@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "buildflow": {
+      "command": "/Applications/BuildFlow.app/Contents/MacOS/BuildFlow",
+      "args": [
+        "/Applications/BuildFlow.app/Contents/Resources/app.asar/out/main/mcp.js"
+      ],
+      "env": {
+        "ELECTRON_RUN_AS_NODE": "1",
+        "BUILDFLOW_SOCKET": "/var/folders/8c/dnq_8d0j6b10xklrxyqdt1fh0000gn/T/buildflow-1sqmlho17xwa93.sock"
+      }
+    }
+  }
+}

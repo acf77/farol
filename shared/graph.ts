@@ -1,0 +1,291 @@
+import type { Pipeline, PipelineNode, Step, StepType } from './types'
+import { normalizeAi } from './ai'
+
+export function defaultGate(type: StepType): boolean {
+  return type === 'shell'
+}
+
+export function nodeGate(n: PipelineNode): boolean {
+  return n.gate ?? defaultGate(n.type)
+}
+
+export function chainToNodes(steps: Step[]): PipelineNode[] {
+  return steps.map((s, i) => ({
+    id: `n${i + 1}`,
+    name: s.name,
+    type: s.type,
+    cmd: s.cmd,
+    ...(s.type === 'ai' ? { ai: normalizeAi(s.ai) } : {}),
+    after: i === 0 ? [] : [`n${i}`],
+    gate: defaultGate(s.type),
+    x: 72,
+    y: 48 + i * 112
+  }))
+}
+
+export function nextNodeId(nodes: PipelineNode[]): string {
+  let max = 0
+  for (const n of nodes) {
+    const m = /^n(\d+)$/.exec(n.id)
+    if (m) max = Math.max(max, Number(m[1]))
+  }
+  return `n${max + 1}`
+}
+
+export function newNodePos(nodes: PipelineNode[]): { x: number; y: number } {
+  if (!nodes.length) return { x: 72, y: 48 }
+  const maxY = Math.max(...nodes.map((n) => n.y))
+  return { x: 72, y: maxY + 112 }
+}
+
+export function topoSort(nodes: PipelineNode[]): PipelineNode[] | null {
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const indeg = new Map<string, number>()
+  for (const n of nodes) indeg.set(n.id, 0)
+  for (const n of nodes) {
+    for (const p of n.after) {
+      if (!byId.has(p)) continue
+      indeg.set(n.id, (indeg.get(n.id) ?? 0) + 1)
+    }
+  }
+  const queue = nodes.filter((n) => (indeg.get(n.id) ?? 0) === 0).map((n) => n.id)
+  const out: PipelineNode[] = []
+  while (queue.length) {
+    const id = queue.shift() as string
+    const n = byId.get(id)
+    if (n) out.push(n)
+    for (const c of nodes) {
+      if (!c.after.includes(id)) continue
+      const d = (indeg.get(c.id) ?? 1) - 1
+      indeg.set(c.id, d)
+      if (d === 0) queue.push(c.id)
+    }
+  }
+  return out.length === nodes.length ? out : null
+}
+
+/** Nodes that can start: not finished, every parent finished. */
+export function readyIds(
+  nodes: PipelineNode[],
+  done: ReadonlySet<string>,
+  skipped: ReadonlySet<string>,
+  started: ReadonlySet<string>
+): string[] {
+  const finished = new Set([...done, ...skipped])
+  return nodes
+    .filter((n) => {
+      if (started.has(n.id) || finished.has(n.id)) return false
+      return n.after.every((p) => !nodes.some((x) => x.id === p) || finished.has(p))
+    })
+    .map((n) => n.id)
+}
+
+/** Downstream cone of `id` (children, grandchildren, …). */
+export function descendants(nodes: PipelineNode[], id: string): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  const q = nodes.filter((n) => n.after.includes(id)).map((n) => n.id)
+  while (q.length) {
+    const cur = q.shift() as string
+    if (seen.has(cur)) continue
+    seen.add(cur)
+    out.push(cur)
+    for (const n of nodes) if (n.after.includes(cur)) q.push(n.id)
+  }
+  return out
+}
+
+export function ancestors(nodes: PipelineNode[], id: string): string[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const seen = new Set<string>()
+  const walk = (nid: string): void => {
+    const n = byId.get(nid)
+    if (!n) return
+    for (const p of n.after) {
+      if (seen.has(p) || !byId.has(p)) continue
+      seen.add(p)
+      walk(p)
+    }
+  }
+  walk(id)
+  return [...seen]
+}
+
+/** Connector above a node in topo order: `and` when it shares parents with the previous node. */
+export function connectorKind(topo: PipelineNode[], index: number): 'then' | 'and' {
+  if (index <= 0) return 'then'
+  const key = (n: PipelineNode): string => [...n.after].sort().join('\0')
+  return key(topo[index]) === key(topo[index - 1]) ? 'and' : 'then'
+}
+
+/** One step as the read-only chain shows it: its number and the word above it. */
+export interface ChainStep {
+  node: PipelineNode
+  /** 1-based reading position across the whole chain. */
+  index: number
+  /** `then` on the first step of a level, `and` on a sibling beside it, null at the start. */
+  join: 'then' | 'and' | null
+}
+
+/** A row of steps that start together — every parent of each sits in an earlier level. */
+export interface ChainLevel {
+  steps: ChainStep[]
+}
+
+/**
+ * Group nodes into the levels the graph actually has: a node sits one step
+ * below its deepest parent, so nodes that genuinely run at the same time land
+ * in the same level. Topo order alone would hand back a single file and invent
+ * a sequence the canvas never drew. A cycle has no honest level, so it falls
+ * back to one node per level in declaration order.
+ */
+export function chainLevels(nodes: PipelineNode[]): ChainLevel[] {
+  const order = topoSort(nodes)
+  const depth = new Map<string, number>()
+  if (order) {
+    const ids = new Set(nodes.map((n) => n.id))
+    for (const n of order) {
+      let d = 0
+      for (const p of n.after) {
+        if (!ids.has(p)) continue
+        d = Math.max(d, (depth.get(p) ?? 0) + 1)
+      }
+      depth.set(n.id, d)
+    }
+  } else {
+    nodes.forEach((n, i) => depth.set(n.id, i))
+  }
+
+  // Declaration order inside a level, so the rows stay stable across renders.
+  const rows = new Map<number, PipelineNode[]>()
+  for (const n of nodes) {
+    const d = depth.get(n.id) ?? 0
+    const row = rows.get(d)
+    if (row) row.push(n)
+    else rows.set(d, [n])
+  }
+
+  let index = 0
+  return [...rows.keys()]
+    .sort((a, b) => a - b)
+    .map((d, li): ChainLevel => ({
+      steps: (rows.get(d) ?? []).map(
+        (node, si): ChainStep => ({
+          node,
+          index: ++index,
+          join: li === 0 && si === 0 ? null : si === 0 ? 'then' : 'and'
+        })
+      )
+    }))
+}
+
+function sanitizeNode(raw: unknown, fallbackId: string): PipelineNode | null {
+  if (!raw || typeof raw !== 'object') return null
+  const n = raw as Record<string, unknown>
+  const type: StepType = n.type === 'ai' ? 'ai' : 'shell'
+  const id = typeof n.id === 'string' && n.id ? n.id : fallbackId
+  const after = Array.isArray(n.after)
+    ? n.after.filter((x): x is string => typeof x === 'string' && x !== id)
+    : []
+  const x = typeof n.x === 'number' && Number.isFinite(n.x) ? n.x : 72
+  const y = typeof n.y === 'number' && Number.isFinite(n.y) ? n.y : 48
+  const gate = typeof n.gate === 'boolean' ? n.gate : defaultGate(type)
+  return {
+    id,
+    name: typeof n.name === 'string' ? n.name : '',
+    type,
+    cmd: typeof n.cmd === 'string' ? n.cmd : '',
+    ...(type === 'ai' ? { ai: normalizeAi(n.ai) } : {}),
+    after,
+    gate,
+    x,
+    y
+  }
+}
+
+function sanitizeStep(raw: unknown): Step | null {
+  if (!raw || typeof raw !== 'object') return null
+  const s = raw as Record<string, unknown>
+  const type: StepType = s.type === 'ai' ? 'ai' : 'shell'
+  return {
+    name: typeof s.name === 'string' ? s.name : '',
+    type,
+    cmd: typeof s.cmd === 'string' ? s.cmd : '',
+    ...(type === 'ai' ? { ai: normalizeAi(s.ai) } : {})
+  }
+}
+
+export function sanitizePipeline(raw: unknown): Pipeline | null {
+  if (!raw || typeof raw !== 'object') return null
+  const p = raw as Record<string, unknown>
+  if (typeof p.id !== 'string' || typeof p.name !== 'string') return null
+  let nodes: PipelineNode[] = []
+  if (Array.isArray(p.nodes) && p.nodes.length) {
+    nodes = p.nodes.flatMap((n, i) => {
+      const node = sanitizeNode(n, `n${i + 1}`)
+      return node ? [node] : []
+    })
+  } else if (Array.isArray(p.steps) && p.steps.length) {
+    const steps = p.steps.flatMap((s) => {
+      const step = sanitizeStep(s)
+      return step ? [step] : []
+    })
+    nodes = chainToNodes(steps)
+  }
+  if (!nodes.length) return { id: p.id, name: p.name, nodes: [] }
+  const ids = new Set(nodes.map((n) => n.id))
+  nodes = nodes.map((n) => ({ ...n, after: n.after.filter((a) => ids.has(a)) }))
+  if (!topoSort(nodes)) {
+    nodes = nodes.map((n, i) => ({
+      ...n,
+      after: i === 0 ? [] : [nodes[i - 1].id]
+    }))
+  }
+  return { id: p.id, name: p.name, nodes }
+}
+
+export function sanitizePipelines(raw: unknown): Pipeline[] | null {
+  if (!Array.isArray(raw)) return null
+  return raw.flatMap((p) => {
+    const pipe = sanitizePipeline(p)
+    return pipe ? [pipe] : []
+  })
+}
+
+/**
+ * Find the pipeline an agent asked for. Accepts an exact id, a name
+ * (case-insensitive), or an unambiguous partial name — agents rarely echo an
+ * id back verbatim. Ambiguity is an error rather than a guess, so the caller
+ * can say which candidates matched.
+ */
+export function resolvePipeline(
+  pipelines: Pipeline[],
+  query: string
+): { ok: true; pipeline: Pipeline } | { ok: false; message: string; candidates: string[] } {
+  const q = query.trim()
+  if (!q) return { ok: false, message: 'Name or id required', candidates: [] }
+
+  const byId = pipelines.find((p) => p.id === q)
+  if (byId) return { ok: true, pipeline: byId }
+
+  const lower = q.toLowerCase()
+  const byName = pipelines.filter((p) => p.name.toLowerCase() === lower)
+  if (byName.length === 1) return { ok: true, pipeline: byName[0] }
+
+  const partial = pipelines.filter(
+    (p) => p.name.toLowerCase().includes(lower) || p.id.toLowerCase().includes(lower)
+  )
+  if (partial.length === 1) return { ok: true, pipeline: partial[0] }
+  if (partial.length > 1) {
+    return {
+      ok: false,
+      message: `"${q}" matches more than one pipeline`,
+      candidates: partial.map((p) => `${p.name} (${p.id})`)
+    }
+  }
+  return {
+    ok: false,
+    message: `No pipeline matches "${q}"`,
+    candidates: pipelines.map((p) => `${p.name} (${p.id})`)
+  }
+}

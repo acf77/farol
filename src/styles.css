@@ -1,0 +1,281 @@
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #07090d;
+  overflow: hidden;
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    'SF Pro Text',
+    'Segoe UI',
+    system-ui,
+    sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+html.bf-glass,
+html.bf-glass body,
+html.bf-glass #root {
+  background: transparent;
+}
+
+a {
+  color: #4d8dfb;
+  text-decoration: none;
+}
+a:hover {
+  color: #7aa9fc;
+}
+
+input,
+button,
+textarea,
+select {
+  font-family: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #6d7686;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+@keyframes bfspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes bfpulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/*
+ * Reduced motion. Both run indicators have to keep reporting "running" once
+ * the movement is taken away, so neither of these is a plain `animation:
+ * none`. The animations are declared inline on the elements, which is why the
+ * selectors match on that declaration and why the overrides are !important.
+ */
+@media (prefers-reduced-motion: reduce) {
+  /*
+   * Safety net first: anything that animates or transitions is reduced to a
+   * jump, including motion added later in a component's inline styles (the
+   * canvas port grow, for one). The two rules below then restore the reading
+   * that each status animation was carrying.
+   */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /*
+   * Freeze the spinner mid-turn. The ring keeps its faint Signal Blue circle
+   * and its bright arc, held off-axis so it still reads as a partial ring in
+   * progress rather than a plain dot outline.
+   */
+  [style*='bfspin'] {
+    animation: none !important;
+    transform: rotate(135deg) !important;
+  }
+  /*
+   * Hold the pulse dot at the top of its cycle. Parked at the 0.35 trough the
+   * status would be halfway to gone; at 1 it is the same dot, just still.
+   */
+  [style*='bfpulse'] {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a3040;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::selection {
+  background: rgba(47, 124, 246, 0.35);
+}
+
+/*
+ * Hover/focus states. Inline styles carry the per-element colours, so these
+ * use !important to win — the same trick the design runtime uses for its
+ * `style-hover` attribute.
+ */
+.bf-hover-fill:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.bf-menu-item {
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.bf-menu-item:hover {
+  background: #2f7cf6 !important;
+  color: #fff !important;
+}
+
+.bf-btn-primary:hover:not(:disabled) {
+  background: #3b88ff !important;
+}
+
+.bf-tab:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+.bf-tab-close:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+  color: #fff !important;
+}
+
+.bf-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #fff !important;
+}
+
+.bf-row:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.bf-brighten:hover {
+  filter: brightness(1.12);
+}
+
+.bf-danger:hover {
+  background: rgba(224, 123, 123, 0.14) !important;
+}
+
+.bf-dashed:hover {
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  color: #fff !important;
+}
+
+.bf-input:focus {
+  border-color: #2f7cf6 !important;
+}
+
+.bf-split-btn:hover {
+  background: rgba(255, 255, 255, 0.09) !important;
+  color: #fff !important;
+}
+
+/*
+ * Hovers the design spells out with its `style-hover` attribute. Each one
+ * matches the spec's hover colour for that surface.
+ */
+.bf-chip:hover {
+  background: #1c222e !important;
+}
+
+.bf-suggest:hover {
+  background: #181f2a !important;
+  border-color: #2d364a !important;
+}
+
+.bf-newpipe:hover {
+  background: #222b3a !important;
+}
+
+.bf-term-tab:hover {
+  background: #171e29 !important;
+}
+.bf-term-tab-active:hover {
+  background: #0b0f16 !important;
+}
+.bf-term-tab:focus-visible {
+  box-shadow: inset 0 0 0 2px #2f7cf6;
+}
+
+.bf-composer-btn:hover {
+  background: #242d3c !important;
+}
+
+.bf-linkish:hover {
+  color: #c3cad6 !important;
+}
+
+.bf-status-item:hover {
+  color: #eef1f6 !important;
+}
+
+/* The run button fills in on hover, so an idle pipeline shows how to start it. */
+.bf-runbtn:hover {
+  background: #2f7cf6 !important;
+  border-color: #2f7cf6 !important;
+}
+.bf-runbtn:hover .bf-runbtn-play {
+  display: block !important;
+}
+
+/*
+ * Keyboard focus. Every button, segment and checkbox in controls.tsx carries
+ * `bf-focus`. The ring is an outline so it costs no layout when it appears,
+ * and it is drawn only for :focus-visible, so a click never lights it up.
+ */
+.bf-focus:focus {
+  outline: none;
+}
+.bf-focus:focus-visible {
+  outline: 2px solid #2f7cf6 !important;
+  outline-offset: 1px !important;
+  /*
+   * A contrast collar, not elevation: under Liquid Glass the effective
+   * backdrop can be light and Signal Blue alone would sink into it. The
+   * outline paints over this, leaving a dark hairline either side of the ring
+   * on any surface. No spread reaches layout.
+   */
+  box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.55) !important;
+}
+
+/*
+ * The primary button is a Signal Blue fill, where a Signal Blue ring would
+ * read as part of the button. Same geometry, white ring.
+ */
+.bf-btn-primary.bf-focus:focus-visible {
+  outline-color: #fff !important;
+}
+
+/*
+ * Segments sit inside an overflow:hidden group that would clip a ring drawn
+ * outside them, so theirs is drawn just inside the segment edge instead.
+ */
+.bf-focus[role='radio']:focus-visible {
+  outline-offset: -3px !important;
+  box-shadow: none !important;
+}
+
+/* Inline code inside assistant Markdown turns. */
+.bf-md-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #0e131b;
+  border: 1px solid #212938;
+  color: #d7dde8;
+}

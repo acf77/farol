@@ -1,0 +1,167 @@
+[
+  {
+    "id": "code-review",
+    "name": "Code Review",
+    "nodes": [
+      {
+        "id": "n1",
+        "name": "Collect diff",
+        "type": "shell",
+        "cmd": "git diff main...HEAD --stat",
+        "after": [],
+        "gate": true,
+        "x": 186,
+        "y": 48
+      },
+      {
+        "id": "n2",
+        "name": "Claude review",
+        "type": "ai",
+        "cmd": "Review the diff for bugs, risks, and style",
+        "ai": "claude",
+        "after": [
+          "n1"
+        ],
+        "gate": false,
+        "x": 72,
+        "y": 160
+      },
+      {
+        "id": "n3",
+        "name": "Cursor review",
+        "type": "ai",
+        "cmd": "Review the same diff independently; flag anything Claude might miss",
+        "ai": "cursor",
+        "after": [
+          "n1"
+        ],
+        "gate": false,
+        "x": 300,
+        "y": 160
+      },
+      {
+        "id": "n4",
+        "name": "Summarize",
+        "type": "ai",
+        "cmd": "Combine both reviews into a one-paragraph summary on the run log",
+        "ai": "claude",
+        "after": [
+          "n2",
+          "n3"
+        ],
+        "gate": false,
+        "x": 186,
+        "y": 272
+      }
+    ]
+  },
+  {
+    "id": "lint",
+    "name": "Lint & Typecheck",
+    "nodes": [
+      {
+        "id": "n2",
+        "name": "TypeScript",
+        "type": "shell",
+        "cmd": "npx tsc --noEmit",
+        "after": [],
+        "gate": true,
+        "x": 300,
+        "y": 48
+      }
+    ]
+  },
+  {
+    "id": "full",
+    "name": "Full Check",
+    "nodes": [
+      {
+        "id": "n1",
+        "name": "ESLint",
+        "type": "shell",
+        "cmd": "npx eslint . --max-warnings 0",
+        "after": [],
+        "gate": true,
+        "x": 72,
+        "y": 48
+      },
+      {
+        "id": "n2",
+        "name": "TypeScript",
+        "type": "shell",
+        "cmd": "npx tsc --noEmit",
+        "after": [],
+        "gate": true,
+        "x": 300,
+        "y": 48
+      },
+      {
+        "id": "n3",
+        "name": "AI Review",
+        "type": "ai",
+        "cmd": "Review lint/type output and the diff; flag risks",
+        "ai": "claude",
+        "after": [
+          "n1",
+          "n2"
+        ],
+        "gate": false,
+        "x": 186,
+        "y": 160
+      },
+      {
+        "id": "n4",
+        "name": "Summarize",
+        "type": "ai",
+        "cmd": "Post a one-paragraph summary to the run log",
+        "ai": "claude",
+        "after": [
+          "n3"
+        ],
+        "gate": false,
+        "x": 186,
+        "y": 272
+      }
+    ]
+  },
+  {
+    "id": "ship",
+    "name": "Ship to GitHub",
+    "nodes": [
+      {
+        "id": "n1",
+        "name": "Run tests",
+        "type": "shell",
+        "cmd": "npm test",
+        "after": [],
+        "gate": true,
+        "x": 72,
+        "y": 48
+      },
+      {
+        "id": "n2",
+        "name": "Build",
+        "type": "shell",
+        "cmd": "npm run build",
+        "after": [
+          "n1"
+        ],
+        "gate": true,
+        "x": 72,
+        "y": 160
+      },
+      {
+        "id": "n3",
+        "name": "Push & open PR",
+        "type": "shell",
+        "cmd": "git push && gh pr create --fill",
+        "after": [
+          "n2"
+        ],
+        "gate": true,
+        "x": 72,
+        "y": 272
+      }
+    ]
+  }
+]

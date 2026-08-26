@@ -1,0 +1,734 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-20T21:11:05.877627",
+  "title": "Design System: BuildFlow",
+  "extensions": {
+    "colorMeta": {
+      "accent-signal-blue": {
+        "role": "primary",
+        "displayName": "Signal Blue",
+        "canonical": "#0a84ff",
+        "tonalRamp": [
+          "#021426",
+          "#032343",
+          "#043261",
+          "#05417e",
+          "#06509b",
+          "#075fb8",
+          "#086ed5",
+          "#0a7df2"
+        ]
+      },
+      "accent-signal-blue-hover": {
+        "role": "primary",
+        "displayName": "Signal Blue Raised",
+        "canonical": "#2492ff",
+        "tonalRamp": [
+          "#051626",
+          "#0a2743",
+          "#0e3761",
+          "#12487e",
+          "#16599b",
+          "#1a69b8",
+          "#1e7ad5",
+          "#228bf2"
+        ]
+      },
+      "status-run-green": {
+        "role": "secondary",
+        "displayName": "Run Green",
+        "canonical": "#32d74b",
+        "tonalRamp": [
+          "#09260d",
+          "#104318",
+          "#166122",
+          "#1d7e2c",
+          "#249b36",
+          "#2bb840",
+          "#32d54a",
+          "#38f255"
+        ]
+      },
+      "status-fail-red": {
+        "role": "secondary",
+        "displayName": "Fail Red",
+        "canonical": "#ff453a",
+        "tonalRamp": [
+          "#260a09",
+          "#43120f",
+          "#611a16",
+          "#7e221d",
+          "#9b2a23",
+          "#b8322a",
+          "#d53a30",
+          "#f24237"
+        ]
+      },
+      "status-ai-violet": {
+        "role": "secondary",
+        "displayName": "AI Violet",
+        "canonical": "#bf5af2",
+        "tonalRamp": [
+          "#1e0e26",
+          "#351943",
+          "#4c2461",
+          "#632f7e",
+          "#7a3a9b",
+          "#9144b8",
+          "#a84fd5",
+          "#bf5af2"
+        ]
+      },
+      "status-ai-violet-soft": {
+        "role": "secondary",
+        "displayName": "AI Violet Soft",
+        "canonical": "#d7a5f7",
+        "tonalRamp": [
+          "#211a26",
+          "#3b2d43",
+          "#544061",
+          "#6d547e",
+          "#87679b",
+          "#a07bb8",
+          "#b98ed5",
+          "#d3a2f2"
+        ]
+      },
+      "status-stale-amber": {
+        "role": "secondary",
+        "displayName": "Stale Amber",
+        "canonical": "#ffd60a",
+        "tonalRamp": [
+          "#262002",
+          "#433903",
+          "#615104",
+          "#7e6905",
+          "#9b8206",
+          "#b89a07",
+          "#d5b308",
+          "#f2cb0a"
+        ]
+      },
+      "surface-pane-well": {
+        "role": "neutral",
+        "displayName": "Pane Well",
+        "canonical": "#0f0f10",
+        "tonalRamp": [
+          "#242426",
+          "#3f3f43",
+          "#5b5b61",
+          "#76767e",
+          "#91919b",
+          "#acacb8",
+          "#c8c8d5",
+          "#e3e3f2"
+        ]
+      },
+      "surface-terminal-pitch": {
+        "role": "neutral",
+        "displayName": "Terminal Pitch",
+        "canonical": "#151516",
+        "tonalRamp": [
+          "#252526",
+          "#404043",
+          "#5c5c61",
+          "#78787e",
+          "#94949b",
+          "#b0b0b8",
+          "#cbcbd5",
+          "#e7e7f2"
+        ]
+      },
+      "surface-empty": {
+        "role": "neutral",
+        "displayName": "Empty Field",
+        "canonical": "#161617",
+        "tonalRamp": [
+          "#252526",
+          "#404043",
+          "#5c5c61",
+          "#78787e",
+          "#94949b",
+          "#b0b0b8",
+          "#ccccd5",
+          "#e8e8f2"
+        ]
+      },
+      "surface-tab-active": {
+        "role": "neutral",
+        "displayName": "Tab Active",
+        "canonical": "#1a1a1c",
+        "tonalRamp": [
+          "#242426",
+          "#3f3f43",
+          "#5a5a61",
+          "#75757e",
+          "#90909b",
+          "#ababb8",
+          "#c6c6d5",
+          "#e1e1f2"
+        ]
+      },
+      "surface-app": {
+        "role": "neutral",
+        "displayName": "App Ground",
+        "canonical": "#1c1c1e",
+        "tonalRamp": [
+          "#242426",
+          "#3f3f43",
+          "#5a5a61",
+          "#75757e",
+          "#91919b",
+          "#acacb8",
+          "#c7c7d5",
+          "#e2e2f2"
+        ]
+      },
+      "surface-sidebar": {
+        "role": "neutral",
+        "displayName": "Sidebar Slate",
+        "canonical": "#202022",
+        "tonalRamp": [
+          "#242426",
+          "#3f3f43",
+          "#5b5b61",
+          "#76767e",
+          "#92929b",
+          "#adadb8",
+          "#c9c9d5",
+          "#e4e4f2"
+        ]
+      },
+      "surface-chrome": {
+        "role": "neutral",
+        "displayName": "Chrome Grey",
+        "canonical": "#29292b",
+        "tonalRamp": [
+          "#242426",
+          "#404043",
+          "#5c5c61",
+          "#78787e",
+          "#94949b",
+          "#afafb8",
+          "#cbcbd5",
+          "#e7e7f2"
+        ]
+      },
+      "surface-panel": {
+        "role": "neutral",
+        "displayName": "Panel Grey",
+        "canonical": "#2c2c2e",
+        "tonalRamp": [
+          "#252526",
+          "#404043",
+          "#5c5c61",
+          "#78787e",
+          "#94949b",
+          "#b0b0b8",
+          "#ccccd5",
+          "#e8e8f2"
+        ]
+      },
+      "text-strong": {
+        "role": "neutral",
+        "displayName": "Text Strong",
+        "canonical": "#f0f0f2",
+        "tonalRamp": [
+          "#262626",
+          "#434343",
+          "#606061",
+          "#7d7d7e",
+          "#9a9a9b",
+          "#b6b6b8",
+          "#d3d3d5",
+          "#f0f0f2"
+        ]
+      },
+      "text-default": {
+        "role": "neutral",
+        "displayName": "Text Default",
+        "canonical": "#e8e8ea",
+        "tonalRamp": [
+          "#262626",
+          "#434343",
+          "#606061",
+          "#7d7d7e",
+          "#99999b",
+          "#b6b6b8",
+          "#d3d3d5",
+          "#f0f0f2"
+        ]
+      },
+      "text-soft": {
+        "role": "neutral",
+        "displayName": "Text Soft",
+        "canonical": "#d4d4d8",
+        "tonalRamp": [
+          "#262626",
+          "#424243",
+          "#5f5f61",
+          "#7b7b7e",
+          "#98989b",
+          "#b5b5b8",
+          "#d1d1d5",
+          "#eeeef2"
+        ]
+      },
+      "text-muted": {
+        "role": "neutral",
+        "displayName": "Text Muted",
+        "canonical": "#9a9aa0",
+        "tonalRamp": [
+          "#252526",
+          "#414143",
+          "#5d5d61",
+          "#79797e",
+          "#95959b",
+          "#b1b1b8",
+          "#cdcdd5",
+          "#e9e9f2"
+        ]
+      },
+      "text-dim": {
+        "role": "neutral",
+        "displayName": "Text Dim",
+        "canonical": "#8e8e93",
+        "tonalRamp": [
+          "#252526",
+          "#414143",
+          "#5d5d61",
+          "#79797e",
+          "#96969b",
+          "#b2b2b8",
+          "#ceced5",
+          "#eaeaf2"
+        ]
+      },
+      "text-faint": {
+        "role": "neutral",
+        "displayName": "Text Faint",
+        "canonical": "#6e6e73",
+        "tonalRamp": [
+          "#252526",
+          "#404043",
+          "#5c5c61",
+          "#78787e",
+          "#94949b",
+          "#b0b0b8",
+          "#ccccd5",
+          "#e8e8f2"
+        ]
+      },
+      "text-fainter": {
+        "role": "neutral",
+        "displayName": "Text Fainter",
+        "canonical": "#5c5c61",
+        "tonalRamp": [
+          "#242426",
+          "#404043",
+          "#5c5c61",
+          "#77777e",
+          "#93939b",
+          "#aeaeb8",
+          "#cacad5",
+          "#e6e6f2"
+        ]
+      },
+      "neutral-grey": {
+        "role": "neutral",
+        "displayName": "Neutral Grey",
+        "canonical": "#636366",
+        "tonalRamp": [
+          "#252526",
+          "#414143",
+          "#5e5e61",
+          "#7a7a7e",
+          "#96969b",
+          "#b3b3b8",
+          "#cfcfd5",
+          "#ebebf2"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The single largest text on a view. Empty-state headlines only, at most one per screen."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Dialog titles and section heads."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Buttons and menu items. The interactive ramp."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Field values, descriptions, list content. Cap prose at 65 to 75ch."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Tab titles, sidebar rows, field labels, inline status. The densest and most-used step."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Step numbers, badges, branch tags, metadata. Below this, only glyphs."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Commands, paths, branch names, run output, prompt marks. Never labels or headings."
+      }
+    },
+    "shadows": [
+      {
+        "name": "menu-drop",
+        "value": "0 12px 32px rgba(0,0,0,0.5)",
+        "purpose": "Popover menus, the branch picker, context menus. One of only two shadows in the system."
+      },
+      {
+        "name": "dialog-drop",
+        "value": "0 18px 48px rgba(0,0,0,0.55)",
+        "purpose": "Modal dialogs. Deeper and wider because a dialog sits further from the panel."
+      },
+      {
+        "name": "node-lift",
+        "value": "0 8px 24px rgba(0,0,0,0.35)",
+        "purpose": "Canvas node. The documented exception to the Two-Shadow Rule: a node is lifted off a world plane, not layered in the chrome."
+      }
+    ],
+    "borders": [
+      {
+        "name": "hairline-seam",
+        "value": "1px solid rgba(255,255,255,0.08)",
+        "purpose": "Seam between adjacent layers of the ramp, such as sidebar against pane area."
+      },
+      {
+        "name": "hairline-panel",
+        "value": "1px solid rgba(255,255,255,0.12)",
+        "purpose": "Edge of a floating surface: menus, dialogs, popovers."
+      },
+      {
+        "name": "hairline-field",
+        "value": "1px solid rgba(255,255,255,0.1)",
+        "purpose": "Resting border of an input field."
+      },
+      {
+        "name": "focus-field",
+        "value": "1px solid #0a84ff",
+        "purpose": "Focused input. The border alone shifts; no glow, no ring expansion."
+      }
+    ],
+    "surfaceWashes": [
+      {
+        "name": "hover-subtle",
+        "value": "rgba(255,255,255,0.05)",
+        "purpose": "Tab hover."
+      },
+      {
+        "name": "hover-row",
+        "value": "rgba(255,255,255,0.06)",
+        "purpose": "Sidebar and list row hover."
+      },
+      {
+        "name": "hover-icon",
+        "value": "rgba(255,255,255,0.08)",
+        "purpose": "Icon button hover."
+      },
+      {
+        "name": "hover-fill",
+        "value": "rgba(255,255,255,0.10)",
+        "purpose": "Generic fill hover."
+      },
+      {
+        "name": "hover-strong",
+        "value": "rgba(255,255,255,0.12)",
+        "purpose": "Tab close target hover."
+      },
+      {
+        "name": "hover-danger",
+        "value": "rgba(255,69,58,0.12)",
+        "purpose": "Destructive control hover. Never a fill at rest."
+      },
+      {
+        "name": "selection",
+        "value": "rgba(10,132,255,0.35)",
+        "purpose": "Text selection."
+      },
+      {
+        "name": "field-recess",
+        "value": "rgba(255,255,255,0.05)",
+        "purpose": "Input field background. Fields are recessed washes, not raised boxes."
+      }
+    ],
+    "glass": [
+      {
+        "name": "glass-chrome",
+        "value": "rgba(28,28,30,0.42)",
+        "purpose": "Toolbar and tab strip under native Liquid Glass."
+      },
+      {
+        "name": "glass-sidebar",
+        "value": "rgba(28,28,30,0.38)",
+        "purpose": "Sidebar under native Liquid Glass."
+      },
+      {
+        "name": "glass-panel",
+        "value": "rgba(44,44,46,0.72)",
+        "purpose": "Menus and dialogs under native Liquid Glass."
+      },
+      {
+        "name": "glass-tab-active",
+        "value": "rgba(255,255,255,0.08)",
+        "purpose": "Active tab under native Liquid Glass."
+      }
+    ],
+    "motion": [
+      {
+        "name": "spin",
+        "value": "bfspin .8s linear infinite",
+        "purpose": "In-progress step indicator. Must degrade under prefers-reduced-motion to a static indicator that still reports the running state."
+      },
+      {
+        "name": "pulse",
+        "value": "bfpulse 1.6s ease-in-out infinite",
+        "purpose": "Attention or pending state, cycling opacity 1 to 0.35. Same reduced-motion obligation."
+      }
+    ],
+    "logLineKinds": [
+      {
+        "name": "def",
+        "color": "#d6d6d9",
+        "bold": false,
+        "purpose": "Ordinary output."
+      },
+      {
+        "name": "dim",
+        "color": "#8e8e93",
+        "bold": false,
+        "purpose": "De-emphasised detail."
+      },
+      {
+        "name": "cmd",
+        "color": "#ffffff",
+        "bold": true,
+        "purpose": "The command being run."
+      },
+      {
+        "name": "head",
+        "color": "#0a84ff",
+        "bold": true,
+        "purpose": "Run or pipeline header."
+      },
+      {
+        "name": "step",
+        "color": "#e8e8ea",
+        "bold": true,
+        "purpose": "Step boundary."
+      },
+      {
+        "name": "ok",
+        "color": "#32d74b",
+        "bold": false,
+        "purpose": "Step passed."
+      },
+      {
+        "name": "err",
+        "color": "#ff453a",
+        "bold": false,
+        "purpose": "Step failed."
+      },
+      {
+        "name": "ai",
+        "color": "#bf5af2",
+        "bold": false,
+        "purpose": "AI step output."
+      },
+      {
+        "name": "warn",
+        "color": "#ffd60a",
+        "bold": false,
+        "purpose": "Warning."
+      },
+      {
+        "name": "echo",
+        "color": "#b8b8bc",
+        "bold": false,
+        "purpose": "Echoed input."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single primary action in a dialog or empty state. Fills with Signal Blue; hover raises the fill and nothing else.",
+      "html": "<button class=\"ds-btn-primary\">Open Project…</button>",
+      "css": ".ds-btn-primary { height: 28px; padding: 0 16px; border: none; border-radius: 7px; background: #0a84ff; color: #fff; font-family: -apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; } .ds-btn-primary:hover:not(:disabled) { background: #2492ff; } .ds-btn-primary:focus-visible { outline: 2px solid #2492ff; outline-offset: 2px; } .ds-btn-primary:disabled { cursor: default; opacity: 0.45; }"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "Toolbar affordance. Transparent at rest with a dim glyph; hover applies the universal white wash and brightens the glyph.",
+      "html": "<button class=\"ds-icon-btn\" aria-label=\"Split right\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\"><rect x=\"1.5\" y=\"2.5\" width=\"13\" height=\"11\" rx=\"2\"/><line x1=\"8\" y1=\"2.5\" x2=\"8\" y2=\"13.5\"/></svg></button>",
+      "css": ".ds-icon-btn { display: grid; place-items: center; width: 24px; height: 22px; padding: 0; border: none; border-radius: 5px; background: transparent; color: #8e8e93; cursor: pointer; } .ds-icon-btn:hover { background: rgba(255,255,255,0.08); color: #fff; } .ds-icon-btn:focus-visible { outline: 2px solid #0a84ff; outline-offset: 1px; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "A recessed wash on the surface, not a raised box. On focus the border alone shifts to Signal Blue: no glow, no ring expansion, no background change.",
+      "html": "<input class=\"ds-input\" value=\"ci/lint\" placeholder=\"ci/lint\" spellcheck=\"false\" />",
+      "css": ".ds-input { height: 24px; padding: 0 8px; border: 1px solid rgba(255,255,255,0.1); border-radius: 5px; background: rgba(255,255,255,0.05); color: #e8e8ea; font-family: -apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif; font-size: 12px; outline: none; } .ds-input::placeholder { color: #5c5c61; } .ds-input:focus { border-color: #0a84ff; }"
+    },
+    {
+      "name": "Command Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "The same field treatment switched to SF Mono, for anything the machine will read: shell commands, paths, branch names.",
+      "html": "<input class=\"ds-input-mono\" value=\"npm run typecheck\" spellcheck=\"false\" />",
+      "css": ".ds-input-mono { height: 24px; padding: 0 8px; border: 1px solid rgba(255,255,255,0.1); border-radius: 5px; background: rgba(255,255,255,0.05); color: #e8e8ea; font-family: ui-monospace, \"SF Mono\", Menlo, monospace; font-size: 11px; outline: none; } .ds-input-mono::placeholder { color: #5c5c61; } .ds-input-mono:focus { border-color: #0a84ff; }"
+    },
+    {
+      "name": "Tab",
+      "kind": "nav",
+      "refersTo": "tab",
+      "description": "The signature component. The active tab is distinguished purely by its surface, keyed to read as continuous with the pane below it. No radius, no border.",
+      "html": "<div class=\"ds-tabstrip\"><div class=\"ds-tab ds-tab--active\"><span class=\"ds-tab-glyph\">❯</span><span class=\"ds-tab-title\">src</span><span class=\"ds-tab-close\">×</span></div><div class=\"ds-tab\"><span class=\"ds-tab-glyph\">❯</span><span class=\"ds-tab-title\">typecheck</span><span class=\"ds-tab-close\">×</span></div></div>",
+      "css": ".ds-tabstrip { display: flex; background: #29292b; height: 30px; } .ds-tab { position: relative; display: flex; align-items: center; gap: 7px; padding: 0 12px; max-width: 190px; min-width: 0; background: transparent; cursor: pointer; font-family: -apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif; font-size: 11px; font-weight: 600; color: #9a9aa0; } .ds-tab:hover { background: rgba(255,255,255,0.05); } .ds-tab--active { background: #1a1a1c; color: #e8e8ea; } .ds-tab-glyph { font-family: ui-monospace, \"SF Mono\", Menlo, monospace; font-size: 10px; color: #7c7c82; flex: none; } .ds-tab--active .ds-tab-glyph { color: #0a84ff; } .ds-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-tab-close { flex: none; display: grid; place-items: center; width: 15px; height: 15px; border-radius: 4px; font-size: 11px; color: rgba(255,255,255,0.35); cursor: pointer; } .ds-tab-close:hover { background: rgba(255,255,255,0.12); color: #fff; }"
+    },
+    {
+      "name": "Menu",
+      "kind": "nav",
+      "refersTo": "menu-item",
+      "description": "A floating surface at Panel Grey with Menu Drop. Hover fills the item with Signal Blue: the one place a saturated fill covers a whole element, justified because it marks the single item under the cursor.",
+      "html": "<div class=\"ds-menu\"><div class=\"ds-menu-item\">main</div><div class=\"ds-menu-item\">feature/panes</div><div class=\"ds-menu-item\">ci/lint</div></div>",
+      "css": ".ds-menu { padding: 5px; min-width: 180px; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; background: #2c2c2e; box-shadow: 0 12px 32px rgba(0,0,0,0.5); } .ds-menu-item { padding: 6px 10px; border-radius: 5px; font-family: -apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif; font-size: 12.5px; color: #e8e8ea; cursor: pointer; } .ds-menu-item:hover { background: #0a84ff; color: #fff; }"
+    },
+    {
+      "name": "Sidebar Row",
+      "kind": "custom",
+      "refersTo": "sidebar-row",
+      "description": "A pipeline in the sidebar, carrying its run status as a glyph plus a word so the reading never depends on hue alone.",
+      "html": "<div class=\"ds-sidebar\"><div class=\"ds-row\"><span class=\"ds-row-name\">typecheck</span><span class=\"ds-row-status ds-row-status--ok\">✓ Passed</span></div><div class=\"ds-row\"><span class=\"ds-row-name\">e2e</span><span class=\"ds-row-status ds-row-status--stale\">◑ Not run on ci/lint</span></div></div>",
+      "css": ".ds-sidebar { padding: 4px; width: 240px; background: #202022; border-right: 1px solid rgba(255,255,255,0.08); } .ds-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 6px; font-family: -apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif; font-size: 11px; font-weight: 600; color: #d4d4d8; cursor: pointer; } .ds-row:hover { background: rgba(255,255,255,0.06); } .ds-row-status { font-size: 10px; letter-spacing: 0.02em; white-space: nowrap; } .ds-row-status--ok { color: #32d74b; } .ds-row-status--stale { color: #ffd60a; }"
+    },
+    {
+      "name": "Pipeline Canvas Node",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "A step on the node canvas. The canvas is the app's one spatial surface and the only place beziers and lifted shadows are permitted.",
+      "html": "<div class=\"ds-canvas\"><div class=\"ds-node ds-node--sel\"><span class=\"ds-port ds-port--in\"></span><div class=\"ds-node-kind\">SHELL · GATE</div><div class=\"ds-node-name\">typecheck</div><span class=\"ds-port ds-port--out\"></span></div><div class=\"ds-node ds-node--ai\"><span class=\"ds-port ds-port--in\"></span><div class=\"ds-node-kind ds-node-kind--ai\">AI · Claude</div><div class=\"ds-node-name\">summarise failures</div><span class=\"ds-port ds-port--out\"></span></div></div>",
+      "css": ".ds-canvas { position: relative; display: flex; gap: 28px; padding: 24px; background-color: #161617; background-image: radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px); background-size: 22px 22px; font-family: -apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif; } .ds-node { position: relative; width: 150px; min-height: 44px; box-sizing: border-box; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; background: #202022; box-shadow: 0 8px 24px rgba(0,0,0,0.35); cursor: grab; } .ds-node--sel { border-color: #0a84ff; box-shadow: 0 0 0 3px rgba(10,132,255,0.18); } .ds-node--ai { background: rgba(191,90,242,0.12); } .ds-node-kind { font-size: 9px; font-weight: 700; letter-spacing: 0.4px; color: #8e8e93; } .ds-node-kind--ai { color: #d7a5f7; } .ds-node-name { margin-top: 4px; font-size: 12px; font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-port { position: absolute; left: 50%; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; cursor: crosshair; transition: transform 160ms cubic-bezier(0.22,1,0.36,1); } .ds-port--in { top: -6px; background: rgba(10,132,255,0.85); } .ds-port--out { bottom: -6px; background: #0a84ff; } .ds-node:hover .ds-port { transform: scale(1.4); }"
+    },
+    {
+      "name": "Pipeline Chain (Detail)",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "The read-only sidebar counterpart, rendering the graph's resolved order. Must express branches where the graph has them; never flattens a graph into a false linear order.",
+      "html": "<div class=\"ds-chain\"><div class=\"ds-step\"><span class=\"ds-num\">01</span><span class=\"ds-badge\">SH</span><div class=\"ds-step-body\"><span class=\"ds-step-name\">typecheck</span><span class=\"ds-step-cmd\">npm run typecheck</span></div><span class=\"ds-mark ds-mark--ok\">✓</span></div><div class=\"ds-join\"><span class=\"ds-join-rule\"></span><span class=\"ds-join-arrow\">▼</span><span class=\"ds-join-word\">then</span></div><div class=\"ds-step\"><span class=\"ds-num\">02</span><span class=\"ds-badge ds-badge--ai\">Claude</span><div class=\"ds-step-body\"><span class=\"ds-step-name\">summarise failures</span><span class=\"ds-step-cmd\">Read the run output and explain…</span></div><span class=\"ds-mark ds-mark--skip\">–</span></div></div>",
+      "css": ".ds-chain { display: flex; flex-direction: column; padding: 8px; background: #202022; font-family: -apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif; } .ds-step { display: flex; align-items: center; gap: 9px; padding: 8px 10px; background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.08); border-radius: 7px; } .ds-num { flex: none; width: 16px; font-family: ui-monospace, \"SF Mono\", Menlo, monospace; font-size: 10px; color: #5c5c61; } .ds-badge { flex: none; display: grid; place-items: center; height: 17px; padding: 0 6px; border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: 0.4px; background: rgba(255,255,255,0.08); color: #9a9aa0; } .ds-badge--ai { background: rgba(191,90,242,0.18); color: #bf5af2; } .ds-step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; } .ds-step-name { font-size: 12px; font-weight: 500; color: #e0e0e4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-step-cmd { font-family: ui-monospace, \"SF Mono\", Menlo, monospace; font-size: 10px; color: #6e6e73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-mark { flex: none; font-size: 12px; font-weight: 700; } .ds-mark--ok { color: #32d74b; } .ds-mark--skip { color: #5c5c61; } .ds-join { display: flex; align-items: center; gap: 6px; padding: 2px 0 2px 17px; } .ds-join-rule { width: 1px; height: 12px; background: rgba(255,255,255,0.16); } .ds-join-arrow { margin-left: -4px; font-size: 10px; line-height: 1; color: #6e6e73; } .ds-join-word { font-size: 9.5px; letter-spacing: 0.3px; color: #5c5c61; }"
+    },
+    {
+      "name": "Run Log",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "Run output on Terminal Pitch, the darkest content surface. Ten line kinds separated by weight and prefix as well as hue.",
+      "html": "<div class=\"ds-log\"><div class=\"ds-l ds-l--head\">▸ typecheck on main</div><div class=\"ds-l ds-l--cmd\">$ npm run typecheck</div><div class=\"ds-l ds-l--def\">tsc --noEmit -p tsconfig.json</div><div class=\"ds-l ds-l--ok\">✓ passed in 4.2s</div><div class=\"ds-l ds-l--err\">✕ 2 errors in src/layout.ts</div><div class=\"ds-l ds-l--ai\">◆ Claude · summarising failures</div></div>",
+      "css": ".ds-log { padding: 10px 12px; background: #151516; font-family: ui-monospace, \"SF Mono\", Menlo, monospace; font-size: 11px; line-height: 1.5; } .ds-l--def { color: #d6d6d9; } .ds-l--cmd { color: #fff; font-weight: 700; } .ds-l--head { color: #0a84ff; font-weight: 700; } .ds-l--ok { color: #32d74b; } .ds-l--err { color: #ff453a; } .ds-l--ai { color: #bf5af2; }"
+    },
+    {
+      "name": "Empty State",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "The no-project view. One Display-scale line, one Body line, one primary action. The mono prompt mark in a 15%-alpha Signal Blue tile is the app’s only mark.",
+      "html": "<div class=\"ds-empty\"><div class=\"ds-empty-mark\">❯</div><div class=\"ds-empty-title\">No Project Open</div><div class=\"ds-empty-sub\">Open a folder to start a shell and run pipelines.</div><button class=\"ds-btn-primary\">Open Project…</button></div>",
+      "css": ".ds-empty { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 48px; background: #161617; font-family: -apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif; } .ds-empty-mark { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 11px; background: rgba(10,132,255,0.15); color: #0a84ff; font-family: ui-monospace, \"SF Mono\", Menlo, monospace; font-size: 20px; font-weight: 700; } .ds-empty-title { font-size: 15px; font-weight: 600; color: #e8e8ea; } .ds-empty-sub { font-size: 12px; color: #8e8e93; } .ds-empty .ds-btn-primary { margin-top: 4px; height: 28px; padding: 0 16px; border: none; border-radius: 7px; background: #0a84ff; color: #fff; font-size: 12.5px; font-weight: 600; cursor: pointer; } .ds-empty .ds-btn-primary:hover { background: #2492ff; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Control Surface",
+    "overview": "BuildFlow is an aircraft panel, not a webpage. Every indicator earns its space, every reading is unambiguous, and the whole surface is legible under pressure at a glance. The instrument is dense because density is correct here: an operator who has to hunt for the state of a run has been failed by the panel. Small type, tight gaps, and exact alignment are the vocabulary. What makes it a control surface rather than clutter is that no element is present for decoration, and every value is deliberate.\n\nThe panel is dark, but not for atmosphere. It is dark because the thing it houses, a real terminal at #151516, is the darkest surface in the app, and everything else steps up from it in near-black tints. Depth is built by stacking surfaces, not by painting shadows. The chrome around the terminal is a slightly lighter grey; the sidebar a shade between; a floating panel a shade above that. This is why the system reads as one machined object rather than a stack of cards.\n\nColor is almost absent, and that absence is the design. The surface is a run of neutral greys, and the only saturated values in the entire system are signal: blue for what is selected or actionable, green for pass, red for fail, violet for an AI step, amber for a result that has gone stale. A screen where more than a sliver is colored is a screen where the signals have stopped meaning anything. This system explicitly rejects the neon hacker terminal, the AI-product gradient, the CI dashboard’s badge soup, and the generic Electron app that forgot which platform it was running on.",
+    "keyCharacteristics": [
+      "Near-black tonal layering, seven surface steps from #0f0f10 to #2c2c2e",
+      "One accent (#0a84ff), four status colors, nothing else saturated",
+      "Dense native type ramp, 9px to 15px, weights 600 and 700 only",
+      "Small radii (3px to 8px), hairline rgba(255,255,255,0.12) borders",
+      "Flat at rest; shadows exist only under things that float",
+      "macOS system fonts and materials, never a substitute stack"
+    ],
+    "rules": [
+      {
+        "name": "The Signal Rule",
+        "section": "colors",
+        "body": "Saturated color is a reading, never a finish. Blue, green, red, violet, and amber appear only where the interface is reporting state or offering the primary action. If a saturated color appears anywhere it is not reporting something, delete it. A typical screen is under 5% saturated pixels."
+      },
+      {
+        "name": "The Pitch Floor Rule",
+        "section": "colors",
+        "body": "Terminal and run-log surfaces stay at #151516, fully opaque, always. When the window is running native Liquid Glass and every other surface goes translucent, content panes do not. Contrast under the user’s own shell theme outranks the material effect."
+      },
+      {
+        "name": "The Status Never Alone Rule",
+        "section": "colors",
+        "body": "Green, red, amber, and grey always travel with a glyph or a word. \"Passed\", \"Failed\", \"Skipped\", \"Not run on feature/x\". A user who cannot distinguish the hues must still read the panel correctly."
+      },
+      {
+        "name": "The Weight-Not-Size Rule",
+        "section": "typography",
+        "body": "The ramp spans six points from top to bottom, so scale cannot carry hierarchy. Promote with weight (600) or with the text color ramp; never by inventing a size step outside the ladder."
+      },
+      {
+        "name": "The Mono Means Code Rule",
+        "section": "typography",
+        "body": "SF Mono is reserved for text the machine will read or did emit: commands, paths, branch names, run output, prompt marks. Monospace on a label, a heading, or a button is decoration borrowed from the hacker-terminal aesthetic, and is prohibited."
+      },
+      {
+        "name": "The Nine-Pixel Floor Rule",
+        "section": "typography",
+        "body": "Nothing below 9px, and 9px only for non-essential metadata that repeats elsewhere. Any text carrying meaning that appears nowhere else is 11px or larger."
+      },
+      {
+        "name": "The Two-Shadow Rule",
+        "section": "elevation",
+        "body": "The system has two shadows. Menus get Menu Drop, dialogs get Dialog Drop, and everything else gets none. A hover state that reaches for a shadow is a hover state that should have changed its background instead. The one exception is a canvas node (0 8px 24px rgba(0,0,0,0.35)), which is genuinely lifted off a world plane rather than layered in the chrome."
+      },
+      {
+        "name": "The Ramp-Is-The-Z-Order Rule",
+        "section": "elevation",
+        "body": "To raise a surface, move it up the neutral ramp; to recess one, move it down. Never simulate depth on an in-flow element with a shadow, an inner glow, or a gradient."
+      },
+      {
+        "name": "The Glass Exception",
+        "section": "elevation",
+        "body": "When native Liquid Glass is active, chrome surfaces become translucent tints of rgba(28,28,30,0.38–0.42) and panels rgba(44,44,46,0.72), but the layer ordering is unchanged and content panes stay opaque. Glass is a platform material the window receives, never an effect the interface applies for looks."
+      }
+    ],
+    "dos": [
+      "Do build depth by moving surfaces along the neutral ramp (#0f0f10 → #2c2c2e), reinforced with hairline rgba(255,255,255,0.08–0.12) borders.",
+      "Do keep terminal and run-log panes fully opaque at #151516, including when Liquid Glass is active.",
+      "Do use rgba(255,255,255,0.05–0.14) background washes for every hover state. That wash is the app’s hover language.",
+      "Do pair every status color with a glyph or word: \"Passed\", \"Failed\", \"Skipped\", \"Not run on feature/x\".",
+      "Do reserve SF Mono for commands, paths, branch names, and run output.",
+      "Do promote with weight (600) and the text color ramp, since the type ramp spans only 9px to 15px.",
+      "Do honor prefers-reduced-motion on bfspin and bfpulse, degrading to a static indicator that still reports the running state.",
+      "Do check dim metadata (#8e8e93, #6e6e73, #5c5c61) for 4.5:1 against its actual surface, including the translucent glass variants where the effective background shifts.",
+      "Do show the real result, including git’s refusal message or a missing CLI on PATH, in the interface’s own type rather than swallowing it."
+    ],
+    "donts": [
+      "Don’t build the generic Electron app. No browser-default buttons, no substitute font stack in place of SF Pro and SF Mono, no web-styled scrollbars over the app’s own 10px rgba(255,255,255,0.14) thumb. If it reads as a website in a frame, rewrite it.",
+      "Don’t build the CI dashboard. No heavy tables, no status-badge soup, no cluttered configuration forms. A pipeline is a node canvas to author and a numbered chain to read, never a grid of identical cards.",
+      "Don’t build the neon hacker terminal. No matrix green, no glow, no text-shadow, no cyberpunk styling, and no decorative monospace on labels, headings, or buttons.",
+      "Don’t build the AI-product gradient SaaS. No purple or blue gradients, no glassmorphism applied as decoration, no hero-metric cards, no sparkle icons. AI Violet marks a step type and nothing more.",
+      "Don’t use background-clip: text with a gradient anywhere. Emphasis is weight or color, never a gradient fill.",
+      "Don’t use border-left or border-right above 1px as a colored stripe on a row, step, or panel. Status goes in a glyph, a word, or the text color.",
+      "Don’t add a fourth shadow. Menus get 0 12px 32px rgba(0,0,0,0.5), dialogs get 0 18px 48px rgba(0,0,0,0.55), canvas nodes get 0 8px 24px rgba(0,0,0,0.35), everything else gets none.",
+      "Don’t reach for a modal. Splits, panes, inline editors, and the sidebar exist precisely so state can be shown in place.",
+      "Don’t apply blur or translucency by hand. Glass is a native material the window receives; content panes never take it.",
+      "Don’t restyle the inside of a terminal pane. The user’s prompt, theme, and colors pass through untouched.",
+      "Don’t show anything green that was not earned on the current branch. Stale results are Stale Amber and labeled with the branch they came from."
+    ]
+  }
+}
