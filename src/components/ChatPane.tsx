@@ -24,6 +24,8 @@ interface Props {
   pipelines: Pipeline[]
   view: View
   projectPath: string
+  /** Settings default used when no chat pane exists yet. */
+  defaultProvider: AiProvider
   onMessage: (text: string) => void
   onCancel: () => void
   onProviderChange: (provider: AiProvider) => void
@@ -151,6 +153,7 @@ export default function ChatPane({
   pipelines,
   view,
   projectPath,
+  defaultProvider,
   onMessage,
   onCancel,
   onProviderChange,
@@ -160,6 +163,7 @@ export default function ChatPane({
 }: Props) {
   const [text, setText] = useState('')
   const [modelOpen, setModelOpen] = useState(false)
+  const [agentMenuPos, setAgentMenuPos] = useState<{ left: number; bottom: number } | null>(null)
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null)
   const [mentionFiles, setMentionFiles] = useState<string[]>([])
   const [mentionIndex, setMentionIndex] = useState(0)
@@ -176,10 +180,13 @@ export default function ChatPane({
 
   const status = pane?.status ?? 'idle'
   const isBusy = busy.has(status)
+  // Allow switching while busy so a usage/session limit can be escaped without
+  // waiting for the dying CLI to exit — the next message uses the new provider.
+  const canChangeProvider = true
   const messages = pane?.messages ?? []
   const availableCount = pipelines.filter((p) => p.nodes.length).length
   const canSend = !!text.trim() && availableCount > 0
-  const provider = pane?.provider ?? 'claude'
+  const provider = pane?.provider ?? defaultProvider
   const showSuggestions = messages.length < 3 && availableCount > 0
 
   // Follow the stream only while the reader is already at the bottom, so
@@ -214,7 +221,7 @@ export default function ChatPane({
   }, [mention, projectPath])
 
   useEffect(() => {
-    if (!mention && !modelOpen) {
+    if (!mention) {
       setMenuPos(null)
       return
     }
@@ -231,7 +238,19 @@ export default function ChatPane({
       window.removeEventListener('resize', place)
       window.removeEventListener('scroll', place, true)
     }
-  }, [mention, modelOpen])
+  }, [mention])
+
+  const openAgentMenu = (): void => {
+    if (!canChangeProvider) return
+    const r = agentBtnRef.current?.getBoundingClientRect()
+    if (r) {
+      setAgentMenuPos({
+        left: Math.min(Math.max(8, r.right - 168), window.innerWidth - 176),
+        bottom: window.innerHeight - r.top + 6
+      })
+    }
+    setModelOpen((v) => !v)
+  }
 
   const insertMention = (file: string): void => {
     const node = textareaRef.current
@@ -612,8 +631,10 @@ export default function ChatPane({
               maxHeight: 200,
               overflowY: 'auto',
               padding: 0,
-              userSelect: 'text'
-            }}
+              userSelect: 'text',
+              WebkitUserSelect: 'text',
+              caretColor: C.text
+            } as React.CSSProperties}
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div
@@ -639,7 +660,7 @@ export default function ChatPane({
               ref={agentBtnRef}
               type="button"
               className="bf-focus"
-              onClick={() => setModelOpen((v) => !v)}
+              onClick={openAgentMenu}
               title={`Agent: ${AI_LABELS[provider]}`}
               style={{
                 display: 'flex',
@@ -649,8 +670,9 @@ export default function ChatPane({
                 background: 'transparent',
                 color: '#9aa3b2',
                 fontSize: 12,
-                cursor: 'pointer',
-                padding: '2px 4px'
+                cursor: canChangeProvider ? 'pointer' : 'default',
+                padding: '2px 4px',
+                opacity: canChangeProvider ? 1 : 0.55
               }}
             >
               <span>{AI_LABELS[provider]}</span>
@@ -748,23 +770,24 @@ export default function ChatPane({
             </div>
           )}
 
-          {modelOpen && (
+          {modelOpen && agentMenuPos && canChangeProvider && (
             <>
               <div
                 aria-hidden
-                onClick={() => setModelOpen(false)}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  setModelOpen(false)
+                }}
                 style={{ position: 'fixed', inset: 0, zIndex: 65 }}
               />
               <div
                 role="menu"
                 aria-label="Agent"
+                onMouseDown={(e) => e.preventDefault()}
                 style={{
                   position: 'fixed',
-                  left: Math.min(
-                    (agentBtnRef.current?.getBoundingClientRect().left ?? menuPos?.left ?? 0),
-                    window.innerWidth - 180
-                  ),
-                  bottom: menuPos ? menuPos.bottom : 80,
+                  left: agentMenuPos.left,
+                  bottom: agentMenuPos.bottom,
                   zIndex: 70,
                   width: 168,
                   background: '#111621',
@@ -780,10 +803,10 @@ export default function ChatPane({
                     type="button"
                     role="menuitem"
                     className="bf-focus bf-menu-item"
-                    disabled={status !== 'idle'}
                     onClick={() => {
                       onProviderChange(p)
                       setModelOpen(false)
+                      window.setTimeout(() => textareaRef.current?.focus(), 0)
                     }}
                     style={{
                       display: 'flex',
@@ -792,7 +815,7 @@ export default function ChatPane({
                       border: 'none',
                       background: 'transparent',
                       color: p === provider ? C.textStrong : C.textMuted,
-                      cursor: status === 'idle' ? 'pointer' : 'default'
+                      cursor: 'pointer'
                     }}
                   >
                     <span>{AI_LABELS[p]}</span>

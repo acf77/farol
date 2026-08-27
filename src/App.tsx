@@ -18,7 +18,7 @@ import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
 import { topoSort } from '@shared/graph'
 import { clearIndent, emptyTerm, ensureNewline, setIndent, trimTo, write, writeLine } from './ansi'
 import { agentPaneFor, chatOwnerFor, chatTabFor } from './chat-context'
-import { leaf, leaves } from './layout'
+import { leaf, leaves, removeLeaf, setSize, splitLeaf } from './layout'
 import type { PaneNode } from './layout'
 import { C, GRADIENT_BG, UI, glass as G, seg } from './theme'
 import type {
@@ -295,6 +295,8 @@ interface ProjectWorkspaceProps {
   onOpenProject: () => void
   onOpenPath: (path: string) => void
   onCloseProject: () => void
+  /** Tell the project rail when this checkout's agent is working. */
+  onAgentBusyChange?: (projectPath: string, busy: boolean) => void
 }
 
 function ProjectWorkspace({
@@ -304,11 +306,11 @@ function ProjectWorkspace({
   newChatNonce,
   onOpenProject,
   onOpenPath,
-  onCloseProject
+  onCloseProject,
+  onAgentBusyChange
 }: ProjectWorkspaceProps) {
   const [recents, setRecents] = useState<Project[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const [git, setGit] = useState<GitInfo>(NO_GIT)
 
@@ -338,6 +340,8 @@ function ProjectWorkspace({
   const sendToAgentRef = useRef<(branch: string, cwd: string) => void>(() => {})
   const worktreeBusy = useRef(false)
   const lastRunOut = useRef<{ paneId: string; nodeId: string } | null>(null)
+  /** Bumped on Stop / newer Start so an in-flight cancel→start cannot resurrect a run. */
+  const runStartGen = useRef(0)
   const tabsRef = useRef<Tab[]>([])
   const gitRef = useRef<GitInfo>(NO_GIT)
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -355,9 +359,16 @@ function ProjectWorkspace({
   snapRef.current = { project, tabs, activeTab, selId }
   const runtimePipelineId = (pipelineId: string): string =>
     scopedRuntimeId(project.path, `pipeline:${pipelineId}`)
+  /** Managed Chat validation must not share the UI Run slot for the same pipeline. */
+  const managedRuntimePipelineId = (pipelineId: string): string =>
+    scopedRuntimeId(project.path, `managed-pipeline:${pipelineId}`)
   const localPipelineId = (runtimeId: string): string | null => {
     const value = unscopedRuntimeId(project.path, runtimeId)
-    return value?.startsWith('pipeline:') ? value.slice('pipeline:'.length) : null
+    if (!value) return null
+    for (const prefix of ['pipeline:', 'managed-pipeline:', 'mcp-pipeline:'] as const) {
+      if (value.startsWith(prefix)) return value.slice(prefix.length)
+    }
+    return null
   }
 
   const flushSession = (last: boolean): void => {
@@ -401,6 +412,18 @@ function ProjectWorkspace({
   const chatOwner = useMemo(() => chatOwnerFor(termTabs, active?.id ?? activeTab), [termTabs, active, activeTab])
   const chatTab = useMemo(() => chatTabFor(tabs, chatOwner?.id), [tabs, chatOwner])
   const chatPane = useMemo(() => agentPaneFor(chatTab), [chatTab])
+
+  const agentBusy = useMemo(() => {
+    const live = new Set(['working', 'validating', 'repairing'])
+    return tabs.some((tab) =>
+      Object.values(tab.panes).some((pane) => pane.kind === 'agent' && live.has(pane.status))
+    )
+  }, [tabs])
+
+  useEffect(() => {
+    onAgentBusyChange?.(project.path, agentBusy)
+    return () => onAgentBusyChange?.(project.path, false)
+  }, [agentBusy, onAgentBusyChange, project.path])
 
   const loadGit = useCallback(async (projectPath: string) => {
     setGit(await api.git.info(projectPath))
@@ -633,6 +656,51 @@ function ProjectWorkspace({
       if (activeTab === id) setActiveTab(rest[Math.max(0, idx - 1)]?.id ?? '')
     },
     [activeTab]
+  )
+
+  /** Split the focused shell pane; new pane starts in the same directory. */
+  const splitPane = useCallback(
+    (dir: 'row' | 'col') => {
+      const tab = tabsRef.current.find((t) => t.id === activeTab)
+      if (!tab || tab.kind !== 'shell') return
+      const focus = tab.panes[tab.focus]
+      if (!focus || focus.kind !== 'shell') return
+      const paneId = nextPaneId()
+      const splitId = `s${++seq.current.split}`
+      patchTab(tab.id, (t) => ({
+        ...t,
+        root: splitLeaf(t.root, t.focus, dir, paneId, splitId),
+        focus: paneId,
+        panes: { ...t.panes, [paneId]: shellPane(paneId, focus.cwd) }
+      }))
+      setView((v) => (v === 'chat' ? 'split' : v))
+    },
+    [activeTab, patchTab]
+  )
+
+  const closePane = useCallback(
+    (tabId: string, paneId: string) => {
+      const tab = tabsRef.current.find((t) => t.id === tabId)
+      if (!tab) return
+      const nextRoot = removeLeaf(tab.root, paneId)
+      if (!nextRoot) {
+        closeTab(tabId)
+        return
+      }
+      if (tab.panes[paneId]?.kind === 'shell') void api.shell.dispose(paneId)
+      const remaining = leaves(nextRoot)
+      patchTab(tabId, (t) => {
+        const panes = { ...t.panes }
+        delete panes[paneId]
+        return {
+          ...t,
+          root: nextRoot,
+          focus: remaining.includes(t.focus) ? t.focus : remaining[remaining.length - 1]!,
+          panes
+        }
+      })
+    },
+    [closeTab, patchTab]
   )
 
   /* ------------------------------------------------------------- project */
@@ -921,56 +989,83 @@ function ProjectWorkspace({
       const context = ensureChat()
       if (!context || !project) return
       const { pane, owner } = context
-      if (pane.status !== 'idle') {
-        void api.agent.message(pane.taskId, text)
-        return
-      }
+      const clean = text.trim()
+      if (!clean) return
 
       const availablePipelines = pipelinesRef.current
         .filter((pipeline) => pipeline.nodes.length)
-        .map((pipeline) => ({ ...pipeline, id: runtimePipelineId(pipeline.id) }))
+        .map((pipeline) => ({ ...pipeline, id: managedRuntimePipelineId(pipeline.id) }))
       if (!availablePipelines.length) return
+
       const branch = branchForTab(owner, project.path, git)
-      patchPane(pane.id, (current) =>
-        current.kind === 'agent'
-          ? {
-              ...current,
-              status: 'working',
-              attempt: 1,
-              messages: [
-                { role: 'user', text, at: Date.now() },
-                {
-                  role: 'system',
-                  text: `Choosing from ${availablePipelines.length} validation pipeline${availablePipelines.length === 1 ? '' : 's'}.`
-                }
-              ]
-            }
-          : current
-      )
-      void api.agent
-        .start({
-          id: pane.taskId,
-          prompt: text,
-          provider: pane.provider,
-          pipelines: availablePipelines,
-          cwd: pane.cwd,
-          branch
-        })
-        .then((result) => {
+      const failStart = (message?: string): void => {
+        patchPane(pane.id, (current) =>
+          current.kind === 'agent'
+            ? {
+                ...current,
+                status: 'failed',
+                messages: [
+                  ...current.messages,
+                  { role: 'system', text: message || 'Could not start agent' }
+                ]
+              }
+            : current
+        )
+      }
+      const startRequest = {
+        id: pane.taskId,
+        prompt: clean,
+        provider: pane.provider,
+        pipelines: availablePipelines,
+        cwd: pane.cwd,
+        branch
+      }
+      const runAgent = (mode: 'message' | 'start'): void => {
+        if (mode === 'message') {
+          // Prefer start when the task is gone (e.g. after a restart).
+          void api.agent.message(pane.taskId, clean, pane.provider).then((result) => {
+            if (result.ok) return
+            runAgent('start')
+          })
+          return
+        }
+        void api.agent.start(startRequest).then((result) => {
           if (result.ok) return
-          patchPane(pane.id, (current) =>
-            current.kind === 'agent'
-              ? {
-                  ...current,
-                  status: 'failed',
-                  messages: [
-                    ...current.messages,
-                    { role: 'system', text: result.message || 'Could not start agent' }
-                  ]
-                }
-              : current
-          )
+          // Still winding down after Stop — queue with the selected provider.
+          void api.agent.message(pane.taskId, clean, pane.provider).then((queued) => {
+            if (queued.ok) return
+            failStart(result.message || queued.message)
+          })
         })
+      }
+
+      if (pane.status === 'idle') {
+        patchPane(pane.id, (current) =>
+          current.kind === 'agent'
+            ? {
+                ...current,
+                status: 'working',
+                attempt: 1,
+                messages: [
+                  ...current.messages,
+                  {
+                    role: 'system',
+                    text: `Choosing from ${availablePipelines.length} validation pipeline${availablePipelines.length === 1 ? '' : 's'}.`
+                  }
+                ]
+              }
+            : current
+        )
+        runAgent('start')
+        return
+      }
+
+      patchPane(pane.id, (current) =>
+        current.kind === 'agent' ? { ...current, status: 'working' } : current
+      )
+      // Resume via start so a provider switch (e.g. after a usage limit) applies
+      // to the in-memory task before the next agent cycle.
+      runAgent('start')
     },
     [ensureChat, project, git, patchPane]
   )
@@ -983,8 +1078,10 @@ function ProjectWorkspace({
         return next
       })
       if (!chatPane) return
+      // Always record the choice on the pane so the next start/message uses it,
+      // including when the user switches after a usage/session limit mid-chat.
       patchPane(chatPane.id, (pane) =>
-        pane.kind === 'agent' && pane.status === 'idle' ? { ...pane, provider } : pane
+        pane.kind === 'agent' ? { ...pane, provider } : pane
       )
     },
     [chatPane, patchPane]
@@ -1070,8 +1167,11 @@ function ProjectWorkspace({
       setActiveTab(tabId)
       setView('terminal')
       const runtimeId = runtimePipelineId(pipelineId)
+      const gen = ++runStartGen.current
       // Wait for cancel so a stopped run cannot race start and keep the old session.
       await api.run.cancel(runtimeId)
+      // Stop (or a newer Start) during the await bumps the gen — do not start.
+      if (gen !== runStartGen.current) return
       void api.run.start({ ...p, id: runtimeId }, cwd, branch)
     },
     [project, git, active]
@@ -1308,15 +1408,24 @@ function ProjectWorkspace({
         e.preventDefault()
         newShellTab()
       } else if (k === 'd') {
-        // The spec's split is chat beside terminal, so ⌘D toggles that.
         e.preventDefault()
-        setView((v) => (v === 'split' ? 'chat' : 'split'))
+        // Pane splits when a shell is active; otherwise toggle chat/terminal split.
+        const tab = tabsRef.current.find((t) => t.id === activeTab)
+        if (tab?.kind === 'shell' && view !== 'chat') {
+          splitPane(e.shiftKey ? 'col' : 'row')
+        } else {
+          setView((v) => (v === 'split' ? 'chat' : 'split'))
+        }
       } else if (k === 'k') {
         e.preventDefault()
         setPaletteOpen(true)
       } else if (k === 'w') {
         e.preventDefault()
-        if (activeTab) closeTab(activeTab)
+        if (e.shiftKey && active) {
+          closePane(active.id, active.focus)
+        } else if (activeTab) {
+          closeTab(activeTab)
+        }
       } else if (k >= '1' && k <= '9') {
         const tab = termTabs[+k - 1]
         if (tab) {
@@ -1328,7 +1437,20 @@ function ProjectWorkspace({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [visible, termTabs, activeTab, newTabOpen, editor, paletteOpen, newShellTab, closeTab])
+  }, [
+    visible,
+    termTabs,
+    activeTab,
+    active,
+    view,
+    newTabOpen,
+    editor,
+    paletteOpen,
+    newShellTab,
+    splitPane,
+    closeTab,
+    closePane
+  ])
 
   const saveEditor = useCallback(() => {
     if (!editor || !editor.name.trim() || !editor.nodes.length) return
@@ -1354,13 +1476,15 @@ function ProjectWorkspace({
     setEditor(null)
   }, [editor, pipelines, persist])
 
-  const stopPipeline = useCallback((id: string) => {
+  const stopPipeline = useCallback((id: string, branch?: string) => {
+    runStartGen.current++
     setRuns((prev) => {
       const byBranch = prev[id]
       if (!byBranch) return prev
       let changed = false
       const next = { ...byBranch }
       for (const [b, r] of Object.entries(next)) {
+        if (branch !== undefined && b !== branch) continue
         if (r.status === 'running') {
           next[b] = {
             ...r,
@@ -1375,11 +1499,12 @@ function ProjectWorkspace({
       return changed ? { ...prev, [id]: next } : prev
     })
     setTabs((prev) =>
-      prev.map((t) =>
-        t.kind === 'run' && t.id.startsWith(`run:${id}:`) && t.status === 'running'
-          ? { ...t, status: 'fail' }
-          : t
-      )
+      prev.map((t) => {
+        if (t.kind !== 'run' || t.status !== 'running') return t
+        if (!t.id.startsWith(`run:${id}:`)) return t
+        if (branch !== undefined && t.branch !== branch) return t
+        return { ...t, status: 'fail' }
+      })
     )
     void api.run.cancel(runtimePipelineId(id))
   }, [project.path])
@@ -1491,8 +1616,7 @@ function ProjectWorkspace({
   const branchRuns = useMemo(() => {
     const out: Record<string, RunState> = {}
     for (const [pipelineId, byBranch] of Object.entries(runs)) {
-      const running = Object.values(byBranch).find((r) => r.status === 'running')
-      const r = running ?? byBranch[runBranch]
+      const r = byBranch[runBranch]
       if (r) out[pipelineId] = r
     }
     return out
@@ -1501,10 +1625,10 @@ function ProjectWorkspace({
   const anyRunning = Object.values(branchRuns).some((r) => r.status === 'running')
   const runningPipelineId = useMemo(() => {
     for (const [pipelineId, byBranch] of Object.entries(runs)) {
-      if (Object.values(byBranch).some((r) => r.status === 'running')) return pipelineId
+      if (byBranch[runBranch]?.status === 'running') return pipelineId
     }
     return null
-  }, [runs])
+  }, [runs, runBranch])
   const processCount = termTabs.reduce(
     (count, tab) => count + Object.values(tab.panes).filter((pane) => pane.kind === 'shell').length,
     0
@@ -1537,7 +1661,6 @@ function ProjectWorkspace({
         recents={recents}
         menuOpen={menuOpen}
         onMenuToggle={() => {
-          setSettingsOpen(false)
           setMenuOpen((v) => !v)
           void api.project.recents().then(setRecents)
         }}
@@ -1552,13 +1675,6 @@ function ProjectWorkspace({
           setSettings(next)
           void api.settings.save(next)
         }}
-        settingsOpen={settingsOpen}
-        onSettingsToggle={() => {
-          setMenuOpen(false)
-          setSettingsOpen((v) => !v)
-        }}
-        onSettingsClose={() => setSettingsOpen(false)}
-        onSearch={() => setPaletteOpen(true)}
       />
 
       {project && (
@@ -1572,6 +1688,7 @@ function ProjectWorkspace({
                   pipelines={pipelines}
                   view={view}
                   projectPath={project.path}
+                  defaultProvider={settings.agent}
                   onMessage={sendAgentMessage}
                   onCancel={cancelAgent}
                   onProviderChange={setAgentProvider}
@@ -1580,13 +1697,23 @@ function ProjectWorkspace({
                   composerRef={composerRef}
                 />
               )}
-              {view !== 'chat' && (
+              {/* Keep terminals mounted in Chat view so PTY scrollback is not lost. */}
+              <div
+                style={{
+                  flex: view === 'split' ? '1 1 50%' : '1 1 100%',
+                  minWidth: 0,
+                  minHeight: 0,
+                  display: view === 'chat' ? 'none' : 'flex',
+                  flexDirection: 'column'
+                }}
+                aria-hidden={view === 'chat'}
+              >
                 <TerminalPane
                   key={project.path}
                   tabs={termTabs}
                   activeId={active?.id ?? ''}
-                  view={view}
-                  workspaceVisible={visible}
+                  view={view === 'chat' ? 'terminal' : view}
+                  workspaceVisible={visible && view !== 'chat'}
                   branch={runBranch}
                   cwd={cwdLabel}
                   onSelect={setActiveTab}
@@ -1595,8 +1722,22 @@ function ProjectWorkspace({
                   onFocusPane={(tabId, paneId) =>
                     patchTab(tabId, (tab) => (tab.focus === paneId ? tab : { ...tab, focus: paneId }))
                   }
+                  onClosePane={closePane}
+                  onResize={(tabId, nodeId, size) =>
+                    patchTab(tabId, (tab) => ({
+                      ...tab,
+                      root: setSize(tab.root, nodeId, size)
+                    }))
+                  }
+                  onSplitRight={() => splitPane('row')}
+                  onSplitDown={() => splitPane('col')}
+                  canSplit={
+                    !!active &&
+                    active.kind === 'shell' &&
+                    active.panes[active.focus]?.kind === 'shell'
+                  }
                 />
-              )}
+              </div>
             </div>
 
             <Sidebar
@@ -1610,7 +1751,7 @@ function ProjectWorkspace({
               }}
               onNew={() => setEditor({ id: null, name: '', nodes: [blankNode()] })}
               onRun={runPipeline}
-              onStop={stopPipeline}
+              onStop={(id) => stopPipeline(id, runBranch)}
               onEdit={(p) => setEditor({ id: p.id, name: p.name, nodes: p.nodes.map((n) => ({ ...n })) })}
               onDelete={deletePipeline}
               onOpenTerminal={openRunLogs}
@@ -1624,10 +1765,8 @@ function ProjectWorkspace({
             running={anyRunning}
             runningLabel={anyRunning ? 'Pipeline running' : 'Idle'}
             processCount={processCount}
-            agent={settings.agent}
             onBranch={() => void openBranchDialog()}
-            onAgentChange={setAgentProvider}
-            onStop={runningPipelineId ? () => stopPipeline(runningPipelineId) : undefined}
+            onStop={runningPipelineId ? () => stopPipeline(runningPipelineId, runBranch) : undefined}
           />
         </>
       )}
@@ -1684,7 +1823,19 @@ export default function App() {
     path: '',
     nonce: 0
   })
+  const [agentBusyPaths, setAgentBusyPaths] = useState<ReadonlySet<string>>(() => new Set())
   const hydrated = useRef(false)
+
+  const setAgentBusy = useCallback((projectPath: string, busy: boolean) => {
+    setAgentBusyPaths((prev) => {
+      const has = prev.has(projectPath)
+      if (busy === has) return prev
+      const next = new Set(prev)
+      if (busy) next.add(projectPath)
+      else next.delete(projectPath)
+      return next
+    })
+  }, [])
 
   const activateProject = useCallback((project: Project) => {
     setProjects((prev) =>
@@ -1830,6 +1981,7 @@ export default function App() {
       <ProjectRail
         projects={projects}
         activePath={activePath}
+        busyPaths={agentBusyPaths}
         onSelect={setActivePath}
         onClose={closeProject}
         onNewBranch={requestBranchDialog}
@@ -1872,6 +2024,7 @@ export default function App() {
                 onOpenProject={openProject}
                 onOpenPath={(path) => void openPath(path)}
                 onCloseProject={() => closeProject(project.path)}
+                onAgentBusyChange={setAgentBusy}
               />
             </div>
           )

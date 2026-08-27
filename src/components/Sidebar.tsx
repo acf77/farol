@@ -230,6 +230,8 @@ export default function Sidebar({
       style={{
         width: PANEL_WIDTH,
         flex: 'none',
+        minHeight: 0,
+        alignSelf: 'stretch',
         display: 'flex',
         flexDirection: 'column',
         background: '#0e121a',
@@ -502,8 +504,18 @@ export default function Sidebar({
       </div>
 
       {selected && (
-        <div style={{ flex: 'none', borderTop: '1px solid #1c2230', padding: '12px 12px 10px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            borderTop: '1px solid #1c2230',
+            padding: '12px 12px 10px',
+            overflow: 'hidden'
+          }}
+        >
+          <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 9 }}>
             <div
               style={{
                 width: 9,
@@ -521,25 +533,43 @@ export default function Sidebar({
             />
             <span style={{ fontSize: 13.5, fontWeight: 500 }}>{selected.name}</span>
           </div>
-          <div style={{ fontSize: 12.5, marginTop: 4, marginLeft: 18, color: selStatus.color }}>
+          <div style={{ flex: 'none', fontSize: 12.5, marginTop: 4, marginLeft: 18, color: selStatus.color }}>
             {selRun ? selRun.label : 'Not run'}
           </div>
 
           <div
             style={{
+              flex: 1,
+              minHeight: 0,
               marginTop: 13,
+              display: 'flex',
+              flexDirection: 'column',
               background: '#131924',
               border: '1px solid #222b3a',
               borderRadius: 7,
-              padding: '11px 11px 5px'
+              padding: '11px 11px 5px',
+              overflow: 'hidden'
             }}
           >
-            <div style={{ fontSize: 13, fontWeight: 500 }}>{current?.name ?? '—'}</div>
-            <div style={{ fontFamily: MONO, fontSize: 12, color: '#8b94a3', marginTop: 4, wordBreak: 'break-all' }}>
+            <div style={{ flex: 'none', fontSize: 13, fontWeight: 500 }}>{current?.name ?? '—'}</div>
+            <div
+              style={{
+                flex: 'none',
+                maxHeight: 72,
+                overflowY: 'auto',
+                fontFamily: MONO,
+                fontSize: 12,
+                color: '#8b94a3',
+                marginTop: 4,
+                wordBreak: 'break-all'
+              }}
+            >
               {current?.cmd ?? ''}
             </div>
             <div
               style={{
+                flex: 1,
+                minHeight: 0,
                 marginTop: 13,
                 background: '#0d121b',
                 borderRadius: 8,
@@ -547,7 +577,7 @@ export default function Sidebar({
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 7,
-                minHeight: 76
+                overflowY: 'auto'
               }}
             >
               {logs.slice(-4).map((l, i) => (
@@ -614,6 +644,7 @@ export default function Sidebar({
                 className="bf-linkish"
                 onClick={onOpenTerminal}
                 style={{
+                  flex: 'none',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',

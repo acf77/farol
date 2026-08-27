@@ -233,6 +233,13 @@ export function sanitizePipeline(raw: unknown): Pipeline | null {
     nodes = chainToNodes(steps)
   }
   if (!nodes.length) return { id: p.id, name: p.name, nodes: [] }
+  // Drop duplicate ids — maps keyed by id would otherwise overwrite mid-run.
+  const seen = new Set<string>()
+  nodes = nodes.filter((n) => {
+    if (seen.has(n.id)) return false
+    seen.add(n.id)
+    return true
+  })
   const ids = new Set(nodes.map((n) => n.id))
   nodes = nodes.map((n) => ({ ...n, after: n.after.filter((a) => ids.has(a)) }))
   if (!topoSort(nodes)) {
@@ -242,6 +249,14 @@ export function sanitizePipeline(raw: unknown): Pipeline | null {
     }))
   }
   return { id: p.id, name: p.name, nodes }
+}
+
+/** Reject graphs the runner cannot execute safely (cycles or duplicate ids). */
+export function validateRunnable(nodes: PipelineNode[]): string | null {
+  const ids = nodes.map((n) => n.id)
+  if (new Set(ids).size !== ids.length) return 'Pipeline has duplicate node ids'
+  if (!topoSort(nodes)) return 'Pipeline has a dependency cycle'
+  return null
 }
 
 export function sanitizePipelines(raw: unknown): Pipeline[] | null {

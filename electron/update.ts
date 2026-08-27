@@ -52,7 +52,16 @@ export class AppUpdater {
       return this.status
     }
 
-    const zip = path.join(feedDir(), feed.file)
+    const zipName = path.basename(feed.file)
+    if (!zipName || zipName !== feed.file.replace(/^\.\/+/, '')) {
+      this.set({ state: 'error', message: 'Update feed path is invalid' })
+      return this.status
+    }
+    const zip = path.join(feedDir(), zipName)
+    if (path.dirname(path.resolve(zip)) !== path.resolve(feedDir())) {
+      this.set({ state: 'error', message: 'Update feed path is invalid' })
+      return this.status
+    }
     if (!versionAhead(feed.version, app.getVersion())) {
       this.ready = null
       this.set({ state: 'idle' })

@@ -12,6 +12,15 @@ function zipName(dir, version) {
   return zips.find((f) => f.includes(`-${version}-`)) ?? zips.find((f) => f.includes(version)) ?? null
 }
 
+/** Drop packaged builds from prior versions so dist/ only holds the latest release. */
+function pruneOldBuilds(dir, version) {
+  for (const f of fs.readdirSync(dir)) {
+    if (!/^BuildFlow-/.test(f)) continue
+    if (f.includes(`-${version}-`) || f.includes(`-${version}.`)) continue
+    fs.unlinkSync(path.join(dir, f))
+  }
+}
+
 if (!fs.existsSync(dist)) {
   console.error('publish-local: dist/ is missing — run electron-builder first')
   process.exit(1)
@@ -23,6 +32,8 @@ if (!zip) {
   console.error(`publish-local: no BuildFlow zip for ${pkg.version} in dist/`)
   process.exit(1)
 }
+
+pruneOldBuilds(dist, pkg.version)
 
 fs.mkdirSync(dest, { recursive: true })
 for (const f of fs.readdirSync(dest)) {

@@ -3,6 +3,7 @@ import {
   branchNameError,
   parseAlreadyOpenPath,
   parseWorktreeList,
+  pipelineStoreRoot,
   worktreeFolderName
 } from './worktree'
 
@@ -27,6 +28,26 @@ describe('parseWorktreeList', () => {
       { path: '/repos/app-feature-x', branch: 'feature/x' },
       { path: '/repos/app-detached', branch: null }
     ])
+  })
+})
+
+describe('pipelineStoreRoot', () => {
+  const trees = parseWorktreeList(
+    ['worktree /repos/app', 'branch refs/heads/main', '', 'worktree /repos/app-feature', 'branch refs/heads/feature/x', ''].join(
+      '\n'
+    )
+  )
+
+  it('uses the primary worktree for linked checkouts', () => {
+    expect(pipelineStoreRoot('/repos/app-feature', trees)).toBe('/repos/app')
+  })
+
+  it('falls back to the main checkout via git-common-dir', () => {
+    expect(pipelineStoreRoot('/repos/app-feature', [], '/repos/app/.git')).toBe('/repos/app')
+  })
+
+  it('keeps a non-repo path as-is', () => {
+    expect(pipelineStoreRoot('/tmp/sandbox', [], null)).toBe('/tmp/sandbox')
   })
 })
 

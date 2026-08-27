@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import type { GitInfo } from '../shared/types'
 import type { WorktreeRequest } from '../shared/worktree'
-import { parseAlreadyOpenPath, parseWorktreeList, worktreeFolderName } from '../shared/worktree'
+import { parseAlreadyOpenPath, parseWorktreeList, pipelineStoreRoot, worktreeFolderName } from '../shared/worktree'
 
 /**
  * Real git, read through the CLI. Plain `execFile` rather than a PTY: this is
@@ -211,6 +211,18 @@ export async function addWorktree(
     return { ok: false, message }
   }
   return { ok: true, path: dest, branch: name, message: '' }
+}
+
+/** Resolve the checkout that stores `.buildflow/pipelines.json` for this repo. */
+export async function pipelineStoreRootFor(cwd: string): Promise<string> {
+  const abs = path.resolve(cwd)
+  const [inside, trees, common] = await Promise.all([
+    git(abs, ['rev-parse', '--is-inside-work-tree']),
+    git(abs, ['worktree', 'list', '--porcelain']),
+    git(abs, ['rev-parse', '--git-common-dir'])
+  ])
+  if (inside.code !== 0 || inside.out.trim() !== 'true') return abs
+  return pipelineStoreRoot(abs, parseWorktreeList(trees.out), common.out.trim() || null)
 }
 
 /**

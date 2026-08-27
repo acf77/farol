@@ -33,6 +33,50 @@ export function parseWorktreeList(raw: string): WorktreeEntry[] {
   return entries
 }
 
+/** Git lists the primary checkout first — that is the shared pipeline home. */
+export function primaryWorktreePath(entries: WorktreeEntry[]): string | null {
+  return entries[0]?.path ?? null
+}
+
+function isAbsolutePath(p: string): boolean {
+  return p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p)
+}
+
+function joinPath(base: string, rel: string): string {
+  const sep = base.includes('\\') ? '\\' : '/'
+  return `${base.replace(/[/\\]+$/, '')}${sep}${rel.replace(/^[/\\]+/, '')}`
+}
+
+function baseName(p: string): string {
+  const parts = p.replace(/[/\\]+$/, '').split(/[/\\]/)
+  return parts[parts.length - 1] || ''
+}
+
+function dirName(p: string): string {
+  const trimmed = p.replace(/[/\\]+$/, '')
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  if (idx <= 0) return trimmed.slice(0, idx + 1) || '.'
+  return trimmed.slice(0, idx)
+}
+
+/**
+ * Directory that owns `.buildflow/pipelines.json` for every checkout of this
+ * repo. Linked worktrees read and write the primary checkout's file.
+ */
+export function pipelineStoreRoot(
+  projectPath: string,
+  worktrees: WorktreeEntry[],
+  gitCommonDir?: string | null
+): string {
+  const primary = primaryWorktreePath(worktrees)
+  if (primary) return primary
+  if (gitCommonDir) {
+    const abs = isAbsolutePath(gitCommonDir) ? gitCommonDir : joinPath(projectPath, gitCommonDir)
+    if (baseName(abs) === '.git') return dirName(abs)
+  }
+  return projectPath
+}
+
 /**
  * Path from git's "already checked out / used by worktree at …" errors, so we
  * can reopen that folder instead of failing.

@@ -6,6 +6,7 @@ import {
   feedMarks,
   initScript,
   loginArgs,
+  sessionToken,
   shellFamily,
   type ShellFamily
 } from './protocol'
@@ -68,6 +69,7 @@ export class PtySession {
   readonly proc: pty.IPty
   cwd: string
   private readonly family: ShellFamily
+  private readonly token: string
   private buf = ''
   private started = false
   private waiter: Waiter | null = null
@@ -79,6 +81,7 @@ export class PtySession {
     this.cwd = opts.cwd
     const shell = defaultShell()
     this.family = shellFamily(shell)
+    this.token = sessionToken()
     this.proc = pty.spawn(shell, loginArgs(this.family), {
       name: 'xterm-256color',
       cols: Math.max(20, Math.min(400, Math.floor(opts.cols ?? 100))),
@@ -97,7 +100,7 @@ export class PtySession {
       for (const fn of queued) fn()
       this.opts.onEnd(exitCode)
     })
-    this.proc.write(initScript(this.family))
+    this.proc.write(initScript(this.family, this.token))
   }
 
   get isAlive(): boolean {
@@ -131,7 +134,10 @@ export class PtySession {
     const { text, marks, rest } = feedMarks(this.buf)
     this.buf = rest
     if (text && this.started) this.opts.onData(text)
-    for (const mark of marks) this.onMark(mark)
+    for (const mark of marks) {
+      if (mark.token !== this.token) continue
+      this.onMark(mark)
+    }
   }
 
   private onMark(mark: { code: number; cwd: string }): void {

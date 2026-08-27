@@ -7,7 +7,8 @@ import {
   descendants,
   readyIds,
   sanitizePipeline,
-  topoSort
+  topoSort,
+  validateRunnable
 } from './graph'
 import type { PipelineNode } from './types'
 
@@ -155,5 +156,26 @@ describe('sanitizePipeline', () => {
     expect(p?.nodes[2].after).toEqual(['a'])
     expect(p?.nodes[1].gate).toBe(false)
     expect(p?.nodes[0].gate).toBe(true)
+  })
+
+  it('drops duplicate node ids', () => {
+    const p = sanitizePipeline({
+      id: 'x',
+      name: 'X',
+      nodes: [
+        { id: 'a', name: 'A', type: 'shell', cmd: 'a', after: [], x: 0, y: 0 },
+        { id: 'a', name: 'Dup', type: 'shell', cmd: 'dup', after: [], x: 0, y: 1 }
+      ]
+    })
+    expect(p?.nodes).toHaveLength(1)
+    expect(p?.nodes[0].name).toBe('A')
+  })
+})
+
+describe('validateRunnable', () => {
+  it('rejects cycles and duplicate ids', () => {
+    expect(validateRunnable([n('a', ['b']), n('b', ['a'])])).toMatch(/cycle/i)
+    expect(validateRunnable([n('a', []), n('a', [])])).toMatch(/duplicate/i)
+    expect(validateRunnable([n('a', []), n('b', ['a'])])).toBeNull()
   })
 })

@@ -7,8 +7,6 @@ import {
   BellIcon,
   ChatIcon,
   FolderPlusIcon,
-  GearIcon,
-  SearchIcon,
   SplitIcon,
   TerminalIcon
 } from './icons'
@@ -32,10 +30,6 @@ interface Props {
   onInstallUpdate: () => void
   settings: AppSettings
   onSettings: (next: AppSettings) => void
-  settingsOpen: boolean
-  onSettingsToggle: () => void
-  onSettingsClose: () => void
-  onSearch: () => void
   /** Hide traffic lights when the project rail owns them. */
   showTrafficLights?: boolean
 }
@@ -99,28 +93,21 @@ export default function Toolbar({
   onInstallUpdate,
   settings,
   onSettings,
-  settingsOpen,
-  onSettingsToggle,
-  onSettingsClose,
-  onSearch,
   showTrafficLights = false
 }: Props) {
   const api = window.buildflow
 
-  /** Escape dismisses whichever popover is open and returns focus to its trigger. */
+  /** Escape dismisses the file menu and returns focus to its trigger. */
   useEffect(() => {
-    if (!menuOpen && !settingsOpen) return
+    if (!menuOpen) return
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
-      if (menuOpen) {
-        onMenuClose()
-        document.getElementById(TRIGGER_ID)?.focus()
-      }
-      if (settingsOpen) onSettingsClose()
+      onMenuClose()
+      document.getElementById(TRIGGER_ID)?.focus()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [menuOpen, settingsOpen, onMenuClose, onSettingsClose])
+  }, [menuOpen, onMenuClose])
 
   return (
     <div
@@ -274,35 +261,6 @@ export default function Toolbar({
           <FolderPlusIcon size={14} />
         </button>
 
-        <div
-          className="bf-focus"
-          role="button"
-          tabIndex={0}
-          onClick={onSearch}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              onSearch()
-            }
-          }}
-          title="Search (⌘K)"
-          style={{
-            ...noDrag,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 9,
-            padding: '6px 9px',
-            background: '#131822',
-            border: '1px solid #242b39',
-            borderRadius: 9,
-            color: '#77808f',
-            cursor: 'pointer'
-          }}
-        >
-          <SearchIcon />
-          <span style={{ fontSize: 12 }}>⌘K</span>
-        </div>
-
         {updateVersion && (
           <span
             className="bf-focus"
@@ -352,34 +310,12 @@ export default function Toolbar({
         >
           File
         </span>
-
-        <span
-          className="bf-focus"
-          role="button"
-          tabIndex={0}
-          onClick={onSettingsToggle}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              onSettingsToggle()
-            }
-          }}
-          aria-haspopup="menu"
-          aria-expanded={settingsOpen}
-          title="Settings"
-          style={{ ...noDrag, display: 'grid', placeItems: 'center', cursor: 'pointer' }}
-        >
-          <GearIcon />
-        </span>
       </div>
 
-      {(menuOpen || settingsOpen) && (
+      {menuOpen && (
         <div
           aria-hidden
-          onClick={() => {
-            onMenuClose()
-            onSettingsClose()
-          }}
+          onClick={onMenuClose}
           style={{ position: 'fixed', inset: 0, zIndex: 40 }}
         />
       )}
@@ -392,7 +328,7 @@ export default function Toolbar({
             ...noDrag,
             position: 'absolute',
             top: 52,
-            right: 52,
+            right: 16,
             zIndex: 50,
             width: 260,
             background: liquid ? G.panel : '#111621',
@@ -453,40 +389,16 @@ export default function Toolbar({
               </button>
             </>
           )}
-        </div>
-      )}
-
-      {settingsOpen && (
-        <div
-          role="menu"
-          aria-label="Settings"
-          style={{
-            ...noDrag,
-            position: 'absolute',
-            top: 52,
-            right: 16,
-            zIndex: 50,
-            width: 252,
-            background: liquid ? G.panel : '#111621',
-            border: `1px solid ${C.cardBorder}`,
-            borderRadius: 11,
-            boxShadow: '0 18px 44px rgba(0,0,0,0.55)',
-            padding: 14,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 12
-          }}
-        >
-          <Checkbox
-            checked={settings.autoFix}
-            onChange={(autoFix) => onSettings({ ...settings, autoFix })}
-            title="On a failed step, open the agent in a terminal with the failure report"
-            style={{ fontSize: 11.5, color: C.textMuted }}
-          >
-            Send failures to the agent
-          </Checkbox>
-          <div style={{ fontSize: 11, color: C.faint, lineHeight: 1.45 }}>
-            Appearance follows the system window chrome. Pick the coding agent from the status bar or chat composer.
+          <div role="separator" style={{ height: 1, background: C.border, margin: '5px 6px' }} />
+          <div style={{ padding: '6px 10px 8px' }}>
+            <Checkbox
+              checked={settings.autoFix}
+              onChange={(autoFix) => onSettings({ ...settings, autoFix })}
+              title="On a failed step, open the agent in a terminal with the failure report"
+              style={{ fontSize: 11.5, color: C.textMuted }}
+            >
+              Send failures to the agent
+            </Checkbox>
           </div>
         </div>
       )}

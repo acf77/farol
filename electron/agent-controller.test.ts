@@ -380,4 +380,212 @@ describe('AgentController', () => {
     expect(execute).toHaveBeenCalledTimes(2)
     expect(execute.mock.calls[1][1]).toContain('continue please')
   })
+
+  it('resumes when the user messages after a completed validation run', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = vi
+      .fn()
+      .mockImplementationOnce(
+        async (_request: AgentTaskRequest, _prompt: string, output: (chunk: string) => void) => {
+          output('Done\nBUILDFLOW_PIPELINES: ["validate"]\n')
+          return 0
+        }
+      )
+      .mockImplementationOnce(
+        async (_request: AgentTaskRequest, prompt: string, output: (chunk: string) => void) => {
+          expect(prompt).toContain('Follow-up: tighten the error message')
+          output('Updated\nBUILDFLOW_PIPELINES: []\n')
+          return 0
+        }
+      )
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(controller.message(request.id, 'tighten the error message')).toEqual({ ok: true })
+    await vi.waitFor(() =>
+      expect(
+        events.filter((event) => event.kind === 'status' && event.status === 'completed').length
+      ).toBe(2)
+    )
+
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(events.some((event) => event.kind === 'user' && event.text === 'tighten the error message')).toBe(
+      true
+    )
+  })
+
+  it('re-hydrates a finished task when start is called again with the same id', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = selecting()
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(controller.start({ ...request, prompt: 'one more tweak' })).toEqual({ ok: true })
+    await vi.waitFor(() =>
+      expect(events.filter((event) => event.kind === 'user' && event.text === 'one more tweak').length).toBe(1)
+    )
+    expect(execute).toHaveBeenCalledTimes(2)
+  })
+
+  it('switches provider when the same task continues after a usage limit', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    const execute = vi
+      .fn()
+      .mockImplementationOnce(
+        async (req: AgentTaskRequest, _prompt: string, output: (chunk: string) => void) => {
+          expect(req.provider).toBe('claude')
+          output('Error: rate limit exceeded — try again later\n')
+          return 1
+        }
+      )
+      .mockImplementationOnce(
+        async (req: AgentTaskRequest, prompt: string, output: (chunk: string) => void) => {
+          expect(req.provider).toBe('cursor')
+          expect(prompt).toContain('continue with another agent')
+          output('BUILDFLOW_PIPELINES: []\n')
+          return 0
+        }
+      )
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(
+        events.some(
+          (event) =>
+            event.kind === 'status' &&
+            event.status === 'needs-attention' &&
+            event.message.toLowerCase().includes('rate limit')
+        )
+      ).toBe(true)
+    )
+
+    expect(
+      controller.start({ ...request, provider: 'cursor', prompt: 'continue with another agent' })
+    ).toEqual({ ok: true })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(
+        true
+      )
+    )
+
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute.mock.calls[1][0].provider).toBe('cursor')
+  })
+
+  it('treats a session limit as a provider failure so a switch can continue', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    const execute = vi
+      .fn()
+      .mockImplementationOnce(async (_req, _prompt, output: (chunk: string) => void) => {
+        output("You've hit your session limit · resets 2pm\n")
+        return 1
+      })
+      .mockImplementationOnce(async (req: AgentTaskRequest, _prompt, output: (chunk: string) => void) => {
+        expect(req.provider).toBe('cursor')
+        output('BUILDFLOW_PIPELINES: []\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(
+        events.some(
+          (event) =>
+            event.kind === 'status' &&
+            event.status === 'needs-attention' &&
+            event.message.toLowerCase().includes('session limit')
+        )
+      ).toBe(true)
+    )
+
+    expect(
+      controller.start({ ...request, provider: 'cursor', prompt: 'continue on cursor' })
+    ).toEqual({ ok: true })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(
+        true
+      )
+    )
+    expect(execute.mock.calls[1][0].provider).toBe('cursor')
+  })
+
+  it('applies a provider override on message follow-ups', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    const execute = vi
+      .fn()
+      .mockImplementationOnce(async (_req, _prompt, output: (chunk: string) => void) => {
+        output('Error: usage limit reached\n')
+        return 1
+      })
+      .mockImplementationOnce(async (req: AgentTaskRequest, _prompt, output: (chunk: string) => void) => {
+        expect(req.provider).toBe('codex')
+        output('BUILDFLOW_PIPELINES: []\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'needs-attention')).toBe(
+        true
+      )
+    )
+
+    expect(controller.message(request.id, 'keep going', 'codex')).toEqual({ ok: true })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+    expect(execute.mock.calls[1][0].provider).toBe('codex')
+  })
+
+  it('continues a queued provider switch after a usage limit mid-run', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    let releaseLimit: (() => void) | undefined
+    const execute = vi
+      .fn()
+      .mockImplementationOnce(
+        async (req: AgentTaskRequest, _prompt: string, output: (chunk: string) => void) => {
+          expect(req.provider).toBe('claude')
+          await new Promise<void>((resolve) => {
+            releaseLimit = resolve
+          })
+          output('Error: usage limit reached\n')
+          return 1
+        }
+      )
+      .mockImplementationOnce(async (req: AgentTaskRequest, prompt: string, output: (chunk: string) => void) => {
+        expect(req.provider).toBe('cursor')
+        expect(prompt).toContain('resume on cursor')
+        output('BUILDFLOW_PIPELINES: []\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1))
+    expect(controller.message(request.id, 'resume on cursor', 'cursor')).toEqual({ ok: true })
+    releaseLimit?.()
+
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute.mock.calls[1][0].provider).toBe('cursor')
+  })
 })

@@ -8,6 +8,7 @@ import type { AppSettings } from './settings'
 export type { AiProvider, AppSettings, ProjectSession, WorktreeRequest }
 export { aiFixCommand } from './ai'
 export { FAILURE_REPORT_REL } from './failure'
+export { parseVerdict, VERDICT_MARKER, verdictPromptSuffix } from './verdict'
 export { defaultSettings, sanitizeSettings } from './settings'
 export { AI_LABELS, AI_PROVIDERS, normalizeAi } from './ai'
 
@@ -290,7 +291,11 @@ export interface BuildFlowApi {
   }
   agent: {
     start(request: AgentTaskRequest): Promise<{ ok: boolean; message?: string }>
-    message(taskId: string, text: string): Promise<{ ok: boolean; message?: string }>
+    message(
+      taskId: string,
+      text: string,
+      provider?: AiProvider
+    ): Promise<{ ok: boolean; message?: string }>
     cancel(taskId: string): Promise<void>
     onEvent(cb: (e: AgentTaskEvent) => void): () => void
   }

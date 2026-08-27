@@ -8,10 +8,13 @@ const api = window.buildflow
 
 const PANEL_WIDTH = 220
 const RAIL_WIDTH = 54
+const noDrag = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
 
 interface Props {
   projects: Project[]
   activePath: string | null
+  /** Project paths whose managed chat agent is currently working. */
+  busyPaths?: ReadonlySet<string>
   onSelect: (path: string) => void
   onClose: (path: string) => void
   /** Open the branch/worktree dialog for a project in this repo group. */
@@ -20,6 +23,25 @@ interface Props {
   onNewChat: (projectPath: string) => void
   collapsed: boolean
   onSetCollapsed: (collapsed: boolean) => void
+}
+
+/** Status dot for a checkout — pulses green while that project's agent is running. */
+function ChatActivityDot({ active, busy }: { active: boolean; busy: boolean }) {
+  return (
+    <span
+      title={busy ? 'Agent running' : undefined}
+      aria-label={busy ? 'Agent running' : undefined}
+      style={{
+        width: 7,
+        height: 7,
+        flex: 'none',
+        borderRadius: '50%',
+        background: busy ? C.green : active ? C.accent : C.fainter,
+        boxShadow: busy ? `0 0 6px ${C.green}` : undefined,
+        animation: busy ? 'bfpulse 1.1s ease-in-out infinite' : 'none'
+      }}
+    />
+  )
 }
 
 function shortPath(p: string): string {
@@ -44,13 +66,15 @@ function TrafficLight({
       aria-label={title}
       onClick={onClick}
       style={{
+        ...noDrag,
         width: 12,
         height: 12,
         borderRadius: '50%',
         border: 'none',
         padding: 0,
         background: color,
-        cursor: 'pointer'
+        cursor: 'pointer',
+        flex: 'none'
       }}
     />
   )
@@ -89,6 +113,7 @@ function RailLabel({
 export default function ProjectRail({
   projects,
   activePath,
+  busyPaths,
   onSelect,
   onClose,
   onNewBranch,
@@ -96,6 +121,7 @@ export default function ProjectRail({
   collapsed,
   onSetCollapsed
 }: Props) {
+  const agentBusy = (path: string): boolean => !!busyPaths?.has(path)
   const [gitByPath, setGitByPath] = useState<Record<string, GitInfo>>({})
   const [groupCollapsed, setGroupCollapsed] = useState<Record<string, boolean>>({})
 
@@ -164,9 +190,11 @@ export default function ProjectRail({
         <div
           style={{
             display: 'flex',
-            flexDirection: 'column',
+            flexDirection: 'row',
             alignItems: 'center',
-            gap: 8,
+            justifyContent: 'center',
+            gap: 6,
+            width: '100%',
             WebkitAppRegion: 'drag'
           } as React.CSSProperties}
         >
@@ -182,7 +210,7 @@ export default function ProjectRail({
           title="Show projects"
           aria-label="Show projects"
           style={{
-            WebkitAppRegion: 'no-drag',
+            ...noDrag,
             width: 30,
             height: 30,
             borderRadius: 8,
@@ -192,7 +220,7 @@ export default function ProjectRail({
             placeItems: 'center',
             cursor: 'pointer',
             color: '#8b94a3'
-          } as React.CSSProperties}
+          }}
         >
           <CaretRight />
         </button>
@@ -212,6 +240,7 @@ export default function ProjectRail({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7, alignItems: 'center' }}>
           {projects.map((project) => {
             const active = project.path === activePath
+            const busy = agentBusy(project.path)
             return (
               <div
                 key={project.path}
@@ -219,13 +248,15 @@ export default function ProjectRail({
                   onSelect(project.path)
                   onSetCollapsed(false)
                 }}
-                title={project.display}
+                title={busy ? `${project.display} — agent running` : project.display}
                 style={{
                   width: 8,
                   height: 8,
                   borderRadius: '50%',
                   cursor: 'pointer',
-                  background: active ? C.accent : C.fainter
+                  background: busy ? C.green : active ? C.accent : C.fainter,
+                  boxShadow: busy ? `0 0 6px ${C.green}` : undefined,
+                  animation: busy ? 'bfpulse 1.1s ease-in-out infinite' : 'none'
                 }}
               />
             )
@@ -272,7 +303,7 @@ export default function ProjectRail({
           title="Collapse panel"
           aria-label="Collapse projects panel"
           style={{
-            WebkitAppRegion: 'no-drag',
+            ...noDrag,
             width: 26,
             height: 26,
             borderRadius: 7,
@@ -282,7 +313,7 @@ export default function ProjectRail({
             placeItems: 'center',
             cursor: 'pointer',
             color: '#8b94a3'
-          } as React.CSSProperties}
+          }}
         >
           <CaretLeft />
         </button>
@@ -395,13 +426,14 @@ export default function ProjectRail({
               {!isCollapsed &&
                 group.projects.map(({ project, branch }) => {
                   const active = project.path === activePath
+                  const busy = agentBusy(project.path)
                   return (
                     <div
                       key={project.path}
                       role="button"
                       tabIndex={0}
                       className="bf-focus"
-                      title={project.display}
+                      title={busy ? `${project.display} — agent running` : project.display}
                       onClick={() => onSelect(project.path)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
@@ -425,15 +457,7 @@ export default function ProjectRail({
                         minWidth: 0
                       }}
                     >
-                      <span
-                        style={{
-                          width: 7,
-                          height: 7,
-                          flex: 'none',
-                          borderRadius: '50%',
-                          background: active ? C.accent : C.fainter
-                        }}
-                      />
+                      <ChatActivityDot active={active} busy={busy} />
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <span
                           style={{

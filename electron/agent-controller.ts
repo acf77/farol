@@ -7,10 +7,11 @@ import type {
   AgentTaskEvent,
   AgentTaskRequest,
   AgentTaskStatus,
+  AiProvider,
   Pipeline,
   PipelineRunResult
 } from '../shared/types'
-import { managedAiCommand } from '../shared/ai'
+import { isAiProvider, managedAiCommand } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
 import { plainText } from '../shared/terminal'
 import { shellEnv } from './session'
@@ -94,7 +95,7 @@ function blockedMarker(assistant: string): string | null {
  */
 function providerFailure(output: string): string | null {
   const match =
-    /(?:authentication failed|not authenticated|permission denied|unauthorized|forbidden|rate limit exceeded|quota exceeded|insufficient (?:credits|quota)|maximum context length|context length exceeded)/i.exec(
+    /(?:authentication failed|not authenticated|permission denied|unauthorized|forbidden|rate limit(?:\s+exceeded)?|(?:usage|session) limit|quota exceeded|insufficient (?:credits|quota)|maximum context length|context length exceeded)/i.exec(
       output
     )
   return match ? match[0] : null
@@ -214,8 +215,21 @@ export class AgentController {
   ) {}
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
-    if (this.tasks.has(request.id)) return { ok: false, message: 'An agent task with this id already exists.' }
-    if (!request.prompt.trim()) return { ok: false, message: 'Enter a task for the agent.' }
+    const clean = request.prompt.trim()
+    if (!clean) return { ok: false, message: 'Enter a task for the agent.' }
+    const existing = this.tasks.get(request.id)
+    if (existing) {
+      if (existing.running) return { ok: false, message: 'An agent task with this id is already running.' }
+      existing.request = {
+        ...existing.request,
+        ...request,
+        prompt: existing.request.prompt,
+        pipelines: request.pipelines.filter((pipeline) => pipeline.nodes.length)
+      }
+      this.emit({ kind: 'user', taskId: request.id, text: clean })
+      this.followUp(existing, clean)
+      return { ok: true }
+    }
     if (!request.pipelines.some((pipeline) => pipeline.nodes.length)) {
       return { ok: false, message: 'Create a non-empty validation pipeline first.' }
     }
@@ -233,15 +247,23 @@ export class AgentController {
       abort: new AbortController()
     }
     this.tasks.set(request.id, task)
-    void this.cycle(task, request.prompt.trim())
+    this.emit({ kind: 'user', taskId: request.id, text: clean })
+    void this.cycle(task, clean)
     return { ok: true }
   }
 
-  message(taskId: string, text: string): { ok: boolean; message?: string } {
+  message(
+    taskId: string,
+    text: string,
+    provider?: AiProvider
+  ): { ok: boolean; message?: string } {
     const task = this.tasks.get(taskId)
     const clean = text.trim()
     if (!task) return { ok: false, message: 'This agent task is no longer available.' }
     if (!clean) return { ok: false, message: 'Enter a message.' }
+    // A provider switch mid-chat (e.g. after a usage limit) must stick before
+    // the next cycle, including when the follow-up is only queued.
+    if (isAiProvider(provider)) task.request.provider = provider
     this.emit({ kind: 'user', taskId, text: clean })
     // Stop only aborts the in-flight run. A follow-up message resumes the same
     // chat — queue it if the cancelled cycle is still winding down.
@@ -249,7 +271,7 @@ export class AgentController {
       task.guidance.push(clean)
       return { ok: true }
     }
-    this.resume(task, clean)
+    this.followUp(task, clean)
     return { ok: true }
   }
 
@@ -274,6 +296,29 @@ export class AgentController {
     this.emit({ kind: 'pipeline', taskId: task.request.id, ...activity })
   }
 
+  /** Append a user follow-up and start a new cycle with the full task history. */
+  private followUp(task: Task, userText: string): void {
+    task.request.prompt = `${task.request.prompt}\n\nFollow-up: ${userText}`
+    this.resume(task, userText)
+  }
+
+  /**
+   * End the current cycle. If the user already queued a follow-up (often with a
+   * new provider after a usage limit), keep going instead of leaving it stranded.
+   */
+  private finishOrContinue(
+    task: Task,
+    attempt: number,
+    status: AgentTaskStatus,
+    message: string
+  ): void {
+    task.running = false
+    this.status(task, status, attempt, message)
+    if (!task.guidance.length) return
+    const text = task.guidance.splice(0).join('\n')
+    this.followUp(task, text)
+  }
+
   /** Clear a user stop and start a new agent cycle for the same task. */
   private resume(task: Task, userText: string): void {
     task.cancelled = false
@@ -293,7 +338,17 @@ export class AgentController {
     task.running = false
     if (!task.cancelled || !task.guidance.length) return
     const text = task.guidance.splice(0).join('\n')
-    this.resume(task, text)
+    this.followUp(task, text)
+  }
+
+  /** If the user typed while a cycle was finishing, run their message next. */
+  private continueIfGuidance(task: Task): string | null {
+    const guidance = task.guidance.splice(0).join('\n')
+    if (!guidance) return null
+    return this.prompt(
+      task,
+      `Continue the original task: ${task.request.prompt}\n\nUser request:\n${guidance}`
+    )
   }
 
   private async cycle(task: Task, opening: string): Promise<void> {
@@ -342,13 +397,23 @@ export class AgentController {
           return
         }
         if (blocked) {
-          task.running = false
-          this.status(task, 'needs-attention', attempt, `Agent stopped: ${blocked}`)
+          // A follow-up may already be queued with a switched provider (e.g. after
+          // a usage limit). Surface the stop, then continue that message.
+          this.finishOrContinue(
+            task,
+            attempt,
+            'needs-attention',
+            `Agent stopped: ${blocked}`
+          )
           return
         }
         if (code !== 0) {
-          task.running = false
-          this.status(task, 'needs-attention', attempt, `Agent exited with code ${code}`)
+          this.finishOrContinue(
+            task,
+            attempt,
+            'needs-attention',
+            `Agent exited with code ${code}`
+          )
           return
         }
         if (task.guidance.length) {
@@ -372,6 +437,11 @@ export class AgentController {
 
         // No code changes → no validation. The agent opted out with [].
         if (!selection.pipelines.length) {
+          const next = this.continueIfGuidance(task)
+          if (next) {
+            prompt = next
+            continue
+          }
           task.running = false
           this.status(task, 'completed', attempt, 'No validation needed')
           return
@@ -422,6 +492,11 @@ export class AgentController {
           if (!result.ok) failures.push({ pipeline, result })
         }
         if (!failures.length) {
+          const next = this.continueIfGuidance(task)
+          if (next) {
+            prompt = next
+            continue
+          }
           task.running = false
           this.status(task, 'completed', attempt, `${names} passed`)
           return

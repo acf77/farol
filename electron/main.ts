@@ -20,7 +20,7 @@ import { AppUpdater } from './update'
 import { applyGlass, glassAvailable } from './glass'
 import { mergeMcpConfig, MCP_CONFIG_REL_PATHS, type McpServerEntry } from '../shared/mcp-config'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
-import { resolvePipeline, topoSort } from '../shared/graph'
+import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
 import { plainText } from '../shared/terminal'
 import { AgentController } from './agent-controller'
 import { scopedRuntimeId } from '../shared/runtime'
@@ -78,9 +78,9 @@ function createWindow(): void {
     glassActive = false
   })
 
-  // Keep navigation inside the app; send real links to the system browser.
+  // Keep navigation inside the app; send real http(s) links to the system browser.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void electronShell.openExternal(url)
+    if (/^https?:\/\//i.test(url)) void electronShell.openExternal(url)
     return { action: 'deny' }
   })
 
@@ -207,9 +207,19 @@ function runForAgent(
   return new Promise((resolve) => {
     const runtimePipeline = {
       ...pipeline,
-      id: scopedRuntimeId(projectPath, `pipeline:${pipeline.id}`)
+      // Keep MCP runs off the UI `pipeline:` slot so a user Run and an agent
+      // `run_pipeline` of the same definition cannot join or orphan each other.
+      id: scopedRuntimeId(projectPath, `mcp-pipeline:${pipeline.id}`)
     }
-    const nodes = topoSort(pipeline.nodes) ?? pipeline.nodes
+    const nodes = topoSort(pipeline.nodes) ?? []
+    const invalid = validateRunnable(pipeline.nodes)
+    if (invalid || !nodes.length) {
+      resolve({
+        text: `FAILED: ${pipeline.name} — ${invalid || 'empty pipeline'}`,
+        failed: true
+      })
+      return
+    }
     const output = new Map<string, string>()
     const status = new Map<string, { label: string; code: number }>()
     let settled = false
@@ -250,7 +260,7 @@ function runForAgent(
     agentRuns.add(run)
 
     const timer = setTimeout(() => {
-      runner.cancel(pipeline.id)
+      runner.cancel(runtimePipeline.id)
       finish(`TIMED OUT after 15 minutes: ${pipeline.name}`, true)
     }, AGENT_RUN_TIMEOUT_MS)
 
@@ -258,7 +268,27 @@ function runForAgent(
   })
 }
 
+/** True when `cwd` is the open project or one of its linked worktrees. */
+async function cwdAllowedForProject(projectPath: string, cwd: string): Promise<boolean> {
+  const abs = path.resolve(cwd)
+  const root = path.resolve(projectPath)
+  if (abs === root || abs.startsWith(root + path.sep)) return true
+  const git = await gitInfo(projectPath)
+  for (const wt of git.worktrees ?? []) {
+    const base = path.resolve(wt.path)
+    if (abs === base || abs.startsWith(base + path.sep)) return true
+  }
+  return false
+}
+
 async function handleBridge(req: BridgeRequest, projectPath: string): Promise<BridgeReply> {
+  if (!(await cwdAllowedForProject(projectPath, req.cwd))) {
+    return {
+      id: req.id,
+      ok: false,
+      message: `cwd is outside this project: ${req.cwd}`
+    }
+  }
   // The agent's own directory wins, so an agent in a worktree runs that worktree.
   const pipelines = await loadPipelines(req.cwd)
   if (req.op === 'list') {
@@ -450,8 +480,10 @@ function registerIpc(): void {
   ipcMain.handle('run:cancel', (_e, pipelineId: string) => runner.cancelAndWait(pipelineId))
 
   ipcMain.handle('agent:start', (_e, request: AgentTaskRequest) => agents.start(request))
-  ipcMain.handle('agent:message', (_e, taskId: string, text: string) =>
-    agents.message(taskId, text)
+  ipcMain.handle(
+    'agent:message',
+    (_e, taskId: string, text: string, provider?: AgentTaskRequest['provider']) =>
+      agents.message(taskId, text, provider)
   )
   ipcMain.handle('agent:cancel', (_e, taskId: string) => agents.cancel(taskId))
 

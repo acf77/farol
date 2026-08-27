@@ -15,12 +15,14 @@ import { aiCommand, normalizeAi } from '../shared/ai'
 import { FAILURE_REPORT_REL, failureReport, gitignoreWithEntry } from '../shared/failure'
 import { plainText } from '../shared/terminal'
 import { exitCodeFromSignal } from '../shared/exit-code'
+import { parseVerdict, verdictPromptSuffix } from '../shared/verdict'
 import {
   ancestors,
   descendants,
   nodeGate,
   readyIds,
-  topoSort
+  topoSort,
+  validateRunnable
 } from '../shared/graph'
 import { defaultShell, pipelineEnv, PtySession, shellEnv } from './session'
 import { killPidTree, killPty } from './kill'
@@ -193,8 +195,9 @@ export class PipelineRunner {
   start(pipeline: Pipeline, cwd: string, branch: string, origin: RunOrigin = 'app'): string {
     const existing = this.active.get(pipeline.id)
     if (existing && !existing.cancelled) return existing.runId
-    // Cancelled runs may still be winding down. Prefer cancelAndWait() first;
-    // replacing here keeps sync callers (MCP bridge) from deadlocking.
+    // Cancelled runs may still be winding down. Re-assert cancel so any leftover
+    // PTYs/oneshots die before this slot is reused (sync MCP callers cannot await).
+    if (existing) this.cancel(pipeline.id)
 
     const runId = `${pipeline.id}:${Date.now()}`
     const state: Active = {
@@ -244,10 +247,44 @@ export class PipelineRunner {
   }
 
   private async execute(pipeline: Pipeline, cwd: string, state: Active): Promise<void> {
-    const { runId } = state
+    const { runId, branch, origin } = state
     const pipelineId = pipeline.id
     try {
       await this.executeRun(pipeline, cwd, state)
+    } catch (error) {
+      // Spawn / unexpected throws must still settle waiters (cancelAndWait).
+      if (!this.finished.has(runId)) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.emit({
+          kind: 'output',
+          runId,
+          pipelineId,
+          branch,
+          origin,
+          index: 0,
+          nodeId: pipeline.nodes[0]?.id ?? 'n1',
+          chunk: `buildflow: ${message}\r\n`
+        })
+        this.emit({
+          kind: 'end',
+          runId,
+          pipelineId,
+          branch,
+          origin,
+          ok: false,
+          failedAt: 0,
+          failedNodeId: pipeline.nodes[0]?.id,
+          cancelled: state.cancelled || undefined
+        })
+        this.settle({
+          runId,
+          pipelineId,
+          ok: false,
+          cancelled: state.cancelled || undefined,
+          failedNodeId: pipeline.nodes[0]?.id,
+          steps: []
+        })
+      }
     } finally {
       // Only drop active when this run still owns the slot — a newer re-run may
       // have replaced us while we were winding down.
@@ -260,7 +297,8 @@ export class PipelineRunner {
   private async executeRun(pipeline: Pipeline, cwd: string, state: Active): Promise<void> {
     const { runId, branch, origin } = state
     const pipelineId = pipeline.id
-    const nodes = topoSort(pipeline.nodes) ?? pipeline.nodes
+    const invalid = validateRunnable(pipeline.nodes)
+    const nodes = invalid ? pipeline.nodes : (topoSort(pipeline.nodes) as PipelineNode[])
     const indexOf = new Map(nodes.map((n, i) => [n.id, i]))
     const byId = new Map(nodes.map((n) => [n.id, n]))
 
@@ -290,16 +328,72 @@ export class PipelineRunner {
       })
     }
 
-    state.session = new PtySession({
-      cwd,
-      cols: 110,
-      onData: (chunk) => {
-        if (state.currentShellId) emitOut(state.currentShellId, chunk)
-      },
-      onEnd: () => {
-        state.session = null
-      }
-    })
+    if (invalid) {
+      const nodeId = nodes[0]?.id ?? 'n1'
+      emitOut(nodeId, `buildflow: ${invalid}\r\n`)
+      this.emit({
+        kind: 'end',
+        runId,
+        pipelineId,
+        branch,
+        origin,
+        ok: false,
+        failedAt: 0,
+        failedNodeId: nodes[0]?.id,
+        cancelled: state.cancelled || undefined
+      })
+      this.settle({
+        runId,
+        pipelineId,
+        ok: false,
+        cancelled: state.cancelled || undefined,
+        failedNodeId: nodes[0]?.id,
+        steps: nodes.map((node) => ({
+          nodeId: node.id,
+          ok: false,
+          code: 1,
+          skipped: true,
+          output: node.id === nodeId ? `buildflow: ${invalid}` : ''
+        }))
+      })
+      return
+    }
+
+    try {
+      state.session = new PtySession({
+        cwd,
+        cols: 110,
+        onData: (chunk) => {
+          if (state.currentShellId) emitOut(state.currentShellId, chunk)
+        },
+        onEnd: () => {
+          state.session = null
+        }
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      emitOut(nodes[0]?.id ?? 'n1', `buildflow: failed to spawn login shell: ${message}\r\n`)
+      this.emit({
+        kind: 'end',
+        runId,
+        pipelineId,
+        branch,
+        origin,
+        ok: false,
+        failedAt: 0,
+        failedNodeId: nodes[0]?.id,
+        cancelled: state.cancelled || undefined
+      })
+      this.settle({
+        runId,
+        pipelineId,
+        ok: false,
+        cancelled: state.cancelled || undefined,
+        failedNodeId: nodes[0]?.id,
+        steps: []
+      })
+      return
+    }
     const shellReady = await state.session.whenReady()
     if (state.cancelled) {
       state.session?.kill()
@@ -495,7 +589,10 @@ export class PipelineRunner {
       return this.runOneshot(node.id, node.cmd, cwd, state, onChunk)
     }
 
-    const prompt = context ? `${node.cmd}\n\n--- Pipeline output so far ---\n${context}` : node.cmd
+    const prompt = [
+      context ? `${node.cmd}\n\n--- Pipeline output so far ---\n${context}` : node.cmd,
+      verdictPromptSuffix()
+    ].join('\n')
     const spec = aiCommand(normalizeAi(node.ai), prompt)
     let bin: string | null = null
     for (const name of spec.bins) {
@@ -509,6 +606,7 @@ export class PipelineRunner {
     }
 
     return new Promise<number>((resolve) => {
+      let collected = ''
       const done = (code: number): void => {
         if (state.finishers.get(node.id) !== done) return
         state.finishers.delete(node.id)
@@ -539,9 +637,16 @@ export class PipelineRunner {
         return
       }
       state.aiProcs.set(node.id, proc)
-      proc.onData(onChunk)
+      proc.onData((chunk) => {
+        collected += plainText(chunk)
+        onChunk(chunk)
+      })
       proc.onExit(({ exitCode, signal }) => {
-        done(exitCode === 0 ? (exitCodeFromSignal(signal) ?? 0) : exitCode)
+        const exit = exitCode === 0 ? (exitCodeFromSignal(signal) ?? 0) : exitCode
+        const verdict = parseVerdict(collected)
+        if (verdict === 'pass') done(0)
+        else if (verdict === 'fail') done(1)
+        else done(exit)
       })
       if (state.cancelled) {
         killPty(proc)

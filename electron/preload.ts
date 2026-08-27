@@ -68,7 +68,8 @@ const api: BuildFlowApi = {
   },
   agent: {
     start: (request) => ipcRenderer.invoke('agent:start', request),
-    message: (taskId, text) => ipcRenderer.invoke('agent:message', taskId, text),
+    message: (taskId, text, provider) =>
+      ipcRenderer.invoke('agent:message', taskId, text, provider),
     cancel: (taskId) => ipcRenderer.invoke('agent:cancel', taskId),
     onEvent: (cb) => on<AgentTaskEvent>('agent:event', cb)
   },

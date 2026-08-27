@@ -40,6 +40,26 @@ export function SplitIcon({ size = 13 }: IconProps) {
   )
 }
 
+/** Split the focused pane to the right. */
+export function SplitRightIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>
+      <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+      <path d="M8 2.5v11" />
+    </svg>
+  )
+}
+
+/** Split the focused pane downward. */
+export function SplitDownIcon({ size = 14 }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>
+      <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+      <path d="M1.5 8h13" />
+    </svg>
+  )
+}
+
 export function ProjectIcon({ size = 14, color = '#8f98a8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.4}>

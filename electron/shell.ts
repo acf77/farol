@@ -73,7 +73,12 @@ export class ShellManager {
       let last: string | null = null
       while ((match = OSC7.exec(chunk))) last = match[1]
       if (last) {
-        const next = decodeURIComponent(last)
+        let next: string
+        try {
+          next = decodeURIComponent(last)
+        } catch {
+          next = last
+        }
         if (next && next !== session.cwd) {
           session.cwd = next
           this.onCwd({ paneId, cwd: next })

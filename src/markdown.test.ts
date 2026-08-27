@@ -44,6 +44,16 @@ describe('renderMarkdown', () => {
     expect(out).toContain('docs')
   })
 
+  it('drops non-http(s) markdown links', () => {
+    const out = html('[x](javascript:alert(1)) and [y](file:///etc/passwd) and [ok](http://a.test)')
+    expect(out).not.toContain('javascript:')
+    expect(out).not.toContain('file:')
+    expect(out).toContain('x')
+    expect(out).toContain('y')
+    expect(out).toContain('href="http://a.test"')
+    expect(out.match(/href=/g)?.length).toBe(1)
+  })
+
   it('hides harness markers from the rendered tree', () => {
     const nodes = renderMarkdown('All good\nBUILDFLOW_PIPELINES: []\n')
     const markup = renderToStaticMarkup(createElement('div', null, ...nodes))

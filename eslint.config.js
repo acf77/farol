@@ -8,7 +8,6 @@ export default tseslint.config(
       'out/**',
       'node_modules/**',
       '**/*.d.ts',
-      'index.js',
       'scripts/**'
     ]
   },

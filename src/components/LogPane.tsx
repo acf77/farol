@@ -27,6 +27,7 @@ export default function LogPane({ term }: { term: TermState }) {
       }}
       style={{
         flex: 1,
+        minHeight: 0,
         overflowY: 'auto',
         padding: '14px 16px 18px',
         fontFamily: MONO,

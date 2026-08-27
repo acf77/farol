@@ -1,9 +1,16 @@
 /** Markers a scripted pipeline shell prints so we can see when a command ends. */
 
+import { randomBytes } from 'crypto'
+
 export const MARK_START = '\x01BFL'
 export const MARK_END = '\x02'
 
 export type ShellFamily = 'zsh' | 'bash' | 'fish' | 'posix' | 'powershell'
+
+/** Opaque token so a step cannot forge completion by printing a fixed marker. */
+export function sessionToken(): string {
+  return randomBytes(8).toString('hex')
+}
 
 export function shellFamily(shell: string): ShellFamily {
   const name = (shell.split(/[\\/]/).pop() || '').toLowerCase()
@@ -20,15 +27,16 @@ export function quoteSh(cmd: string): string {
 }
 
 /**
- * Print `code:cwd` wrapped in markers. Uses $'…' so the bytes in the PTY
+ * Print `token:code:cwd` wrapped in markers. Uses $'…' so the bytes in the PTY
  * output match MARK_START / MARK_END, independent of the user's PROMPT.
  */
-const PRINT_UNIX = `printf $'\\001BFL%s:%s\\002'`
+const PRINT_UNIX = `printf $'\\001BFL%s:%s:%s\\002'`
 
-function unixRunFn(): string {
+function unixRunFn(token: string): string {
+  const t = quoteSh(token)
   return (
-    `__bf_run() { if eval "$1"; then ${PRINT_UNIX} "0" "$PWD"; else ${PRINT_UNIX} "$?" "$PWD"; fi; }; ` +
-    `${PRINT_UNIX} "0" "$PWD"`
+    `__bf_run() { if eval "$1"; then ${PRINT_UNIX} ${t} "0" "$PWD"; else ${PRINT_UNIX} ${t} "$?" "$PWD"; fi; }; ` +
+    `${PRINT_UNIX} ${t} "0" "$PWD"`
   )
 }
 
@@ -37,32 +45,32 @@ function unixRunFn(): string {
  * (oh-my-zsh, Starship, p10k) overwrite PS1, so we never wait on a prompt —
  * we define a helper and print a ready marker ourselves.
  */
-export function initScript(family: ShellFamily): string {
+export function initScript(family: ShellFamily, token: string): string {
   switch (family) {
     case 'zsh':
       return (
         `unsetopt zle 2>/dev/null; setopt no_errexit 2>/dev/null; ` +
         `stty -echo 2>/dev/null; PROMPT=''; RPROMPT=''; PS1=''; PS2=''; ` +
-        unixRunFn() +
+        unixRunFn(token) +
         '\n'
       )
     case 'bash':
     case 'posix':
       return (
-        `set +e 2>/dev/null; stty -echo 2>/dev/null; PS1=''; PS2=''; ` + unixRunFn() + '\n'
+        `set +e 2>/dev/null; stty -echo 2>/dev/null; PS1=''; PS2=''; ` + unixRunFn(token) + '\n'
       )
     case 'fish':
       return (
         `stty -echo 2>/dev/null; ` +
-        `function __bf_run; eval $argv; printf \\x01BFL%s:%s\\x02 $status $PWD; end; ` +
-        `printf \\x01BFL%s:%s\\x02 0 $PWD\n`
+        `function __bf_run; eval $argv; printf \\x01BFL%s:%s:%s\\x02 ${quoteSh(token)} $status $PWD; end; ` +
+        `printf \\x01BFL%s:%s:%s\\x02 ${quoteSh(token)} 0 $PWD\n`
       )
     case 'powershell':
       return (
-        `function __bf_run($c) { Invoke-Expression $c; ` +
-        `$ec = if ($?) { 0 } else { 1 }; ` +
-        `[Console]::Write([char]1 + 'BFL' + $ec + ':' + $PWD.Path + [char]2) }; ` +
-        `[Console]::Write([char]1 + 'BFL0:' + $PWD.Path + [char]2)\n`
+        `$__bf_tok = ${JSON.stringify(token)}; ` +
+        `function __bf_run($c) { try { Invoke-Expression $c; $ec = if ($?) { 0 } else { 1 } } catch { $ec = 1 }; ` +
+        `[Console]::Write([char]1 + 'BFL' + $__bf_tok + ':' + $ec + ':' + $PWD.Path + [char]2) }; ` +
+        `[Console]::Write([char]1 + 'BFL' + $__bf_tok + ':0:' + $PWD.Path + [char]2)\n`
       )
   }
 }
@@ -83,6 +91,7 @@ export function loginArgs(family: ShellFamily): string[] {
 }
 
 export interface ParsedMark {
+  token: string
   code: number
   cwd: string
 }
@@ -116,10 +125,14 @@ export function feedMarks(buf: string): FeedResult {
     }
     text += rest.slice(0, i)
     const payload = rest.slice(i + MARK_START.length, j)
-    const sep = payload.indexOf(':')
-    const code = parseInt(sep === -1 ? payload : payload.slice(0, sep), 10)
-    const cwd = sep === -1 ? '' : payload.slice(sep + 1)
-    marks.push({ code: Number.isFinite(code) ? code : 0, cwd })
+    const parts = payload.split(':')
+    // Expected: token:code:cwd — reject anything else as non-completion noise.
+    if (parts.length >= 3 && parts[0]) {
+      const token = parts[0]
+      const code = parseInt(parts[1], 10)
+      const cwd = parts.slice(2).join(':')
+      if (Number.isFinite(code)) marks.push({ token, code, cwd })
+    }
     rest = rest.slice(j + MARK_END.length)
   }
   const keep = partialSuffix(rest, MARK_START)

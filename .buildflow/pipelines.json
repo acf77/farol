@@ -7,7 +7,7 @@
         "id": "n1",
         "name": "Collect diff",
         "type": "shell",
-        "cmd": "git diff main...HEAD --stat",
+        "cmd": "git diff main...HEAD",
         "after": [],
         "gate": true,
         "x": 186,

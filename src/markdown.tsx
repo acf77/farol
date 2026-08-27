@@ -53,11 +53,15 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
       const labelEnd = full.indexOf(']')
       const label = full.slice(1, labelEnd)
       const href = full.slice(labelEnd + 2, -1)
-      nodes.push(
-        <a key={key} href={href} target="_blank" rel="noreferrer">
-          {label}
-        </a>
-      )
+      if (/^https?:\/\//i.test(href)) {
+        nodes.push(
+          <a key={key} href={href} target="_blank" rel="noreferrer">
+            {label}
+          </a>
+        )
+      } else {
+        nodes.push(label)
+      }
     }
     last = match.index + full.length
   }

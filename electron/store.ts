@@ -11,11 +11,12 @@ import {
   type Workspace
 } from '../shared/session'
 import { sanitizeSettings, type AppSettings } from '../shared/settings'
+import { pipelineStoreRootFor } from './git'
 
 /**
- * Pipelines live with the project (`.buildflow/pipelines.json`) so they can be
- * committed and shared. Recent projects and the last workspace (open project,
- * tabs, splits) are per-machine, so they live in userData.
+ * Pipelines live with the repo at `.buildflow/pipelines.json` on the primary
+ * checkout, so every linked worktree shares one file and it can be committed.
+ * Recent projects and the last workspace are per-machine, in userData.
  */
 
 export function toProject(dir: string): Project {
@@ -200,25 +201,47 @@ function sanitize(raw: unknown): Pipeline[] | null {
   return sanitizePipelines(raw)
 }
 
-export async function loadPipelines(projectPath: string): Promise<Pipeline[]> {
-  const file = path.join(projectPath, CONFIG_DIR, CONFIG_FILE)
+async function readPipelineFile(file: string): Promise<Pipeline[] | null> {
   try {
     const parsed = sanitize(JSON.parse(await fs.readFile(file, 'utf8')))
-    if (parsed && parsed.length) return parsed
-    if (parsed) return []
+    if (parsed) return parsed
   } catch {
-    /* no config yet, or unreadable — fall through to the defaults */
+    /* no config yet, or unreadable */
   }
+  return null
+}
+
+async function writePipelineFile(root: string, pipelines: Pipeline[]): Promise<void> {
+  const dir = path.join(root, CONFIG_DIR)
+  await fs.mkdir(dir, { recursive: true })
+  const clean = sanitize(pipelines) ?? []
+  await fs.writeFile(path.join(dir, CONFIG_FILE), JSON.stringify(clean, null, 2) + '\n', 'utf8')
+}
+
+export async function loadPipelines(projectPath: string): Promise<Pipeline[]> {
+  const root = await pipelineStoreRootFor(projectPath)
+  const file = path.join(root, CONFIG_DIR, CONFIG_FILE)
+  const loaded = await readPipelineFile(file)
+  if (loaded) return loaded
+
+  // One-time migration: an older worktree may have seeded its own copy.
+  const local = path.resolve(projectPath)
+  if (root !== local) {
+    const localPipelines = await readPipelineFile(path.join(local, CONFIG_DIR, CONFIG_FILE))
+    if (localPipelines?.length) {
+      await writePipelineFile(root, localPipelines)
+      return localPipelines
+    }
+  }
+
   const seeded = defaultPipelines()
-  await savePipelines(projectPath, seeded).catch(() => {})
+  await writePipelineFile(root, seeded).catch(() => {})
   return seeded
 }
 
 export async function savePipelines(projectPath: string, pipelines: Pipeline[]): Promise<void> {
-  const dir = path.join(projectPath, CONFIG_DIR)
-  await fs.mkdir(dir, { recursive: true })
-  const clean = sanitize(pipelines) ?? []
-  await fs.writeFile(path.join(dir, CONFIG_FILE), JSON.stringify(clean, null, 2) + '\n', 'utf8')
+  const root = await pipelineStoreRootFor(projectPath)
+  await writePipelineFile(root, pipelines)
 }
 
 function recentsFile(): string {
