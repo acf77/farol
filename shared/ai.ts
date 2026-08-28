@@ -123,6 +123,11 @@ export function managedAiCommand(provider: AiProvider, prompt: string): AiComman
 
 import { FAILURE_REPORT_REL } from './failure'
 
+/** Prompt that points the UI chat (or a CLI) at the report a failed run left. */
+export function aiFixPrompt(reportPath = FAILURE_REPORT_REL): string {
+  return `Read ${reportPath} - it describes a pipeline step that just failed. Fix the errors it reports.`
+}
+
 /**
  * Command to type into a real terminal so the agent picks up a failure and
  * fixes it. Unlike `aiCommand` these are the *interactive* forms — the point
@@ -132,7 +137,7 @@ import { FAILURE_REPORT_REL } from './failure'
  * everything about the failure lives in the report file itself.
  */
 export function aiFixCommand(provider: AiProvider, reportPath = FAILURE_REPORT_REL): string {
-  const ask = `Read ${reportPath} - it describes a pipeline step that just failed. Fix the errors it reports.`
+  const ask = aiFixPrompt(reportPath)
   switch (provider) {
     case 'codex':
       return `codex "${ask}"`

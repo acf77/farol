@@ -8,10 +8,11 @@ import type {
   Project,
   ProjectSession,
   RunEvent,
+  RunOrigin,
   StepState,
   WorktreeRequest
 } from '@shared/types'
-import { aiFixCommand } from '@shared/ai'
+import { aiFixPrompt } from '@shared/ai'
 import { defaultSettings } from '@shared/settings'
 import { sessionSeq } from '@shared/session'
 import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
@@ -22,6 +23,7 @@ import { leaf, leaves, removeLeaf, setSize, splitLeaf } from './layout'
 import type { PaneNode } from './layout'
 import { C, GRADIENT_BG, UI, glass as G, seg } from './theme'
 import type {
+  AgentMessage,
   AgentPane,
   DetailLog,
   EditorState,
@@ -33,6 +35,7 @@ import type {
   View
 } from './types'
 import Toolbar from './components/Toolbar'
+import ErrorBoundary from './ErrorBoundary'
 import EmptyState from './components/EmptyState'
 import NewTabDialog from './components/NewTabDialog'
 import ChatPane from './components/ChatPane'
@@ -57,7 +60,48 @@ const STREAM_FLUSH_MS = 60
 const MAX_MESSAGE_CHARS = 40_000
 /** Per-message ceiling on what a restored session carries back. */
 const MAX_SAVED_CHARS = 4_000
+/** Hard cap on transcript length so a long agent run cannot exhaust the renderer. */
+const MAX_AGENT_MESSAGES = 400
 const NO_GIT: GitInfo = { isRepo: false, branch: '', branches: [] }
+
+function asText(value: unknown): string {
+  return typeof value === 'string' ? value : String(value ?? '')
+}
+
+function trimAgentMessages(messages: AgentMessage[]): AgentMessage[] {
+  if (messages.length <= MAX_AGENT_MESSAGES) return messages
+  return messages.slice(-MAX_AGENT_MESSAGES)
+}
+
+function sanitizeAgentMessage(message: AgentMessage): AgentMessage {
+  return {
+    ...message,
+    text: asText(message.text),
+    ...(message.tool
+      ? {
+          tool: {
+            ...message.tool,
+            name: asText(message.tool.name),
+            ...(message.tool.detail ? { detail: asText(message.tool.detail) } : {})
+          }
+        }
+      : {}),
+    ...(message.pipeline
+      ? {
+          pipeline: {
+            ...message.pipeline,
+            pipelineName: asText(message.pipeline.pipelineName),
+            tabId: asText(message.pipeline.tabId)
+          }
+        }
+      : {})
+  }
+}
+
+/** Managed Chat and MCP runs share agent semantics — not manual UI runs. */
+function isAgentRun(origin: RunOrigin): boolean {
+  return origin === 'agent' || origin === 'managed-agent'
+}
 
 function fmtDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
@@ -75,6 +119,67 @@ function nodeLogPrefix(name: string): string {
 
 function fmtTime(epoch: number): string {
   return new Date(epoch).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
+const RUNTIME_PIPELINE_PREFIXES = ['pipeline:', 'managed-pipeline:', 'mcp-pipeline:'] as const
+
+/** Unscope a runtime pipeline id back to the bare pipeline id stored in the editor. */
+function unscopeLocalPipelineId(projectPath: string, runtimeId: string): string | null {
+  const value = unscopedRuntimeId(projectPath, runtimeId)
+  if (!value) return null
+  for (const prefix of RUNTIME_PIPELINE_PREFIXES) {
+    if (value.startsWith(prefix)) return value.slice(prefix.length)
+  }
+  return null
+}
+
+/**
+ * Fallback when managed Chat reports a terminal pipeline state but the RunEvent
+ * stream never bound the slot (e.g. the runner threw before `start`). The live
+ * run path is owned exclusively by RunEvent handlers.
+ */
+function syncAgentPipelineRun(
+  prev: RunsByBranch,
+  event: Extract<AgentTaskEvent, { kind: 'pipeline' }>,
+  pipelineId: string,
+  branch: string,
+  nodes: PipelineNode[]
+): RunsByBranch {
+  // Live runs are owned by the RunEvent stream — agent cards only mirror them.
+  if (event.status === 'running') return prev
+  const cur = prev[pipelineId]?.[branch]
+  if (cur && event.runId && cur.runId === event.runId && cur.status !== 'running') return prev
+  if (
+    cur?.status === 'running' &&
+    cur.runId &&
+    !cur.runId.startsWith('agent:') &&
+    !cur.runId.startsWith('pending:')
+  ) {
+    return prev
+  }
+  const stepResults = Object.fromEntries(nodes.map((n) => [n.id, 'pending' as StepState]))
+  const time = fmtTime(event.startedAt)
+  const status = event.status === 'passed' ? 'pass' : 'fail'
+  const label =
+    event.status === 'passed'
+      ? `Passed on ${branch} · ${time}`
+      : event.status === 'cancelled'
+        ? `Cancelled on ${branch} · ${time}`
+        : `Failed on ${branch} · ${time}`
+  const finishedSteps = cur?.stepResults ?? stepResults
+  return {
+    ...prev,
+    [pipelineId]: {
+      ...prev[pipelineId],
+      [branch]: {
+        runId: event.runId ?? cur?.runId ?? `agent:${event.startedAt}`,
+        status,
+        label,
+        startedAt: event.startedAt,
+        stepResults: finishedSteps
+      }
+    }
+  }
 }
 
 function fmtEventTime(epoch: number): string {
@@ -128,17 +233,19 @@ function tabsFromSession(sess: ProjectSession): Tab[] {
                   : 'needs-attention') as AgentPane['status'],
               attempt: p.attempt,
               provider: p.provider,
-              messages: [
-                ...p.messages,
-                ...(p.status === 'idle' || p.status === 'completed' || p.status === 'cancelled'
-                  ? []
-                  : [
-                      {
-                        role: 'system' as const,
-                        text: 'BuildFlow restarted. This managed process stopped; start a new chat to continue.'
-                      }
-                    ])
-              ]
+              messages: trimAgentMessages(
+                [
+                  ...p.messages.map(sanitizeAgentMessage),
+                  ...(p.status === 'idle' || p.status === 'completed' || p.status === 'cancelled'
+                    ? []
+                    : [
+                        {
+                          role: 'system' as const,
+                          text: 'BuildFlow restarted. This managed process stopped; start a new chat to continue.'
+                        }
+                      ])
+                ].map(sanitizeAgentMessage)
+              )
             }
           : { id: p.id, kind: 'shell' as const, title: p.title || api.shellName, cwd: p.cwd }
       ])
@@ -290,7 +397,7 @@ interface ProjectWorkspaceProps {
   visible: boolean
   /** Incremented when the rail asks this project to open the branch dialog. */
   branchDialogNonce: number
-  /** Incremented when the rail asks this project to open a new chat. */
+  /** Incremented when the rail asks this project to clear its chat. */
   newChatNonce: number
   onOpenProject: () => void
   onOpenPath: (path: string) => void
@@ -333,6 +440,8 @@ function ProjectWorkspace({
   const [liquid, setLiquid] = useState(false)
   const [pipesCollapsed, setPipesCollapsed] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [clearChatConfirm, setClearChatConfirm] = useState(false)
+  const [chatClearedNotice, setChatClearedNotice] = useState(false)
 
   const seq = useRef({ shell: 1, pane: 0, split: 0 })
   const pipelinesRef = useRef<Pipeline[]>([])
@@ -340,8 +449,12 @@ function ProjectWorkspace({
   const sendToAgentRef = useRef<(branch: string, cwd: string) => void>(() => {})
   const worktreeBusy = useRef(false)
   const lastRunOut = useRef<{ paneId: string; nodeId: string } | null>(null)
-  /** Bumped on Stop / newer Start so an in-flight cancel→start cannot resurrect a run. */
-  const runStartGen = useRef(0)
+  /**
+   * Per-pipeline generation: Stop / newer Start of the *same* pipeline bumps it so an
+   * in-flight cancel→start cannot resurrect that run. Other pipelines keep their own
+   * counter so concurrent Starts do not strand each other as permanently `running`.
+   */
+  const runStartGen = useRef<Record<string, number>>({})
   const tabsRef = useRef<Tab[]>([])
   const gitRef = useRef<GitInfo>(NO_GIT)
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -362,14 +475,8 @@ function ProjectWorkspace({
   /** Managed Chat validation must not share the UI Run slot for the same pipeline. */
   const managedRuntimePipelineId = (pipelineId: string): string =>
     scopedRuntimeId(project.path, `managed-pipeline:${pipelineId}`)
-  const localPipelineId = (runtimeId: string): string | null => {
-    const value = unscopedRuntimeId(project.path, runtimeId)
-    if (!value) return null
-    for (const prefix of ['pipeline:', 'managed-pipeline:', 'mcp-pipeline:'] as const) {
-      if (value.startsWith(prefix)) return value.slice(prefix.length)
-    }
-    return null
-  }
+  const localPipelineId = (runtimeId: string): string | null =>
+    unscopeLocalPipelineId(project.path, runtimeId)
 
   const flushSession = (last: boolean): void => {
     if (last && !persistEnabled.current) return
@@ -420,10 +527,20 @@ function ProjectWorkspace({
     )
   }, [tabs])
 
+  const runBranchForBusy = project ? branchForTab(active, project.path, git) : git.branch || '—'
+  const pipelineBusy = useMemo(() => {
+    for (const byBranch of Object.values(runs)) {
+      if (byBranch[runBranchForBusy]?.status === 'running') return true
+    }
+    return false
+  }, [runs, runBranchForBusy])
+
+  const worktreeBusyFlag = agentBusy || pipelineBusy
+
   useEffect(() => {
-    onAgentBusyChange?.(project.path, agentBusy)
+    onAgentBusyChange?.(project.path, worktreeBusyFlag)
     return () => onAgentBusyChange?.(project.path, false)
-  }, [agentBusy, onAgentBusyChange, project.path])
+  }, [worktreeBusyFlag, onAgentBusyChange, project.path])
 
   const loadGit = useCallback(async (projectPath: string) => {
     setGit(await api.git.info(projectPath))
@@ -470,46 +587,49 @@ function ProjectWorkspace({
     [project, showTerminal]
   )
 
-  /** Make the active worktree's independent chat on demand. */
-  const ensureChat = useCallback((): { pane: AgentPane; owner: Tab } | null => {
-    if (!project || !chatOwner) return null
-    const existing = chatTabFor(tabsRef.current, chatOwner.id)
-    const existingPane = agentPaneFor(existing)
-    if (existingPane) return { pane: existingPane, owner: chatOwner }
+  /** Make a worktree's independent chat on demand. Pass an owner when the active tab is a run. */
+  const ensureChat = useCallback(
+    (owner: Tab | undefined = chatOwner): { pane: AgentPane; owner: Tab } | null => {
+      if (!project || !owner) return null
+      const existing = chatTabFor(tabsRef.current, owner.id)
+      const existingPane = agentPaneFor(existing)
+      if (existingPane) return { pane: existingPane, owner }
 
-    const cwd = chatOwner.panes[chatOwner.focus]?.cwd || project.path
-    const taskId = scopedRuntimeId(project.path, `agent:${chatOwner.id}:${Date.now()}`)
-    const paneId = `ap:${taskId}`
-    const pane: AgentPane = {
-      id: paneId,
-      kind: 'agent',
-      title: 'Chat',
-      cwd,
-      taskId,
-      status: 'idle',
-      attempt: 0,
-      provider: settingsRef.current.agent,
-      messages: []
-    }
-    setTabs((prev) => [
-      ...prev,
-      {
-        id: taskId,
+      const cwd = owner.panes[owner.focus]?.cwd || project.path
+      const taskId = scopedRuntimeId(project.path, `agent:${owner.id}:${Date.now()}`)
+      const paneId = `ap:${taskId}`
+      const pane: AgentPane = {
+        id: paneId,
         kind: 'agent',
         title: 'Chat',
-        status: null,
-        ownerTabId: chatOwner.id,
-        branch: branchForTab(chatOwner, project.path, gitRef.current),
-        root: leaf(paneId),
-        focus: paneId,
-        panes: { [paneId]: pane }
+        cwd,
+        taskId,
+        status: 'idle',
+        attempt: 0,
+        provider: settingsRef.current.agent,
+        messages: []
       }
-    ])
-    return { pane, owner: chatOwner }
-  }, [project, chatOwner])
+      setTabs((prev) => [
+        ...prev,
+        {
+          id: taskId,
+          kind: 'agent',
+          title: 'Chat',
+          status: null,
+          ownerTabId: owner.id,
+          branch: branchForTab(owner, project.path, gitRef.current),
+          root: leaf(paneId),
+          focus: paneId,
+          panes: { [paneId]: pane }
+        }
+      ])
+      return { pane, owner }
+    },
+    [project, chatOwner]
+  )
 
-  /** Throw away only the active worktree's conversation. Other agents continue. */
-  const newChat = useCallback(() => {
+  /** Discard the active worktree's conversation. Other agents continue. */
+  const clearChat = useCallback((hadMessages = false) => {
     if (!chatOwner) return
     const existing = chatTabFor(tabsRef.current, chatOwner.id)
     if (existing) {
@@ -517,35 +637,24 @@ function ProjectWorkspace({
       if (pane && pane.kind === 'agent') void api.agent.cancel(pane.taskId)
       setTabs((prev) => prev.filter((t) => t.id !== existing.id))
     }
+    setClearChatConfirm(false)
+    if (hadMessages) setChatClearedNotice(true)
     setView((v) => (v === 'terminal' ? 'split' : v))
   }, [chatOwner])
 
-  /**
-   * Hand a failed step to the configured agent in a real terminal, so the user
-   * can carry on the conversation rather than read a transcript. The report
-   * file the runner wrote is referred to by its relative path, so the terminal
-   * has to be sitting in the working copy that failed.
-   */
-  const sendToAgent = useCallback(
-    (branch: string, cwd: string) => {
-      const cmd = aiFixCommand(settingsRef.current.agent)
-      const shells = tabsRef.current.filter((t) => t.kind === 'shell')
-      const target =
-        shells.find((t) => t.panes[t.focus]?.cwd === cwd) ?? shells.find((t) => t.branch === branch)
-      let paneId: string | null
-      if (target) {
-        setActiveTab(target.id)
-        showTerminal(target.id)
-        paneId = target.focus
-      } else {
-        paneId = openShellTab(cwd, branch)
-      }
-      // `send` rather than `write`: a tab opened just now has no PTY yet.
-      if (paneId) void api.shell.send(paneId, `${cmd}\r`)
-    },
-    [openShellTab, showTerminal]
-  )
-  sendToAgentRef.current = sendToAgent
+  /** One chat per branch — this clears it and shows a blank composer, not a second tab. */
+  const requestNewChat = useCallback(() => {
+    if (!chatOwner) return
+    const existing = chatTabFor(tabsRef.current, chatOwner.id)
+    const hasMessages = (agentPaneFor(existing)?.messages.length ?? 0) > 0
+    if (hasMessages) {
+      setChatClearedNotice(false)
+      setClearChatConfirm(true)
+      setView('chat')
+      return
+    }
+    clearChat(false)
+  }, [chatOwner, clearChat])
 
   /** Tabs share this project's checkout — no worktree, no branch switch. */
   const newShellTab = useCallback(() => {
@@ -576,9 +685,9 @@ function ProjectWorkspace({
   useEffect(() => {
     if (!visible || !newChatNonce || newChatNonce === newChatSeen.current) return
     newChatSeen.current = newChatNonce
-    newChat()
+    requestNewChat()
     setView('chat')
-  }, [visible, newChatNonce, newChat])
+  }, [visible, newChatNonce, requestNewChat])
 
   const openWorktreeProject = useCallback(
     async (req: WorktreeRequest): Promise<{ ok: boolean; message: string }> => {
@@ -836,7 +945,12 @@ function ProjectWorkspace({
   )
 
   const applyAgentEvent = useCallback((pane: AgentPane, event: AgentTaskEvent): AgentPane => {
+    const appendMessages = (messages: AgentMessage[]): AgentPane => ({
+      ...pane,
+      messages: trimAgentMessages(messages.map(sanitizeAgentMessage))
+    })
     if (event.kind === 'output') {
+      const chunk = asText(event.chunk)
       const messages = [...pane.messages]
       const last = messages[messages.length - 1]
       // Only plain prose keeps growing; a card or an oversized turn is closed.
@@ -844,14 +958,14 @@ function ProjectWorkspace({
         last?.role === 'assistant' &&
         !last.tool &&
         !last.pipeline &&
-        last.text.length < MAX_MESSAGE_CHARS
+        asText(last.text).length < MAX_MESSAGE_CHARS
       )
-        messages[messages.length - 1] = { ...last, text: last.text + event.chunk }
-      else messages.push({ role: 'assistant', text: event.chunk })
-      return { ...pane, messages }
+        messages[messages.length - 1] = { ...last, text: asText(last.text) + chunk }
+      else messages.push({ role: 'assistant', text: chunk })
+      return appendMessages(messages)
     }
     if (event.kind === 'assistant') {
-      return { ...pane, messages: [...pane.messages, { role: 'assistant', text: event.text }] }
+      return appendMessages([...pane.messages, { role: 'assistant', text: asText(event.text) }])
     }
     if (event.kind === 'tool') {
       const messages = [...pane.messages]
@@ -878,13 +992,10 @@ function ProjectWorkspace({
       }
       if (existing >= 0) messages[existing] = message
       else messages.push(message)
-      return { ...pane, messages }
+      return appendMessages(messages)
     }
     if (event.kind === 'user') {
-      return {
-        ...pane,
-        messages: [...pane.messages, { role: 'user', text: event.text, at: Date.now() }]
-      }
+      return appendMessages([...pane.messages, { role: 'user', text: asText(event.text), at: Date.now() }])
     }
     if (event.kind === 'pipeline') {
       const text =
@@ -926,21 +1037,30 @@ function ProjectWorkspace({
       }
       if (existing >= 0) messages[existing] = message
       else messages.push(message)
-      return {
-        ...pane,
-        messages
-      }
+      return appendMessages(messages)
     }
     const announce = event.status !== 'validating' && event.status !== 'completed'
+    const message = asText(event.message)
     return {
       ...pane,
       status: event.status,
       attempt: event.attempt,
-      messages: announce
-        ? [...pane.messages, { role: 'system', text: event.message }]
-        : pane.messages
+      messages: announce ? trimAgentMessages([...pane.messages, { role: 'system', text: message }]) : pane.messages
     }
   }, [])
+
+  /** Agent panes are keyed `ap:${taskId}`; scan when ids drift after restore. */
+  const agentPaneByTaskId = useCallback(
+    (panes: Record<string, Pane>, taskId: string): AgentPane | null => {
+      const direct = panes[`ap:${taskId}`]
+      if (direct?.kind === 'agent') return direct
+      for (const pane of Object.values(panes)) {
+        if (pane.kind === 'agent' && pane.taskId === taskId) return pane
+      }
+      return null
+    },
+    []
+  )
 
   /**
    * An agent at work emits events far faster than a person reads them, and one
@@ -956,22 +1076,48 @@ function ProjectWorkspace({
       const queued = agentQueue.current
       if (!queued.length) return
       agentQueue.current = []
-      setTabs((prev) => {
-        let touched = false
-        const next = prev.map((tab) => {
-          let panes = tab.panes
-          for (const event of queued) {
-            const pane = panes[`ap:${event.taskId}`]
-            if (!pane || pane.kind !== 'agent') continue
-            const updated = applyAgentEvent(pane, event)
-            if (updated !== pane) panes = { ...panes, [pane.id]: updated }
-          }
-          if (panes === tab.panes) return tab
-          touched = true
-          return { ...tab, panes }
+      try {
+        const pipelineEvents = queued.filter(
+          (event): event is Extract<AgentTaskEvent, { kind: 'pipeline' }> => event.kind === 'pipeline'
+        )
+        if (pipelineEvents.length) {
+          const proj = snapRef.current.project
+          setRuns((prev) => {
+            let next = prev
+            for (const event of pipelineEvents) {
+              const pipelineId = proj ? unscopeLocalPipelineId(proj.path, event.pipelineId) : null
+              if (!pipelineId) continue
+              const p = pipelinesRef.current.find((x) => x.id === pipelineId)
+              if (!p) continue
+              const owner = tabsRef.current.find((t) =>
+                Object.values(t.panes).some((pane) => pane.kind === 'agent' && pane.taskId === event.taskId)
+              )
+              const branch = owner && proj ? branchForTab(owner, proj.path, gitRef.current) : ''
+              if (!branch) continue
+              next = syncAgentPipelineRun(next, event, pipelineId, branch, p.nodes)
+            }
+            return next === prev ? prev : next
+          })
+        }
+        setTabs((prev) => {
+          let touched = false
+          const next = prev.map((tab) => {
+            let panes = tab.panes
+            for (const event of queued) {
+              const pane = agentPaneByTaskId(panes, event.taskId)
+              if (!pane) continue
+              const updated = applyAgentEvent(pane, event)
+              if (updated !== pane) panes = { ...panes, [pane.id]: updated }
+            }
+            if (panes === tab.panes) return tab
+            touched = true
+            return { ...tab, panes }
+          })
+          return touched ? next : prev
         })
-        return touched ? next : prev
-      })
+      } catch (error) {
+        console.error('[buildflow] agent event flush failed', error)
+      }
     }
     const off = api.agent.onEvent((event: AgentTaskEvent) => {
       agentQueue.current.push(event)
@@ -982,15 +1128,17 @@ function ProjectWorkspace({
       if (agentFlush.current !== null) window.clearTimeout(agentFlush.current)
       agentFlush.current = null
     }
-  }, [applyAgentEvent])
+  }, [applyAgentEvent, agentPaneByTaskId])
 
   const sendAgentMessage = useCallback(
-    (text: string) => {
-      const context = ensureChat()
+    (text: string, providerOverride?: AppSettings['agent'], ownerOverride?: Tab, cwdOverride?: string) => {
+      setChatClearedNotice(false)
+      const context = ensureChat(ownerOverride)
       if (!context || !project) return
       const { pane, owner } = context
       const clean = text.trim()
       if (!clean) return
+      const provider = providerOverride ?? pane.provider
 
       const availablePipelines = pipelinesRef.current
         .filter((pipeline) => pipeline.nodes.length)
@@ -1015,15 +1163,15 @@ function ProjectWorkspace({
       const startRequest = {
         id: pane.taskId,
         prompt: clean,
-        provider: pane.provider,
+        provider,
         pipelines: availablePipelines,
-        cwd: pane.cwd,
+        cwd: cwdOverride || pane.cwd,
         branch
       }
       const runAgent = (mode: 'message' | 'start'): void => {
         if (mode === 'message') {
           // Prefer start when the task is gone (e.g. after a restart).
-          void api.agent.message(pane.taskId, clean, pane.provider).then((result) => {
+          void api.agent.message(pane.taskId, clean, provider).then((result) => {
             if (result.ok) return
             runAgent('start')
           })
@@ -1032,7 +1180,7 @@ function ProjectWorkspace({
         void api.agent.start(startRequest).then((result) => {
           if (result.ok) return
           // Still winding down after Stop — queue with the selected provider.
-          void api.agent.message(pane.taskId, clean, pane.provider).then((queued) => {
+          void api.agent.message(pane.taskId, clean, provider).then((queued) => {
             if (queued.ok) return
             failStart(result.message || queued.message)
           })
@@ -1046,6 +1194,7 @@ function ProjectWorkspace({
                 ...current,
                 status: 'working',
                 attempt: 1,
+                provider,
                 messages: [
                   ...current.messages,
                   {
@@ -1061,14 +1210,34 @@ function ProjectWorkspace({
       }
 
       patchPane(pane.id, (current) =>
-        current.kind === 'agent' ? { ...current, status: 'working' } : current
+        current.kind === 'agent' ? { ...current, status: 'working', provider } : current
       )
-      // Resume via start so a provider switch (e.g. after a usage limit) applies
-      // to the in-memory task before the next agent cycle.
-      runAgent('start')
+      // Resume the same task so history and the selected provider carry forward.
+      runAgent('message')
     },
     [ensureChat, project, git, patchPane]
   )
+
+  /**
+   * Hand a failed manual run to the UI chat so the user can keep talking there.
+   * Agent-started runs stay out — otherwise a pipeline the chat ran and failed
+   * would spawn another agent, and so on.
+   */
+  const sendToAgent = useCallback(
+    (branch: string, cwd: string) => {
+      const shells = tabsRef.current.filter((t) => t.kind === 'shell')
+      const owner =
+        shells.find((t) => t.panes[t.focus]?.cwd === cwd) ??
+        shells.find((t) => t.branch === branch) ??
+        shells[0]
+      if (owner) setActiveTab(owner.id)
+      else openShellTab(cwd, branch)
+      setView('chat')
+      sendAgentMessage(aiFixPrompt(), undefined, owner, cwd)
+    },
+    [openShellTab, sendAgentMessage]
+  )
+  sendToAgentRef.current = sendToAgent
 
   const setAgentProvider = useCallback(
     (provider: AppSettings['agent']) => {
@@ -1083,6 +1252,7 @@ function ProjectWorkspace({
       patchPane(chatPane.id, (pane) =>
         pane.kind === 'agent' ? { ...pane, provider } : pane
       )
+      void api.agent.setProvider(chatPane.taskId, provider)
     },
     [chatPane, patchPane]
   )
@@ -1106,6 +1276,7 @@ function ProjectWorkspace({
       }
 
       let blocked = false
+      const pendingRunId = `pending:${Date.now()}`
       setRuns((prev) => {
         if (prev[pipelineId]?.[branch]?.status === 'running') {
           blocked = true
@@ -1116,7 +1287,7 @@ function ProjectWorkspace({
           [pipelineId]: {
             ...prev[pipelineId],
             [branch]: {
-              runId: `pending:${Date.now()}`,
+              runId: pendingRunId,
               status: 'running',
               label: 'Starting…',
               startedAt: Date.now(),
@@ -1167,11 +1338,33 @@ function ProjectWorkspace({
       setActiveTab(tabId)
       setView('terminal')
       const runtimeId = runtimePipelineId(pipelineId)
-      const gen = ++runStartGen.current
+      const gen = (runStartGen.current[pipelineId] = (runStartGen.current[pipelineId] ?? 0) + 1)
       // Wait for cancel so a stopped run cannot race start and keep the old session.
       await api.run.cancel(runtimeId)
-      // Stop (or a newer Start) during the await bumps the gen — do not start.
-      if (gen !== runStartGen.current) return
+      // Stop (or a newer Start of *this* pipeline) during the await bumps the gen — do not start.
+      if (gen !== runStartGen.current[pipelineId]) {
+        // Clear our optimistic slot if nothing else settled it (Stop / a later Start).
+        setRuns((prev) => {
+          const cur = prev[pipelineId]?.[branch]
+          if (!cur || cur.runId !== pendingRunId || cur.status !== 'running') return prev
+          return {
+            ...prev,
+            [pipelineId]: {
+              ...prev[pipelineId],
+              [branch]: {
+                ...cur,
+                runId: `cancelled:${cur.runId}`,
+                status: 'fail',
+                label: `Cancelled on ${branch} · ${fmtTime(cur.startedAt)}`
+              }
+            }
+          }
+        })
+        setTabs((prev) =>
+          prev.map((t) => (t.id === tabId && t.status === 'running' ? { ...t, status: 'fail' } : t))
+        )
+        return
+      }
       void api.run.start({ ...p, id: runtimeId }, cwd, branch)
     },
     [project, git, active]
@@ -1208,7 +1401,7 @@ function ProjectWorkspace({
           lastRunOut.current = null
           // A run the user started already made its tab. One an agent asked
           // for has none, so make it here — otherwise the run is invisible.
-          if (e.origin === 'agent') {
+          if (isAgentRun(e.origin)) {
             setTabs((prev) =>
               prev.some((t) => t.id === tabId)
                 ? prev
@@ -1234,12 +1427,15 @@ function ProjectWorkspace({
             const cur = prev[pipelineId]?.[branch]
             if (cur) {
               if (cur.runId === e.runId) return prev
-              if (cur.status === 'running' && cur.runId.startsWith('pending:')) {
+              if (
+                cur.status === 'running' &&
+                (cur.runId.startsWith('pending:') || cur.runId.startsWith('agent:'))
+              ) {
                 // Bind the optimistic slot to the real run id.
               } else if (cur.status === 'running') {
                 // A newer live run already owns this slot.
                 return prev
-              } else if (e.origin !== 'agent') {
+              } else if (!isAgentRun(e.origin)) {
                 // Stop/finish already settled the UI — ignore a late start.
                 return prev
               }
@@ -1360,7 +1556,7 @@ function ProjectWorkspace({
           patchTab(tabId, (t) => ({ ...t, status: e.ok ? 'pass' : 'fail' }))
           // Only runs a person started hand off; otherwise an agent that runs
           // a pipeline and fails would spawn another agent, and so on.
-          if (e.origin !== 'agent' && !e.ok && !e.cancelled && e.reportPath && settingsRef.current.autoFix) {
+          if (!isAgentRun(e.origin) && !e.ok && !e.cancelled && e.reportPath && settingsRef.current.autoFix) {
             const runCwd = tabsRef.current.find((t) => t.id === tabId)?.panes[paneId]?.cwd
             if (runCwd) sendToAgentRef.current(branch, runCwd)
           }
@@ -1384,7 +1580,14 @@ function ProjectWorkspace({
     let timer: number | null = null
     const flush = (): void => {
       timer = null
-      for (const event of queue.splice(0)) handle(event)
+      const batch = queue.splice(0)
+      for (const event of batch) {
+        try {
+          handle(event)
+        } catch (error) {
+          console.error('[buildflow] run event failed', event, error)
+        }
+      }
     }
     const off = api.run.onEvent((event: RunEvent) => {
       queue.push(event)
@@ -1477,7 +1680,7 @@ function ProjectWorkspace({
   }, [editor, pipelines, persist])
 
   const stopPipeline = useCallback((id: string, branch?: string) => {
-    runStartGen.current++
+    runStartGen.current[id] = (runStartGen.current[id] ?? 0) + 1
     setRuns((prev) => {
       const byBranch = prev[id]
       if (!byBranch) return prev
@@ -1682,20 +1885,27 @@ function ProjectWorkspace({
           <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 12, padding: '0 14px 12px' }}>
             <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 12 }}>
               {view !== 'terminal' && (
-                <ChatPane
-                  key={`${project.path}:${chatOwner?.id ?? 'chat'}`}
-                  pane={chatPane}
-                  pipelines={pipelines}
-                  view={view}
-                  projectPath={project.path}
-                  defaultProvider={settings.agent}
-                  onMessage={sendAgentMessage}
-                  onCancel={cancelAgent}
-                  onProviderChange={setAgentProvider}
-                  onOpenPipeline={(tabId) => showTerminal(tabId, 'terminal')}
-                  onNewChat={newChat}
-                  composerRef={composerRef}
-                />
+                <ErrorBoundary compact>
+                  <ChatPane
+                    key={`${project.path}:${chatOwner?.id ?? 'chat'}`}
+                    pane={chatPane}
+                    pipelines={pipelines}
+                    view={view}
+                    projectPath={project.path}
+                    defaultProvider={settings.agent}
+                    onMessage={sendAgentMessage}
+                    onCancel={cancelAgent}
+                    onProviderChange={setAgentProvider}
+                    onOpenPipeline={(tabId) => showTerminal(tabId, 'terminal')}
+                    onNewChat={requestNewChat}
+                    clearChatConfirm={clearChatConfirm}
+                    onConfirmClearChat={() => clearChat(true)}
+                    onCancelClearChat={() => setClearChatConfirm(false)}
+                    chatClearedNotice={chatClearedNotice}
+                    onDismissChatCleared={() => setChatClearedNotice(false)}
+                    composerRef={composerRef}
+                  />
+                </ErrorBoundary>
               )}
               {/* Keep terminals mounted in Chat view so PTY scrollback is not lost. */}
               <div
@@ -1910,6 +2120,13 @@ export default function App() {
   }, [activateProject])
 
   useEffect(() => {
+    if (!hydrated.current || !projects.length) return
+    if (!activePath || !projects.some((project) => normPath(project.path) === normPath(activePath))) {
+      setActivePath(projects[0]!.path)
+    }
+  }, [projects, activePath])
+
+  useEffect(() => {
     if (!hydrated.current) return
     void api.session.saveOpenProjects(
       projects.map((project) => project.path),
@@ -1991,7 +2208,7 @@ export default function App() {
       />
       <div style={{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden' }}>
         {projects.map((project) => {
-          const visible = project.path === activePath
+          const visible = normPath(project.path) === normPath(activePath ?? '')
           return (
             <div
               key={project.path}

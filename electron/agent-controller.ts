@@ -53,6 +53,8 @@ interface Task {
   process: ChildProcess | null
   running: boolean
   cancelled: boolean
+  /** Drop from the map once the in-flight cycle settles (cleared chats). */
+  disposeWhenIdle: boolean
   guidance: string[]
   pipelineRuns: PipelineActivity[]
   abort: AbortController
@@ -73,6 +75,10 @@ const BLOCK_MARKER = 'BUILDFLOW_BLOCKED:'
 /** How much trailing output the marker and failure scans keep in memory. */
 const SCAN_WINDOW = 16_384
 const PIPELINES_MARKER = 'BUILDFLOW_PIPELINES:'
+/** Cap stored prompt history so long chats cannot retain unbounded text. */
+const MAX_PROMPT_CHARS = 100_000
+/** Cap pipeline activity retained for prompt context. */
+const MAX_PIPELINE_RUNS = 40
 
 /**
  * Give agents an explicit marker for task-ending blockers. Scanned over what
@@ -90,12 +96,14 @@ function blockedMarker(assistant: string): string | null {
 }
 
 /**
- * Provider-level failures that cannot be repaired inside the task. These
- * surface on stderr rather than in the transcript, so this reads raw output.
+ * Provider-level failures that cannot be repaired inside the task (usage /
+ * session / auth / quota / context banners from the coding CLI). Keep this
+ * narrow: generic OS/HTTP phrases like "permission denied" or "forbidden" show
+ * up in ordinary tool stderr and must not abort the chat.
  */
 function providerFailure(output: string): string | null {
   const match =
-    /(?:authentication failed|not authenticated|permission denied|unauthorized|forbidden|rate limit(?:\s+exceeded)?|(?:usage|session) limit|quota exceeded|insufficient (?:credits|quota)|maximum context length|context length exceeded)/i.exec(
+    /(?:authentication failed|not authenticated|rate[ _-]limit(?:ed|[ _-]?error|\s+(?:exceeded|reached))?|429(?:\s|$)|(?:usage|session) limit|quota exceeded|insufficient (?:credits|quota)|maximum context length|context length exceeded)/i.exec(
       output
     )
   return match ? match[0] : null
@@ -242,6 +250,7 @@ export class AgentController {
       process: null,
       running: true,
       cancelled: false,
+      disposeWhenIdle: false,
       guidance: [],
       pipelineRuns: [],
       abort: new AbortController()
@@ -275,6 +284,15 @@ export class AgentController {
     return { ok: true }
   }
 
+  /** Switch provider on an existing task without sending a message. */
+  setProvider(taskId: string, provider: AiProvider): { ok: boolean; message?: string } {
+    const task = this.tasks.get(taskId)
+    if (!task) return { ok: false, message: 'This agent task is no longer available.' }
+    if (!isAiProvider(provider)) return { ok: false, message: 'Unknown agent provider.' }
+    task.request.provider = provider
+    return { ok: true }
+  }
+
   cancel(taskId: string): void {
     const task = this.tasks.get(taskId)
     if (!task) return
@@ -284,8 +302,25 @@ export class AgentController {
     this.status(task, 'cancelled', 0, 'Cancelled by user')
   }
 
+  /**
+   * Cancel and release the task. Cleared/closed chats must not leave prompt
+   * history and pipeline catalogs resident for the rest of the session.
+   */
+  dispose(taskId: string): void {
+    const task = this.tasks.get(taskId)
+    if (!task) return
+    task.disposeWhenIdle = true
+    task.guidance.length = 0
+    this.cancel(taskId)
+    if (!task.running) this.tasks.delete(taskId)
+  }
+
   cancelAll(): void {
     for (const id of this.tasks.keys()) this.cancel(id)
+  }
+
+  private releaseIfDisposed(task: Task): void {
+    if (task.disposeWhenIdle && !task.running) this.tasks.delete(task.request.id)
   }
 
   private status(task: Task, status: AgentTaskStatus, attempt: number, message: string): void {
@@ -298,7 +333,8 @@ export class AgentController {
 
   /** Append a user follow-up and start a new cycle with the full task history. */
   private followUp(task: Task, userText: string): void {
-    task.request.prompt = `${task.request.prompt}\n\nFollow-up: ${userText}`
+    const next = `${task.request.prompt}\n\nFollow-up: ${userText}`
+    task.request.prompt = next.length > MAX_PROMPT_CHARS ? next.slice(-MAX_PROMPT_CHARS) : next
     this.resume(task, userText)
   }
 
@@ -314,6 +350,10 @@ export class AgentController {
   ): void {
     task.running = false
     this.status(task, status, attempt, message)
+    if (task.disposeWhenIdle) {
+      this.releaseIfDisposed(task)
+      return
+    }
     if (!task.guidance.length) return
     const text = task.guidance.splice(0).join('\n')
     this.followUp(task, text)
@@ -336,6 +376,10 @@ export class AgentController {
    */
   private settleCancel(task: Task): void {
     task.running = false
+    if (task.disposeWhenIdle) {
+      this.releaseIfDisposed(task)
+      return
+    }
     if (!task.cancelled || !task.guidance.length) return
     const text = task.guidance.splice(0).join('\n')
     this.followUp(task, text)
@@ -444,6 +488,7 @@ export class AgentController {
           }
           task.running = false
           this.status(task, 'completed', attempt, 'No validation needed')
+          this.releaseIfDisposed(task)
           return
         }
 
@@ -458,6 +503,9 @@ export class AgentController {
             startedAt: Date.now()
           }
           task.pipelineRuns.push(activity)
+          if (task.pipelineRuns.length > MAX_PIPELINE_RUNS) {
+            task.pipelineRuns.splice(0, task.pipelineRuns.length - MAX_PIPELINE_RUNS)
+          }
           this.pipelineStatus(task, activity)
           let result: PipelineRunResult
           try {
@@ -472,6 +520,7 @@ export class AgentController {
             activity.status = 'failed'
             activity.finishedAt = Date.now()
             activity.durationMs = activity.finishedAt - activity.startedAt
+            if (activity.runId === undefined) activity.runId = `error:${activity.startedAt}`
             this.pipelineStatus(task, activity)
             throw error
           }
@@ -487,6 +536,7 @@ export class AgentController {
           if (result.cancelled) {
             task.running = false
             this.status(task, 'needs-attention', attempt, 'Validation stopped unexpectedly')
+            this.releaseIfDisposed(task)
             return
           }
           if (!result.ok) failures.push({ pipeline, result })
@@ -499,6 +549,7 @@ export class AgentController {
           }
           task.running = false
           this.status(task, 'completed', attempt, `${names} passed`)
+          this.releaseIfDisposed(task)
           return
         }
 
@@ -526,6 +577,7 @@ export class AgentController {
       }
       task.running = false
       this.status(task, 'needs-attention', maxAttempts, `Validation still fails after ${maxAttempts} attempts`)
+      this.releaseIfDisposed(task)
     } catch (error) {
       if (task.cancelled) {
         this.settleCancel(task)
@@ -539,6 +591,7 @@ export class AgentController {
         attempt,
         `Agent stopped: ${error instanceof Error ? error.message : String(error)}`
       )
+      this.releaseIfDisposed(task)
     }
   }
 

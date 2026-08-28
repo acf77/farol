@@ -8,6 +8,17 @@ export function stripAnsi(s: string): string {
 }
 
 /**
+ * Grow a string while keeping only the trailing `max` characters.
+ * Used for live pipeline/agent buffers so a verbose run cannot OOM the process.
+ */
+export function appendTail(prev: string, chunk: string, max: number): string {
+  if (max <= 0) return ''
+  if (chunk.length >= max) return chunk.slice(-max)
+  const next = prev + chunk
+  return next.length > max ? next.slice(-max) : next
+}
+
+/**
  * Flatten captured PTY output to what the screen would actually show.
  *
  * A carriage return means "back to column 0", so anything before the last one

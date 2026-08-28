@@ -394,7 +394,7 @@ export default function Toolbar({
             <Checkbox
               checked={settings.autoFix}
               onChange={(autoFix) => onSettings({ ...settings, autoFix })}
-              title="On a failed step, open the agent in a terminal with the failure report"
+              title="On a failed step, send the failure report to Chat"
               style={{ fontSize: 11.5, color: C.textMuted }}
             >
               Send failures to the agent

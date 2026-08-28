@@ -305,3 +305,13 @@ export function RetryIcon({ size = 15, color = '#7f889a' }: IconProps) {
     </svg>
   )
 }
+
+/** Clear the branch chat — bubble with a minus, not “add another chat”. */
+export function ClearChatIcon({ size = 14, color = '#8f98a8' }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.4}>
+      <path d="M2.5 4.2A1.7 1.7 0 0 1 4.2 2.5h7.6A1.7 1.7 0 0 1 13.5 4.2v4.6a1.7 1.7 0 0 1-1.7 1.7H7l-3.2 2.6v-2.6a1.3 1.3 0 0 1-1.3-1.3Z" />
+      <path d="M5.5 8h5" />
+    </svg>
+  )
+}

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { plainText, stripAnsi } from './terminal'
+import { appendTail, plainText, stripAnsi } from './terminal'
+
+describe('appendTail', () => {
+  it('keeps only the trailing window', () => {
+    expect(appendTail('abc', 'defgh', 4)).toBe('efgh')
+    expect(appendTail('', 'hello', 3)).toBe('llo')
+    expect(appendTail('hi', '!', 10)).toBe('hi!')
+  })
+})
 
 describe('plainText', () => {
   it('drops ANSI colour and OSC sequences', () => {

@@ -4,3 +4,4 @@ dist/
 .DS_Store
 *.log
 .buildflow/last-failure.md
+.buildflow/attachments/

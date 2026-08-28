@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { GitInfo, Project } from '@shared/types'
 import { groupOpenProjects } from '@shared/project-groups'
 import { C, UI } from '../theme'
-import { BranchIcon, CaretLeft, CaretRight, ChevronDown, ChevronRight, ProjectIcon } from './icons'
+import { BranchIcon, CaretLeft, CaretRight, ChevronDown, ChevronRight, ClearChatIcon, ProjectIcon } from './icons'
 
 const api = window.buildflow
 
@@ -13,24 +13,24 @@ const noDrag = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
 interface Props {
   projects: Project[]
   activePath: string | null
-  /** Project paths whose managed chat agent is currently working. */
+  /** Project paths with active agent or pipeline work. */
   busyPaths?: ReadonlySet<string>
   onSelect: (path: string) => void
   onClose: (path: string) => void
   /** Open the branch/worktree dialog for a project in this repo group. */
   onNewBranch: (projectPath: string) => void
-  /** Select this checkout and open a new chat. */
+  /** Select this checkout and clear its chat to start fresh. */
   onNewChat: (projectPath: string) => void
   collapsed: boolean
   onSetCollapsed: (collapsed: boolean) => void
 }
 
-/** Status dot for a checkout — pulses green while that project's agent is running. */
+/** Status dot for a checkout — pulses green while that project has work in flight. */
 function ChatActivityDot({ active, busy }: { active: boolean; busy: boolean }) {
   return (
     <span
-      title={busy ? 'Agent running' : undefined}
-      aria-label={busy ? 'Agent running' : undefined}
+      title={busy ? 'Work in progress' : undefined}
+      aria-label={busy ? 'Work in progress' : undefined}
       style={{
         width: 7,
         height: 7,
@@ -248,7 +248,7 @@ export default function ProjectRail({
                   onSelect(project.path)
                   onSetCollapsed(false)
                 }}
-                title={busy ? `${project.display} — agent running` : project.display}
+                title={busy ? `${project.display} — work in progress` : project.display}
                 style={{
                   width: 8,
                   height: 8,
@@ -433,7 +433,7 @@ export default function ProjectRail({
                       role="button"
                       tabIndex={0}
                       className="bf-focus"
-                      title={busy ? `${project.display} — agent running` : project.display}
+                      title={busy ? `${project.display} — work in progress` : project.display}
                       onClick={() => onSelect(project.path)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
@@ -488,7 +488,8 @@ export default function ProjectRail({
                       <button
                         type="button"
                         className="bf-icon-btn"
-                        title="New chat"
+                        title="Clear this branch's chat (does not create a second chat)"
+                        aria-label="Clear this branch's chat"
                         onClick={(e) => {
                           e.stopPropagation()
                           onNewChat(project.path)
@@ -500,15 +501,13 @@ export default function ProjectRail({
                           border: 0,
                           background: 'transparent',
                           color: C.textMuted,
-                          fontSize: 15,
-                          lineHeight: 1,
                           cursor: 'pointer',
                           display: 'grid',
                           placeItems: 'center',
                           opacity: active ? 1 : 0.7
                         }}
                       >
-                        +
+                        <ClearChatIcon size={13} color={C.textMuted} />
                       </button>
                       <button
                         type="button"

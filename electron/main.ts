@@ -15,13 +15,13 @@ import { ShellManager } from './shell'
 import { HeadWatcher, addWorktree, checkout, info as gitInfo } from './git'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings } from './store'
-import { listProjectFiles } from './files'
+import { listProjectFiles, saveChatAttachment } from './files'
 import { AppUpdater } from './update'
 import { applyGlass, glassAvailable } from './glass'
 import { mergeMcpConfig, MCP_CONFIG_REL_PATHS, type McpServerEntry } from '../shared/mcp-config'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
 import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
-import { plainText } from '../shared/terminal'
+import { appendTail, plainText } from '../shared/terminal'
 import { AgentController } from './agent-controller'
 import { scopedRuntimeId } from '../shared/runtime'
 import net from 'net'
@@ -72,6 +72,15 @@ function createWindow(): void {
     }
   })
 
+  const loadRenderer = (): void => {
+    if (!win || win.isDestroyed()) return
+    if (process.env.ELECTRON_RENDERER_URL) {
+      void win.loadURL(process.env.ELECTRON_RENDERER_URL)
+    } else {
+      void win.loadFile(path.join(__dirname, '../renderer/index.html'))
+    }
+  }
+
   win.on('ready-to-show', () => win?.show())
   win.on('closed', () => {
     win = null
@@ -83,6 +92,17 @@ function createWindow(): void {
     if (/^https?:\/\//i.test(url)) void electronShell.openExternal(url)
     return { action: 'deny' }
   })
+  win.webContents.on('will-navigate', (event) => {
+    event.preventDefault()
+  })
+  // OOM / GPU faults kill the renderer and leave an empty frame — reload it.
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[buildflow] renderer process gone', details)
+    loadRenderer()
+  })
+  win.webContents.on('unresponsive', () => {
+    console.error('[buildflow] renderer unresponsive')
+  })
 
   if (wantGlass) {
     win.webContents.once('did-finish-load', () => {
@@ -92,11 +112,7 @@ function createWindow(): void {
     })
   }
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void win.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'))
-  }
+  loadRenderer()
 }
 
 /**
@@ -236,7 +252,10 @@ function runForAgent(
       onEvent: (e) => {
         if (e.pipelineId !== runtimePipeline.id || e.origin !== 'agent') return
         if (e.kind === 'output') {
-          output.set(e.nodeId, (output.get(e.nodeId) ?? '') + plainText(e.chunk))
+          output.set(
+            e.nodeId,
+            appendTail(output.get(e.nodeId) ?? '', plainText(e.chunk), AGENT_STEP_OUTPUT_LIMIT)
+          )
         } else if (e.kind === 'step-end') {
           status.set(e.nodeId, { label: e.skipped ? 'SKIP' : e.ok ? 'PASS' : 'FAIL', code: e.code })
         } else if (e.kind === 'end') {
@@ -331,8 +350,13 @@ function startBridge(projectPath: string): void {
   }
   const server = net.createServer((socket) => {
     let buffer = ''
+    const BRIDGE_BUFFER_LIMIT = 256 * 1024
     socket.on('data', (chunk) => {
       buffer += chunk.toString()
+      if (buffer.length > BRIDGE_BUFFER_LIMIT) {
+        socket.destroy()
+        return
+      }
       const { lines, rest } = takeLines(buffer)
       buffer = rest
       for (const line of lines) {
@@ -424,6 +448,14 @@ function registerIpc(): void {
     listProjectFiles(projectPath, typeof query === 'string' ? query : '')
   )
 
+  ipcMain.handle(
+    'project:saveAttachment',
+    (_e, projectPath: string, name: string, data: ArrayBuffer) => {
+      if (typeof projectPath !== 'string' || typeof name !== 'string' || !data) return null
+      return saveChatAttachment(projectPath, name, Buffer.from(data))
+    }
+  )
+
   ipcMain.handle('session:last', () => lastProjectPath())
   ipcMain.handle('session:openProjects', () => loadOpenProjects())
   ipcMain.handle(
@@ -485,7 +517,13 @@ function registerIpc(): void {
     (_e, taskId: string, text: string, provider?: AgentTaskRequest['provider']) =>
       agents.message(taskId, text, provider)
   )
+  ipcMain.handle(
+    'agent:setProvider',
+    (_e, taskId: string, provider: AgentTaskRequest['provider']) =>
+      agents.setProvider(taskId, provider)
+  )
   ipcMain.handle('agent:cancel', (_e, taskId: string) => agents.cancel(taskId))
+  ipcMain.handle('agent:dispose', (_e, taskId: string) => agents.dispose(taskId))
 
   ipcMain.handle('settings:load', () => loadSettings())
   ipcMain.handle('settings:save', (_e, settings: AppSettings) => saveSettings(settings))

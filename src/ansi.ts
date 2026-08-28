@@ -82,6 +82,9 @@ export interface TermState {
 
 const BLANK: Cell = { ch: ' ' }
 
+/** Soft cap on cells per row — unbounded lines turn each byte into a heap object. */
+export const MAX_COLS = 512
+
 export function emptyTerm(): TermState {
   return { rows: [[]], sgr: {}, pending: '', indent: '', col: 0, altScreen: false }
 }
@@ -210,6 +213,7 @@ export function write(state: TermState, chunk: string): TermState {
 
   /** Write one character at the cursor, padding with blanks to reach it. */
   const put = (ch: string): void => {
+    if (col >= MAX_COLS) return
     while (cur.length < col) cur.push({ ...BLANK })
     cur[col] = { ch, color: sgr.color, bold: sgr.bold, dim: sgr.dim }
     col++
@@ -259,19 +263,19 @@ export function write(state: TermState, chunk: string): TermState {
           sgr = applySgr(sgr, body)
           break
         case 'C': // cursor forward
-          col += Math.max(1, n ?? 1)
+          col = Math.min(MAX_COLS, col + Math.max(1, n ?? 1))
           break
         case 'D': // cursor back
           col = Math.max(0, col - Math.max(1, n ?? 1))
           break
         case 'G': // cursor to column
         case '`':
-          col = Math.max(0, (n ?? 1) - 1)
+          col = Math.max(0, Math.min(MAX_COLS, (n ?? 1) - 1))
           break
         case 'H': // cursor position — only the column applies to a line buffer
         case 'f': {
           const c = Number.isFinite(nums[1]) ? nums[1] : 1
-          col = Math.max(0, c - 1)
+          col = Math.max(0, Math.min(MAX_COLS, c - 1))
           break
         }
         case 'K': // erase in line

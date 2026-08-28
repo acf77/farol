@@ -17,7 +17,8 @@ export function stripControlMarkers(text: string): string {
     .trimEnd()
 }
 
-function inline(text: string, keyPrefix: string): ReactNode[] {
+function inline(text: string, keyPrefix: string, depth = 0): ReactNode[] {
+  if (depth > 24) return [text]
   const nodes: ReactNode[] = []
   // Inline code, bold, italic, links — processed left-to-right so nested
   // markers inside a code span stay literal.
@@ -40,13 +41,13 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
     } else if (bold) {
       nodes.push(
         <strong key={key} style={{ fontWeight: 600, color: '#eef1f6' }}>
-          {inline(bold.slice(2, -2), key)}
+          {inline(bold.slice(2, -2), key, depth + 1)}
         </strong>
       )
     } else if (italic) {
       nodes.push(
         <em key={key} style={{ fontStyle: 'italic' }}>
-          {inline(italic.slice(1, -1), key)}
+          {inline(italic.slice(1, -1), key, depth + 1)}
         </em>
       )
     } else if (link) {
@@ -273,6 +274,13 @@ export function renderMarkdown(source: string): ReactNode[] {
 }
 
 export function MarkdownBody({ text }: { text: string }) {
+  let body: ReactNode
+  try {
+    body = renderMarkdown(typeof text === 'string' ? text : String(text ?? ''))
+  } catch (error) {
+    console.error('[buildflow] markdown render failed', error)
+    body = typeof text === 'string' ? text : String(text ?? '')
+  }
   return (
     <div
       className="bf-md"
@@ -287,7 +295,7 @@ export function MarkdownBody({ text }: { text: string }) {
         userSelect: 'text'
       }}
     >
-      {renderMarkdown(text)}
+      {body}
     </div>
   )
 }

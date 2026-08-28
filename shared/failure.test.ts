@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { REPORT_OUTPUT_LIMIT, failureReport, gitignoreWithEntry } from './failure'
-import { aiFixCommand } from './ai'
+import { aiFixCommand, aiFixPrompt } from './ai'
 import { sanitizeSettings } from './settings'
 
 const base = {
@@ -98,6 +98,13 @@ describe('gitignoreWithEntry', () => {
   it('is a no-op once the entry is there', () => {
     expect(gitignoreWithEntry('last-failure.md\n', 'last-failure.md')).toBeNull()
     expect(gitignoreWithEntry('a\n  last-failure.md  \nb\n', 'last-failure.md')).toBeNull()
+  })
+})
+
+describe('aiFixPrompt', () => {
+  it('points at the report a failed run left', () => {
+    expect(aiFixPrompt()).toContain('.buildflow/last-failure.md')
+    expect(aiFixPrompt()).toMatch(/just failed/)
   })
 })
 

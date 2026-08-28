@@ -27,6 +27,8 @@ const api: BuildFlowApi = {
     recents: () => ipcRenderer.invoke('project:recents'),
     openPath: (p: string) => ipcRenderer.invoke('project:openPath', p),
     listFiles: (projectPath, query) => ipcRenderer.invoke('project:listFiles', projectPath, query),
+    saveAttachment: (projectPath, name, data) =>
+      ipcRenderer.invoke('project:saveAttachment', projectPath, name, data),
     onOpened: (cb) => on<Project>('project:opened', cb)
   },
   session: {
@@ -70,7 +72,10 @@ const api: BuildFlowApi = {
     start: (request) => ipcRenderer.invoke('agent:start', request),
     message: (taskId, text, provider) =>
       ipcRenderer.invoke('agent:message', taskId, text, provider),
+    setProvider: (taskId, provider) =>
+      ipcRenderer.invoke('agent:setProvider', taskId, provider),
     cancel: (taskId) => ipcRenderer.invoke('agent:cancel', taskId),
+    dispose: (taskId) => ipcRenderer.invoke('agent:dispose', taskId),
     onEvent: (cb) => on<AgentTaskEvent>('agent:event', cb)
   },
   settings: {

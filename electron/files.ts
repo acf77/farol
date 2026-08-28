@@ -27,6 +27,11 @@ const SKIP = new Set([
 ])
 
 const MAX_FILES = 400
+const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
+/** Reject oversized drops before they cross IPC. */
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+const ATTACHMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+const ATTACHMENTS_IGNORE = '.buildflow/attachments/'
 
 export function listProjectFiles(root: string, query = ''): string[] {
   if (typeof root !== 'string' || !root || !fs.existsSync(root)) return []
@@ -59,4 +64,56 @@ export function listProjectFiles(root: string, query = ''): string[] {
 
   walk(root)
   return out
+}
+
+function ensureAttachmentsIgnored(root: string): void {
+  const ignorePath = path.join(root, '.gitignore')
+  try {
+    const existing = fs.existsSync(ignorePath) ? fs.readFileSync(ignorePath, 'utf8') : ''
+    if (existing.split(/\r?\n/).some((line) => line.trim() === ATTACHMENTS_IGNORE)) return
+    const next = existing.endsWith('\n') || !existing ? existing : `${existing}\n`
+    fs.writeFileSync(ignorePath, `${next}${ATTACHMENTS_IGNORE}\n`)
+  } catch {
+    // Best effort — the project may be read-only.
+  }
+}
+
+function pruneOldAttachments(dir: string): void {
+  const cutoff = Date.now() - ATTACHMENT_MAX_AGE_MS
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    if (!entry.isFile()) continue
+    const full = path.join(dir, entry.name)
+    try {
+      const stat = fs.statSync(full)
+      if (stat.mtimeMs < cutoff) fs.unlinkSync(full)
+    } catch {
+      // Ignore stale entries we cannot read or remove.
+    }
+  }
+}
+
+/** Save a dropped chat image under `.buildflow/attachments/` and return its absolute path. */
+export function saveChatAttachment(root: string, name: string, data: Buffer): string | null {
+  if (typeof root !== 'string' || !root || !fs.existsSync(root)) return null
+  if (data.length > MAX_ATTACHMENT_BYTES) return null
+  const ext = path.extname(name).toLowerCase()
+  if (!IMAGE_EXT.has(ext)) return null
+  const safe = path.basename(name).replace(/[^a-zA-Z0-9._-]/g, '_') || `image${ext || '.png'}`
+  const dir = path.join(root, '.buildflow', 'attachments')
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+    ensureAttachmentsIgnored(root)
+    pruneOldAttachments(dir)
+    const file = path.join(dir, `${Date.now()}-${safe}`)
+    fs.writeFileSync(file, data)
+    return file
+  } catch {
+    return null
+  }
 }

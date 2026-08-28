@@ -232,6 +232,12 @@ export interface BuildFlowApi {
     openPath(path: string): Promise<Project | null>
     /** Relative paths under the project root, filtered by an optional query. */
     listFiles(projectPath: string, query?: string): Promise<string[]>
+    /** Persist a dropped chat image; returns the absolute path on disk. */
+    saveAttachment(
+      projectPath: string,
+      name: string,
+      data: ArrayBuffer
+    ): Promise<string | null>
     /** Fires when a project is opened from the application menu. */
     onOpened(cb: (p: Project) => void): () => void
   }
@@ -296,7 +302,13 @@ export interface BuildFlowApi {
       text: string,
       provider?: AiProvider
     ): Promise<{ ok: boolean; message?: string }>
+    setProvider(
+      taskId: string,
+      provider: AiProvider
+    ): Promise<{ ok: boolean; message?: string }>
     cancel(taskId: string): Promise<void>
+    /** Cancel and drop the task so cleared chats cannot retain prompt history. */
+    dispose(taskId: string): Promise<void>
     onEvent(cb: (e: AgentTaskEvent) => void): () => void
   }
   settings: {

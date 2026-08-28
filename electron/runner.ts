@@ -13,7 +13,8 @@ import type {
 } from '../shared/types'
 import { aiCommand, normalizeAi } from '../shared/ai'
 import { FAILURE_REPORT_REL, failureReport, gitignoreWithEntry } from '../shared/failure'
-import { plainText } from '../shared/terminal'
+import { REPORT_OUTPUT_LIMIT } from '../shared/failure'
+import { appendTail, plainText } from '../shared/terminal'
 import { exitCodeFromSignal } from '../shared/exit-code'
 import { parseVerdict, verdictPromptSuffix } from '../shared/verdict'
 import {
@@ -34,6 +35,11 @@ import { shellFamily } from './protocol'
  */
 
 const CONTEXT_LIMIT = 12000
+/** Live per-step stdout kept for context, failure reports, and settled results. */
+const LIVE_OUTPUT_LIMIT = Math.max(CONTEXT_LIMIT, REPORT_OUTPUT_LIMIT)
+/** Trailing window for AI verdict parsing — only the end of the stream matters. */
+const VERDICT_SCAN_LIMIT = 16_384
+const STEP_RESULT_LIMIT = 4000
 
 function extraBinDirs(): string[] {
   const home = os.homedir()
@@ -315,7 +321,7 @@ export class PipelineRunner {
     let failedCode = 1
 
     const emitOut = (nodeId: string, chunk: string): void => {
-      outputs[nodeId] = (outputs[nodeId] || '') + plainText(chunk)
+      outputs[nodeId] = appendTail(outputs[nodeId] || '', plainText(chunk), LIVE_OUTPUT_LIMIT)
       this.emit({
         kind: 'output',
         runId,
@@ -444,7 +450,7 @@ export class PipelineRunner {
         nodeId: node.id,
         ok,
         code,
-        output: (outputs[node.id] || '').slice(-4000)
+        output: (outputs[node.id] || '').slice(-STEP_RESULT_LIMIT)
       })
       this.emit({
         kind: 'step-end',
@@ -638,7 +644,7 @@ export class PipelineRunner {
       }
       state.aiProcs.set(node.id, proc)
       proc.onData((chunk) => {
-        collected += plainText(chunk)
+        collected = appendTail(collected, plainText(chunk), VERDICT_SCAN_LIMIT)
         onChunk(chunk)
       })
       proc.onExit(({ exitCode, signal }) => {

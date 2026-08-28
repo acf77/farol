@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AiProvider, Pipeline } from '@shared/types'
-import { AI_LABELS, AI_PROVIDERS } from '@shared/ai'
+import { AI_LABELS, AI_PROVIDERS, normalizeAi } from '@shared/ai'
 import type { AgentMessage, AgentPane, View } from '../types'
 import { C, MONO, PANE } from '../theme'
 import { MarkdownBody, stripControlMarkers } from '../markdown'
+import { MessageErrorBoundary } from '../ErrorBoundary'
 import {
   CheckIcon,
   ChevronDown,
   CircleIcon,
   ClipIcon,
+  ClearChatIcon,
   CopyIcon,
-  RetryIcon,
   SendIcon,
   Sparkle,
   SparkleLarge,
@@ -26,13 +27,25 @@ interface Props {
   projectPath: string
   /** Settings default used when no chat pane exists yet. */
   defaultProvider: AiProvider
-  onMessage: (text: string) => void
+  onMessage: (text: string, provider: AiProvider) => void
   onCancel: () => void
   onProviderChange: (provider: AiProvider) => void
   onOpenPipeline: (tabId: string) => void
   onNewChat: () => void
+  clearChatConfirm?: boolean
+  onConfirmClearChat?: () => void
+  onCancelClearChat?: () => void
+  /** Shown briefly after the user clears — explains the old chat was removed, not hidden. */
+  chatClearedNotice?: boolean
+  onDismissChatCleared?: () => void
   /** Focus hook so ⌘K can put the caret in the composer. */
   composerRef?: React.RefObject<HTMLTextAreaElement>
+}
+
+interface PendingAttachment {
+  name: string
+  path: string
+  previewUrl: string
 }
 
 const busy = new Set(['working', 'validating', 'repairing'])
@@ -133,6 +146,10 @@ function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool']>; ti
   )
 }
 
+function messageText(text: unknown): string {
+  return typeof text === 'string' ? text : String(text ?? '')
+}
+
 function UserMark() {
   return (
     <div
@@ -159,9 +176,19 @@ export default function ChatPane({
   onProviderChange,
   onOpenPipeline,
   onNewChat,
+  clearChatConfirm,
+  onConfirmClearChat,
+  onCancelClearChat,
+  chatClearedNotice,
+  onDismissChatCleared,
   composerRef
 }: Props) {
   const [text, setText] = useState('')
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const [savingAttachments, setSavingAttachments] = useState(0)
+  const [dragOver, setDragOver] = useState(false)
+  const [provider, setProvider] = useState<AiProvider>(normalizeAi(pane?.provider ?? defaultProvider))
   const [modelOpen, setModelOpen] = useState(false)
   const [agentMenuPos, setAgentMenuPos] = useState<{ left: number; bottom: number } | null>(null)
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null)
@@ -185,8 +212,12 @@ export default function ChatPane({
   const canChangeProvider = true
   const messages = pane?.messages ?? []
   const availableCount = pipelines.filter((p) => p.nodes.length).length
-  const canSend = !!text.trim() && availableCount > 0
-  const provider = pane?.provider ?? defaultProvider
+  const canSend =
+    (!!text.trim() || attachments.length > 0) && availableCount > 0 && savingAttachments === 0
+
+  useEffect(() => {
+    if (pane?.provider) setProvider(normalizeAi(pane.provider))
+  }, [pane?.provider])
   const showSuggestions = messages.length < 3 && availableCount > 0
 
   // Follow the stream only while the reader is already at the bottom, so
@@ -308,19 +339,67 @@ export default function ChatPane({
 
   const sendText = (clean: string): void => {
     if (!clean) return
-    onMessage(clean)
+    onMessage(clean, provider)
     const history = historyRef.current
     if (history[history.length - 1] !== clean) history.push(clean)
     historyIndexRef.current = null
     draftRef.current = ''
   }
 
+  const buildMessage = (body: string, paths: string[]): string => {
+    const clean = body.trim()
+    if (!paths.length) return clean
+    const lines = paths.map((p) => `- ${p}`).join('\n')
+    const block = `Attached images:\n${lines}`
+    return clean ? `${clean}\n\n${block}` : block
+  }
+
+  const addImageFiles = (files: FileList | File[]): void => {
+    const images = [...files].filter((file) => file.type.startsWith('image/'))
+    if (!images.length) {
+      setAttachmentError('Only image files can be attached.')
+      return
+    }
+    setAttachmentError(null)
+    setSavingAttachments((count) => count + 1)
+    void (async () => {
+      try {
+        const next: PendingAttachment[] = []
+        for (const file of images) {
+          const buffer = await file.arrayBuffer()
+          const path = await window.buildflow.project.saveAttachment(projectPath, file.name, buffer)
+          if (!path) {
+            setAttachmentError(`Could not attach ${file.name}.`)
+            continue
+          }
+          next.push({ name: file.name, path, previewUrl: URL.createObjectURL(file) })
+        }
+        if (next.length) setAttachments((prev) => [...prev, ...next])
+      } catch {
+        setAttachmentError('Could not save the attachment.')
+      } finally {
+        setSavingAttachments((count) => count - 1)
+      }
+    })()
+  }
+
+  const removeAttachment = (path: string): void => {
+    setAttachments((prev) => {
+      const item = prev.find((attachment) => attachment.path === path)
+      if (item) URL.revokeObjectURL(item.previewUrl)
+      return prev.filter((attachment) => attachment.path !== path)
+    })
+  }
+
   const send = (): void => {
-    const clean = text.trim()
+    const paths = attachments.map((attachment) => attachment.path)
+    const clean = buildMessage(text, paths)
     if (!clean) return
     sendText(clean)
     setText('')
     setMention(null)
+    for (const attachment of attachments) URL.revokeObjectURL(attachment.previewUrl)
+    setAttachments([])
   }
 
   const navigateHistory = (direction: 'up' | 'down', textarea: HTMLTextAreaElement): boolean => {
@@ -351,8 +430,263 @@ export default function ChatPane({
     return true
   }
 
+  const renderTurn = (m: AgentMessage, i: number) => {
+    if (m.role === 'user') {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 7 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
+            <div
+              style={{
+                maxWidth: 430,
+                padding: '11px 15px',
+                background: '#1d2637',
+                border: '1px solid #2a3446',
+                borderRadius: 12,
+                fontSize: 13.5,
+                lineHeight: 1.5,
+                whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
+                userSelect: 'text'
+              }}
+            >
+              {messageText(m.text)}
+            </div>
+            <UserMark />
+          </div>
+          {m.at && (
+            <span style={{ fontSize: 11, color: '#6d7686', marginRight: 39 }}>{fmtClock(m.at)}</span>
+          )}
+        </div>
+      )
+    }
+
+    if (m.tool) return <ToolCard tool={m.tool} tight={!!messages[i - 1]?.tool} />
+
+    const pc = m.pipeline
+    const text = messageText(m.text)
+    return (
+      <div style={{ display: 'flex', gap: 13, alignItems: 'flex-start' }}>
+        <AgentMark />
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 15 }}>
+          {pc ? (
+            <div
+              style={{
+                border: '1px solid #242c3b',
+                borderRadius: 11,
+                overflow: 'hidden',
+                background: '#12171f'
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '11px 14px',
+                  borderBottom: '1px solid #212938'
+                }}
+              >
+                <ToolIcon />
+                <span style={{ fontFamily: MONO, fontSize: 12, color: '#c3cad6' }}>
+                  pipeline: {pc.pipelineName}
+                </span>
+                {pc.status === 'running' ? (
+                  <Spinner />
+                ) : pc.status === 'passed' ? (
+                  <CheckIcon />
+                ) : (
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: pc.status === 'failed' ? C.red : C.faint
+                    }}
+                  >
+                    {pc.status === 'failed' ? '✗' : '–'}
+                  </span>
+                )}
+                <span style={{ flex: 1 }} />
+                <span
+                  className="bf-linkish"
+                  onClick={() => onOpenPipeline(pc.tabId)}
+                  style={{ fontSize: 11.5, color: '#7f889a', cursor: 'pointer' }}
+                  title="Jump to this run's terminal tab"
+                >
+                  Open in terminal
+                </span>
+              </div>
+              <div
+                style={{
+                  padding: '13px 15px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                  fontFamily: MONO,
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  color: '#8b94a3',
+                  userSelect: 'text'
+                }}
+              >
+                {text}
+              </div>
+            </div>
+          ) : m.role === 'assistant' ? (
+            <MarkdownBody text={text} />
+          ) : (
+            <div
+              style={{
+                fontSize: 13.5,
+                lineHeight: 1.6,
+                color: '#8b94a3',
+                textWrap: 'pretty',
+                whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
+                userSelect: 'text'
+              }}
+            >
+              {text}
+            </div>
+          )}
+
+          {m.role === 'assistant' && i === messages.length - 1 && !isBusy && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#7f889a' }}>
+              <CircleIcon />
+              <span style={{ fontSize: 12 }}>{AI_LABELS[provider]}</span>
+              <span style={{ flex: 1 }} />
+              <div style={{ display: 'flex', gap: 16 }}>
+                <span title="Copy" onClick={() => void navigator.clipboard?.writeText(stripControlMarkers(text))}>
+                  <CopyIcon />
+                </span>
+                <span title="Good response">
+                  <ThumbIcon />
+                </span>
+                <span title="Clear chat and start fresh" onClick={onNewChat}>
+                  <ClearChatIcon size={15} />
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ ...PANE, flex: view === 'split' ? '1 1 50%' : '1 1 100%', overflow: 'visible' }}>
+      {clearChatConfirm && (
+        <div
+          role="alertdialog"
+          aria-labelledby="clear-chat-title"
+          aria-describedby="clear-chat-desc"
+          style={{
+            flex: 'none',
+            margin: '12px 34px 0',
+            maxWidth: 680,
+            marginLeft: 'auto',
+            marginRight: 'auto',
+            width: '100%',
+            boxSizing: 'border-box',
+            display: 'flex',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '10px 14px',
+            padding: '12px 14px',
+            background: '#1a1520',
+            border: '1px solid #3d3040',
+            borderRadius: 11
+          }}
+        >
+          <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+            <div id="clear-chat-title" style={{ fontSize: 13.5, fontWeight: 500, color: C.textSoft }}>
+              Clear this conversation?
+            </div>
+            <div id="clear-chat-desc" style={{ fontSize: 12.5, lineHeight: 1.45, color: C.textMuted, marginTop: 4 }}>
+              This branch keeps one chat at a time. Clearing permanently deletes the current messages
+              and shows a blank composer — it does not hide the old chat or open a second one.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flex: 'none' }}>
+            <button
+              type="button"
+              className="bf-focus"
+              onClick={onCancelClearChat}
+              style={{
+                border: '1px solid #2a3446',
+                background: 'transparent',
+                color: C.textMuted,
+                borderRadius: 8,
+                padding: '6px 12px',
+                fontSize: 12.5,
+                cursor: 'pointer'
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="bf-focus"
+              onClick={onConfirmClearChat}
+              style={{
+                border: 'none',
+                background: 'rgba(224,123,123,0.16)',
+                color: C.red,
+                borderRadius: 8,
+                padding: '6px 12px',
+                fontSize: 12.5,
+                fontWeight: 500,
+                cursor: 'pointer'
+              }}
+            >
+              Clear chat
+            </button>
+          </div>
+        </div>
+      )}
+      {chatClearedNotice && !messages.length && (
+        <div
+          role="status"
+          style={{
+            flex: 'none',
+            margin: '12px 34px 0',
+            maxWidth: 680,
+            marginLeft: 'auto',
+            marginRight: 'auto',
+            width: '100%',
+            boxSizing: 'border-box',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '10px 14px',
+            background: '#141922',
+            border: '1px solid #283040',
+            borderRadius: 10
+          }}
+        >
+          <span style={{ flex: 1, fontSize: 12.5, lineHeight: 1.45, color: C.textMuted }}>
+            Conversation cleared. Previous messages were removed from this branch — switch to another
+            branch in the sidebar to see its chat.
+          </span>
+          <button
+            type="button"
+            className="bf-focus"
+            onClick={onDismissChatCleared}
+            aria-label="Dismiss"
+            style={{
+              flex: 'none',
+              border: 'none',
+              background: 'transparent',
+              color: C.textMuted,
+              fontSize: 16,
+              lineHeight: 1,
+              cursor: 'pointer',
+              padding: '2px 4px'
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
       <div
         ref={scrollRef}
         onScroll={(e) => {
@@ -407,153 +741,9 @@ export default function ChatPane({
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 26, marginTop: 40 }}>
-            {messages.map((m, i) => {
-              if (m.role === 'user') {
-                return (
-                  <div
-                    key={i}
-                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 7 }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
-                      <div
-                        style={{
-                          maxWidth: 430,
-                          padding: '11px 15px',
-                          background: '#1d2637',
-                          border: '1px solid #2a3446',
-                          borderRadius: 12,
-                          fontSize: 13.5,
-                          lineHeight: 1.5,
-                          whiteSpace: 'pre-wrap',
-                          overflowWrap: 'anywhere',
-                          userSelect: 'text'
-                        }}
-                      >
-                        {m.text}
-                      </div>
-                      <UserMark />
-                    </div>
-                    {m.at && (
-                      <span style={{ fontSize: 11, color: '#6d7686', marginRight: 39 }}>
-                        {fmtClock(m.at)}
-                      </span>
-                    )}
-                  </div>
-                )
-              }
-
-              // Tool cards sit in the text column with no avatar, so a burst
-              // of them reads as one list rather than a stack of turns.
-              if (m.tool) return <ToolCard key={i} tool={m.tool} tight={!!messages[i - 1]?.tool} />
-
-              const pc = m.pipeline
-              return (
-                <div key={i} style={{ display: 'flex', gap: 13, alignItems: 'flex-start' }}>
-                  <AgentMark />
-                  <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 15 }}>
-                    {pc ? (
-                      <div
-                        style={{
-                          border: '1px solid #242c3b',
-                          borderRadius: 11,
-                          overflow: 'hidden',
-                          background: '#12171f'
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            padding: '11px 14px',
-                            borderBottom: '1px solid #212938'
-                          }}
-                        >
-                          <ToolIcon />
-                          <span style={{ fontFamily: MONO, fontSize: 12, color: '#c3cad6' }}>
-                            pipeline: {pc.pipelineName}
-                          </span>
-                          {pc.status === 'running' ? (
-                            <Spinner />
-                          ) : pc.status === 'passed' ? (
-                            <CheckIcon />
-                          ) : (
-                            <span style={{ fontSize: 12, fontWeight: 700, color: pc.status === 'failed' ? C.red : C.faint }}>
-                              {pc.status === 'failed' ? '✗' : '–'}
-                            </span>
-                          )}
-                          <span style={{ flex: 1 }} />
-                          <span
-                            className="bf-linkish"
-                            onClick={() => onOpenPipeline(pc.tabId)}
-                            style={{ fontSize: 11.5, color: '#7f889a', cursor: 'pointer' }}
-                            title="Jump to this run's terminal tab"
-                          >
-                            Open in terminal
-                          </span>
-                        </div>
-                        <div
-                          style={{
-                            padding: '13px 15px',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 6,
-                            fontFamily: MONO,
-                            fontSize: 12,
-                            lineHeight: 1.5,
-                            color: '#8b94a3',
-                            userSelect: 'text'
-                          }}
-                        >
-                          {m.text}
-                        </div>
-                      </div>
-                    ) : m.role === 'assistant' ? (
-                      <MarkdownBody text={m.text} />
-                    ) : (
-                      <div
-                        style={{
-                          fontSize: 13.5,
-                          lineHeight: 1.6,
-                          color: '#8b94a3',
-                          textWrap: 'pretty',
-                          whiteSpace: 'pre-wrap',
-                          overflowWrap: 'anywhere',
-                          userSelect: 'text'
-                        }}
-                      >
-                        {m.text}
-                      </div>
-                    )}
-
-                    {/* The footer row belongs to the last assistant turn once it settles. */}
-                    {m.role === 'assistant' && i === messages.length - 1 && !isBusy && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#7f889a' }}>
-                        <CircleIcon />
-                        <span style={{ fontSize: 12 }}>{AI_LABELS[provider]}</span>
-                        <span style={{ flex: 1 }} />
-                        <div style={{ display: 'flex', gap: 16 }}>
-                          <span
-                            title="Copy"
-                            onClick={() =>
-                              void navigator.clipboard?.writeText(stripControlMarkers(m.text))
-                            }
-                          >
-                            <CopyIcon />
-                          </span>
-                          <span title="Good response">
-                            <ThumbIcon />
-                          </span>
-                          <span title="New chat" onClick={onNewChat}>
-                            <RetryIcon />
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+            {messages.map((m, i) => (
+              <MessageErrorBoundary key={i}>{renderTurn(m, i)}</MessageErrorBoundary>
+            ))}
           </div>
           <div style={{ height: 12 }} />
         </div>
@@ -562,16 +752,87 @@ export default function ChatPane({
       <div style={{ flex: 'none', padding: '8px 34px 20px' }}>
         <div
           ref={composerBoxRef}
+          onDragOver={(e) => {
+            if (![...e.dataTransfer.types].includes('Files')) return
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
+            setDragOver(true)
+          }}
+          onDragLeave={(e) => {
+            if (e.currentTarget.contains(e.relatedTarget as Node)) return
+            setDragOver(false)
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragOver(false)
+            if (e.dataTransfer.files.length) addImageFiles(e.dataTransfer.files)
+          }}
           style={{
             maxWidth: 680,
             margin: '0 auto',
-            background: '#141922',
-            border: '1px solid #262e3d',
+            background: dragOver ? '#171d28' : '#141922',
+            border: dragOver ? `1px solid ${C.accent}` : '1px solid #262e3d',
             borderRadius: 14,
             padding: '14px 16px 11px',
-            position: 'relative'
+            position: 'relative',
+            boxShadow: dragOver ? '0 0 0 1px rgba(47,124,246,.2)' : 'none'
           }}
         >
+          {attachments.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+              {attachments.map((attachment) => (
+                <div
+                  key={attachment.path}
+                  style={{
+                    position: 'relative',
+                    width: 56,
+                    height: 56,
+                    borderRadius: 8,
+                    overflow: 'hidden',
+                    border: '1px solid #2a3446',
+                    background: '#0f141d'
+                  }}
+                >
+                  <img
+                    src={attachment.previewUrl}
+                    alt={attachment.name}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  />
+                  <button
+                    type="button"
+                    className="bf-focus"
+                    onClick={() => removeAttachment(attachment.path)}
+                    title={`Remove ${attachment.name}`}
+                    aria-label={`Remove ${attachment.name}`}
+                    style={{
+                      position: 'absolute',
+                      top: 3,
+                      right: 3,
+                      width: 18,
+                      height: 18,
+                      borderRadius: '50%',
+                      border: 'none',
+                      background: 'rgba(0,0,0,0.65)',
+                      color: '#fff',
+                      fontSize: 12,
+                      lineHeight: 1,
+                      cursor: 'pointer',
+                      display: 'grid',
+                      placeItems: 'center'
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {attachmentError && (
+            <div style={{ fontSize: 12, color: '#e07b7b', marginBottom: 8 }}>{attachmentError}</div>
+          )}
+          {savingAttachments > 0 && (
+            <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>Saving attachment…</div>
+          )}
           <textarea
             ref={textareaRef}
             value={text}
@@ -614,7 +875,13 @@ export default function ChatPane({
                 }
               }
             }}
-            placeholder={availableCount ? 'Message the agent…' : 'Create a validation pipeline to start'}
+            placeholder={
+              availableCount
+                ? attachments.length
+                  ? 'Add a message or send the attached images…'
+                  : 'Message the agent… (drop images here)'
+                : 'Create a validation pipeline to start'
+            }
             disabled={!availableCount}
             rows={1}
             style={{
@@ -637,24 +904,27 @@ export default function ChatPane({
             } as React.CSSProperties}
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div
-              className="bf-composer-btn"
+            <button
+              type="button"
+              className="bf-focus bf-composer-btn"
               onClick={onNewChat}
-              title="New chat"
+              title="Clear chat and start fresh"
+              aria-label="Clear chat and start fresh"
               style={{
                 width: 26,
                 height: 26,
                 borderRadius: 8,
+                border: 'none',
                 background: '#1d2431',
                 display: 'grid',
                 placeItems: 'center',
                 color: '#9aa3b2',
-                fontSize: 15,
-                cursor: 'pointer'
+                cursor: 'pointer',
+                padding: 0
               }}
             >
-              +
-            </div>
+              <ClearChatIcon size={14} color="#9aa3b2" />
+            </button>
             <span style={{ flex: 1 }} />
             <button
               ref={agentBtnRef}
@@ -804,6 +1074,7 @@ export default function ChatPane({
                     role="menuitem"
                     className="bf-focus bf-menu-item"
                     onClick={() => {
+                      setProvider(p)
                       onProviderChange(p)
                       setModelOpen(false)
                       window.setTimeout(() => textareaRef.current?.focus(), 0)

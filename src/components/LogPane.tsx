@@ -37,30 +37,34 @@ export default function LogPane({ term }: { term: TermState }) {
         userSelect: 'text'
       }}
     >
-      {term.rows.map((row, i) => (
-        <div
-          key={i}
-          style={{
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            minHeight: 20,
-            color: DEFAULT_FG
-          }}
-        >
-          {segments(row).map((s, j) => (
-            <span
-              key={j}
+      {Array.isArray(term.rows)
+        ? term.rows.map((row, i) => (
+            <div
+              key={i}
               style={{
-                color: s.color,
-                fontWeight: s.bold ? 600 : 400,
-                opacity: s.dim ? 0.65 : 1
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                minHeight: 20,
+                color: DEFAULT_FG
               }}
             >
-              {s.text}
-            </span>
-          ))}
-        </div>
-      ))}
+              {Array.isArray(row)
+                ? segments(row).map((s, j) => (
+                    <span
+                      key={j}
+                      style={{
+                        color: s.color,
+                        fontWeight: s.bold ? 600 : 400,
+                        opacity: s.dim ? 0.65 : 1
+                      }}
+                    >
+                      {s.text}
+                    </span>
+                  ))
+                : null}
+            </div>
+          ))
+        : null}
     </div>
   )
 }

@@ -588,4 +588,35 @@ describe('AgentController', () => {
     expect(execute).toHaveBeenCalledTimes(2)
     expect(execute.mock.calls[1][0].provider).toBe('cursor')
   })
+
+  it('setProvider updates the in-memory task before the next cycle', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    const execute = vi
+      .fn()
+      .mockImplementationOnce(async (_req, _prompt, output: (chunk: string) => void) => {
+        output('Error: rate limit reached\n')
+        return 1
+      })
+      .mockImplementationOnce(async (req: AgentTaskRequest, _prompt, output: (chunk: string) => void) => {
+        expect(req.provider).toBe('cursor')
+        output('BUILDFLOW_PIPELINES: []\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'needs-attention')).toBe(
+        true
+      )
+    )
+
+    expect(controller.setProvider(request.id, 'cursor')).toEqual({ ok: true })
+    expect(controller.message(request.id, 'continue on cursor', 'cursor')).toEqual({ ok: true })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+    expect(execute.mock.calls[1][0].provider).toBe('cursor')
+  })
 })
