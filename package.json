@@ -1,6 +1,6 @@
 {
   "name": "buildflow",
-  "version": "1.5.12",
+  "version": "1.5.13",
   "private": true,
   "author": "BuildFlow",
   "description": "A terminal workspace with runnable shell + AI pipelines.",
