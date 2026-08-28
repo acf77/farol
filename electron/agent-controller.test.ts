@@ -619,4 +619,22 @@ describe('AgentController', () => {
     )
     expect(execute.mock.calls[1][0].provider).toBe('cursor')
   })
+
+  it('dispose drops a finished task so cleared chats release memory', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    const execute = selecting()
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    controller.dispose(request.id)
+    expect(controller.message(request.id, 'hello')).toEqual({
+      ok: false,
+      message: 'This agent task is no longer available.'
+    })
+  })
 })

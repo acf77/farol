@@ -3,6 +3,7 @@ import {
   clearIndent,
   emptyTerm,
   ensureNewline,
+  MAX_COLS,
   rowText,
   segments,
   setIndent,
@@ -129,5 +130,11 @@ describe('ansi', () => {
     t = trimTo(t, 10)
     expect(t.rows).toHaveLength(10)
     expect(text(t)[0]).toBe('line 40')
+  })
+
+  it('caps row length so a single dump cannot exhaust the heap', () => {
+    const t = write(emptyTerm(), 'x'.repeat(MAX_COLS * 4))
+    expect(t.rows[0].length).toBe(MAX_COLS)
+    expect(t.col).toBe(MAX_COLS)
   })
 })

@@ -110,6 +110,7 @@ export class ShellManager {
       return
     }
     const queue = this.pending.get(paneId) ?? []
+    if (queue.length >= 32) return
     queue.push(data)
     this.pending.set(paneId, queue)
   }

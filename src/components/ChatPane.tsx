@@ -342,6 +342,7 @@ export default function ChatPane({
     onMessage(clean, provider)
     const history = historyRef.current
     if (history[history.length - 1] !== clean) history.push(clean)
+    if (history.length > 100) history.splice(0, history.length - 100)
     historyIndexRef.current = null
     draftRef.current = ''
   }

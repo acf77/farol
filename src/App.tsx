@@ -56,6 +56,8 @@ const MAX_DETAIL_LOGS = 40
  * single pass instead — still well under a frame's worth of latency.
  */
 const STREAM_FLUSH_MS = 60
+/** Drop oldest run/agent events once a flush window falls this far behind. */
+const MAX_STREAM_QUEUE = 400
 /** Past this a single streamed turn starts a new bubble rather than growing. */
 const MAX_MESSAGE_CHARS = 40_000
 /** Per-message ceiling on what a restored session carries back. */
@@ -348,7 +350,7 @@ function disposeShells(tabList: Tab[]): void {
 function cancelAgents(tabList: Tab[]): void {
   for (const tab of tabList) {
     for (const pane of Object.values(tab.panes)) {
-      if (pane.kind === 'agent') void api.agent.cancel(pane.taskId)
+      if (pane.kind === 'agent') void api.agent.dispose(pane.taskId)
     }
   }
 }
@@ -634,7 +636,7 @@ function ProjectWorkspace({
     const existing = chatTabFor(tabsRef.current, chatOwner.id)
     if (existing) {
       const pane = existing.panes[existing.focus]
-      if (pane && pane.kind === 'agent') void api.agent.cancel(pane.taskId)
+      if (pane && pane.kind === 'agent') void api.agent.dispose(pane.taskId)
       setTabs((prev) => prev.filter((t) => t.id !== existing.id))
     }
     setClearChatConfirm(false)
@@ -748,11 +750,14 @@ function ProjectWorkspace({
       const tab = tabsRef.current.find((t) => t.id === id)
       if (!tab) return
       if (tab.kind === 'shell' && tabsRef.current.filter((t) => t.kind === 'shell').length <= 1) return
-      if (tab.kind === 'agent') void api.agent.cancel(tab.id)
+      if (tab.kind === 'agent') {
+        const pane = agentPaneFor(tab)
+        if (pane) void api.agent.dispose(pane.taskId)
+      }
       const linkedAgents = tabsRef.current.filter((t) => t.kind === 'agent' && t.ownerTabId === id)
       for (const linked of linkedAgents) {
         const pane = agentPaneFor(linked)
-        if (pane) void api.agent.cancel(pane.taskId)
+        if (pane) void api.agent.dispose(pane.taskId)
       }
       // Closing a run tab stops watching it; the run itself keeps going.
       leaves(tab.root).forEach((paneId) => {
@@ -1120,7 +1125,14 @@ function ProjectWorkspace({
       }
     }
     const off = api.agent.onEvent((event: AgentTaskEvent) => {
-      agentQueue.current.push(event)
+      const queue = agentQueue.current
+      const last = queue[queue.length - 1]
+      if (event.kind === 'output' && last?.kind === 'output' && last.taskId === event.taskId) {
+        last.chunk += event.chunk
+      } else {
+        queue.push(event)
+      }
+      if (queue.length > MAX_STREAM_QUEUE) queue.splice(0, queue.length - MAX_STREAM_QUEUE)
       if (agentFlush.current === null) agentFlush.current = window.setTimeout(flush, STREAM_FLUSH_MS)
     })
     return () => {
@@ -1311,8 +1323,8 @@ function ProjectWorkspace({
         panes: { [paneId]: { id: paneId, kind: 'run', title: p.name, cwd, term: emptyTerm() } }
       }
 
-      // Re-running appends to the tab that is already open rather than opening
-      // another one or wiping the previous run's log.
+      // Re-running resets the log buffer. Appending forever let verbose CI
+      // output compound across runs until the renderer OOMed.
       setTabs((prev) =>
         prev.some((t) => t.id === tabId)
           ? prev.map((t) => {
@@ -1320,7 +1332,14 @@ function ProjectWorkspace({
               const pane = t.panes[paneId]
               const nextPane =
                 pane?.kind === 'run'
-                  ? { ...pane, cwd, term: writeLine(ensureNewline(pane.term), '', {}) }
+                  ? {
+                      ...pane,
+                      cwd,
+                      term: writeLine(ensureNewline(emptyTerm()), `── rerun ${clockStamp()} ──`, {
+                        color: '#8b94a3',
+                        dim: true
+                      })
+                    }
                   : fresh.panes[paneId]
               return {
                 ...t,
@@ -1590,7 +1609,18 @@ function ProjectWorkspace({
       }
     }
     const off = api.run.onEvent((event: RunEvent) => {
-      queue.push(event)
+      const last = queue[queue.length - 1]
+      if (
+        event.kind === 'output' &&
+        last?.kind === 'output' &&
+        last.runId === event.runId &&
+        last.nodeId === event.nodeId
+      ) {
+        last.chunk += event.chunk
+      } else {
+        queue.push(event)
+      }
+      if (queue.length > MAX_STREAM_QUEUE) queue.splice(0, queue.length - MAX_STREAM_QUEUE)
       if (timer === null) timer = window.setTimeout(flush, STREAM_FLUSH_MS)
     })
     return () => {

@@ -286,8 +286,9 @@ export function write(state: TermState, chunk: string): TermState {
         case 'X': {
           // erase n characters
           const count = Math.max(1, n ?? 1)
-          while (cur.length < col + count) cur.push({ ...BLANK })
-          for (let k = col; k < col + count; k++) cur[k] = { ...BLANK }
+          const end = Math.min(MAX_COLS, col + count)
+          while (cur.length < end) cur.push({ ...BLANK })
+          for (let k = col; k < end; k++) cur[k] = { ...BLANK }
           break
         }
         default:
@@ -318,7 +319,7 @@ export function write(state: TermState, chunk: string): TermState {
       continue
     }
     if (ch === '\t') {
-      const target = col + (8 - (col % 8))
+      const target = Math.min(MAX_COLS, col + (8 - (col % 8)))
       while (col < target) put(' ')
       i++
       continue
@@ -343,7 +344,12 @@ export function writeLine(state: TermState, text: string, style: Omit<Segment, '
   else if (last.length > 0) rows.push([])
 
   rows[rows.length - 1] = text
-    ? [...text].map((ch) => ({ ch, color: style.color, bold: style.bold, dim: style.dim }))
+    ? [...text.slice(0, MAX_COLS)].map((ch) => ({
+        ch,
+        color: style.color,
+        bold: style.bold,
+        dim: style.dim
+      }))
     : []
   rows.push([])
   return { ...state, rows, sgr: {}, col: 0 }
