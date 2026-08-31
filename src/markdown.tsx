@@ -21,8 +21,9 @@ function inline(text: string, keyPrefix: string, depth = 0): ReactNode[] {
   if (depth > 24) return [text]
   const nodes: ReactNode[] = []
   // Inline code, bold, italic, links — processed left-to-right so nested
-  // markers inside a code span stay literal.
-  const pattern = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(\[[^\]]+\]\([^)]+\))/g
+  // markers inside a code span stay literal. Code fences use equal-length
+  // backtick runs so `` `a | b` `` works like GFM.
+  const pattern = /(`+)((?:(?!\1).)+?)\1|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(\[[^\]]+\]\([^)]+\))/g
   let last = 0
   let match: RegExpExecArray | null
   let n = 0
@@ -30,12 +31,12 @@ function inline(text: string, keyPrefix: string, depth = 0): ReactNode[] {
     if (match.index > last) {
       nodes.push(text.slice(last, match.index))
     }
-    const [full, code, bold, italic, link] = match
+    const [full, , codeBody, bold, italic, link] = match
     const key = `${keyPrefix}-${n++}`
-    if (code) {
+    if (codeBody !== undefined) {
       nodes.push(
         <code key={key} className="bf-md-code">
-          {code.slice(1, -1)}
+          {codeBody}
         </code>
       )
     } else if (bold) {
@@ -137,6 +138,146 @@ function listItem(text: string, ordered: boolean, index: number, key: string): R
 
 type BlockParse = { node: ReactNode; next: number }
 
+type TableAlignment = 'left' | 'center' | 'right'
+
+type TableScan = { cells: string[]; hasPipe: boolean }
+
+/**
+ * Split a GFM table row. Escaped pipes and pipes inside matching backtick
+ * spans stay in the cell; opening/closing runs must be the same length.
+ */
+function scanTableLine(line: string): TableScan {
+  const source = line.trim()
+  const cells: string[] = []
+  let cell = ''
+  let hasPipe = false
+  let codeFence = 0
+  let i = 0
+
+  while (i < source.length) {
+    const char = source[i]
+    if (char === '`') {
+      let run = 0
+      while (i + run < source.length && source[i + run] === '`') run++
+      if (codeFence === 0) codeFence = run
+      else if (run === codeFence) codeFence = 0
+      cell += source.slice(i, i + run)
+      i += run
+      continue
+    }
+    if (char === '\\' && codeFence === 0 && source[i + 1] === '|') {
+      cell += '|'
+      i += 2
+      continue
+    }
+    if (char === '|' && codeFence === 0) {
+      hasPipe = true
+      cells.push(cell.trim())
+      cell = ''
+      i++
+      continue
+    }
+    cell += char
+    i++
+  }
+
+  cells.push(cell.trim())
+  if (source.startsWith('|') && cells[0] === '') cells.shift()
+  if (cells.length > 0 && cells[cells.length - 1] === '') cells.pop()
+  return { cells, hasPipe }
+}
+
+function tableCells(line: string): string[] {
+  return scanTableLine(line).cells
+}
+
+function hasTablePipe(line: string): boolean {
+  return scanTableLine(line).hasPipe
+}
+
+/**
+ * Other markdown blocks must not be swallowed as table body rows.
+ * Patterns match the block parsers (column 0 only) — do not trim, or indented
+ * markers interrupt paragraphs without being parsed and stall the renderer.
+ */
+function isBlockInterrupt(line: string): boolean {
+  return (
+    /^```/.test(line) ||
+    /^#{1,3}\s+/.test(line) ||
+    /^>\s?/.test(line) ||
+    /^[-*+]\s+/.test(line) ||
+    /^\d+\.\s+/.test(line) ||
+    /^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)
+  )
+}
+
+function isTableBodyRow(line: string): boolean {
+  return !!line.trim() && !isBlockInterrupt(line) && hasTablePipe(line)
+}
+
+function tableDelimiter(line: string): TableAlignment[] | null {
+  if (!hasTablePipe(line)) return null
+  const cells = tableCells(line)
+  if (!cells.length || cells.some((cell) => !/^:?-{3,}:?$/.test(cell))) return null
+  return cells.map((cell) => {
+    const left = cell.startsWith(':')
+    const right = cell.endsWith(':')
+    // GFM default (no colons) is left — always emit so UA-centered <th> cannot win.
+    return left && right ? 'center' : right ? 'right' : 'left'
+  })
+}
+
+function isTableStart(lines: string[], i: number): boolean {
+  if (i + 1 >= lines.length || !hasTablePipe(lines[i]) || isBlockInterrupt(lines[i])) return false
+  const alignments = tableDelimiter(lines[i + 1])
+  return !!alignments && tableCells(lines[i]).length === alignments.length
+}
+
+function parseTable(lines: string[], i: number, key: string): BlockParse | null {
+  if (!isTableStart(lines, i)) return null
+  const headers = tableCells(lines[i])
+  const alignments = tableDelimiter(lines[i + 1])!
+  const rows: string[][] = []
+  let j = i + 2
+
+  while (j < lines.length && isTableBodyRow(lines[j])) {
+    const cells = tableCells(lines[j]).slice(0, headers.length)
+    while (cells.length < headers.length) cells.push('')
+    rows.push(cells)
+    j++
+  }
+
+  return {
+    node: (
+      <div key={key} className="bf-md-table-wrap">
+        <table className="bf-md-table">
+          <thead>
+            <tr>
+              {headers.map((cell, column) => (
+                <th key={`${key}-h${column}`} scope="col" style={{ textAlign: alignments[column] }}>
+                  {inline(cell, `${key}-h${column}`)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr key={`${key}-r${rowIndex}`}>
+                {row.map((cell, column) => (
+                  <td key={`${key}-r${rowIndex}c${column}`} style={{ textAlign: alignments[column] }}>
+                    {inline(cell, `${key}-r${rowIndex}c${column}`)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    ),
+    next: j
+  }
+}
+
 function parseFence(lines: string[], i: number, key: string): BlockParse | null {
   const fence = /^```([\w-]*)\s*$/.exec(lines[i])
   if (!fence) return null
@@ -224,21 +365,13 @@ function parseList(
 
 /** True while a paragraph should keep absorbing the line. */
 function continuesParagraph(line: string): boolean {
-  return (
-    !!line.trim() &&
-    !/^```/.test(line) &&
-    !/^#{1,3}\s+/.test(line) &&
-    !/^>\s?/.test(line) &&
-    !/^[-*+]\s+/.test(line) &&
-    !/^\d+\.\s+/.test(line) &&
-    !/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)
-  )
+  return !!line.trim() && !isBlockInterrupt(line)
 }
 
 function parseParagraph(lines: string[], i: number, key: string): BlockParse {
   const para: string[] = []
   let j = i
-  while (j < lines.length && continuesParagraph(lines[j])) {
+  while (j < lines.length && continuesParagraph(lines[j]) && !isTableStart(lines, j)) {
     para.push(lines[j])
     j++
   }
@@ -254,7 +387,7 @@ function parseParagraph(lines: string[], i: number, key: string): BlockParse {
 
 /**
  * Render a subset of Markdown that coding agents commonly emit: headings,
- * fenced code, lists, quotes, rules, and inline emphasis/links/code.
+ * fenced code, tables, lists, quotes, rules, and inline emphasis/links/code.
  */
 export function renderMarkdown(source: string): ReactNode[] {
   const text = stripControlMarkers(source)
@@ -269,6 +402,7 @@ export function renderMarkdown(source: string): ReactNode[] {
 
     const parsed =
       parseFence(lines, i, key) ??
+      parseTable(lines, i, key) ??
       parseHeading(line, key, i + 1) ??
       parseHr(line, key, i + 1) ??
       parseQuote(lines, i, key) ??
@@ -289,7 +423,8 @@ export function renderMarkdown(source: string): ReactNode[] {
 
     const para = parseParagraph(lines, i, key)
     nodes.push(para.node)
-    i = para.next
+    // Never stall: if nothing absorbed the line, skip it (defensive).
+    i = para.next > i ? para.next : i + 1
   }
 
   return nodes
