@@ -60,7 +60,7 @@ export function SplitDownIcon({ size = 14 }: IconProps) {
   )
 }
 
-export function ProjectIcon({ size = 14, color = '#8f98a8' }: IconProps) {
+export function ProjectIcon({ size = 14, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.4}>
       <path d="M3 4h10M5 8h6M7 12h2" />
@@ -78,7 +78,7 @@ export function FolderPlusIcon({ size = 14, color = 'currentColor' }: IconProps)
   )
 }
 
-export function BranchIcon({ size = 13, color = '#8f98a8' }: IconProps) {
+export function BranchIcon({ size = 13, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.4}>
       <circle cx="4.5" cy="3.5" r="1.8" />
@@ -89,7 +89,7 @@ export function BranchIcon({ size = 13, color = '#8f98a8' }: IconProps) {
   )
 }
 
-export function ChevronDown({ size = 10, color = '#7e8798' }: IconProps) {
+export function ChevronDown({ size = 10, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 12 12" fill="none" stroke={color} strokeWidth={1.5}>
       <path d="M2 4.5 6 8.5l4-4" />
@@ -105,7 +105,7 @@ export function ChevronRight({ size = 12, color = 'currentColor' }: IconProps) {
   )
 }
 
-export function ChevronUp({ size = 13, color = '#9aa3b2', style }: IconProps) {
+export function ChevronUp({ size = 13, color = '#94A3B8', style }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.5} style={style}>
       <path d="M2.5 8.5 7 4l4.5 4.5" />
@@ -139,7 +139,7 @@ export function SearchIcon({ size = 13 }: IconProps) {
   )
 }
 
-export function BellIcon({ size = 17, color = '#8f98a8' }: IconProps) {
+export function BellIcon({ size = 17, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 18 18" fill="none" stroke={color} strokeWidth={1.4}>
       <path d="M9 2.5a4 4 0 0 0-4 4v3l-1.3 2.2h10.6L13 9.5v-3a4 4 0 0 0-4-4Z" />
@@ -148,7 +148,7 @@ export function BellIcon({ size = 17, color = '#8f98a8' }: IconProps) {
   )
 }
 
-export function GearIcon({ size = 17, color = '#8f98a8' }: IconProps) {
+export function GearIcon({ size = 17, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 18 18" fill="none" stroke={color} strokeWidth={1.4}>
       <path d="M7.2 1.8h3.6l.4 1.5a5.6 5.6 0 0 1 1.3.8l1.5-.5 1.8 1.8-.5 1.5c.3.4.6.8.8 1.3l1.5.4v3.6l-1.5.4a5.6 5.6 0 0 1-.8 1.3l.5 1.5-1.8 1.8-1.5-.5a5.6 5.6 0 0 1-1.3.8l-.4 1.5H7.2l-.4-1.5a5.6 5.6 0 0 1-1.3-.8l-1.5.5-1.8-1.8.5-1.5a5.6 5.6 0 0 1-.8-1.3L1.4 10.8V7.2l1.5-.4c.2-.5.5-.9.8-1.3l-.5-1.5 1.8-1.8 1.5.5c.4-.3.8-.6 1.3-.8Z" />
@@ -157,8 +157,8 @@ export function GearIcon({ size = 17, color = '#8f98a8' }: IconProps) {
   )
 }
 
-/** The agent's mark — an eight-point sparkle, in the design's copper. */
-export function Sparkle({ size = 15, color = '#c98a5e', width = 1.2 }: IconProps & { width?: number }) {
+/** The agent's mark — an eight-point sparkle, in AI violet. */
+export function Sparkle({ size = 15, color = '#bf5af2', width = 1.2 }: IconProps & { width?: number }) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={width}>
       <path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4l-9.2 9.2" />
@@ -167,7 +167,7 @@ export function Sparkle({ size = 15, color = '#c98a5e', width = 1.2 }: IconProps
 }
 
 /** The larger greeting mark: same star, drawn edge-to-edge with a finer stroke. */
-export function SparkleLarge({ size = 30, color = '#c98a5e' }: IconProps) {
+export function SparkleLarge({ size = 30, color = '#bf5af2' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.15}>
       <path d="M8 1v14M1 8h14M3.05 3.05l9.9 9.9M12.95 3.05l-9.9 9.9" />
@@ -175,7 +175,7 @@ export function SparkleLarge({ size = 30, color = '#c98a5e' }: IconProps) {
   )
 }
 
-export function ToolIcon({ size = 13, color = '#8f98a8' }: IconProps) {
+export function ToolIcon({ size = 13, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.3}>
       <rect x="2" y="2.5" width="4.5" height="4.5" rx="1" />
@@ -185,7 +185,7 @@ export function ToolIcon({ size = 13, color = '#8f98a8' }: IconProps) {
   )
 }
 
-export function CheckIcon({ size = 13, color = '#5fd39a', style }: IconProps) {
+export function CheckIcon({ size = 13, color = '#22C55E', style }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.7} style={style}>
       <path d="M2.5 7.5 5.5 10.5 11.5 4" />
@@ -194,7 +194,7 @@ export function CheckIcon({ size = 13, color = '#5fd39a', style }: IconProps) {
 }
 
 /** The running arc. Spins via the `bfspin` keyframes so reduced-motion can park it. */
-export function Spinner({ size = 13, color = '#4d8dfb', style }: IconProps) {
+export function Spinner({ size = 13, color = '#60A5FA', style }: IconProps) {
   return (
     <svg
       {...S(size)}
@@ -260,7 +260,7 @@ export function SendIcon({ size = 15 }: IconProps) {
 }
 
 /** Composer: the model indicator — an aperture ring. */
-export function ModelIcon({ size = 17, color = '#8b94a3' }: IconProps) {
+export function ModelIcon({ size = 17, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 18 18" fill="none" stroke={color} strokeWidth={1.3}>
       <circle cx="9" cy="9" r="7.2" />
@@ -270,7 +270,7 @@ export function ModelIcon({ size = 17, color = '#8b94a3' }: IconProps) {
   )
 }
 
-export function ClipIcon({ size = 17, color = '#8b94a3' }: IconProps) {
+export function ClipIcon({ size = 17, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 18 18" fill="none" stroke={color} strokeWidth={1.3}>
       <path d="M11.5 5.5 6.8 10.2a2.3 2.3 0 0 0 3.2 3.2l5-5a4 4 0 0 0-5.6-5.6L4 7.2a5.6 5.6 0 0 0 8 8" />
@@ -279,7 +279,7 @@ export function ClipIcon({ size = 17, color = '#8b94a3' }: IconProps) {
 }
 
 /** The three message-footer actions: copy, useful, retry. */
-export function CopyIcon({ size = 15, color = '#7f889a' }: IconProps) {
+export function CopyIcon({ size = 15, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.3} style={{ cursor: 'pointer' }}>
       <rect x="2.5" y="2.5" width="8" height="8" rx="1.5" />
@@ -288,7 +288,7 @@ export function CopyIcon({ size = 15, color = '#7f889a' }: IconProps) {
   )
 }
 
-export function ThumbIcon({ size = 15, color = '#7f889a' }: IconProps) {
+export function ThumbIcon({ size = 15, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.3} style={{ cursor: 'pointer' }}>
       <path d="M5 14V7l3-5 1 .6c.6.4.8 1.1.6 1.8L9 7h3.6c.9 0 1.6.9 1.3 1.8l-1.2 4A2 2 0 0 1 10.8 14Z" />
@@ -297,7 +297,7 @@ export function ThumbIcon({ size = 15, color = '#7f889a' }: IconProps) {
   )
 }
 
-export function RetryIcon({ size = 15, color = '#7f889a' }: IconProps) {
+export function RetryIcon({ size = 15, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.3} style={{ cursor: 'pointer' }}>
       <path d="M13.5 8a5.5 5.5 0 1 1-2-4.2" />
@@ -307,7 +307,7 @@ export function RetryIcon({ size = 15, color = '#7f889a' }: IconProps) {
 }
 
 /** Clear the branch chat — bubble with a minus, not “add another chat”. */
-export function ClearChatIcon({ size = 14, color = '#8f98a8' }: IconProps) {
+export function ClearChatIcon({ size = 14, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.4}>
       <path d="M2.5 4.2A1.7 1.7 0 0 1 4.2 2.5h7.6A1.7 1.7 0 0 1 13.5 4.2v4.6a1.7 1.7 0 0 1-1.7 1.7H7l-3.2 2.6v-2.6a1.3 1.3 0 0 1-1.3-1.3Z" />

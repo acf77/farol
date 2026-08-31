@@ -14,7 +14,7 @@ export interface ShellPane extends BasePane {
   kind: 'shell'
 }
 
-/** A pipeline run's log, rendered by BuildFlow rather than emulated. */
+/** A pipeline run's log, rendered by Farol rather than emulated. */
 export interface RunPane extends BasePane {
   kind: 'run'
   term: TermState

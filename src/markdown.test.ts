@@ -8,12 +8,12 @@ function html(source: string): string {
 }
 
 describe('stripControlMarkers', () => {
-  it('removes BuildFlow harness lines', () => {
+  it('removes Farol harness lines', () => {
     expect(
-      stripControlMarkers('Done.\nBUILDFLOW_PIPELINES: ["lint"]\n')
+      stripControlMarkers('Done.\nFAROL_PIPELINES: ["lint"]\n')
     ).toBe('Done.')
     expect(
-      stripControlMarkers('Stopped.\nBUILDFLOW_BLOCKED: no access\n')
+      stripControlMarkers('Stopped.\nFAROL_BLOCKED: no access\n')
     ).toBe('Stopped.')
   })
 })
@@ -55,9 +55,9 @@ describe('renderMarkdown', () => {
   })
 
   it('hides harness markers from the rendered tree', () => {
-    const nodes = renderMarkdown('All good\nBUILDFLOW_PIPELINES: []\n')
+    const nodes = renderMarkdown('All good\nFAROL_PIPELINES: []\n')
     const markup = renderToStaticMarkup(createElement('div', null, ...nodes))
     expect(markup).toContain('All good')
-    expect(markup).not.toContain('BUILDFLOW_PIPELINES')
+    expect(markup).not.toContain('FAROL_PIPELINES')
   })
 })

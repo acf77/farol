@@ -4,7 +4,7 @@ import { groupOpenProjects } from '@shared/project-groups'
 import { C, UI } from '../theme'
 import { BranchIcon, CaretLeft, CaretRight, ChevronDown, ChevronRight, ClearChatIcon, ProjectIcon } from './icons'
 
-const api = window.buildflow
+const api = window.farol
 
 const PANEL_WIDTH = 220
 const RAIL_WIDTH = 54
@@ -15,6 +15,8 @@ interface Props {
   activePath: string | null
   /** Project paths with active agent or pipeline work. */
   busyPaths?: ReadonlySet<string>
+  /** Finished chats with updates the user has not opened yet. */
+  unreadPaths?: ReadonlySet<string>
   onSelect: (path: string) => void
   onClose: (path: string) => void
   /** Open the branch/worktree dialog for a project in this repo group. */
@@ -25,19 +27,20 @@ interface Props {
   onSetCollapsed: (collapsed: boolean) => void
 }
 
-/** Status dot for a checkout — pulses green while that project has work in flight. */
-function ChatActivityDot({ active, busy }: { active: boolean; busy: boolean }) {
+/** Status dot — green pulse while busy, blue until the chat is opened, then off. */
+function ChatActivityDot({ busy, unread }: { busy: boolean; unread: boolean }) {
+  const title = busy ? 'Work in progress' : unread ? 'Unread chat updates' : undefined
   return (
     <span
-      title={busy ? 'Work in progress' : undefined}
-      aria-label={busy ? 'Work in progress' : undefined}
+      title={title}
+      aria-label={title}
       style={{
         width: 7,
         height: 7,
         flex: 'none',
         borderRadius: '50%',
-        background: busy ? C.green : active ? C.accent : C.fainter,
-        boxShadow: busy ? `0 0 6px ${C.green}` : undefined,
+        background: busy ? C.green : unread ? C.accent : C.fainter,
+        boxShadow: busy ? `0 0 6px ${C.green}` : unread ? `0 0 6px ${C.accent}` : undefined,
         animation: busy ? 'bfpulse 1.1s ease-in-out infinite' : 'none'
       }}
     />
@@ -114,6 +117,7 @@ export default function ProjectRail({
   projects,
   activePath,
   busyPaths,
+  unreadPaths,
   onSelect,
   onClose,
   onNewBranch,
@@ -122,8 +126,15 @@ export default function ProjectRail({
   onSetCollapsed
 }: Props) {
   const agentBusy = (path: string): boolean => !!busyPaths?.has(path)
+  const agentUnread = (path: string): boolean => !!unreadPaths?.has(path)
   const [gitByPath, setGitByPath] = useState<Record<string, GitInfo>>({})
   const [groupCollapsed, setGroupCollapsed] = useState<Record<string, boolean>>({})
+  // Keep the full panel mounted while the width shrinks, then swap to the rail.
+  const [showRail, setShowRail] = useState(collapsed)
+
+  useEffect(() => {
+    if (!collapsed) setShowRail(false)
+  }, [collapsed])
 
   useEffect(() => {
     let cancelled = false
@@ -168,20 +179,28 @@ export default function ProjectRail({
   const activeBranch =
     activeGroup?.projects.find((p) => p.project.path === activePath)?.branch ?? ''
 
-  if (collapsed) {
+  const onWidthEnd = (e: React.TransitionEvent<HTMLElement>): void => {
+    if (e.propertyName !== 'width' || e.target !== e.currentTarget) return
+    if (collapsed) setShowRail(true)
+  }
+
+  if (showRail) {
     return (
       <aside
         aria-label="Projects"
+        className="bf-side-panel"
+        onTransitionEnd={onWidthEnd}
         style={{
-          width: RAIL_WIDTH,
+          width: collapsed ? RAIL_WIDTH : PANEL_WIDTH,
           flex: 'none',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           gap: 14,
           padding: '11px 0 14px',
-          background: '#0e121a',
-          borderRight: '1px solid #1a202b',
+          background: '#111827',
+          borderRight: '1px solid #273449',
+          overflow: 'hidden',
           fontFamily: UI,
           fontSize: 13,
           WebkitFontSmoothing: 'antialiased'
@@ -219,17 +238,17 @@ export default function ProjectRail({
             display: 'grid',
             placeItems: 'center',
             cursor: 'pointer',
-            color: '#8b94a3'
+            color: '#94A3B8'
           }}
         >
           <CaretRight />
         </button>
-        <div style={{ width: 22, height: 1, background: '#212936' }} />
+        <div style={{ width: 22, height: 1, background: '#273449' }} />
 
         {activeGroup && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
             <ProjectIcon size={14} color={C.accentBright} />
-            <RailLabel color="#dbe1ea" weight={500}>
+            <RailLabel color="#F8FAFC" weight={500}>
               {activeGroup.label}
             </RailLabel>
             {activeBranch && <RailLabel color={C.textMuted}>{activeBranch}</RailLabel>}
@@ -239,8 +258,13 @@ export default function ProjectRail({
         <span style={{ flex: 1 }} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7, alignItems: 'center' }}>
           {projects.map((project) => {
-            const active = project.path === activePath
             const busy = agentBusy(project.path)
+            const unread = agentUnread(project.path)
+            const tip = busy
+              ? `${project.display} — work in progress`
+              : unread
+                ? `${project.display} — unread chat updates`
+                : project.display
             return (
               <div
                 key={project.path}
@@ -248,14 +272,18 @@ export default function ProjectRail({
                   onSelect(project.path)
                   onSetCollapsed(false)
                 }}
-                title={busy ? `${project.display} — work in progress` : project.display}
+                title={tip}
                 style={{
                   width: 8,
                   height: 8,
                   borderRadius: '50%',
                   cursor: 'pointer',
-                  background: busy ? C.green : active ? C.accent : C.fainter,
-                  boxShadow: busy ? `0 0 6px ${C.green}` : undefined,
+                  background: busy ? C.green : unread ? C.accent : C.fainter,
+                  boxShadow: busy
+                    ? `0 0 6px ${C.green}`
+                    : unread
+                      ? `0 0 6px ${C.accent}`
+                      : undefined,
                   animation: busy ? 'bfpulse 1.1s ease-in-out infinite' : 'none'
                 }}
               />
@@ -269,18 +297,30 @@ export default function ProjectRail({
   return (
     <aside
       aria-label="Projects"
+      className="bf-side-panel"
+      onTransitionEnd={onWidthEnd}
       style={{
-        width: PANEL_WIDTH,
+        width: collapsed ? RAIL_WIDTH : PANEL_WIDTH,
         flex: 'none',
         display: 'flex',
         flexDirection: 'column',
-        background: '#0e121a',
-        borderRight: '1px solid #1a202b',
+        background: '#111827',
+        borderRight: '1px solid #273449',
+        overflow: 'hidden',
         fontFamily: UI,
         fontSize: 13,
         WebkitFontSmoothing: 'antialiased'
       }}
     >
+      <div
+        style={{
+          width: PANEL_WIDTH,
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column'
+        }}
+      >
       <div
         style={{
           height: 52,
@@ -312,7 +352,7 @@ export default function ProjectRail({
             display: 'grid',
             placeItems: 'center',
             cursor: 'pointer',
-            color: '#8b94a3'
+            color: '#94A3B8'
           }}
         >
           <CaretLeft />
@@ -325,7 +365,7 @@ export default function ProjectRail({
           fontSize: 10.5,
           fontWeight: 600,
           letterSpacing: '0.09em',
-          color: '#7c8595'
+          color: '#94A3B8'
         }}
       >
         PROJECTS
@@ -427,13 +467,19 @@ export default function ProjectRail({
                 group.projects.map(({ project, branch }) => {
                   const active = project.path === activePath
                   const busy = agentBusy(project.path)
+                  const unread = agentUnread(project.path)
+                  const tip = busy
+                    ? `${project.display} — work in progress`
+                    : unread
+                      ? `${project.display} — unread chat updates`
+                      : project.display
                   return (
                     <div
                       key={project.path}
                       role="button"
                       tabIndex={0}
                       className="bf-focus"
-                      title={busy ? `${project.display} — work in progress` : project.display}
+                      title={tip}
                       onClick={() => onSelect(project.path)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
@@ -457,7 +503,7 @@ export default function ProjectRail({
                         minWidth: 0
                       }}
                     >
-                      <ChatActivityDot active={active} busy={busy} />
+                      <ChatActivityDot busy={busy} unread={unread} />
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <span
                           style={{
@@ -537,6 +583,7 @@ export default function ProjectRail({
             </div>
           )
         })}
+      </div>
       </div>
     </aside>
   )

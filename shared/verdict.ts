@@ -1,5 +1,5 @@
-/** Marker AI pipeline steps emit so BuildFlow can read pass/fail from prose. */
-export const VERDICT_MARKER = 'BUILDFLOW_VERDICT:'
+/** Marker AI pipeline steps emit so Farol can read pass/fail from prose. */
+export const VERDICT_MARKER = 'FAROL_VERDICT:'
 
 export type StepVerdict = 'pass' | 'fail'
 

@@ -8,7 +8,7 @@ import { parseUpdateFeed, versionAhead } from '../shared/update-feed'
 
 /** Same folder `scripts/publish-local.mjs` writes after `npm run dist`. */
 export function feedDir(): string {
-  return path.join(os.homedir(), '.buildflow', 'updates')
+  return path.join(os.homedir(), '.farol', 'updates')
 }
 
 function sh(s: string): string {
@@ -16,7 +16,7 @@ function sh(s: string): string {
 }
 
 function appBundle(): string {
-  // /Applications/BuildFlow.app/Contents/MacOS/BuildFlow → the .app
+  // /Applications/Farol.app/Contents/MacOS/Farol → the .app
   return path.resolve(process.execPath, '..', '..', '..')
 }
 
@@ -69,7 +69,7 @@ export class AppUpdater {
         await dialog.showMessageBox({
           type: 'info',
           message: 'You’re up to date',
-          detail: `BuildFlow ${app.getVersion()} is the latest build.`
+          detail: `Farol ${app.getVersion()} is the latest build.`
         })
       }
       return this.status
@@ -88,7 +88,7 @@ export class AppUpdater {
     if (opts?.informNone) {
       const { response } = await dialog.showMessageBox({
         type: 'info',
-        message: `BuildFlow ${feed.version} is ready`,
+        message: `Farol ${feed.version} is ready`,
         detail: 'Restart to replace the running app.',
         buttons: ['Restart now', 'Later'],
         defaultId: 0,
@@ -108,10 +108,10 @@ export class AppUpdater {
 
     const pack = this.ready
     const dest = appBundle()
-    const tmp = path.join(os.tmpdir(), `buildflow-update-${Date.now()}`)
+    const tmp = path.join(os.tmpdir(), `farol-update-${Date.now()}`)
     fs.mkdirSync(tmp, { recursive: true })
 
-    const script = path.join(os.tmpdir(), `buildflow-apply-update-${Date.now()}.sh`)
+    const script = path.join(os.tmpdir(), `farol-apply-update-${Date.now()}.sh`)
     fs.writeFileSync(
       script,
       `#!/bin/bash
@@ -122,7 +122,7 @@ DEST=${sh(dest)}
 /usr/bin/ditto -xk "$SRC_ZIP" "$TMP"
 NEW=$(/usr/bin/find "$TMP" -name '*.app' -maxdepth 3 | /usr/bin/head -n 1)
 if [ -z "$NEW" ]; then
-  echo "buildflow: unzipped update has no .app" >&2
+  echo "farol: unzipped update has no .app" >&2
   exit 1
 fi
 for i in 1 2 3 4 5 6 7 8 9 10; do

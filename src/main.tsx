@@ -13,10 +13,10 @@ document.addEventListener('drop', (event) => {
 
 // Errors in IPC callbacks and batched flushes never reach a component boundary.
 window.addEventListener('error', (event) => {
-  console.error('[buildflow] uncaught error', event.error ?? event.message)
+  console.error('[farol] uncaught error', event.error ?? event.message)
 })
 window.addEventListener('unhandledrejection', (event) => {
-  console.error('[buildflow] unhandled rejection', event.reason)
+  console.error('[farol] unhandled rejection', event.reason)
 })
 
 // No StrictMode: its double-invoked effects would spawn a second PTY for

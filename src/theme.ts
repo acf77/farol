@@ -1,48 +1,49 @@
-/** Palette and type ramp — matches the "Forge" design spec (claude.ai/design). */
+/** Palette and type ramp — farol.sh Color Palette. */
 
 export const C = {
-  appBg: '#07090d',
+  appBg: '#080D17',
   chrome: 'transparent',
-  terminal: '#0b0f16',
-  sidebar: '#0e121a',
-  emptyBg: '#0a0d13',
-  tabActive: '#212a39',
-  panel: '#0e121a',
+  terminal: '#080D17',
+  sidebar: '#111827',
+  emptyBg: '#111827',
+  panel: '#1F2937',
 
   /** Cards, tool output, suggestion tiles. */
-  card: '#12171f',
-  cardBorder: '#232a38',
+  card: '#111827',
+  cardBorder: '#273449',
   /** Chat surface panes, the message composer. */
-  surface: '#141922',
-  surfaceBorder: '#262e3d',
-  border: '#1e2532',
+  surface: '#111827',
+  surfaceBorder: '#273449',
+  border: '#273449',
 
-  text: '#e7eaf0',
-  textStrong: '#eef1f6',
-  textSoft: '#dfe4ec',
-  textMuted: '#8b94a3',
-  dim: '#7f889a',
-  faint: '#6d7686',
-  fainter: '#5c6577',
+  text: '#F8FAFC',
+  textStrong: '#F8FAFC',
+  textSoft: '#E2E8F0',
+  textMuted: '#94A3B8',
+  dim: '#94A3B8',
+  faint: '#64748B',
+  fainter: '#475569',
 
-  textStep: '#e7eaf0',
-  textRow: '#c3cad6',
-  glyph: '#8f98a8',
+  textStep: '#F8FAFC',
+  textRow: '#CBD5E1',
+  glyph: '#94A3B8',
 
-  accent: '#2f7cf6',
-  accentHover: '#3b88ff',
-  accentBright: '#4d8dfb',
-  accentSoft: '#c3cad6',
-  green: '#5fd39a',
-  red: '#e07b7b',
-  /** Agent identity colour — the sparkle mark, its avatar ring. */
-  purple: '#c98a5e',
-  purpleSoft: '#e3b892',
-  yellow: '#e2b258',
-  yellowDim: '#8e6b2f',
-  grey: '#3a4356',
+  /** Beacon Blue — fills, borders, focus rings (not body text on dark grounds). */
+  accent: '#2563EB',
+  accentHover: '#60A5FA',
+  /** Soft Blue — blue *text* on dark grounds (WCAG AA). */
+  accentBright: '#60A5FA',
+  accentSoft: '#60A5FA',
+  green: '#22C55E',
+  red: '#EF4444',
+  /** AI step identity — violet, never copper. */
+  purple: '#bf5af2',
+  purpleSoft: '#d7a5f7',
+  yellow: '#F59E0B',
+  yellowDim: '#92400E',
+  grey: '#64748B',
 
-  light: { red: '#ff5f57', yellow: '#febc2e', green: '#28c840' }
+  light: { red: '#EF4444', yellow: '#F59E0B', green: '#22C55E' }
 } as const
 
 /**
@@ -51,47 +52,46 @@ export const C = {
  */
 export const glass = {
   appBg: 'transparent',
-  chrome: 'rgba(14, 18, 26, 0.5)',
-  sidebar: 'rgba(14, 18, 26, 0.45)',
-  emptyBg: 'rgba(10, 13, 19, 0.4)',
+  chrome: 'rgba(8, 13, 23, 0.4)',
+  sidebar: 'rgba(17, 24, 39, 0.4)',
+  emptyBg: 'rgba(17, 24, 39, 0.4)',
   tabActive: 'rgba(255, 255, 255, 0.08)',
-  panel: 'rgba(17, 22, 31, 0.75)',
-  /** Terminal / run content — keep solid. */
-  terminal: '#0b0f16',
-  paneWell: '#0b0f16'
+  panel: 'rgba(31, 41, 55, 0.72)',
+  /** Terminal / run content — keep solid (Deep Navy). */
+  terminal: '#080D17',
+  paneWell: '#080D17'
 } as const
 
-/** Colours for BuildFlow's own run-log lines (the design's `this.C`). */
+/** Colours for Farol's own run-log lines (DESIGN.md § Run Log). */
 export const LINE = {
-  def: '#dfe4ec',
-  dim: '#6d7686',
-  cmd: '#ffffff',
-  head: '#4d8dfb',
-  step: '#e7eaf0',
-  ok: '#5fd39a',
-  err: '#e07b7b',
-  ai: '#c98a5e',
-  warn: '#e2b258',
-  echo: '#c3cad6'
+  def: '#F8FAFC',
+  dim: '#94A3B8',
+  cmd: '#FFFFFF',
+  head: '#60A5FA',
+  step: '#F8FAFC',
+  ok: '#22C55E',
+  err: '#EF4444',
+  ai: '#bf5af2',
+  warn: '#F59E0B',
+  echo: '#CBD5E1'
 } as const
 
 export type LineKind = keyof typeof LINE
 
-/** The app's window background — a faint glow rising from the top edge. */
-export const GRADIENT_BG =
-  'radial-gradient(1200px 500px at 50% -10%, #131b2b 0%, #0a0d13 55%, #07090d 100%)'
+/** Flat window ground. Depth comes from surface stacking, not a wash. */
+export const GRADIENT_BG = C.appBg
 
 /**
  * The floating panel every top-level surface sits in — chat, terminal and the
  * pipelines rail all share this shell, and only their `flex` and background
- * differ. Lifted verbatim from the spec's `pane` object.
+ * differ.
  */
 export const PANE: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   minWidth: 0,
-  background: '#0e121a',
-  border: '1px solid #1e2532',
+  background: C.sidebar,
+  border: `1px solid ${C.border}`,
   borderRadius: 8,
   overflow: 'hidden'
 }

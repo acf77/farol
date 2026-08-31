@@ -1,9 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentTaskEvent,
-  BuildFlowApi,
+  FarolApi,
   GitChanged,
   Pipeline,
+  PipelinesChanged,
   Project,
   RunEvent,
   ShellCwd,
@@ -19,7 +20,7 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
   return () => ipcRenderer.removeListener(channel, listener)
 }
 
-const api: BuildFlowApi = {
+const api: FarolApi = {
   platform: process.platform,
   shellName: (process.env.SHELL || '').split('/').pop() || 'shell',
   project: {
@@ -44,7 +45,8 @@ const api: BuildFlowApi = {
   pipelines: {
     load: (projectPath: string) => ipcRenderer.invoke('pipelines:load', projectPath),
     save: (projectPath: string, pipelines: Pipeline[]) =>
-      ipcRenderer.invoke('pipelines:save', projectPath, pipelines)
+      ipcRenderer.invoke('pipelines:save', projectPath, pipelines),
+    onChanged: (cb) => on<PipelinesChanged>('pipelines:changed', cb)
   },
   shell: {
     open: (paneId, cwd, cols, rows) => ipcRenderer.invoke('shell:open', paneId, cwd, cols, rows),
@@ -70,8 +72,8 @@ const api: BuildFlowApi = {
   },
   agent: {
     start: (request) => ipcRenderer.invoke('agent:start', request),
-    message: (taskId, text, provider) =>
-      ipcRenderer.invoke('agent:message', taskId, text, provider),
+    message: (taskId, text, provider, pipelines) =>
+      ipcRenderer.invoke('agent:message', taskId, text, provider, pipelines),
     setProvider: (taskId, provider) =>
       ipcRenderer.invoke('agent:setProvider', taskId, provider),
     cancel: (taskId) => ipcRenderer.invoke('agent:cancel', taskId),
@@ -98,4 +100,4 @@ const api: BuildFlowApi = {
   }
 }
 
-contextBridge.exposeInMainWorld('buildflow', api)
+contextBridge.exposeInMainWorld('farol', api)

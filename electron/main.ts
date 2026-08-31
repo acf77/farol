@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell as electronShell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell as electronShell } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import type {
@@ -14,7 +14,7 @@ import type {
 import { ShellManager } from './shell'
 import { HeadWatcher, addWorktree, checkout, info as gitInfo } from './git'
 import { PipelineRunner } from './runner'
-import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings } from './store'
+import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, PipelineWatcher } from './store'
 import { listProjectFiles, saveChatAttachment } from './files'
 import { AppUpdater } from './update'
 import { applyGlass, glassAvailable } from './glass'
@@ -48,11 +48,30 @@ const agents = new AgentController(runner, (event) => send('agent:event', event)
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
 )
+const pipelineFiles = new PipelineWatcher((projectPath, pipelines) =>
+  send('pipelines:changed', { projectPath, pipelines })
+)
 const updater = new AppUpdater((s) => send('update:status', s))
+
+function brandIconCandidates(): string[] {
+  const root = app.isPackaged ? process.resourcesPath : path.join(__dirname, '../../build')
+  // Prefer PNG for dock.setIcon; keep .icns as a fallback for Finder/About.
+  return [path.join(root, 'icon.png'), path.join(root, 'icon.icns')]
+}
+
+function loadBrandIcon(): Electron.NativeImage | undefined {
+  for (const candidate of brandIconCandidates()) {
+    if (!fs.existsSync(candidate)) continue
+    const image = nativeImage.createFromPath(candidate)
+    if (!image.isEmpty()) return image
+  }
+  return undefined
+}
 
 function createWindow(): void {
   const wantGlass = glassAvailable()
   glassActive = false
+  const icon = loadBrandIcon()
 
   win = new BrowserWindow({
     width: 1280,
@@ -63,7 +82,8 @@ function createWindow(): void {
     frame: false,
     // Liquid Glass needs a transparent window and must not use vibrancy.
     transparent: wantGlass,
-    backgroundColor: wantGlass ? '#00000000' : '#1c1c1e',
+    backgroundColor: wantGlass ? '#00000000' : '#080D17',
+    ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -81,7 +101,12 @@ function createWindow(): void {
     }
   }
 
-  win.on('ready-to-show', () => win?.show())
+  win.on('ready-to-show', () => {
+    // Re-apply after the window exists — Dock can ignore an early setIcon
+    // while Launch Services still thinks this binary is stock Electron.
+    applyBrandIcon()
+    win?.show()
+  })
   win.on('closed', () => {
     win = null
     glassActive = false
@@ -97,11 +122,11 @@ function createWindow(): void {
   })
   // OOM / GPU faults kill the renderer and leave an empty frame — reload it.
   win.webContents.on('render-process-gone', (_event, details) => {
-    console.error('[buildflow] renderer process gone', details)
+    console.error('[farol] renderer process gone', details)
     loadRenderer()
   })
   win.webContents.on('unresponsive', () => {
-    console.error('[buildflow] renderer unresponsive')
+    console.error('[farol] renderer unresponsive')
   })
 
   if (wantGlass) {
@@ -195,7 +220,7 @@ async function openProjectDialog() {
 }
 
 /**
- * Point agents at this project's pipelines by declaring BuildFlow's MCP server
+ * Point agents at this project's pipelines by declaring Farol's MCP server
  * in each supported client's project config (`.mcp.json`, `.cursor/mcp.json`).
  * Run through Electron with ELECTRON_RUN_AS_NODE so there is no dependency on a
  * `node` binary — `process.execPath` is the same Electron in development and in
@@ -213,6 +238,39 @@ const agentRuns = new Set<AgentRun>()
 
 const AGENT_RUN_TIMEOUT_MS = 15 * 60 * 1000
 const AGENT_STEP_OUTPUT_LIMIT = 4000
+
+function agentStepLabel(skipped: boolean | undefined, ok: boolean): string {
+  if (skipped) return 'SKIP'
+  return ok ? 'PASS' : 'FAIL'
+}
+
+function agentRunOutcomeLabel(cancelled: boolean | undefined, ok: boolean): string {
+  if (cancelled) return 'CANCELLED'
+  return ok ? 'PASSED' : 'FAILED'
+}
+
+function formatAgentRunReport(
+  pipelineName: string,
+  branch: string,
+  nodes: { id: string; name: string }[],
+  status: Map<string, { label: string; code: number }>,
+  output: Map<string, string>,
+  cancelled: boolean | undefined,
+  ok: boolean
+): string {
+  const lines = [`${agentRunOutcomeLabel(cancelled, ok)}: ${pipelineName} on ${branch}`, '']
+  for (const n of nodes) {
+    const st = status.get(n.id) ?? { label: 'SKIP', code: 0 }
+    const exit = st.label === 'FAIL' ? ` (exit ${st.code})` : ''
+    lines.push(`[${st.label}] ${n.name || n.id}${exit}`)
+  }
+  for (const n of nodes) {
+    if (status.get(n.id)?.label !== 'FAIL') continue
+    const text = (output.get(n.id) ?? '').trim().slice(-AGENT_STEP_OUTPUT_LIMIT)
+    if (text) lines.push('', `--- output: ${n.name || n.id} ---`, text)
+  }
+  return lines.join('\n')
+}
 
 function runForAgent(
   pipeline: Pipeline,
@@ -256,23 +314,17 @@ function runForAgent(
             e.nodeId,
             appendTail(output.get(e.nodeId) ?? '', plainText(e.chunk), AGENT_STEP_OUTPUT_LIMIT)
           )
-        } else if (e.kind === 'step-end') {
-          status.set(e.nodeId, { label: e.skipped ? 'SKIP' : e.ok ? 'PASS' : 'FAIL', code: e.code })
-        } else if (e.kind === 'end') {
-          const lines = [
-            `${e.cancelled ? 'CANCELLED' : e.ok ? 'PASSED' : 'FAILED'}: ${pipeline.name} on ${branch}`,
-            ''
-          ]
-          for (const n of nodes) {
-            const st = status.get(n.id) ?? { label: 'SKIP', code: 0 }
-            lines.push(`[${st.label}] ${n.name || n.id}${st.label === 'FAIL' ? ` (exit ${st.code})` : ''}`)
-          }
-          for (const n of nodes) {
-            if (status.get(n.id)?.label !== 'FAIL') continue
-            const text = (output.get(n.id) ?? '').trim().slice(-AGENT_STEP_OUTPUT_LIMIT)
-            if (text) lines.push('', `--- output: ${n.name || n.id} ---`, text)
-          }
-          finish(lines.join('\n'), !e.ok)
+          return
+        }
+        if (e.kind === 'step-end') {
+          status.set(e.nodeId, { label: agentStepLabel(e.skipped, e.ok), code: e.code })
+          return
+        }
+        if (e.kind === 'end') {
+          finish(
+            formatAgentRunReport(pipeline.name, branch, nodes, status, output, e.cancelled, e.ok),
+            !e.ok
+          )
         }
       }
     }
@@ -410,7 +462,7 @@ function mcpEntry(projectPath: string): McpServerEntry {
  *
  * Also merges into `~/.cursor/mcp.json`. Cursor's CLI (and often the IDE agent)
  * ignores project `.cursor/mcp.json`; the user-level file is what they load.
- * Last opened project wins for the shared `buildflow` key.
+ * Last opened project wins for the shared `farol` key.
  */
 function installMcpConfig(dir: string, socketFor = dir): void {
   const entry = mcpEntry(socketFor)
@@ -476,7 +528,10 @@ function registerIpc(): void {
   })
   ipcMain.handle('session:clearLast', () => clearLastProject())
 
-  ipcMain.handle('pipelines:load', (_e, projectPath: string) => loadPipelines(projectPath))
+  ipcMain.handle('pipelines:load', async (_e, projectPath: string) => {
+    void pipelineFiles.watch(projectPath)
+    return loadPipelines(projectPath)
+  })
 
   ipcMain.handle('pipelines:save', (_e, projectPath: string, pipelines: Pipeline[]) =>
     savePipelines(projectPath, pipelines)
@@ -514,8 +569,13 @@ function registerIpc(): void {
   ipcMain.handle('agent:start', (_e, request: AgentTaskRequest) => agents.start(request))
   ipcMain.handle(
     'agent:message',
-    (_e, taskId: string, text: string, provider?: AgentTaskRequest['provider']) =>
-      agents.message(taskId, text, provider)
+    (
+      _e,
+      taskId: string,
+      text: string,
+      provider?: AgentTaskRequest['provider'],
+      pipelines?: AgentTaskRequest['pipelines']
+    ) => agents.message(taskId, text, provider, pipelines)
   )
   ipcMain.handle(
     'agent:setProvider',
@@ -537,7 +597,28 @@ function registerIpc(): void {
   ipcMain.on('window:close', () => win?.close())
 }
 
+function applyBrandIcon(): void {
+  const image = loadBrandIcon()
+  if (!image) return
+
+  // Dock tiles look sharpest around 128; a raw 1024 PNG sometimes fails to paint
+  // and leaves the stock Electron atom in place (especially under `electron-vite` / unsigned installs).
+  const dockTile = image.resize({ width: 128, height: 128 })
+  if (process.platform === 'darwin') {
+    app.dock?.setIcon(dockTile.isEmpty() ? image : dockTile)
+  }
+
+  const aboutPath = brandIconCandidates().find((p) => fs.existsSync(p))
+  app.setAboutPanelOptions({
+    applicationName: 'Farol',
+    applicationVersion: app.getVersion(),
+    copyright: 'Farol',
+    ...(aboutPath ? { iconPath: aboutPath } : {})
+  })
+}
+
 app.whenReady().then(() => {
+  applyBrandIcon()
   registerIpc()
   buildMenu()
   createWindow()
@@ -557,6 +638,7 @@ app.on('before-quit', () => {
   shells.disposeAll()
   runner.cancelAll()
   head.stop()
+  pipelineFiles.stop()
   for (const server of bridges.values()) server.close()
   bridges.clear()
 })

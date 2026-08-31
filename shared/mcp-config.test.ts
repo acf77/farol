@@ -4,12 +4,12 @@ import { socketPathFor, takeLines } from './bridge'
 import { resolvePipeline } from './graph'
 import type { Pipeline } from './types'
 
-const entry = { command: '/Applications/BuildFlow.app/Contents/MacOS/BuildFlow', args: ['/x/mcp.js'] }
+const entry = { command: '/Applications/Farol.app/Contents/MacOS/Farol', args: ['/x/mcp.js'] }
 
 describe('mergeMcpConfig', () => {
   it('creates the file when the project has none', () => {
     const out = mergeMcpConfig('', entry)
-    expect(JSON.parse(out!)).toEqual({ mcpServers: { buildflow: entry } })
+    expect(JSON.parse(out!)).toEqual({ mcpServers: { farol: entry } })
   })
 
   it('targets Claude and Cursor project paths', () => {
@@ -22,14 +22,14 @@ describe('mergeMcpConfig', () => {
     })
     const parsed = JSON.parse(mergeMcpConfig(existing, entry)!)
     expect(parsed.mcpServers.posthog).toEqual({ url: 'https://mcp.posthog.com/mcp' })
-    expect(parsed.mcpServers.buildflow).toEqual(entry)
+    expect(parsed.mcpServers.farol).toEqual(entry)
   })
 
   it('leaves other servers alone', () => {
     const existing = JSON.stringify({ mcpServers: { github: { command: 'gh-mcp', args: [] } } })
     const parsed = JSON.parse(mergeMcpConfig(existing, entry)!)
     expect(parsed.mcpServers.github).toEqual({ command: 'gh-mcp', args: [] })
-    expect(parsed.mcpServers.buildflow).toEqual(entry)
+    expect(parsed.mcpServers.farol).toEqual(entry)
   })
 
   it('keeps unrelated top-level keys', () => {
@@ -45,6 +45,22 @@ describe('mergeMcpConfig', () => {
   it('updates a stale entry when the app moves', () => {
     const current = mergeMcpConfig('', { ...entry, args: ['/old/mcp.js'] })!
     expect(mergeMcpConfig(current, entry)).not.toBeNull()
+  })
+
+  it('drops a leftover buildflow key even when farol already matches', () => {
+    const existing = JSON.stringify({
+      mcpServers: {
+        farol: entry,
+        buildflow: { command: '/Applications/BuildFlow.app/Contents/MacOS/BuildFlow', args: ['/x/mcp.js'] },
+        github: { command: 'gh-mcp', args: [] }
+      }
+    })
+    const out = mergeMcpConfig(existing, entry)
+    expect(out).not.toBeNull()
+    const parsed = JSON.parse(out!)
+    expect(parsed.mcpServers.farol).toEqual(entry)
+    expect(parsed.mcpServers.github).toEqual({ command: 'gh-mcp', args: [] })
+    expect(parsed.mcpServers.buildflow).toBeUndefined()
   })
 
   it('refuses to touch a file it cannot parse', () => {
@@ -110,7 +126,7 @@ describe('socket path', () => {
 
   it('produces one path segment with no separators from the project', () => {
     const p = socketPathFor('/a/b/c', '/tmp')
-    expect(p.startsWith('/tmp/buildflow-')).toBe(true)
+    expect(p.startsWith('/tmp/farol-')).toBe(true)
     expect(p.slice('/tmp/'.length)).not.toContain('/')
   })
 })

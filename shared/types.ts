@@ -16,7 +16,7 @@ export interface Project {
   name: string
   /** Absolute path on disk. */
   path: string
-  /** Home-relative display path, e.g. `~/dev/buildflow`. */
+  /** Home-relative display path, e.g. `~/dev/farol`. */
   display: string
 }
 
@@ -69,6 +69,12 @@ export interface GitInfo {
 export interface GitChanged {
   projectPath: string
   info: GitInfo
+}
+
+/** Fired when `.farol/pipelines.json` changes on disk (including outside the app). */
+export interface PipelinesChanged {
+  projectPath: string
+  pipelines: Pipeline[]
 }
 
 export interface OpenProjects {
@@ -222,7 +228,7 @@ export type UpdateStatus =
 
 export type Platform = 'darwin' | 'win32' | 'linux' | (string & {})
 
-export interface BuildFlowApi {
+export interface FarolApi {
   platform: Platform
   /** The machine's default shell, e.g. `zsh` — used to label terminal tabs. */
   shellName: string
@@ -252,6 +258,8 @@ export interface BuildFlowApi {
   pipelines: {
     load(projectPath: string): Promise<Pipeline[]>
     save(projectPath: string, pipelines: Pipeline[]): Promise<void>
+    /** Fires when pipelines.json changes, including from outside the app. */
+    onChanged(cb: (changed: PipelinesChanged) => void): () => void
   }
   shell: {
     /** Start an interactive shell for a pane. */
@@ -300,7 +308,8 @@ export interface BuildFlowApi {
     message(
       taskId: string,
       text: string,
-      provider?: AiProvider
+      provider?: AiProvider,
+      pipelines?: Pipeline[]
     ): Promise<{ ok: boolean; message?: string }>
     setProvider(
       taskId: string,

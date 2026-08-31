@@ -9,7 +9,7 @@
  */
 
 /** Env var carrying the socket path from `.mcp.json` to the MCP server. */
-export const BRIDGE_ENV = 'BUILDFLOW_SOCKET'
+export const BRIDGE_ENV = 'FAROL_SOCKET'
 
 /** Cheap, stable, filename-safe digest — this names a socket, not a secret. */
 export function projectKey(projectPath: string): string {
@@ -24,7 +24,7 @@ export function projectKey(projectPath: string): string {
 }
 
 export function socketPathFor(projectPath: string, tmpDir: string, sep = '/'): string {
-  return `${tmpDir.replace(/[/\\]+$/, '')}${sep}buildflow-${projectKey(projectPath)}.sock`
+  return `${tmpDir.replace(/[/\\]+$/, '')}${sep}farol-${projectKey(projectPath)}.sock`
 }
 
 /** What the MCP server wants. `cwd` is the agent's directory, not the app's. */

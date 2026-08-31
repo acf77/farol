@@ -24,8 +24,8 @@ function fallbackUi(
           marginLeft: 41,
           padding: '8px 12px',
           borderRadius: 9,
-          background: '#1a1520',
-          border: '1px solid #3d3040',
+          background: '#111827',
+          border: '1px solid #273449',
           fontSize: 12.5,
           lineHeight: 1.45,
           color: C.textMuted
@@ -41,7 +41,7 @@ function fallbackUi(
               marginLeft: 8,
               border: 'none',
               background: 'transparent',
-              color: C.accent,
+              color: C.accentBright,
               cursor: 'pointer',
               fontSize: 'inherit',
               padding: 0
@@ -65,14 +65,14 @@ function fallbackUi(
         gap: 16,
         padding: 32,
         boxSizing: 'border-box',
-        background: '#07090d',
+        background: '#080D17',
         color: C.text,
         fontFamily: UI,
         fontSize: 14,
         textAlign: 'center'
       }}
     >
-      <div style={{ fontSize: 17, fontWeight: 500, color: C.textSoft }}>BuildFlow hit an error</div>
+      <div style={{ fontSize: 17, fontWeight: 600, color: C.textSoft }}>Farol hit an error</div>
       <div style={{ maxWidth: 480, lineHeight: 1.5, color: C.textMuted }}>
         The workspace stopped updating. Your terminals and agent processes may still be running in the
         background.
@@ -84,13 +84,13 @@ function fallbackUi(
             className="bf-focus"
             onClick={onReset}
             style={{
-              border: '1px solid #2a3446',
+              border: '1px solid #273449',
               borderRadius: 9,
               padding: '10px 18px',
               background: 'transparent',
               color: C.textSoft,
               fontSize: 13.5,
-              fontWeight: 500,
+              fontWeight: 600,
               cursor: 'pointer'
             }}
           >
@@ -108,7 +108,7 @@ function fallbackUi(
             background: C.accent,
             color: '#fff',
             fontSize: 13.5,
-            fontWeight: 500,
+            fontWeight: 600,
             cursor: 'pointer'
           }}
         >
@@ -131,7 +131,7 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error('[buildflow] UI error', error, info.componentStack)
+    console.error('[farol] UI error', error, info.componentStack)
   }
 
   private reset = (): void => {

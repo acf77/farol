@@ -11,31 +11,31 @@ import { MONO } from '../theme'
  * user's terminal. Nothing here interprets the byte stream.
  */
 
-const api = window.buildflow
+const api = window.farol
 
 /** Palette shared with the run-log renderer, so both panes look like one app. */
 const THEME = {
-  background: '#0b0f16',
-  foreground: '#dfe4ec',
-  cursor: '#4d8dfb',
-  cursorAccent: '#0b0f16',
-  selectionBackground: 'rgba(47,124,246,0.35)',
-  black: '#3a4356',
-  red: '#e07b7b',
-  green: '#5fd39a',
-  yellow: '#e2b258',
-  blue: '#4d8dfb',
-  magenta: '#c98a5e',
-  cyan: '#5ac8fa',
-  white: '#dfe4ec',
-  brightBlack: '#6d7686',
-  brightRed: '#f0a3a3',
-  brightGreen: '#8ee6bb',
-  brightYellow: '#eec685',
-  brightBlue: '#7aa9fc',
-  brightMagenta: '#e3b892',
-  brightCyan: '#7fdbff',
-  brightWhite: '#ffffff'
+  background: '#080D17',
+  foreground: '#F8FAFC',
+  cursor: '#2563EB',
+  cursorAccent: '#080D17',
+  selectionBackground: 'rgba(37,99,235,0.35)',
+  black: '#64748B',
+  red: '#EF4444',
+  green: '#22C55E',
+  yellow: '#F59E0B',
+  blue: '#60A5FA',
+  magenta: '#bf5af2',
+  cyan: '#38BDF8',
+  white: '#F8FAFC',
+  brightBlack: '#94A3B8',
+  brightRed: '#F87171',
+  brightGreen: '#4ADE80',
+  brightYellow: '#FBBF24',
+  brightBlue: '#93C5FD',
+  brightMagenta: '#d7a5f7',
+  brightCyan: '#BAE6FD',
+  brightWhite: '#FFFFFF'
 }
 
 interface Props {
@@ -185,7 +185,7 @@ export default function XtermPane({ paneId, cwd, visible, focused, onFocus }: Pr
         minHeight: 0,
         overflow: 'hidden',
         padding: '10px 12px 12px 14px',
-        background: '#0b0f16'
+        background: '#080D17'
       }}
     >
       <div ref={hostRef} style={{ width: '100%', height: '100%' }} />

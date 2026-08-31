@@ -78,7 +78,7 @@ export default function TerminalPane({
   }
 
   const dotFor = (t: Tab): string =>
-    t.status === 'running' ? C.accentBright : t.status === 'pass' ? C.green : t.status === 'fail' ? C.red : '#4b5567'
+    t.status === 'running' ? C.accentBright : t.status === 'pass' ? C.green : t.status === 'fail' ? C.red : '#64748B'
 
   const splitBtn = (label: string, title: string, onClick: () => void, Icon: typeof SplitRightIcon) => (
     <button
@@ -97,7 +97,7 @@ export default function TerminalPane({
         border: 0,
         borderRadius: 5,
         background: 'transparent',
-        color: canSplit ? '#8e8e93' : '#3a4356',
+        color: canSplit ? '#94A3B8' : '#64748B',
         display: 'grid',
         placeItems: 'center',
         cursor: canSplit ? 'pointer' : 'default'
@@ -108,7 +108,7 @@ export default function TerminalPane({
   )
 
   return (
-    <div style={{ ...PANE, flex: 1, minHeight: 0, background: '#0b0f16' }}>
+    <div style={{ ...PANE, flex: 1, minHeight: 0, background: '#080D17' }}>
       <div
         style={{
           flex: 'none',
@@ -117,7 +117,7 @@ export default function TerminalPane({
           alignItems: 'center',
           gap: 8,
           padding: '0 8px 0 0',
-          borderBottom: '1px solid #1c2230'
+          borderBottom: '1px solid #273449'
         }}
       >
         <div style={{ display: 'flex', alignItems: 'stretch', height: '100%', minWidth: 0, overflow: 'hidden' }}>
@@ -154,15 +154,15 @@ export default function TerminalPane({
                   height: '100%',
                   padding: '0 12px',
                   borderRadius: 0,
-                  borderBottom: on ? '1px solid #0b0f16' : '1px solid transparent',
+                  borderBottom: on ? '1px solid #080D17' : '1px solid transparent',
                   marginBottom: -1,
                   fontSize: 12,
                   cursor: 'pointer',
                   minWidth: 0,
                   flex: 'none',
                   maxWidth: 200,
-                  background: on ? '#0b0f16' : 'transparent',
-                  color: on ? '#eef1f6' : '#8b94a3',
+                  background: on ? '#080D17' : 'transparent',
+                  color: on ? '#F8FAFC' : '#94A3B8',
                   outline: 'none'
                 }}
               >
@@ -187,7 +187,7 @@ export default function TerminalPane({
                   {t.title}
                 </span>
                 {paneCount > 1 && (
-                  <span style={{ flex: 'none', fontFamily: MONO, fontSize: 9.5, color: '#6d7686' }}>
+                  <span style={{ flex: 'none', fontFamily: MONO, fontSize: 9.5, color: '#64748B' }}>
                     ×{paneCount}
                   </span>
                 )}
@@ -235,7 +235,7 @@ export default function TerminalPane({
             borderRadius: 7,
             display: 'grid',
             placeItems: 'center',
-            color: '#8b94a3',
+            color: '#94A3B8',
             fontSize: 15,
             cursor: 'pointer'
           }}
@@ -254,7 +254,7 @@ export default function TerminalPane({
           style={{
             fontFamily: MONO,
             fontSize: 11,
-            color: '#6d7686',
+            color: '#64748B',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -265,7 +265,7 @@ export default function TerminalPane({
         </span>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: '#0b0f16' }}>
+      <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: '#080D17' }}>
         {tabs.map((t) => {
           const shown = t.id === activeId
           return (
@@ -280,7 +280,7 @@ export default function TerminalPane({
                 transform: shown ? 'none' : 'translateX(-120%)',
                 pointerEvents: shown ? 'auto' : 'none',
                 zIndex: shown ? 1 : 0,
-                background: '#0b0f16'
+                background: '#080D17'
               }}
             >
               <PaneGrid
@@ -306,8 +306,8 @@ export default function TerminalPane({
             top: Math.min(ctx.y, window.innerHeight - 100),
             zIndex: 80,
             minWidth: 180,
-            background: '#2c2c2e',
-            border: '1px solid rgba(255,255,255,0.12)',
+            background: '#1F2937',
+            border: '1px solid #273449',
             borderRadius: 8,
             boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
             padding: 5
@@ -328,14 +328,14 @@ export default function TerminalPane({
               gap: 8,
               border: 'none',
               background: 'transparent',
-              color: '#e8e8ea',
+              color: '#F8FAFC',
               cursor: 'pointer',
               textAlign: 'left'
             }}
           >
             <SplitRightIcon size={13} />
             <span style={{ flex: 1 }}>Split right</span>
-            <span style={{ fontSize: 11, color: '#8e8e93' }}>⌘D</span>
+            <span style={{ fontSize: 11, color: '#94A3B8' }}>⌘D</span>
           </button>
           <button
             type="button"
@@ -352,14 +352,14 @@ export default function TerminalPane({
               gap: 8,
               border: 'none',
               background: 'transparent',
-              color: '#e8e8ea',
+              color: '#F8FAFC',
               cursor: 'pointer',
               textAlign: 'left'
             }}
           >
             <SplitDownIcon size={13} />
             <span style={{ flex: 1 }}>Split down</span>
-            <span style={{ fontSize: 11, color: '#8e8e93' }}>⇧⌘D</span>
+            <span style={{ fontSize: 11, color: '#94A3B8' }}>⇧⌘D</span>
           </button>
         </div>
       )}

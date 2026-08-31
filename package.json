@@ -1,8 +1,8 @@
 {
-  "name": "buildflow",
-  "version": "1.5.13",
+  "name": "farol",
+  "version": "1.5.23",
   "private": true,
-  "author": "BuildFlow",
+  "author": "Farol",
   "description": "A terminal workspace with runnable shell + AI pipelines.",
   "main": "./out/main/index.js",
   "scripts": {
@@ -17,13 +17,20 @@
     "install:app": "npm run dist && node scripts/install-app.mjs"
   },
   "build": {
-    "appId": "com.buildflow.app",
-    "productName": "BuildFlow",
+    "appId": "com.farol.app",
+    "productName": "Farol",
     "directories": {
+      "buildResources": "build",
       "output": "dist"
     },
     "files": [
       "out/**"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
     ],
     "asarUnpack": [
       "**/node_modules/node-pty/**",
@@ -31,7 +38,12 @@
     ],
     "npmRebuild": true,
     "mac": {
+      "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools",
+      "extendInfo": {
+        "CFBundleIconFile": "icon",
+        "CFBundleIconName": "icon"
+      },
       "target": [
         "dmg",
         "zip"
@@ -41,7 +53,7 @@
       "gatekeeperAssess": false
     },
     "dmg": {
-      "title": "BuildFlow ${version}"
+      "title": "Farol ${version}"
     }
   },
   "dependencies": {

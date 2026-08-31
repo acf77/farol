@@ -14,17 +14,17 @@ The primary task on any given screen is either typing into a shell or watching a
 
 ## Product Purpose
 
-BuildFlow is a desktop terminal workspace with runnable pipelines. It opens a project folder, gives it tabs and splits backed by the machine's own default shell, and runs named pipelines whose steps are either real commands or prompts handed to Claude, Codex, Cursor, or OpenCode, streaming into their own tab.
+Farol is a desktop terminal workspace with runnable pipelines. It opens a project folder, gives it tabs and splits backed by the machine's own default shell, and runs named pipelines whose steps are either real commands or prompts handed to Claude, Codex, Cursor, or OpenCode, streaming into their own tab.
 
-It exists because the two halves of that workflow normally live apart: a terminal that is faithful but has no memory of your sequences, and a task runner that remembers but replaces your shell with a worse one. BuildFlow refuses the trade. Pipelines are stored in the project at `.buildflow/pipelines.json` so they can be committed and shared, and runs are tracked per branch so a green result on `main` never masquerades as a green result on the branch you just checked out.
+It exists because the two halves of that workflow normally live apart: a terminal that is faithful but has no memory of your sequences, and a task runner that remembers but replaces your shell with a worse one. Farol refuses the trade. Pipelines are stored in the project at `.farol/pipelines.json` so they can be committed and shared, and runs are tracked per branch so a green result on `main` never masquerades as a green result on the branch you just checked out.
 
-Success looks like a developer forgetting BuildFlow is an app. Panes behave like their own terminal, prompts and aliases and PATH intact, full-screen programs rendering properly. The product has worked when the only thing that felt notable was that the pipeline was one click away.
+Success looks like a developer forgetting Farol is an app. Panes behave like their own terminal, prompts and aliases and PATH intact, full-screen programs rendering properly. The product has worked when the only thing that felt notable was that the pipeline was one click away.
 
 ## Brand Personality
 
 **Native, invisible, precise.**
 
-*Native:* BuildFlow speaks macOS. It borrows the platform's vocabulary (system materials, SF Pro and SF Mono, traffic lights, standard shortcuts) instead of inventing a parallel one. A user who knows the Mac already knows this app.
+*Native:* Farol speaks macOS. It borrows the platform's vocabulary (system materials, SF Pro and SF Mono, traffic lights, standard shortcuts) instead of inventing a parallel one. A user who knows the Mac already knows this app.
 
 *Invisible:* Chrome recedes so content dominates. The terminal is the hero and the interface is scaffolding around it. Confidence here reads as restraint, not as decoration.
 
@@ -57,4 +57,4 @@ Voice is quiet and factual. Labels are nouns and verbs, not slogans. "No Project
 - **Reduced motion.** Honor `prefers-reduced-motion`. The spin and pulse keyframes used for run status must degrade to a static or opacity-only state, never disappearing the status signal itself.
 - **Full keyboard operability.** Every action reachable by pointer is reachable by keyboard, with a visible focus indicator that survives on both opaque and translucent chrome. Focus order follows visual order. Nothing traps focus except a modal that can be dismissed with Escape.
 - **Status is never color alone.** Pass, fail, skipped, and stale carry a glyph or word alongside the green, red, grey, or amber. Run-log line kinds must stay distinguishable without color vision.
-- **Terminal fidelity is an accessibility feature.** Users who rely on their own shell configuration (custom prompts, high-contrast themes, larger fonts) keep it. BuildFlow does not restyle the pane contents.
+- **Terminal fidelity is an accessibility feature.** Users who rely on their own shell configuration (custom prompts, high-contrast themes, larger fonts) keep it. Farol does not restyle the pane contents.

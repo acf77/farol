@@ -29,19 +29,21 @@ export default function StatusBar({
         justifyContent: 'space-between',
         gap: 16,
         padding: '0 16px',
-        borderTop: '1px solid #1a202b',
-        background: '#0b0e14'
+        borderTop: '1px solid #273449',
+        background: '#080D17'
       }}
     >
       <div
         className="bf-status-item"
         onClick={onBranch}
         title="Open branch as project"
-        style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#aeb6c3', cursor: 'pointer' }}
+        style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#94A3B8', cursor: 'pointer' }}
       >
         {branch && <span style={{ fontSize: 11.5, fontFamily: MONO }}>{branch}</span>}
-        {branch && <span style={{ color: '#5c6577' }}>·</span>}
-        <span style={{ width: 7, height: 7, borderRadius: '50%', background: processCount ? C.green : C.fainter }} />
+        {branch && <span style={{ color: '#64748B' }}>·</span>}
+        <span
+          style={{ width: 7, height: 7, borderRadius: '50%', background: processCount ? C.green : C.fainter }}
+        />
         <span style={{ fontSize: 11.5 }}>
           {processCount} {processCount === 1 ? 'process' : 'processes'}
         </span>
@@ -52,7 +54,7 @@ export default function StatusBar({
           display: 'flex',
           alignItems: 'center',
           gap: 10,
-          color: running ? '#c3cad6' : '#7f889a'
+          color: running ? '#CBD5E1' : '#94A3B8'
         }}
       >
         {running && onStop && (
@@ -65,11 +67,11 @@ export default function StatusBar({
               height: 22,
               padding: '0 9px',
               borderRadius: 6,
-              border: '1px solid #3a2830',
-              background: 'rgba(224, 123, 123, 0.12)',
+              border: '1px solid rgba(239,68,68,0.35)',
+              background: 'rgba(239, 68, 68, 0.12)',
               color: C.red,
               fontSize: 11.5,
-              fontWeight: 500,
+              fontWeight: 600,
               cursor: 'pointer'
             }}
           >

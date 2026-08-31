@@ -1,8 +1,8 @@
-import type { BuildFlowApi } from '@shared/types'
+import type { FarolApi } from '@shared/types'
 
 declare global {
   interface Window {
-    buildflow: BuildFlowApi
+    farol: FarolApi
   }
 }
 

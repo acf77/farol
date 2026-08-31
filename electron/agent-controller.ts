@@ -11,7 +11,7 @@ import type {
   Pipeline,
   PipelineRunResult
 } from '../shared/types'
-import { isAiProvider, managedAiCommand } from '../shared/ai'
+import { isAiProvider, managedAiCommand, normalizeAi } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
 import { plainText } from '../shared/terminal'
 import { shellEnv } from './session'
@@ -36,7 +36,7 @@ export type AgentExecutor = (
 /**
  * Where one agent invocation reports what it is doing. `text` and `turn` both
  * reach the chat and both count as the agent "speaking" — only they are
- * scanned for BuildFlow's markers. `noise` is diagnostics (stderr, banners):
+ * scanned for Farol's markers. `noise` is diagnostics (stderr, banners):
  * held back from the transcript, but still watched for provider failures.
  */
 interface AgentSink {
@@ -71,10 +71,10 @@ interface PipelineActivity {
 }
 
 const DEFAULT_MAX_ATTEMPTS = 5
-const BLOCK_MARKER = 'BUILDFLOW_BLOCKED:'
+const BLOCK_MARKER = 'FAROL_BLOCKED:'
 /** How much trailing output the marker and failure scans keep in memory. */
 const SCAN_WINDOW = 16_384
-const PIPELINES_MARKER = 'BUILDFLOW_PIPELINES:'
+const PIPELINES_MARKER = 'FAROL_PIPELINES:'
 /** Cap stored prompt history so long chats cannot retain unbounded text. */
 const MAX_PROMPT_CHARS = 100_000
 /** Cap pipeline activity retained for prompt context. */
@@ -155,6 +155,31 @@ function failureContext(pipeline: Pipeline, result: PipelineRunResult): string {
   return `${pipeline.name} failed.${detail ? `\n${detail}` : ''}`
 }
 
+function repairPromptOpening(
+  originalPrompt: string,
+  attempt: number,
+  failures: { pipeline: Pipeline; result: PipelineRunResult }[],
+  guidance: string
+): string {
+  return [
+    `Continue the original task: ${originalPrompt}`,
+    '',
+    `Farol validation attempt ${attempt} failed. Fix the code, then finish so Farol can validate again.`,
+    ...failures.flatMap(({ pipeline, result }) => [
+      result.reportPath ? `Read the full failure report at ${result.reportPath}.` : '',
+      failureContext(pipeline, result)
+    ]),
+    guidance ? `Additional user guidance:\n${guidance}` : ''
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function activityStatus(result: PipelineRunResult): PipelineActivity['status'] {
+  if (result.cancelled) return 'cancelled'
+  return result.ok ? 'passed' : 'failed'
+}
+
 function selectedPipelines(
   output: string,
   available: Pipeline[]
@@ -206,7 +231,11 @@ function pipelineCatalog(pipelines: Pipeline[]): string {
   return pipelines
     .map((pipeline) => {
       const steps = pipeline.nodes
-        .map((node) => `  - ${node.name || node.id} (${node.type}): ${node.cmd}`)
+        .map((node) => {
+          const kind =
+            node.type === 'ai' ? `ai/${normalizeAi(node.ai)}` : node.type
+          return `  - ${node.name || node.id} (${kind}): ${node.cmd}`
+        })
         .join('\n')
       return `- ${pipeline.name} [id: ${pipeline.id}]\n${steps}`
     })
@@ -264,7 +293,8 @@ export class AgentController {
   message(
     taskId: string,
     text: string,
-    provider?: AiProvider
+    provider?: AiProvider,
+    pipelines?: Pipeline[]
   ): { ok: boolean; message?: string } {
     const task = this.tasks.get(taskId)
     const clean = text.trim()
@@ -273,6 +303,12 @@ export class AgentController {
     // A provider switch mid-chat (e.g. after a usage limit) must stick before
     // the next cycle, including when the follow-up is only queued.
     if (isAiProvider(provider)) task.request.provider = provider
+    // Pipeline edits (e.g. AI step provider) are snapshotted at start; refresh
+    // on every follow-up so validation uses what the user configured now.
+    if (pipelines) {
+      const next = pipelines.filter((pipeline) => pipeline.nodes.length)
+      if (next.length) task.request.pipelines = next
+    }
     this.emit({ kind: 'user', taskId, text: clean })
     // Stop only aborts the in-flight run. A follow-up message resumes the same
     // chat — queue it if the cancelled cycle is still winding down.
@@ -395,180 +431,198 @@ export class AgentController {
     )
   }
 
+  private cycleSink(
+    task: Task,
+    scan: { assistant: string; output: string; blocked: string | null }
+  ): AgentSink {
+    const check = (): void => {
+      const reason = blockedMarker(scan.assistant) ?? providerFailure(scan.output)
+      if (!scan.blocked && reason) {
+        scan.blocked = reason
+        if (task.process?.pid) killPidTree(task.process.pid)
+      }
+    }
+    return {
+      text: (chunk) => {
+        this.emit({ kind: 'output', taskId: task.request.id, chunk })
+        scan.assistant = (scan.assistant + chunk).slice(-SCAN_WINDOW)
+        scan.output = (scan.output + chunk).slice(-SCAN_WINDOW)
+        check()
+      },
+      turn: (text) => {
+        this.emit({ kind: 'assistant', taskId: task.request.id, text })
+        scan.assistant = (`${scan.assistant}\n${text}`).slice(-SCAN_WINDOW)
+        scan.output = (`${scan.output}\n${text}`).slice(-SCAN_WINDOW)
+        check()
+      },
+      tool: (event) => this.emit({ kind: 'tool', taskId: task.request.id, ...event }),
+      noise: (chunk) => {
+        scan.output = (scan.output + chunk).slice(-SCAN_WINDOW)
+        check()
+      }
+    }
+  }
+
+  private async runValidationPipelines(
+    task: Task,
+    pipelines: Pipeline[],
+    attempt: number
+  ): Promise<
+    | { kind: 'cancelled' }
+    | { kind: 'stopped' }
+    | { kind: 'passed' }
+    | { kind: 'failed'; failures: { pipeline: Pipeline; result: PipelineRunResult }[] }
+  > {
+    const failures: { pipeline: Pipeline; result: PipelineRunResult }[] = []
+    for (const pipeline of pipelines) {
+      const activity: PipelineActivity = {
+        pipelineId: pipeline.id,
+        pipelineName: pipeline.name,
+        status: 'running',
+        startedAt: Date.now()
+      }
+      task.pipelineRuns.push(activity)
+      if (task.pipelineRuns.length > MAX_PIPELINE_RUNS) {
+        task.pipelineRuns.splice(0, task.pipelineRuns.length - MAX_PIPELINE_RUNS)
+      }
+      this.pipelineStatus(task, activity)
+      let result: PipelineRunResult
+      try {
+        result = await this.runner.run(
+          pipeline,
+          task.request.cwd,
+          task.request.branch,
+          'managed-agent',
+          task.abort.signal
+        )
+      } catch (error) {
+        activity.status = 'failed'
+        activity.finishedAt = Date.now()
+        activity.durationMs = activity.finishedAt - activity.startedAt
+        if (activity.runId === undefined) activity.runId = `error:${activity.startedAt}`
+        this.pipelineStatus(task, activity)
+        throw error
+      }
+      activity.status = activityStatus(result)
+      activity.finishedAt = Date.now()
+      activity.durationMs = activity.finishedAt - activity.startedAt
+      activity.runId = result.runId
+      this.pipelineStatus(task, activity)
+      if (task.cancelled) return { kind: 'cancelled' }
+      if (result.cancelled) {
+        task.running = false
+        this.status(task, 'needs-attention', attempt, 'Validation stopped unexpectedly')
+        this.releaseIfDisposed(task)
+        return { kind: 'stopped' }
+      }
+      if (!result.ok) failures.push({ pipeline, result })
+    }
+    if (!failures.length) return { kind: 'passed' }
+    return { kind: 'failed', failures }
+  }
+
+  private async runCycleAttempt(
+    task: Task,
+    prompt: string,
+    attempt: number
+  ): Promise<{ kind: 'done' } | { kind: 'retry'; prompt: string; rewindAttempt?: boolean }> {
+    this.status(
+      task,
+      attempt === 1 ? 'working' : 'repairing',
+      attempt,
+      attempt === 1 ? 'Agent working' : 'Agent repairing validation failures'
+    )
+    // What the agent said, which is what the markers are read from, and
+    // everything it printed, which is where provider failures show up.
+    const scan = { assistant: '', output: '', blocked: null as string | null }
+    const sink = this.cycleSink(task, scan)
+    const code = this.executor
+      ? await this.executor(task.request, prompt, sink.text)
+      : await this.runAgent(task, prompt, sink)
+    if (task.cancelled) {
+      this.settleCancel(task)
+      return { kind: 'done' }
+    }
+    if (scan.blocked) {
+      // A follow-up may already be queued with a switched provider (e.g. after
+      // a usage limit). Surface the stop, then continue that message.
+      this.finishOrContinue(task, attempt, 'needs-attention', `Agent stopped: ${scan.blocked}`)
+      return { kind: 'done' }
+    }
+    if (code !== 0) {
+      this.finishOrContinue(task, attempt, 'needs-attention', `Agent exited with code ${code}`)
+      return { kind: 'done' }
+    }
+    if (task.guidance.length) {
+      const guidance = task.guidance.splice(0).join('\n')
+      return {
+        kind: 'retry',
+        rewindAttempt: true,
+        prompt: this.prompt(
+          task,
+          `Continue the original task: ${task.request.prompt}\n\nAdditional user guidance:\n${guidance}`
+        )
+      }
+    }
+
+    const selection = selectedPipelines(scan.assistant, task.request.pipelines)
+    if (selection.error) {
+      return {
+        kind: 'retry',
+        prompt: this.prompt(
+          task,
+          `Continue the original task: ${task.request.prompt}\n\nFarol could not validate because your pipeline selection was invalid: ${selection.error}`
+        )
+      }
+    }
+
+    // No code changes → no validation. The agent opted out with [].
+    if (!selection.pipelines.length) {
+      const next = this.continueIfGuidance(task)
+      if (next) return { kind: 'retry', prompt: next }
+      task.running = false
+      this.status(task, 'completed', attempt, 'No validation needed')
+      this.releaseIfDisposed(task)
+      return { kind: 'done' }
+    }
+
+    const names = selection.pipelines.map((pipeline) => pipeline.name).join(', ')
+    this.status(task, 'validating', attempt, `Running ${names}`)
+    const outcome = await this.runValidationPipelines(task, selection.pipelines, attempt)
+    if (outcome.kind === 'cancelled') {
+      this.settleCancel(task)
+      return { kind: 'done' }
+    }
+    if (outcome.kind === 'stopped') return { kind: 'done' }
+    if (outcome.kind === 'passed') {
+      const next = this.continueIfGuidance(task)
+      if (next) return { kind: 'retry', prompt: next }
+      task.running = false
+      this.status(task, 'completed', attempt, `${names} passed`)
+      this.releaseIfDisposed(task)
+      return { kind: 'done' }
+    }
+
+    const guidance = task.guidance.splice(0).join('\n')
+    return {
+      kind: 'retry',
+      prompt: this.prompt(
+        task,
+        repairPromptOpening(task.request.prompt, attempt, outcome.failures, guidance)
+      )
+    }
+  }
+
   private async cycle(task: Task, opening: string): Promise<void> {
     const maxAttempts = Math.max(1, Math.min(20, task.request.maxAttempts ?? DEFAULT_MAX_ATTEMPTS))
     let prompt = this.prompt(task, opening)
     let attempt = 0
     try {
       for (attempt = 1; attempt <= maxAttempts && !task.cancelled; attempt++) {
-        this.status(task, attempt === 1 ? 'working' : 'repairing', attempt, attempt === 1 ? 'Agent working' : 'Agent repairing validation failures')
-        // What the agent said, which is what the markers are read from, and
-        // everything it printed, which is where provider failures show up.
-        let assistant = ''
-        let output = ''
-        let blocked: string | null = null
-        const check = (): void => {
-          const reason = blockedMarker(assistant) ?? providerFailure(output)
-          if (!blocked && reason) {
-            blocked = reason
-            if (task.process?.pid) killPidTree(task.process.pid)
-          }
-        }
-        const sink: AgentSink = {
-          text: (chunk) => {
-            this.emit({ kind: 'output', taskId: task.request.id, chunk })
-            assistant = (assistant + chunk).slice(-SCAN_WINDOW)
-            output = (output + chunk).slice(-SCAN_WINDOW)
-            check()
-          },
-          turn: (text) => {
-            this.emit({ kind: 'assistant', taskId: task.request.id, text })
-            assistant = (`${assistant}\n${text}`).slice(-SCAN_WINDOW)
-            output = (`${output}\n${text}`).slice(-SCAN_WINDOW)
-            check()
-          },
-          tool: (event) => this.emit({ kind: 'tool', taskId: task.request.id, ...event }),
-          noise: (chunk) => {
-            output = (output + chunk).slice(-SCAN_WINDOW)
-            check()
-          }
-        }
-        const code = this.executor
-          ? await this.executor(task.request, prompt, sink.text)
-          : await this.runAgent(task, prompt, sink)
-        if (task.cancelled) {
-          this.settleCancel(task)
-          return
-        }
-        if (blocked) {
-          // A follow-up may already be queued with a switched provider (e.g. after
-          // a usage limit). Surface the stop, then continue that message.
-          this.finishOrContinue(
-            task,
-            attempt,
-            'needs-attention',
-            `Agent stopped: ${blocked}`
-          )
-          return
-        }
-        if (code !== 0) {
-          this.finishOrContinue(
-            task,
-            attempt,
-            'needs-attention',
-            `Agent exited with code ${code}`
-          )
-          return
-        }
-        if (task.guidance.length) {
-          const guidance = task.guidance.splice(0).join('\n')
-          prompt = this.prompt(
-            task,
-            `Continue the original task: ${task.request.prompt}\n\nAdditional user guidance:\n${guidance}`
-          )
-          attempt--
-          continue
-        }
-
-        const selection = selectedPipelines(assistant, task.request.pipelines)
-        if (selection.error) {
-          prompt = this.prompt(
-            task,
-            `Continue the original task: ${task.request.prompt}\n\nBuildFlow could not validate because your pipeline selection was invalid: ${selection.error}`
-          )
-          continue
-        }
-
-        // No code changes → no validation. The agent opted out with [].
-        if (!selection.pipelines.length) {
-          const next = this.continueIfGuidance(task)
-          if (next) {
-            prompt = next
-            continue
-          }
-          task.running = false
-          this.status(task, 'completed', attempt, 'No validation needed')
-          this.releaseIfDisposed(task)
-          return
-        }
-
-        const names = selection.pipelines.map((pipeline) => pipeline.name).join(', ')
-        this.status(task, 'validating', attempt, `Running ${names}`)
-        const failures: { pipeline: Pipeline; result: PipelineRunResult }[] = []
-        for (const pipeline of selection.pipelines) {
-          const activity: PipelineActivity = {
-            pipelineId: pipeline.id,
-            pipelineName: pipeline.name,
-            status: 'running',
-            startedAt: Date.now()
-          }
-          task.pipelineRuns.push(activity)
-          if (task.pipelineRuns.length > MAX_PIPELINE_RUNS) {
-            task.pipelineRuns.splice(0, task.pipelineRuns.length - MAX_PIPELINE_RUNS)
-          }
-          this.pipelineStatus(task, activity)
-          let result: PipelineRunResult
-          try {
-            result = await this.runner.run(
-              pipeline,
-              task.request.cwd,
-              task.request.branch,
-              'managed-agent',
-              task.abort.signal
-            )
-          } catch (error) {
-            activity.status = 'failed'
-            activity.finishedAt = Date.now()
-            activity.durationMs = activity.finishedAt - activity.startedAt
-            if (activity.runId === undefined) activity.runId = `error:${activity.startedAt}`
-            this.pipelineStatus(task, activity)
-            throw error
-          }
-          activity.status = result.cancelled ? 'cancelled' : result.ok ? 'passed' : 'failed'
-          activity.finishedAt = Date.now()
-          activity.durationMs = activity.finishedAt - activity.startedAt
-          activity.runId = result.runId
-          this.pipelineStatus(task, activity)
-          if (task.cancelled) {
-            this.settleCancel(task)
-            return
-          }
-          if (result.cancelled) {
-            task.running = false
-            this.status(task, 'needs-attention', attempt, 'Validation stopped unexpectedly')
-            this.releaseIfDisposed(task)
-            return
-          }
-          if (!result.ok) failures.push({ pipeline, result })
-        }
-        if (!failures.length) {
-          const next = this.continueIfGuidance(task)
-          if (next) {
-            prompt = next
-            continue
-          }
-          task.running = false
-          this.status(task, 'completed', attempt, `${names} passed`)
-          this.releaseIfDisposed(task)
-          return
-        }
-
-        const guidance = task.guidance.splice(0).join('\n')
-        prompt = this.prompt(
-          task,
-          [
-            `Continue the original task: ${task.request.prompt}`,
-            '',
-            `BuildFlow validation attempt ${attempt} failed. Fix the code, then finish so BuildFlow can validate again.`,
-            ...failures.flatMap(({ pipeline, result }) => [
-              result.reportPath ? `Read the full failure report at ${result.reportPath}.` : '',
-              failureContext(pipeline, result)
-            ]),
-            guidance ? `Additional user guidance:\n${guidance}` : ''
-          ]
-            .filter(Boolean)
-            .join('\n\n')
-        )
+        const result = await this.runCycleAttempt(task, prompt, attempt)
+        if (result.kind === 'done') return
+        prompt = result.prompt
+        if (result.rewindAttempt) attempt--
       }
 
       if (task.cancelled) {
@@ -601,11 +655,11 @@ export class AgentController {
       '',
       `Work only in ${task.request.cwd}.`,
       this.pipelineHistory(task),
-      `When the requested code change is complete, select every relevant validation pipeline from the catalog below. If you made no code changes, select none (\`[]\`). BuildFlow will run your selections and return any failures for you to repair.`,
-      `Do not call the BuildFlow MCP tools in this managed Chat session. They require approval in some providers; the managed harness executes your selected pipelines directly.`,
+      `When the requested code change is complete, select every relevant validation pipeline from the catalog below. If you made no code changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
+      `Do not call the Farol MCP tools in this managed Chat session. They require approval in some providers; the managed harness executes your selected pipelines directly.`,
       `End every response with exactly one line in this format: ${PIPELINES_MARKER} ["pipeline-id"] — or ${PIPELINES_MARKER} [] when no validation is needed. Use a JSON array and only ids from the catalog.`,
       '',
-      `Available BuildFlow pipelines:\n${pipelineCatalog(task.request.pipelines)}`,
+      `Available Farol pipelines:\n${pipelineCatalog(task.request.pipelines)}`,
       `If a block or error prevents you from completing the task, stop immediately and end your response with “${BLOCK_MARKER} <reason>”. Do not keep trying.`
     ]
       .filter(Boolean)
@@ -624,7 +678,7 @@ export class AgentController {
       const runId = run.runId ? `; run id ${run.runId}` : ''
       return `- ${run.pipelineName} (${run.pipelineId}) started at ${started}; finished at ${finished}; status ${run.status.toUpperCase()}${duration}${runId}.`
     })
-    return `BuildFlow pipeline activity for this chat:\n${lines.join('\n')}`
+    return `Farol pipeline activity for this chat:\n${lines.join('\n')}`
   }
 
   private runAgent(task: Task, prompt: string, sink: AgentSink): Promise<number> {
@@ -633,7 +687,7 @@ export class AgentController {
     env.PATH = searchPath()
     const bin = resolveBin(spec.bins, env.PATH)
     if (!bin) {
-      sink.text(`buildflow: ${spec.hint}\n`)
+      sink.text(`farol: ${spec.hint}\n`)
       return Promise.resolve(127)
     }
 
@@ -675,7 +729,7 @@ export class AgentController {
           stdio: ['ignore', 'pipe', 'pipe']
         })
       } catch (error) {
-        sink.text(`buildflow: ${error instanceof Error ? error.message : String(error)}\n`)
+        sink.text(`farol: ${error instanceof Error ? error.message : String(error)}\n`)
         done(127)
         return
       }
@@ -697,7 +751,7 @@ export class AgentController {
         sink.noise(text)
       })
       child.on('error', (error) => {
-        sink.text(`buildflow: ${error.message}\n`)
+        sink.text(`farol: ${error.message}\n`)
         done(127)
       })
       child.on('close', (code) => done(code ?? 127))

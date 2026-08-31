@@ -103,14 +103,14 @@ describe('gitignoreWithEntry', () => {
 
 describe('aiFixPrompt', () => {
   it('points at the report a failed run left', () => {
-    expect(aiFixPrompt()).toContain('.buildflow/last-failure.md')
+    expect(aiFixPrompt()).toContain('.farol/last-failure.md')
     expect(aiFixPrompt()).toMatch(/just failed/)
   })
 })
 
 describe('aiFixCommand', () => {
   it('uses each CLI interactive form, pointing at the report', () => {
-    expect(aiFixCommand('claude')).toMatch(/^claude "Read \.buildflow\/last-failure\.md/)
+    expect(aiFixCommand('claude')).toMatch(/^claude "Read \.farol\/last-failure\.md/)
     expect(aiFixCommand('cursor')).toMatch(/^cursor-agent "/)
     expect(aiFixCommand('codex')).toMatch(/^codex "/)
     expect(aiFixCommand('opencode')).toMatch(/^opencode run "/)

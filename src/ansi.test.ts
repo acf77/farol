@@ -34,7 +34,7 @@ describe('ansi', () => {
   it('applies SGR colour and resets it', () => {
     const t = write(emptyTerm(), '\x1b[32mgreen\x1b[0m plain')
     expect(segments(t.rows[0])).toEqual([
-      { text: 'green', color: '#5fd39a', bold: undefined, dim: undefined },
+      { text: 'green', color: '#22C55E', bold: undefined, dim: undefined },
       { text: ' plain', color: undefined, bold: undefined, dim: undefined }
     ])
   })

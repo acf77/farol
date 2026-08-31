@@ -95,7 +95,7 @@ export default function Toolbar({
   onSettings,
   showTrafficLights = false
 }: Props) {
-  const api = window.buildflow
+  const api = window.farol
 
   /** Escape dismisses the file menu and returns focus to its trigger. */
   useEffect(() => {
@@ -144,8 +144,8 @@ export default function Toolbar({
           display: 'flex',
           gap: 2,
           padding: 3,
-          background: '#12171f',
-          border: '1px solid #232a37',
+          background: '#111827',
+          border: '1px solid #273449',
           borderRadius: 8,
           gridColumn: 2,
           gridRow: 1,
@@ -177,10 +177,10 @@ export default function Toolbar({
                 padding: '6px 12px',
                 borderRadius: 8,
                 fontSize: 12.5,
-                fontWeight: 500,
+                fontWeight: 600,
                 cursor: 'pointer',
-                background: on ? '#212a39' : 'transparent',
-                color: on ? '#eef1f6' : '#8b94a3'
+                background: on ? '#111827' : 'transparent',
+                color: on ? '#F8FAFC' : '#94A3B8'
               }}
             >
               <v.Icon />
@@ -211,11 +211,11 @@ export default function Toolbar({
               height: 28,
               padding: '0 10px',
               borderRadius: 7,
-              border: '1px solid #283040',
-              background: '#1b2230',
-              color: '#dbe1ea',
+              border: '1px solid #273449',
+              background: '#1F2937',
+              color: '#F8FAFC',
               fontSize: 12,
-              fontWeight: 500,
+              fontWeight: 600,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -267,7 +267,7 @@ export default function Toolbar({
             role="button"
             tabIndex={0}
             onClick={onInstallUpdate}
-            title={`Install BuildFlow ${updateVersion} and restart`}
+            title={`Install Farol ${updateVersion} and restart`}
             style={{ ...noDrag, position: 'relative', display: 'grid', placeItems: 'center', cursor: 'pointer' }}
           >
             <BellIcon />
@@ -331,7 +331,7 @@ export default function Toolbar({
             right: 16,
             zIndex: 50,
             width: 260,
-            background: liquid ? G.panel : '#111621',
+            background: liquid ? G.panel : '#111827',
             border: `1px solid ${C.cardBorder}`,
             borderRadius: 11,
             boxShadow: '0 18px 44px rgba(0,0,0,0.55)',

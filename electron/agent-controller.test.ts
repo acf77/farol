@@ -45,7 +45,7 @@ function selecting(...ids: string[]) {
       _prompt: string,
       output: (chunk: string) => void
     ) => {
-      output(`Done\nBUILDFLOW_PIPELINES: ${JSON.stringify(ids)}\n`)
+      output(`Done\nFAROL_PIPELINES: ${JSON.stringify(ids)}\n`)
       return 0
     }
   )
@@ -72,7 +72,7 @@ describe('AgentController', () => {
     expect(execute.mock.calls[0][1]).toContain('Validate [id: validate]')
     expect(execute.mock.calls[0][1]).toContain('Lint [id: lint]')
     expect(execute.mock.calls[0][1]).toContain('npm run lint')
-    expect(execute.mock.calls[0][1]).toContain('Do not call the BuildFlow MCP tools')
+    expect(execute.mock.calls[0][1]).toContain('Do not call the Farol MCP tools')
     expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate', 'lint'])
   })
 
@@ -89,7 +89,7 @@ describe('AgentController', () => {
 
     expect(execute).toHaveBeenCalledTimes(1)
     expect(execute.mock.calls[0][1]).toContain('If you made no code changes, select none')
-    expect(execute.mock.calls[0][1]).toContain(`${'BUILDFLOW_PIPELINES:'} []`)
+    expect(execute.mock.calls[0][1]).toContain(`${'FAROL_PIPELINES:'} []`)
     expect(run).not.toHaveBeenCalled()
     expect(
       events.some(
@@ -116,7 +116,7 @@ describe('AgentController', () => {
           _prompt: string,
           output: (chunk: string) => void
         ) => {
-          output('BUILDFLOW_PIPELINES: ["validate"]\n')
+          output('FAROL_PIPELINES: ["validate"]\n')
           return 0
         }
       )
@@ -150,7 +150,7 @@ describe('AgentController', () => {
     expect(execute).toHaveBeenCalledTimes(2)
     expect(run).toHaveBeenCalledTimes(2)
     expect(execute.mock.calls[1][1]).toContain('one test failed')
-    expect(execute.mock.calls[1][1]).toContain('BuildFlow pipeline activity for this chat:')
+    expect(execute.mock.calls[1][1]).toContain('Farol pipeline activity for this chat:')
     expect(execute.mock.calls[1][1]).toMatch(
       /Validate \(validate\) started at .*; finished at .*; status FAILED; duration \d+ms; run id run-false\./
     )
@@ -196,7 +196,7 @@ describe('AgentController', () => {
         _prompt: string,
         output: (chunk: string) => void
       ) => {
-        output('I cannot continue.\nBUILDFLOW_BLOCKED: repository access was denied\n')
+        output('I cannot continue.\nFAROL_BLOCKED: repository access was denied\n')
         return 0
       }
     )
@@ -311,7 +311,7 @@ describe('AgentController', () => {
           output: (chunk: string) => void
         ) => {
           expect(prompt).toContain('try again with a narrower fix')
-          output('BUILDFLOW_PIPELINES: []\n')
+          output('FAROL_PIPELINES: []\n')
           return 0
         }
       )
@@ -357,7 +357,7 @@ describe('AgentController', () => {
         return 0
       })
       .mockImplementationOnce(async (_request, _prompt, output: (chunk: string) => void) => {
-        output('BUILDFLOW_PIPELINES: []\n')
+        output('FAROL_PIPELINES: []\n')
         return 0
       })
     const controller = new AgentController({ run }, (event) => events.push(event), execute)
@@ -388,14 +388,14 @@ describe('AgentController', () => {
       .fn()
       .mockImplementationOnce(
         async (_request: AgentTaskRequest, _prompt: string, output: (chunk: string) => void) => {
-          output('Done\nBUILDFLOW_PIPELINES: ["validate"]\n')
+          output('Done\nFAROL_PIPELINES: ["validate"]\n')
           return 0
         }
       )
       .mockImplementationOnce(
         async (_request: AgentTaskRequest, prompt: string, output: (chunk: string) => void) => {
           expect(prompt).toContain('Follow-up: tighten the error message')
-          output('Updated\nBUILDFLOW_PIPELINES: []\n')
+          output('Updated\nFAROL_PIPELINES: []\n')
           return 0
         }
       )
@@ -453,7 +453,7 @@ describe('AgentController', () => {
         async (req: AgentTaskRequest, prompt: string, output: (chunk: string) => void) => {
           expect(req.provider).toBe('cursor')
           expect(prompt).toContain('continue with another agent')
-          output('BUILDFLOW_PIPELINES: []\n')
+          output('FAROL_PIPELINES: []\n')
           return 0
         }
       )
@@ -495,7 +495,7 @@ describe('AgentController', () => {
       })
       .mockImplementationOnce(async (req: AgentTaskRequest, _prompt, output: (chunk: string) => void) => {
         expect(req.provider).toBe('cursor')
-        output('BUILDFLOW_PIPELINES: []\n')
+        output('FAROL_PIPELINES: []\n')
         return 0
       })
     const controller = new AgentController({ run }, (event) => events.push(event), execute)
@@ -534,7 +534,7 @@ describe('AgentController', () => {
       })
       .mockImplementationOnce(async (req: AgentTaskRequest, _prompt, output: (chunk: string) => void) => {
         expect(req.provider).toBe('codex')
-        output('BUILDFLOW_PIPELINES: []\n')
+        output('FAROL_PIPELINES: []\n')
         return 0
       })
     const controller = new AgentController({ run }, (event) => events.push(event), execute)
@@ -551,6 +551,64 @@ describe('AgentController', () => {
       expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
     )
     expect(execute.mock.calls[1][0].provider).toBe('codex')
+  })
+
+  it('refreshes validation pipeline AI providers on message follow-ups', async () => {
+    const events: AgentTaskEvent[] = []
+    const review = {
+      id: 'full',
+      name: 'Full Check',
+      nodes: [
+        {
+          id: 'n3',
+          name: 'AI Review',
+          type: 'ai' as const,
+          ai: 'claude' as const,
+          cmd: 'Review lint/type output and the diff; flag risks',
+          after: [] as string[],
+          x: 0,
+          y: 0
+        }
+      ]
+    }
+    const run = vi.fn().mockImplementation(async (pipeline: AgentTaskRequest['pipelines'][number]) => {
+      expect(pipeline.nodes[0]?.ai).toBe('cursor')
+      return result(true)
+    })
+    const execute = vi
+      .fn()
+      .mockImplementationOnce(async (_req, _prompt, output: (chunk: string) => void) => {
+        output("You've hit your session limit · resets 8:20pm\n")
+        return 1
+      })
+      .mockImplementationOnce(async (req: AgentTaskRequest, prompt: string, output: (chunk: string) => void) => {
+        expect(prompt).toContain('ai/cursor')
+        expect(req.pipelines[0]?.nodes[0]?.ai).toBe('cursor')
+        output('FAROL_PIPELINES: ["full"]\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, pipelines: [review] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'needs-attention')).toBe(
+        true
+      )
+    )
+
+    expect(
+      controller.message(request.id, 'use cursor for this check', 'cursor', [
+        {
+          ...review,
+          nodes: [{ ...review.nodes[0], ai: 'cursor' }]
+        }
+      ])
+    ).toEqual({ ok: true })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(run.mock.calls[0][0].nodes[0].ai).toBe('cursor')
   })
 
   it('continues a queued provider switch after a usage limit mid-run', async () => {
@@ -572,7 +630,7 @@ describe('AgentController', () => {
       .mockImplementationOnce(async (req: AgentTaskRequest, prompt: string, output: (chunk: string) => void) => {
         expect(req.provider).toBe('cursor')
         expect(prompt).toContain('resume on cursor')
-        output('BUILDFLOW_PIPELINES: []\n')
+        output('FAROL_PIPELINES: []\n')
         return 0
       })
     const controller = new AgentController({ run }, (event) => events.push(event), execute)
@@ -600,7 +658,7 @@ describe('AgentController', () => {
       })
       .mockImplementationOnce(async (req: AgentTaskRequest, _prompt, output: (chunk: string) => void) => {
         expect(req.provider).toBe('cursor')
-        output('BUILDFLOW_PIPELINES: []\n')
+        output('FAROL_PIPELINES: []\n')
         return 0
       })
     const controller = new AgentController({ run }, (event) => events.push(event), execute)

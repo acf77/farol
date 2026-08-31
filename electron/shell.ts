@@ -48,7 +48,7 @@ export class ShellManager {
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      this.onData({ tabId: paneId, chunk: `buildflow: cannot start ${shell}: ${message}\r\n` })
+      this.onData({ tabId: paneId, chunk: `farol: cannot start ${shell}: ${message}\r\n` })
       return
     }
 

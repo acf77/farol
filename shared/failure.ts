@@ -1,7 +1,7 @@
 /** The failure report an agent reads. Pure, so it can be unit-tested. */
 
 /** Where a failed run leaves its report, relative to the run's working copy. */
-export const FAILURE_REPORT_REL = '.buildflow/last-failure.md'
+export const FAILURE_REPORT_REL = '.farol/last-failure.md'
 
 /** How much of the failing step's output to keep, tail-first. */
 export const REPORT_OUTPUT_LIMIT = 12000
@@ -41,7 +41,7 @@ function codeNote(code: number): string {
  * Tell the agent how to check its own work, and where. Re-running the whole
  * pipeline is the real test — the failing command alone can pass while a later
  * step still breaks — so the MCP tool comes first, with the bare command as
- * the fallback for agents with no BuildFlow MCP server wired up.
+ * the fallback for agents with no Farol MCP server wired up.
  */
 function verifySection(r: FailureReport): string[] {
   return [
@@ -51,7 +51,7 @@ function verifySection(r: FailureReport): string[] {
     'Confirm you are in that directory and on that branch before you start — a fix made in another worktree will not be exercised by the run below.',
     '',
     `1. Re-run the failing command above to iterate quickly on \`${r.step}\`.`,
-    `2. Then re-run the whole pipeline: the \`buildflow\` MCP tool \`run_pipeline\` with pipeline \`${r.pipeline}\` (call \`list_pipelines\` first if you need the exact id). It executes in the BuildFlow window, so the user can watch it.`,
+    `2. Then re-run the whole pipeline: the \`farol\` MCP tool \`run_pipeline\` with pipeline \`${r.pipeline}\` (call \`list_pipelines\` first if you need the exact id). It executes in the Farol window, so the user can watch it.`,
     '',
     'A green command is weaker evidence than a green pipeline: other steps may depend on what you changed. If that tool is not available to you, run the command directly and say so in your summary.',
     ''
@@ -85,7 +85,7 @@ export function failureReport(r: FailureReport): string {
 }
 
 /**
- * The `.buildflow/.gitignore` needed to keep the report out of commits, or
+ * The `.farol/.gitignore` needed to keep the report out of commits, or
  * null when it already covers it. Only the report file is ignored — the
  * pipelines in that same folder are meant to be committed.
  */

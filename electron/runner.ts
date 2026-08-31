@@ -142,6 +142,29 @@ interface Active {
   cancelled: boolean
 }
 
+interface RunGraph {
+  pipelineId: string
+  nodes: PipelineNode[]
+  indexOf: Map<string, number>
+  byId: Map<string, PipelineNode>
+  outputs: Record<string, string>
+  done: Set<string>
+  skipped: Set<string>
+  started: Set<string>
+  stepResults: Map<string, PipelineStepResult>
+  failedAt?: number
+  failedNodeId?: string
+  failedCode: number
+}
+
+function defaultStepResult(nodeId: string): PipelineStepResult {
+  return { nodeId, ok: false, code: 0, skipped: true, output: '' }
+}
+
+function settleSteps(nodes: PipelineNode[], stepResults: Map<string, PipelineStepResult>): PipelineStepResult[] {
+  return nodes.map((node) => stepResults.get(node.id) ?? defaultStepResult(node.id))
+}
+
 export class PipelineRunner {
   private active = new Map<string, Active>()
   private waiters = new Map<string, ((result: PipelineRunResult) => void)[]>()
@@ -269,7 +292,7 @@ export class PipelineRunner {
           origin,
           index: 0,
           nodeId: pipeline.nodes[0]?.id ?? 'n1',
-          chunk: `buildflow: ${message}\r\n`
+          chunk: `farol: ${message}\r\n`
         })
         this.emit({
           kind: 'end',
@@ -305,72 +328,98 @@ export class PipelineRunner {
     const pipelineId = pipeline.id
     const invalid = validateRunnable(pipeline.nodes)
     const nodes = invalid ? pipeline.nodes : (topoSort(pipeline.nodes) as PipelineNode[])
-    const indexOf = new Map(nodes.map((n, i) => [n.id, i]))
-    const byId = new Map(nodes.map((n) => [n.id, n]))
+    const graph: RunGraph = {
+      pipelineId,
+      nodes,
+      indexOf: new Map(nodes.map((n, i) => [n.id, i])),
+      byId: new Map(nodes.map((n) => [n.id, n])),
+      outputs: {},
+      done: new Set(),
+      skipped: new Set(),
+      started: new Set(),
+      stepResults: new Map(),
+      failedCode: 1
+    }
 
     this.emit({ kind: 'start', runId, pipelineId, branch, origin, steps: nodes.length })
 
-    const outputs: Record<string, string> = {}
-    const done = new Set<string>()
-    const skipped = new Set<string>()
-    const started = new Set<string>()
-    const inflight = new Map<string, Promise<void>>()
-    const stepResults = new Map<string, PipelineStepResult>()
-    let failedAt: number | undefined
-    let failedNodeId: string | undefined
-    let failedCode = 1
-
-    const emitOut = (nodeId: string, chunk: string): void => {
-      outputs[nodeId] = appendTail(outputs[nodeId] || '', plainText(chunk), LIVE_OUTPUT_LIMIT)
-      this.emit({
-        kind: 'output',
-        runId,
-        pipelineId,
-        branch,
-        origin,
-        index: indexOf.get(nodeId) ?? 0,
-        nodeId,
-        chunk
-      })
-    }
-
     if (invalid) {
-      const nodeId = nodes[0]?.id ?? 'n1'
-      emitOut(nodeId, `buildflow: ${invalid}\r\n`)
-      this.emit({
-        kind: 'end',
-        runId,
-        pipelineId,
-        branch,
-        origin,
-        ok: false,
-        failedAt: 0,
-        failedNodeId: nodes[0]?.id,
-        cancelled: state.cancelled || undefined
-      })
-      this.settle({
-        runId,
-        pipelineId,
-        ok: false,
-        cancelled: state.cancelled || undefined,
-        failedNodeId: nodes[0]?.id,
-        steps: nodes.map((node) => ({
-          nodeId: node.id,
-          ok: false,
-          code: 1,
-          skipped: true,
-          output: node.id === nodeId ? `buildflow: ${invalid}` : ''
-        }))
-      })
+      this.settleInvalid(state, graph, invalid)
       return
     }
 
+    if (!(await this.openRunShell(cwd, state, graph))) return
+
+    const inflight = new Map<string, Promise<void>>()
+    const pump = (): void => this.pumpReady(cwd, state, graph, inflight)
+
+    pump()
+    while (inflight.size) {
+      await Promise.race(inflight.values())
+      if (state.cancelled) {
+        this.markUnstartedCancelled(state, graph)
+        break
+      }
+      pump()
+    }
+
+    this.finalizeGraph(pipeline, cwd, state, graph)
+  }
+
+  private emitOut(state: Active, graph: RunGraph, nodeId: string, chunk: string): void {
+    const { runId, branch, origin } = state
+    graph.outputs[nodeId] = appendTail(graph.outputs[nodeId] || '', plainText(chunk), LIVE_OUTPUT_LIMIT)
+    this.emit({
+      kind: 'output',
+      runId,
+      pipelineId: graph.pipelineId,
+      branch,
+      origin,
+      index: graph.indexOf.get(nodeId) ?? 0,
+      nodeId,
+      chunk
+    })
+  }
+
+  private settleInvalid(state: Active, graph: RunGraph, invalid: string): void {
+    const { runId, branch, origin } = state
+    const nodeId = graph.nodes[0]?.id ?? 'n1'
+    this.emitOut(state, graph, nodeId, `farol: ${invalid}\r\n`)
+    this.emit({
+      kind: 'end',
+      runId,
+      pipelineId: graph.pipelineId,
+      branch,
+      origin,
+      ok: false,
+      failedAt: 0,
+      failedNodeId: graph.nodes[0]?.id,
+      cancelled: state.cancelled || undefined
+    })
+    this.settle({
+      runId,
+      pipelineId: graph.pipelineId,
+      ok: false,
+      cancelled: state.cancelled || undefined,
+      failedNodeId: graph.nodes[0]?.id,
+      steps: graph.nodes.map((node) => ({
+        nodeId: node.id,
+        ok: false,
+        code: 1,
+        skipped: true,
+        output: node.id === nodeId ? `farol: ${invalid}` : ''
+      }))
+    })
+  }
+
+  private async openRunShell(cwd: string, state: Active, graph: RunGraph): Promise<boolean> {
+    const { runId, branch, origin } = state
     try {
       state.session = new PtySession({
         cwd,
         cols: 110,
         onData: (chunk) => {
-          if (state.currentShellId) emitOut(state.currentShellId, chunk)
+          if (state.currentShellId) this.emitOut(state, graph, state.currentShellId, chunk)
         },
         onEnd: () => {
           state.session = null
@@ -378,196 +427,211 @@ export class PipelineRunner {
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      emitOut(nodes[0]?.id ?? 'n1', `buildflow: failed to spawn login shell: ${message}\r\n`)
+      this.emitOut(state, graph, graph.nodes[0]?.id ?? 'n1', `farol: failed to spawn login shell: ${message}\r\n`)
       this.emit({
         kind: 'end',
         runId,
-        pipelineId,
+        pipelineId: graph.pipelineId,
         branch,
         origin,
         ok: false,
         failedAt: 0,
-        failedNodeId: nodes[0]?.id,
+        failedNodeId: graph.nodes[0]?.id,
         cancelled: state.cancelled || undefined
       })
       this.settle({
         runId,
-        pipelineId,
+        pipelineId: graph.pipelineId,
         ok: false,
         cancelled: state.cancelled || undefined,
-        failedNodeId: nodes[0]?.id,
+        failedNodeId: graph.nodes[0]?.id,
         steps: []
       })
-      return
+      return false
     }
+
     const shellReady = await state.session.whenReady()
     if (state.cancelled) {
       state.session?.kill()
       state.session = null
     } else if (!shellReady) {
-      emitOut(nodes[0]?.id ?? 'n1', 'buildflow: login shell did not become ready; shell steps run as one-shot commands.\r\n')
+      this.emitOut(
+        state,
+        graph,
+        graph.nodes[0]?.id ?? 'n1',
+        'farol: login shell did not become ready; shell steps run as one-shot commands.\r\n'
+      )
       state.session?.kill()
       state.session = null
     }
+    return true
+  }
 
-    const skipCone = (fromId: string): void => {
-      for (const id of descendants(nodes, fromId)) {
-        if (done.has(id) || skipped.has(id) || started.has(id)) continue
-        skipped.add(id)
-        stepResults.set(id, { nodeId: id, ok: false, code: 0, skipped: true, output: '' })
-        this.emit({
-          kind: 'step-end',
-          runId,
-          pipelineId,
-          branch,
-          origin,
-          index: indexOf.get(id) ?? 0,
-          nodeId: id,
-          ok: false,
-          code: 0,
-          durationMs: 0,
-          skipped: true
-        })
-      }
+  private skipCone(state: Active, graph: RunGraph, fromId: string): void {
+    const { runId, branch, origin } = state
+    for (const id of descendants(graph.nodes, fromId)) {
+      if (graph.done.has(id) || graph.skipped.has(id) || graph.started.has(id)) continue
+      graph.skipped.add(id)
+      graph.stepResults.set(id, { nodeId: id, ok: false, code: 0, skipped: true, output: '' })
+      this.emit({
+        kind: 'step-end',
+        runId,
+        pipelineId: graph.pipelineId,
+        branch,
+        origin,
+        index: graph.indexOf.get(id) ?? 0,
+        nodeId: id,
+        ok: false,
+        code: 0,
+        durationMs: 0,
+        skipped: true
+      })
     }
+  }
 
-    const runNode = async (node: PipelineNode): Promise<void> => {
-      const index = indexOf.get(node.id) ?? 0
-      this.emit({ kind: 'step-start', runId, pipelineId, branch, origin, index, nodeId: node.id })
-      const ancestorIds = new Set(ancestors(nodes, node.id))
-      const context = nodes
-        .filter((n) => ancestorIds.has(n.id))
-        .map((n) => outputs[n.id] || '')
-        .join('')
-        .trim()
-        .slice(-CONTEXT_LIMIT)
-      const onChunk = (chunk: string): void => emitOut(node.id, chunk)
-      const startedAt = Date.now()
-      const code = await this.runStep(node, cwd, context, state, onChunk)
-      const durationMs = Date.now() - startedAt
-      const ok = code === 0 && !state.cancelled
-      stepResults.set(node.id, {
-        nodeId: node.id,
-        ok,
-        code,
-        output: (outputs[node.id] || '').slice(-STEP_RESULT_LIMIT)
+  private async runGraphNode(
+    cwd: string,
+    state: Active,
+    graph: RunGraph,
+    node: PipelineNode
+  ): Promise<void> {
+    const { runId, branch, origin } = state
+    const index = graph.indexOf.get(node.id) ?? 0
+    this.emit({
+      kind: 'step-start',
+      runId,
+      pipelineId: graph.pipelineId,
+      branch,
+      origin,
+      index,
+      nodeId: node.id
+    })
+    const ancestorIds = new Set(ancestors(graph.nodes, node.id))
+    const context = graph.nodes
+      .filter((n) => ancestorIds.has(n.id))
+      .map((n) => graph.outputs[n.id] || '')
+      .join('')
+      .trim()
+      .slice(-CONTEXT_LIMIT)
+    const onChunk = (chunk: string): void => this.emitOut(state, graph, node.id, chunk)
+    const startedAt = Date.now()
+    const code = await this.runStep(node, cwd, context, state, onChunk)
+    const durationMs = Date.now() - startedAt
+    const ok = code === 0 && !state.cancelled
+    graph.stepResults.set(node.id, {
+      nodeId: node.id,
+      ok,
+      code,
+      output: (graph.outputs[node.id] || '').slice(-STEP_RESULT_LIMIT)
+    })
+    this.emit({
+      kind: 'step-end',
+      runId,
+      pipelineId: graph.pipelineId,
+      branch,
+      origin,
+      index,
+      nodeId: node.id,
+      ok,
+      code,
+      durationMs,
+      cancelled: state.cancelled || undefined
+    })
+    if (state.cancelled) {
+      graph.skipped.add(node.id)
+      return
+    }
+    graph.done.add(node.id)
+    if (!ok) {
+      if (graph.failedNodeId === undefined) {
+        graph.failedAt = index
+        graph.failedNodeId = node.id
+        graph.failedCode = code
+      }
+      if (nodeGate(node)) this.skipCone(state, graph, node.id)
+    }
+  }
+
+  private pumpReady(
+    cwd: string,
+    state: Active,
+    graph: RunGraph,
+    inflight: Map<string, Promise<void>>
+  ): void {
+    if (state.cancelled) return
+    for (const id of readyIds(graph.nodes, graph.done, graph.skipped, graph.started)) {
+      const node = graph.byId.get(id)
+      if (!node) continue
+      graph.started.add(id)
+      const p = this.runGraphNode(cwd, state, graph, node).finally(() => inflight.delete(id))
+      inflight.set(id, p)
+    }
+  }
+
+  private markUnstartedCancelled(state: Active, graph: RunGraph): void {
+    const { runId, branch, origin } = state
+    for (const n of graph.nodes) {
+      if (graph.done.has(n.id) || graph.skipped.has(n.id) || graph.started.has(n.id)) continue
+      graph.skipped.add(n.id)
+      graph.stepResults.set(n.id, {
+        nodeId: n.id,
+        ok: false,
+        code: 130,
+        skipped: true,
+        output: ''
       })
       this.emit({
         kind: 'step-end',
         runId,
-        pipelineId,
+        pipelineId: graph.pipelineId,
         branch,
         origin,
-        index,
-        nodeId: node.id,
-        ok,
-        code,
-        durationMs,
-        cancelled: state.cancelled || undefined
+        index: graph.indexOf.get(n.id) ?? 0,
+        nodeId: n.id,
+        ok: false,
+        code: 130,
+        durationMs: 0,
+        cancelled: true
       })
-      if (state.cancelled) {
-        skipped.add(node.id)
-        return
-      }
-      done.add(node.id)
-      if (!ok) {
-        if (failedNodeId === undefined) {
-          failedAt = index
-          failedNodeId = node.id
-          failedCode = code
-        }
-        if (nodeGate(node)) skipCone(node.id)
-      }
     }
+  }
 
-    const pump = (): void => {
-      if (state.cancelled) return
-      for (const id of readyIds(nodes, done, skipped, started)) {
-        const node = byId.get(id)
-        if (!node) continue
-        started.add(id)
-        const p = runNode(node).finally(() => inflight.delete(id))
-        inflight.set(id, p)
-      }
-    }
-
-    pump()
-    while (inflight.size) {
-      await Promise.race([...inflight.values()])
-      if (state.cancelled) {
-        for (const n of nodes) {
-          if (!done.has(n.id) && !skipped.has(n.id) && !started.has(n.id)) {
-            skipped.add(n.id)
-            stepResults.set(n.id, {
-              nodeId: n.id,
-              ok: false,
-              code: 130,
-              skipped: true,
-              output: ''
-            })
-            this.emit({
-              kind: 'step-end',
-              runId,
-              pipelineId,
-              branch,
-              origin,
-              index: indexOf.get(n.id) ?? 0,
-              nodeId: n.id,
-              ok: false,
-              code: 130,
-              durationMs: 0,
-              cancelled: true
-            })
-          }
-        }
-        break
-      }
-      pump()
-    }
-
+  private finalizeGraph(pipeline: Pipeline, cwd: string, state: Active, graph: RunGraph): void {
+    const { runId, branch, origin } = state
     state.session?.kill()
     state.session = null
     const reportPath =
-      failedNodeId !== undefined && !state.cancelled
+      graph.failedNodeId !== undefined && !state.cancelled
         ? writeFailureReport(
             cwd,
             pipeline.name,
             branch,
-            byId.get(failedNodeId),
-            outputs[failedNodeId] || '',
-            failedCode
+            graph.byId.get(graph.failedNodeId),
+            graph.outputs[graph.failedNodeId] || '',
+            graph.failedCode
           )
         : undefined
     const endEvent: RunEvent = {
       kind: 'end',
       runId,
-      pipelineId,
+      pipelineId: graph.pipelineId,
       branch,
       origin,
-      ok: failedAt === undefined && !state.cancelled,
-      failedAt,
-      failedNodeId,
+      ok: graph.failedAt === undefined && !state.cancelled,
+      failedAt: graph.failedAt,
+      failedNodeId: graph.failedNodeId,
       cancelled: state.cancelled || undefined,
       reportPath
     }
     this.emit(endEvent)
     this.settle({
       runId,
-      pipelineId,
+      pipelineId: graph.pipelineId,
       ok: endEvent.ok,
       cancelled: endEvent.cancelled,
-      failedNodeId,
+      failedNodeId: graph.failedNodeId,
       reportPath,
-      steps: nodes.map(
-        (node) =>
-          stepResults.get(node.id) ?? {
-            nodeId: node.id,
-            ok: false,
-            code: 0,
-            skipped: true,
-            output: ''
-          }
-      )
+      steps: settleSteps(graph.nodes, graph.stepResults)
     })
   }
 
@@ -607,7 +671,7 @@ export class PipelineRunner {
     }
     if (!bin) {
       const listed = spec.bins.map((b) => `'${b}'`).join(' or ')
-      onChunk(`buildflow: ${listed} is not on PATH. ${spec.hint}\r\n`)
+      onChunk(`farol: ${listed} is not on PATH. ${spec.hint}\r\n`)
       return 127
     }
 
@@ -638,7 +702,7 @@ export class PipelineRunner {
           env: aiEnv()
         })
       } catch (err) {
-        onChunk(`buildflow: ${err instanceof Error ? err.message : String(err)}\r\n`)
+        onChunk(`farol: ${err instanceof Error ? err.message : String(err)}\r\n`)
         done(127)
         return
       }
@@ -676,7 +740,7 @@ export class PipelineRunner {
       try {
         child = spawn(shell, args, { cwd, env: pipelineEnv(), windowsHide: true })
       } catch (err) {
-        onChunk(`buildflow: ${err instanceof Error ? err.message : String(err)}\r\n`)
+        onChunk(`farol: ${err instanceof Error ? err.message : String(err)}\r\n`)
         resolve(127)
         return
       }
@@ -688,7 +752,7 @@ export class PipelineRunner {
       child.stderr?.on('data', push)
       child.on('error', (err) => {
         if (state.oneshots.get(nodeId) === child) state.oneshots.delete(nodeId)
-        onChunk(`buildflow: ${err.message}\r\n`)
+        onChunk(`farol: ${err.message}\r\n`)
         resolve(127)
       })
       child.on('close', (code, signal) => {

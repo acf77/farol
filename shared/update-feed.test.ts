@@ -4,8 +4,8 @@ import { parseUpdateFeed, versionAhead } from './update-feed'
 describe('parseUpdateFeed', () => {
   it('reads version and zip path', () => {
     expect(
-      parseUpdateFeed('version: 0.2.0\npath: BuildFlow-0.2.0-arm64-mac.zip\n')
-    ).toEqual({ version: '0.2.0', file: 'BuildFlow-0.2.0-arm64-mac.zip' })
+      parseUpdateFeed('version: 0.2.0\npath: Farol-0.2.0-arm64-mac.zip\n')
+    ).toEqual({ version: '0.2.0', file: 'Farol-0.2.0-arm64-mac.zip' })
   })
 
   it('rejects an empty file', () => {

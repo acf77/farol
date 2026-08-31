@@ -99,76 +99,85 @@ export function sanitizeNode(raw: unknown): SavedNode | null {
   return null
 }
 
+function sanitizeAgentMessages(raw: unknown): SavedAgentPane['messages'] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((message): SavedAgentPane['messages'] => {
+    if (!message || typeof message !== 'object') return []
+    const item = message as Record<string, unknown>
+    if (
+      (item.role !== 'user' && item.role !== 'assistant' && item.role !== 'system') ||
+      typeof item.text !== 'string'
+    ) {
+      return []
+    }
+    return [{ role: item.role, text: item.text }]
+  })
+}
+
+function sanitizePane(raw: unknown): SavedPane | null {
+  if (!raw || typeof raw !== 'object') return null
+  const pane = raw as Record<string, unknown>
+  if (typeof pane.id !== 'string' || typeof pane.cwd !== 'string') return null
+  const base = {
+    id: pane.id,
+    title: typeof pane.title === 'string' ? pane.title : '',
+    cwd: pane.cwd
+  }
+  if (pane.kind !== 'agent' || typeof pane.taskId !== 'string') return base
+  const messages = Array.isArray(pane.messages) ? sanitizeAgentMessages(pane.messages) : []
+  return {
+    ...base,
+    kind: 'agent',
+    taskId: pane.taskId,
+    status: typeof pane.status === 'string' ? pane.status : 'needs-attention',
+    attempt: typeof pane.attempt === 'number' && Number.isFinite(pane.attempt) ? pane.attempt : 0,
+    provider: normalizeAi(pane.provider),
+    messages
+  }
+}
+
+function sanitizeTab(raw: unknown): SavedTab | null {
+  if (!raw || typeof raw !== 'object') return null
+  const tab = raw as Record<string, unknown>
+  const root = sanitizeNode(tab.root)
+  if (typeof tab.id !== 'string' || !root) return null
+  const leafIds = savedLeaves(root)
+  const paneList = Array.isArray(tab.panes) ? tab.panes : []
+  const byId = new Map<string, SavedPane>()
+  for (const p of paneList) {
+    const sp = sanitizePane(p)
+    if (sp) byId.set(sp.id, sp)
+  }
+  const panes: SavedPane[] = []
+  for (const id of leafIds) {
+    const pane = byId.get(id)
+    if (!pane) continue
+    panes.push(pane)
+  }
+  if (panes.length !== leafIds.length) return null
+  const focus = typeof tab.focus === 'string' && leafIds.includes(tab.focus) ? tab.focus : leafIds[0]
+  return {
+    id: tab.id,
+    title: typeof tab.title === 'string' ? tab.title : '',
+    ...(tab.kind === 'agent' ? { kind: 'agent' as const } : {}),
+    ...(tab.kind === 'agent' && typeof tab.ownerTabId === 'string' && tab.ownerTabId
+      ? { ownerTabId: tab.ownerTabId }
+      : {}),
+    ...(typeof tab.branch === 'string' && tab.branch ? { branch: tab.branch } : {}),
+    root,
+    focus,
+    panes
+  }
+}
+
 export function sanitizeSession(raw: unknown): ProjectSession | null {
   if (!raw || typeof raw !== 'object') return null
   const s = raw as Record<string, unknown>
   if (!Array.isArray(s.tabs)) return null
   const tabs: SavedTab[] = []
   for (const t of s.tabs) {
-    if (!t || typeof t !== 'object') continue
-    const tab = t as Record<string, unknown>
-    const root = sanitizeNode(tab.root)
-    if (typeof tab.id !== 'string' || !root) continue
-    const leafIds = savedLeaves(root)
-    const paneList = Array.isArray(tab.panes) ? tab.panes : []
-    const panes: SavedPane[] = []
-    const byId = new Map<string, SavedPane>()
-    for (const p of paneList) {
-      if (!p || typeof p !== 'object') continue
-      const pane = p as Record<string, unknown>
-      if (typeof pane.id !== 'string' || typeof pane.cwd !== 'string') continue
-      const base = {
-        id: pane.id,
-        title: typeof pane.title === 'string' ? pane.title : '',
-        cwd: pane.cwd
-      }
-      const messages =
-        pane.kind === 'agent' && Array.isArray(pane.messages)
-          ? pane.messages.flatMap((message): SavedAgentPane['messages'] => {
-              if (!message || typeof message !== 'object') return []
-              const item = message as Record<string, unknown>
-              if (
-                (item.role !== 'user' && item.role !== 'assistant' && item.role !== 'system') ||
-                typeof item.text !== 'string'
-              )
-                return []
-              return [{ role: item.role, text: item.text }]
-            })
-          : []
-      const sp: SavedPane =
-        pane.kind === 'agent' && typeof pane.taskId === 'string'
-          ? {
-              ...base,
-              kind: 'agent',
-              taskId: pane.taskId,
-              status: typeof pane.status === 'string' ? pane.status : 'needs-attention',
-              attempt:
-                typeof pane.attempt === 'number' && Number.isFinite(pane.attempt) ? pane.attempt : 0,
-              provider: normalizeAi(pane.provider),
-              messages
-            }
-          : base
-      byId.set(sp.id, sp)
-    }
-    for (const id of leafIds) {
-      const pane = byId.get(id)
-      if (!pane) continue
-      panes.push(pane)
-    }
-    if (panes.length !== leafIds.length) continue
-    const focus = typeof tab.focus === 'string' && leafIds.includes(tab.focus) ? tab.focus : leafIds[0]
-    tabs.push({
-      id: tab.id,
-      title: typeof tab.title === 'string' ? tab.title : '',
-      ...(tab.kind === 'agent' ? { kind: 'agent' as const } : {}),
-      ...(tab.kind === 'agent' && typeof tab.ownerTabId === 'string' && tab.ownerTabId
-        ? { ownerTabId: tab.ownerTabId }
-        : {}),
-      ...(typeof tab.branch === 'string' && tab.branch ? { branch: tab.branch } : {}),
-      root,
-      focus,
-      panes
-    })
+    const tab = sanitizeTab(t)
+    if (tab) tabs.push(tab)
   }
   if (!tabs.length) return null
   const ids = new Set(tabs.map((t) => t.id))

@@ -67,7 +67,7 @@ export function aiCommand(provider: AiProvider, prompt: string): AiCommand {
 }
 
 /**
- * Headless coding commands used by BuildFlow's managed Chat harness.
+ * Headless coding commands used by Farol's managed Chat harness.
  * stdin is ignored (see agent-controller.ts), so a mode that can still stop
  * to ask for approval — e.g. Claude's `acceptEdits`, which only auto-accepts
  * edits and leaves Bash pending — would hang forever. Every provider here

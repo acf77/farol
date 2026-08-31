@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type RefObject,
+  type SetStateAction
+} from 'react'
 import type {
   AgentTaskEvent,
   AppSettings,
@@ -47,7 +56,7 @@ import PipelineCanvas from './components/PipelineCanvas'
 import CommandPalette, { type PaletteItem } from './components/CommandPalette'
 import { FolderPlusIcon } from './components/icons'
 
-const api = window.buildflow
+const api = window.farol
 const MAX_LINES = 5000
 const MAX_DETAIL_LOGS = 40
 /**
@@ -204,7 +213,7 @@ function clockStamp(): string {
 
 function shellPane(id: string, cwd: string): Pane {
   // No buffer, no input state: xterm.js and the PTY own everything a shell
-  // pane does. BuildFlow only tracks where it is, for the title bar.
+  // pane does. Farol only tracks where it is, for the title bar.
   return { id, kind: 'shell', title: api.shellName, cwd }
 }
 
@@ -243,7 +252,7 @@ function tabsFromSession(sess: ProjectSession): Tab[] {
                     : [
                         {
                           role: 'system' as const,
-                          text: 'BuildFlow restarted. This managed process stopped; start a new chat to continue.'
+                          text: 'Farol restarted. This managed process stopped; start a new chat to continue.'
                         }
                       ])
                 ].map(sanitizeAgentMessage)
@@ -394,6 +403,842 @@ function branchForTab(tab: Tab | undefined, projectPath: string, git: GitInfo): 
   return git.branch || '—'
 }
 
+function appendAgentMessages(pane: AgentPane, messages: AgentMessage[]): AgentPane {
+  return {
+    ...pane,
+    messages: trimAgentMessages(messages.map(sanitizeAgentMessage))
+  }
+}
+
+function applyAgentOutputEvent(
+  pane: AgentPane,
+  event: Extract<AgentTaskEvent, { kind: 'output' }>
+): AgentPane {
+  const chunk = asText(event.chunk)
+  const messages = [...pane.messages]
+  const last = messages[messages.length - 1]
+  // Only plain prose keeps growing; a card or an oversized turn is closed.
+  if (
+    last?.role === 'assistant' &&
+    !last.tool &&
+    !last.pipeline &&
+    asText(last.text).length < MAX_MESSAGE_CHARS
+  ) {
+    messages[messages.length - 1] = { ...last, text: asText(last.text) + chunk }
+  } else {
+    messages.push({ role: 'assistant', text: chunk })
+  }
+  return appendAgentMessages(pane, messages)
+}
+
+function applyAgentToolEvent(
+  pane: AgentPane,
+  event: Extract<AgentTaskEvent, { kind: 'tool' }>
+): AgentPane {
+  const messages = [...pane.messages]
+  let existing = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].tool?.toolId === event.toolId) {
+      existing = i
+      break
+    }
+  }
+  // The finishing event names the tool but repeats none of its input,
+  // so the card it closes keeps the detail it was opened with.
+  const card = existing >= 0 ? messages[existing].tool! : { toolId: event.toolId, name: event.name }
+  const tool = {
+    ...card,
+    name: event.name || card.name,
+    ...(event.detail ? { detail: event.detail } : {}),
+    state: event.state
+  }
+  const message = {
+    role: 'system' as const,
+    text: `${tool.name}${tool.detail ? ` — ${tool.detail}` : ''}`,
+    tool
+  }
+  if (existing >= 0) messages[existing] = message
+  else messages.push(message)
+  return appendAgentMessages(pane, messages)
+}
+
+function applyAgentPipelineEvent(
+  pane: AgentPane,
+  event: Extract<AgentTaskEvent, { kind: 'pipeline' }>,
+  localPipelineId: (runtimeId: string) => string | null,
+  tabs: Tab[],
+  project: Project | null,
+  git: GitInfo
+): AgentPane {
+  const text =
+    event.status === 'running'
+      ? `$ pipeline run — started ${fmtEventTime(event.startedAt)}`
+      : `${event.status} — ${fmtEventTime(event.finishedAt ?? event.startedAt)}${event.durationMs === undefined ? '' : ` · ${fmtDuration(event.durationMs)}`}`
+  // The tab a pipeline run streams to is addressed the same way
+  // runPipeline() addresses one it started directly — by pipeline
+  // and the branch the owning tab is on.
+  const owner = tabs.find((t) =>
+    Object.values(t.panes).some((p) => p.kind === 'agent' && p.taskId === event.taskId)
+  )
+  const branch = owner && project ? branchForTab(owner, project.path, git) : ''
+  const pipelineId = localPipelineId(event.pipelineId) ?? event.pipelineId
+  const message = {
+    role: 'system' as const,
+    text,
+    pipeline: {
+      pipelineId,
+      pipelineName: event.pipelineName,
+      status: event.status,
+      startedAt: event.startedAt,
+      finishedAt: event.finishedAt,
+      durationMs: event.durationMs,
+      tabId: `run:${pipelineId}:${branch}`
+    }
+  }
+  const messages = [...pane.messages]
+  let existing = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const card = messages[i].pipeline
+    if (card?.pipelineId === pipelineId && card.startedAt === event.startedAt) {
+      existing = i
+      break
+    }
+  }
+  if (existing >= 0) messages[existing] = message
+  else messages.push(message)
+  return appendAgentMessages(pane, messages)
+}
+
+function applyAgentStatusEvent(
+  pane: AgentPane,
+  event: Extract<AgentTaskEvent, { kind: 'status' }>
+): AgentPane {
+  const announce = event.status !== 'validating' && event.status !== 'completed'
+  const message = asText(event.message)
+  return {
+    ...pane,
+    status: event.status,
+    attempt: event.attempt,
+    messages: announce
+      ? trimAgentMessages([...pane.messages, { role: 'system', text: message }])
+      : pane.messages
+  }
+}
+
+/** Fold one agent-stream event into the pane transcript. */
+function applyAgentEvent(
+  pane: AgentPane,
+  event: AgentTaskEvent,
+  localPipelineId: (runtimeId: string) => string | null,
+  tabs: Tab[],
+  project: Project | null,
+  git: GitInfo
+): AgentPane {
+  if (event.kind === 'output') return applyAgentOutputEvent(pane, event)
+  if (event.kind === 'assistant') {
+    return appendAgentMessages(pane, [...pane.messages, { role: 'assistant', text: asText(event.text) }])
+  }
+  if (event.kind === 'tool') return applyAgentToolEvent(pane, event)
+  if (event.kind === 'user') {
+    return appendAgentMessages(pane, [
+      ...pane.messages,
+      { role: 'user', text: asText(event.text), at: Date.now() }
+    ])
+  }
+  if (event.kind === 'pipeline') {
+    return applyAgentPipelineEvent(pane, event, localPipelineId, tabs, project, git)
+  }
+  return applyAgentStatusEvent(pane, event)
+}
+
+type LastRunOut = { paneId: string; nodeId: string } | null
+
+interface RunEventHandlerDeps {
+  localPipelineId: (runtimeId: string) => string | null
+  pipelines: Pipeline[]
+  lastRunOut: { current: LastRunOut }
+  patchPane: (paneId: string, fn: (p: Pane) => Pane) => void
+  patchTab: (tabId: string, fn: (t: Tab) => Tab) => void
+  pushLog: (text: string, color: string) => void
+  setRuns: Dispatch<SetStateAction<RunsByBranch>>
+  setTabs: Dispatch<SetStateAction<Tab[]>>
+  setSelId: Dispatch<SetStateAction<string | null>>
+  settingsRef: { current: AppSettings }
+  tabsRef: { current: Tab[] }
+  sendToAgentRef: { current: (branch: string, cwd: string) => void }
+}
+
+interface RunEventCtx {
+  pipelineId: string
+  branch: string
+  tabId: string
+  paneId: string
+  pipeline: Pipeline
+  nodes: PipelineNode[]
+  byId: Map<string, PipelineNode>
+  total: number
+  deps: RunEventHandlerDeps
+  term: (fn: (pane: RunPane) => RunPane) => void
+  patchRun: (fn: (r: RunState) => RunState) => void
+  stepAt: (nodeId: string, v: StepState) => void
+}
+
+function bindOptimisticRunSlot(
+  cur: RunState | undefined,
+  e: Extract<RunEvent, { kind: 'start' }>
+): 'keep' | 'bind' | 'ignore' {
+  if (!cur) return 'bind'
+  if (cur.runId === e.runId) return 'keep'
+  if (cur.status === 'running' && (cur.runId.startsWith('pending:') || cur.runId.startsWith('agent:'))) {
+    return 'bind'
+  }
+  if (cur.status === 'running') return 'ignore'
+  if (!isAgentRun(e.origin)) return 'ignore'
+  return 'bind'
+}
+
+function handleRunStart(ctx: RunEventCtx, e: Extract<RunEvent, { kind: 'start' }>): void {
+  const { pipelineId, branch, tabId, paneId, pipeline: p, nodes, total, deps, term } = ctx
+  deps.lastRunOut.current = null
+  // A run the user started already made its tab. One an agent asked
+  // for has none, so make it here — otherwise the run is invisible.
+  if (isAgentRun(e.origin)) {
+    deps.setTabs((prev) =>
+      prev.some((t) => t.id === tabId)
+        ? prev
+        : [
+            ...prev,
+            {
+              id: tabId,
+              kind: 'run',
+              title: p.name,
+              status: 'running',
+              branch,
+              root: leaf(paneId),
+              focus: paneId,
+              panes: {
+                [paneId]: { id: paneId, kind: 'run', title: p.name, cwd: '', term: emptyTerm() }
+              }
+            }
+          ]
+    )
+    deps.setSelId(pipelineId)
+  }
+  deps.setRuns((prev) => {
+    const cur = prev[pipelineId]?.[branch]
+    const action = bindOptimisticRunSlot(cur, e)
+    if (action === 'keep' || action === 'ignore') return prev
+    return {
+      ...prev,
+      [pipelineId]: {
+        ...prev[pipelineId],
+        [branch]: {
+          runId: e.runId,
+          status: 'running',
+          label: 'Running…',
+          startedAt: Date.now(),
+          stepResults: Object.fromEntries(nodes.map((n) => [n.id, 'pending' as StepState]))
+        }
+      }
+    }
+  })
+  deps.patchTab(tabId, (t) => ({ ...t, status: 'running' }))
+  term((pane) => ({
+    ...pane,
+    term: writeLine(
+      writeLine(
+        writeLine(
+          ensureNewline(pane.term),
+          `▶ ${p.name} — ${total} step${total === 1 ? '' : 's'}`,
+          seg('head')
+        ),
+        `  branch ${branch} · ${new Date().toLocaleTimeString()}`,
+        seg('dim')
+      ),
+      '',
+      {}
+    )
+  }))
+}
+
+function handleRunStepStart(ctx: RunEventCtx, e: Extract<RunEvent, { kind: 'step-start' }>): void {
+  const { byId, total, deps, term, stepAt } = ctx
+  deps.lastRunOut.current = null
+  const name = byId.get(e.nodeId)?.name || e.nodeId
+  stepAt(e.nodeId, 'running')
+  deps.pushLog(`Starting step: ${name}`, '#94A3B8')
+  term((pane) => ({
+    ...pane,
+    term: writeLine(ensureNewline(clearIndent(pane.term)), `[${e.index + 1}/${total}] ${name}`, seg('step'))
+  }))
+}
+
+function handleRunOutput(ctx: RunEventCtx, e: Extract<RunEvent, { kind: 'output' }>): void {
+  const { paneId, byId, deps, term } = ctx
+  const name = byId.get(e.nodeId)?.name || e.nodeId
+  const prefix = nodeLogPrefix(name)
+  const switched =
+    deps.lastRunOut.current?.paneId !== paneId || deps.lastRunOut.current?.nodeId !== e.nodeId
+  deps.lastRunOut.current = { paneId, nodeId: e.nodeId }
+  term((pane) => {
+    const t = switched ? setIndent(ensureNewline(clearIndent(pane.term)), prefix) : pane.term
+    return { ...pane, term: trimTo(write(t, e.chunk), MAX_LINES) }
+  })
+}
+
+function stepEndState(e: Extract<RunEvent, { kind: 'step-end' }>): StepState {
+  if (e.skipped) return 'skip'
+  if (e.ok) return 'pass'
+  if (e.cancelled) return 'skip'
+  return 'fail'
+}
+
+function stepEndText(name: string, e: Extract<RunEvent, { kind: 'step-end' }>): string {
+  if (e.skipped) return `– ${name} skipped`
+  if (e.ok) return `✓ ${name} (${fmtDuration(e.durationMs)})`
+  if (e.cancelled) return `■ ${name} cancelled`
+  return `✗ ${name} (${fmtDuration(e.durationMs)}) — exit code ${e.code}`
+}
+
+function handleRunStepEnd(ctx: RunEventCtx, e: Extract<RunEvent, { kind: 'step-end' }>): void {
+  const { byId, deps, term, stepAt } = ctx
+  deps.lastRunOut.current = null
+  const st = stepEndState(e)
+  stepAt(e.nodeId, st)
+  const name = byId.get(e.nodeId)?.name || e.nodeId
+  const text = stepEndText(name, e)
+  const color = e.ok ? '#22C55E' : e.skipped || e.cancelled ? '#94A3B8' : '#EF4444'
+  deps.pushLog(text, color)
+  term((pane) => ({
+    ...pane,
+    term: writeLine(
+      ensureNewline(clearIndent(pane.term)),
+      text,
+      seg(e.ok ? 'ok' : e.skipped || e.cancelled ? 'dim' : 'err')
+    )
+  }))
+}
+
+function runEndLabel(branch: string, time: string, e: Extract<RunEvent, { kind: 'end' }>): string {
+  if (e.cancelled) return `Cancelled on ${branch} · ${time}`
+  if (e.ok) return `Passed on ${branch} · ${time}`
+  return `Failed on ${branch} · ${time}`
+}
+
+function runEndSummary(
+  branch: string,
+  total: number,
+  failedName: string | undefined,
+  e: Extract<RunEvent, { kind: 'end' }>
+): string {
+  if (e.cancelled) return `■ Cancelled on ${branch}`
+  if (e.ok) return `✔ Passed on ${branch} — all ${total} step${total === 1 ? '' : 's'} succeeded`
+  return `✖ Failed on ${branch}` + (failedName ? ` — ${failedName} failed` : '')
+}
+
+function handleRunEnd(ctx: RunEventCtx, e: Extract<RunEvent, { kind: 'end' }>): void {
+  const { branch, tabId, paneId, nodes, byId, total, deps, term, patchRun } = ctx
+  deps.lastRunOut.current = null
+  const failedName = e.failedNodeId
+    ? byId.get(e.failedNodeId)?.name || e.failedNodeId
+    : nodes[e.failedAt ?? 0]?.name
+  patchRun((r) => {
+    const time = fmtTime(r.startedAt)
+    return {
+      ...r,
+      status: e.ok ? 'pass' : 'fail',
+      label: runEndLabel(branch, time, e)
+    }
+  })
+  const summary = runEndSummary(branch, total, failedName, e)
+  deps.pushLog(
+    e.ok ? 'Pipeline finished — all steps passed' : e.cancelled ? 'Pipeline cancelled' : 'Pipeline failed',
+    e.ok ? '#22C55E' : e.cancelled ? '#94A3B8' : '#EF4444'
+  )
+  deps.patchTab(tabId, (t) => ({ ...t, status: e.ok ? 'pass' : 'fail' }))
+  // Only runs a person started hand off; otherwise an agent that runs
+  // a pipeline and fails would spawn another agent, and so on.
+  if (!isAgentRun(e.origin) && !e.ok && !e.cancelled && e.reportPath && deps.settingsRef.current.autoFix) {
+    const runCwd = deps.tabsRef.current.find((t) => t.id === tabId)?.panes[paneId]?.cwd
+    if (runCwd) deps.sendToAgentRef.current(branch, runCwd)
+  }
+  term((pane) => ({
+    ...pane,
+    term: writeLine(
+      writeLine(ensureNewline(clearIndent(pane.term)), '', {}),
+      summary,
+      seg(e.ok ? 'ok' : e.cancelled ? 'dim' : 'err')
+    )
+  }))
+}
+
+function handleRunEvent(e: RunEvent, deps: RunEventHandlerDeps): void {
+  const pipelineId = deps.localPipelineId(e.pipelineId)
+  if (!pipelineId) return
+  const p = deps.pipelines.find((x) => x.id === pipelineId)
+  if (!p) return
+  const { branch } = e
+  const tabId = `run:${pipelineId}:${branch}`
+  const paneId = `rp:${pipelineId}:${branch}`
+  const nodes = topoSort(p.nodes) ?? p.nodes
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const total = nodes.length
+
+  const term = (fn: (pane: RunPane) => RunPane): void =>
+    deps.patchPane(paneId, (pane) => (pane.kind === 'run' ? fn(pane) : pane))
+  const patchRun = (fn: (r: RunState) => RunState): void =>
+    deps.setRuns((prev) => {
+      const cur = prev[pipelineId]?.[branch]
+      if (!cur) return prev
+      // Ignore output from a cancelled predecessor after a newer run was queued.
+      if (cur.runId !== e.runId) return prev
+      return { ...prev, [pipelineId]: { ...prev[pipelineId], [branch]: fn(cur) } }
+    })
+  const stepAt = (nodeId: string, v: StepState): void =>
+    patchRun((r) => ({ ...r, stepResults: { ...r.stepResults, [nodeId]: v } }))
+
+  const ctx: RunEventCtx = {
+    pipelineId,
+    branch,
+    tabId,
+    paneId,
+    pipeline: p,
+    nodes,
+    byId,
+    total,
+    deps,
+    term,
+    patchRun,
+    stepAt
+  }
+
+  switch (e.kind) {
+    case 'start':
+      handleRunStart(ctx, e)
+      break
+    case 'step-start':
+      handleRunStepStart(ctx, e)
+      break
+    case 'output':
+      handleRunOutput(ctx, e)
+      break
+    case 'step-end':
+      handleRunStepEnd(ctx, e)
+      break
+    case 'end':
+      handleRunEnd(ctx, e)
+      break
+  }
+}
+
+interface WorkspaceKeyCtx {
+  visible: boolean
+  newTabOpen: boolean
+  editor: EditorState | null
+  paletteOpen: boolean
+  activeTab: string
+  active: Tab | undefined
+  view: View
+  termTabs: Tab[]
+  tabsRef: { current: Tab[] }
+  newShellTab: () => void
+  splitPane: (dir: 'row' | 'col') => void
+  closePane: (tabId: string, paneId: string) => void
+  closeTab: (id: string) => void
+  setView: Dispatch<SetStateAction<View>>
+  setPaletteOpen: Dispatch<SetStateAction<boolean>>
+  setActiveTab: Dispatch<SetStateAction<string>>
+}
+
+function handleSplitShortcut(e: KeyboardEvent, ctx: WorkspaceKeyCtx): void {
+  e.preventDefault()
+  // Pane splits when a shell is active; otherwise toggle chat/terminal split.
+  const tab = ctx.tabsRef.current.find((t) => t.id === ctx.activeTab)
+  if (tab?.kind === 'shell' && ctx.view !== 'chat') {
+    ctx.splitPane(e.shiftKey ? 'col' : 'row')
+  } else {
+    ctx.setView((v) => (v === 'split' ? 'chat' : 'split'))
+  }
+}
+
+function handleCloseShortcut(e: KeyboardEvent, ctx: WorkspaceKeyCtx): void {
+  e.preventDefault()
+  if (e.shiftKey && ctx.active) {
+    ctx.closePane(ctx.active.id, ctx.active.focus)
+  } else if (ctx.activeTab) {
+    ctx.closeTab(ctx.activeTab)
+  }
+}
+
+function handleDigitShortcut(e: KeyboardEvent, ctx: WorkspaceKeyCtx, digit: string): void {
+  const tab = ctx.termTabs[+digit - 1]
+  if (!tab) return
+  e.preventDefault()
+  ctx.setActiveTab(tab.id)
+  ctx.setView((v) => (v === 'chat' ? 'split' : v))
+}
+
+function handleWorkspaceKeyDown(e: KeyboardEvent, ctx: WorkspaceKeyCtx): void {
+  // The dialog is modal: let it own Escape and Return.
+  if (!ctx.visible || ctx.newTabOpen || ctx.editor || ctx.paletteOpen) return
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) return
+  const k = e.key.toLowerCase()
+  if (k === 't') {
+    e.preventDefault()
+    ctx.newShellTab()
+    return
+  }
+  if (k === 'd') {
+    handleSplitShortcut(e, ctx)
+    return
+  }
+  if (k === 'k') {
+    e.preventDefault()
+    ctx.setPaletteOpen(true)
+    return
+  }
+  if (k === 'w') {
+    handleCloseShortcut(e, ctx)
+    return
+  }
+  if (k >= '1' && k <= '9') handleDigitShortcut(e, ctx, k)
+}
+
+function resolveRunBranch(project: Project | null, active: Tab | undefined, git: GitInfo): string {
+  if (project) return branchForTab(active, project.path, git)
+  return git.branch || '—'
+}
+
+function workspaceBusyFlag(agentBusy: boolean, pipelineBusy: boolean): boolean {
+  return agentBusy || pipelineBusy
+}
+
+function workspaceChatOpen(visible: boolean, view: View): boolean {
+  return visible && view !== 'terminal'
+}
+
+function canSplitShell(active: Tab | undefined): boolean {
+  return !!active && active.kind === 'shell' && active.panes[active.focus]?.kind === 'shell'
+}
+
+interface ProjectWorkspaceViewProps {
+  liquid: boolean
+  project: Project
+  visible: boolean
+  view: View
+  setView: Dispatch<SetStateAction<View>>
+  newShellTab: () => void
+  recents: Project[]
+  menuOpen: boolean
+  setMenuOpen: Dispatch<SetStateAction<boolean>>
+  setRecents: Dispatch<SetStateAction<Project[]>>
+  onOpenProject: () => void
+  onOpenPath: (path: string) => void
+  onCloseProject: () => void
+  updateVersion: string | null
+  settings: AppSettings
+  setSettings: Dispatch<SetStateAction<AppSettings>>
+  chatOwner: Tab | undefined
+  chatPane: AgentPane | null
+  pipelines: Pipeline[]
+  sendAgentMessage: (
+    text: string,
+    providerOverride?: AppSettings['agent'],
+    ownerOverride?: Tab,
+    cwdOverride?: string
+  ) => void
+  cancelAgent: () => void
+  setAgentProvider: (provider: AppSettings['agent']) => void
+  showTerminal: (tabId?: string, mode?: 'split' | 'terminal') => void
+  requestNewChat: () => void
+  clearChatConfirm: boolean
+  clearChat: (hadMessages?: boolean) => void
+  setClearChatConfirm: Dispatch<SetStateAction<boolean>>
+  chatClearedNotice: boolean
+  setChatClearedNotice: Dispatch<SetStateAction<boolean>>
+  composerRef: RefObject<HTMLTextAreaElement>
+  termTabs: Tab[]
+  active: Tab | undefined
+  runBranch: string
+  cwdLabel: string
+  setActiveTab: Dispatch<SetStateAction<string>>
+  closeTab: (id: string) => void
+  patchTab: (tabId: string, fn: (t: Tab) => Tab) => void
+  closePane: (tabId: string, paneId: string) => void
+  splitPane: (dir: 'row' | 'col') => void
+  branchRuns: Record<string, RunState>
+  detailLogs: DetailLog[]
+  selected: Pipeline | null
+  setSelId: Dispatch<SetStateAction<string | null>>
+  setEditor: Dispatch<SetStateAction<EditorState | null>>
+  runPipeline: (pipelineId: string) => void
+  stopPipeline: (id: string, branch?: string) => void
+  deletePipeline: (id: string) => void
+  openRunLogs: () => void
+  pipesCollapsed: boolean
+  setPipesCollapsed: Dispatch<SetStateAction<boolean>>
+  git: GitInfo
+  anyRunning: boolean
+  processCount: number
+  openBranchDialog: () => void
+  runningPipelineId: string | null
+  paletteOpen: boolean
+  paletteItems: PaletteItem[]
+  setPaletteOpen: Dispatch<SetStateAction<boolean>>
+  newTabOpen: boolean
+  creating: boolean
+  newTabError: string | null
+  setNewTabOpen: Dispatch<SetStateAction<boolean>>
+  openExistingWorktree: (branch: string) => void
+  createBranchProject: (req: WorktreeRequest) => void
+  editor: EditorState | null
+  saveEditor: () => void
+}
+
+function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
+  const {
+    liquid,
+    project,
+    visible,
+    view,
+    setView,
+    newShellTab,
+    recents,
+    menuOpen,
+    setMenuOpen,
+    setRecents,
+    onOpenProject,
+    onOpenPath,
+    onCloseProject,
+    updateVersion,
+    settings,
+    setSettings,
+    chatOwner,
+    chatPane,
+    pipelines,
+    sendAgentMessage,
+    cancelAgent,
+    setAgentProvider,
+    showTerminal,
+    requestNewChat,
+    clearChatConfirm,
+    clearChat,
+    setClearChatConfirm,
+    chatClearedNotice,
+    setChatClearedNotice,
+    composerRef,
+    termTabs,
+    active,
+    runBranch,
+    cwdLabel,
+    setActiveTab,
+    closeTab,
+    patchTab,
+    closePane,
+    splitPane,
+    branchRuns,
+    detailLogs,
+    selected,
+    setSelId,
+    setEditor,
+    runPipeline,
+    stopPipeline,
+    deletePipeline,
+    openRunLogs,
+    pipesCollapsed,
+    setPipesCollapsed,
+    git,
+    anyRunning,
+    processCount,
+    openBranchDialog,
+    runningPipelineId,
+    paletteOpen,
+    paletteItems,
+    setPaletteOpen,
+    newTabOpen,
+    creating,
+    newTabError,
+    setNewTabOpen,
+    openExistingWorktree,
+    createBranchProject,
+    editor,
+    saveEditor
+  } = props
+
+  return (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        background: liquid ? G.appBg : GRADIENT_BG,
+        color: C.text,
+        fontFamily: UI,
+        fontSize: 13,
+        WebkitFontSmoothing: 'antialiased',
+        userSelect: 'none',
+        overflow: 'hidden'
+      }}
+    >
+      <Toolbar
+        liquid={liquid}
+        project={project}
+        view={view}
+        onView={setView}
+        onNewTerminal={newShellTab}
+        recents={recents}
+        menuOpen={menuOpen}
+        onMenuToggle={() => {
+          setMenuOpen((v) => !v)
+          void api.project.recents().then(setRecents)
+        }}
+        onMenuClose={() => setMenuOpen(false)}
+        onOpenProject={onOpenProject}
+        onOpenRecent={onOpenPath}
+        onCloseProject={onCloseProject}
+        updateVersion={updateVersion}
+        onInstallUpdate={() => api.update.install()}
+        settings={settings}
+        onSettings={(next) => {
+          setSettings(next)
+          void api.settings.save(next)
+        }}
+      />
+
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 12, padding: '0 14px 12px' }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 12 }}>
+          {view !== 'terminal' && (
+            <ErrorBoundary compact>
+              <ChatPane
+                key={`${project.path}:${chatOwner?.id ?? 'chat'}`}
+                pane={chatPane}
+                pipelines={pipelines}
+                view={view}
+                projectPath={project.path}
+                defaultProvider={settings.agent}
+                onMessage={sendAgentMessage}
+                onCancel={cancelAgent}
+                onProviderChange={setAgentProvider}
+                onOpenPipeline={(tabId) => showTerminal(tabId, 'terminal')}
+                onNewChat={requestNewChat}
+                clearChatConfirm={clearChatConfirm}
+                onConfirmClearChat={() => clearChat(true)}
+                onCancelClearChat={() => setClearChatConfirm(false)}
+                chatClearedNotice={chatClearedNotice}
+                onDismissChatCleared={() => setChatClearedNotice(false)}
+                composerRef={composerRef}
+              />
+            </ErrorBoundary>
+          )}
+          {/* Keep terminals mounted in Chat view so PTY scrollback is not lost. */}
+          <div
+            style={{
+              flex: view === 'split' ? '1 1 50%' : '1 1 100%',
+              minWidth: 0,
+              minHeight: 0,
+              display: view === 'chat' ? 'none' : 'flex',
+              flexDirection: 'column'
+            }}
+            aria-hidden={view === 'chat'}
+          >
+            <TerminalPane
+              key={project.path}
+              tabs={termTabs}
+              activeId={active?.id ?? ''}
+              view={view === 'chat' ? 'terminal' : view}
+              workspaceVisible={visible && view !== 'chat'}
+              branch={runBranch}
+              cwd={cwdLabel}
+              onSelect={setActiveTab}
+              onClose={closeTab}
+              onNew={newShellTab}
+              onFocusPane={(tabId, paneId) =>
+                patchTab(tabId, (tab) => (tab.focus === paneId ? tab : { ...tab, focus: paneId }))
+              }
+              onClosePane={closePane}
+              onResize={(tabId, nodeId, size) =>
+                patchTab(tabId, (tab) => ({
+                  ...tab,
+                  root: setSize(tab.root, nodeId, size)
+                }))
+              }
+              onSplitRight={() => splitPane('row')}
+              onSplitDown={() => splitPane('col')}
+              canSplit={canSplitShell(active)}
+            />
+          </div>
+        </div>
+
+        <Sidebar
+          pipelines={pipelines}
+          runs={branchRuns}
+          logs={detailLogs}
+          selected={selected}
+          onSelect={(id) => {
+            setSelId(id)
+            setEditor(null)
+          }}
+          onNew={() => setEditor({ id: null, name: '', nodes: [blankNode()] })}
+          onRun={runPipeline}
+          onStop={(id) => stopPipeline(id, runBranch)}
+          onEdit={(p) => setEditor({ id: p.id, name: p.name, nodes: p.nodes.map((n) => ({ ...n })) })}
+          onDelete={deletePipeline}
+          onOpenTerminal={openRunLogs}
+          collapsed={pipesCollapsed}
+          onSetCollapsed={setPipesCollapsed}
+        />
+      </div>
+
+      <StatusBar
+        branch={git.isRepo ? runBranch : ''}
+        running={anyRunning}
+        runningLabel={anyRunning ? 'Pipeline running' : 'Idle'}
+        processCount={processCount}
+        onBranch={() => void openBranchDialog()}
+        onStop={runningPipelineId ? () => stopPipeline(runningPipelineId, runBranch) : undefined}
+      />
+
+      <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
+
+      {newTabOpen && (
+        <NewTabDialog
+          liquid={liquid}
+          git={git}
+          projectPath={project.path}
+          repoName={project.name}
+          busy={creating}
+          error={newTabError}
+          onCancel={() => setNewTabOpen(false)}
+          onOpenExisting={openExistingWorktree}
+          onCreate={(req) => void createBranchProject(req)}
+        />
+      )}
+
+      {editor && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            // Above the app toolbar (zIndex 30) so Save/Cancel stay clickable.
+            zIndex: 80,
+            display: 'flex',
+            flexDirection: 'column',
+            background: '#080D17'
+          }}
+        >
+          <PipelineCanvas
+            editor={editor}
+            onChange={setEditor}
+            onCancel={() => setEditor(null)}
+            onSave={saveEditor}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface ProjectWorkspaceProps {
   project: Project
   visible: boolean
@@ -406,6 +1251,8 @@ interface ProjectWorkspaceProps {
   onCloseProject: () => void
   /** Tell the project rail when this checkout's agent is working. */
   onAgentBusyChange?: (projectPath: string, busy: boolean) => void
+  /** Tell the project rail when a finished chat still needs to be opened. */
+  onAgentUnreadChange?: (projectPath: string, unread: boolean) => void
 }
 
 function ProjectWorkspace({
@@ -416,7 +1263,8 @@ function ProjectWorkspace({
   onOpenProject,
   onOpenPath,
   onCloseProject,
-  onAgentBusyChange
+  onAgentBusyChange,
+  onAgentUnreadChange
 }: ProjectWorkspaceProps) {
   const [recents, setRecents] = useState<Project[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
@@ -529,7 +1377,7 @@ function ProjectWorkspace({
     )
   }, [tabs])
 
-  const runBranchForBusy = project ? branchForTab(active, project.path, git) : git.branch || '—'
+  const runBranchForBusy = resolveRunBranch(project, active, git)
   const pipelineBusy = useMemo(() => {
     for (const byBranch of Object.values(runs)) {
       if (byBranch[runBranchForBusy]?.status === 'running') return true
@@ -537,12 +1385,26 @@ function ProjectWorkspace({
     return false
   }, [runs, runBranchForBusy])
 
-  const worktreeBusyFlag = agentBusy || pipelineBusy
+  const worktreeBusyFlag = workspaceBusyFlag(agentBusy, pipelineBusy)
+  const wasWorktreeBusy = useRef(false)
+  const chatOpen = workspaceChatOpen(visible, view)
 
   useEffect(() => {
     onAgentBusyChange?.(project.path, worktreeBusyFlag)
+    if (worktreeBusyFlag) {
+      // Green pulse wins while work is in flight.
+      onAgentUnreadChange?.(project.path, false)
+    } else if (wasWorktreeBusy.current && !chatOpen) {
+      // Finished while the user was elsewhere — leave a blue unread mark.
+      onAgentUnreadChange?.(project.path, true)
+    }
+    wasWorktreeBusy.current = worktreeBusyFlag
     return () => onAgentBusyChange?.(project.path, false)
-  }, [worktreeBusyFlag, onAgentBusyChange, project.path])
+  }, [worktreeBusyFlag, chatOpen, onAgentBusyChange, onAgentUnreadChange, project.path])
+
+  useEffect(() => {
+    if (chatOpen) onAgentUnreadChange?.(project.path, false)
+  }, [chatOpen, onAgentUnreadChange, project.path])
 
   const loadGit = useCallback(async (projectPath: string) => {
     setGit(await api.git.info(projectPath))
@@ -668,7 +1530,7 @@ function ProjectWorkspace({
   const openBranchDialog = useCallback(async () => {
     if (!project) return
     // Refresh at the moment the picker opens. Git state may still be loading
-    // after a project switch, and worktrees can be added outside BuildFlow.
+    // after a project switch, and worktrees can be added outside Farol.
     const fresh = await api.git.info(project.path)
     setGit(fresh)
     if (!fresh.isRepo) return
@@ -925,6 +1787,20 @@ function ProjectWorkspace({
     [project.path]
   )
 
+  // Agents (and other editors) rewrite `.farol/pipelines.json` on disk —
+  // pick that up without requiring an app restart.
+  useEffect(
+    () =>
+      api.pipelines.onChanged((changed) => {
+        if (normPath(changed.projectPath) !== normPath(project.path)) return
+        setPipelines(changed.pipelines)
+        setSelId((cur) =>
+          cur && changed.pipelines.some((p) => p.id === cur) ? cur : (changed.pipelines[0]?.id ?? null)
+        )
+      }),
+    [project.path]
+  )
+
   useEffect(
     () => api.update.onStatus((s) => setUpdateVersion(s.state === 'ready' ? s.version : null)),
     []
@@ -949,110 +1825,17 @@ function ProjectWorkspace({
     [patchPane]
   )
 
-  const applyAgentEvent = useCallback((pane: AgentPane, event: AgentTaskEvent): AgentPane => {
-    const appendMessages = (messages: AgentMessage[]): AgentPane => ({
-      ...pane,
-      messages: trimAgentMessages(messages.map(sanitizeAgentMessage))
-    })
-    if (event.kind === 'output') {
-      const chunk = asText(event.chunk)
-      const messages = [...pane.messages]
-      const last = messages[messages.length - 1]
-      // Only plain prose keeps growing; a card or an oversized turn is closed.
-      if (
-        last?.role === 'assistant' &&
-        !last.tool &&
-        !last.pipeline &&
-        asText(last.text).length < MAX_MESSAGE_CHARS
-      )
-        messages[messages.length - 1] = { ...last, text: asText(last.text) + chunk }
-      else messages.push({ role: 'assistant', text: chunk })
-      return appendMessages(messages)
-    }
-    if (event.kind === 'assistant') {
-      return appendMessages([...pane.messages, { role: 'assistant', text: asText(event.text) }])
-    }
-    if (event.kind === 'tool') {
-      const messages = [...pane.messages]
-      let existing = -1
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].tool?.toolId === event.toolId) {
-          existing = i
-          break
-        }
-      }
-      // The finishing event names the tool but repeats none of its input,
-      // so the card it closes keeps the detail it was opened with.
-      const card = existing >= 0 ? messages[existing].tool! : { toolId: event.toolId, name: event.name }
-      const tool = {
-        ...card,
-        name: event.name || card.name,
-        ...(event.detail ? { detail: event.detail } : {}),
-        state: event.state
-      }
-      const message = {
-        role: 'system' as const,
-        text: `${tool.name}${tool.detail ? ` — ${tool.detail}` : ''}`,
-        tool
-      }
-      if (existing >= 0) messages[existing] = message
-      else messages.push(message)
-      return appendMessages(messages)
-    }
-    if (event.kind === 'user') {
-      return appendMessages([...pane.messages, { role: 'user', text: asText(event.text), at: Date.now() }])
-    }
-    if (event.kind === 'pipeline') {
-      const text =
-        event.status === 'running'
-          ? `$ pipeline run — started ${fmtEventTime(event.startedAt)}`
-          : `${event.status} — ${fmtEventTime(event.finishedAt ?? event.startedAt)}${event.durationMs === undefined ? '' : ` · ${fmtDuration(event.durationMs)}`}`
-      // The tab a pipeline run streams to is addressed the same way
-      // runPipeline() addresses one it started directly — by pipeline
-      // and the branch the owning tab is on.
-      const owner = tabsRef.current.find((t) =>
-        Object.values(t.panes).some((p) => p.kind === 'agent' && p.taskId === event.taskId)
-      )
-      const proj = snapRef.current.project
-      const branch = owner && proj ? branchForTab(owner, proj.path, gitRef.current) : ''
-      const message = {
-        role: 'system' as const,
-        text,
-        pipeline: {
-          pipelineId: localPipelineId(event.pipelineId) ?? event.pipelineId,
-          pipelineName: event.pipelineName,
-          status: event.status,
-          startedAt: event.startedAt,
-          finishedAt: event.finishedAt,
-          durationMs: event.durationMs,
-          tabId: `run:${localPipelineId(event.pipelineId) ?? event.pipelineId}:${branch}`
-        }
-      }
-      const messages = [...pane.messages]
-      let existing = -1
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const card = messages[i].pipeline
-        if (
-          card?.pipelineId === (localPipelineId(event.pipelineId) ?? event.pipelineId) &&
-          card.startedAt === event.startedAt
-        ) {
-          existing = i
-          break
-        }
-      }
-      if (existing >= 0) messages[existing] = message
-      else messages.push(message)
-      return appendMessages(messages)
-    }
-    const announce = event.status !== 'validating' && event.status !== 'completed'
-    const message = asText(event.message)
-    return {
-      ...pane,
-      status: event.status,
-      attempt: event.attempt,
-      messages: announce ? trimAgentMessages([...pane.messages, { role: 'system', text: message }]) : pane.messages
-    }
-  }, [])
+  const applyAgentEventToPane = useCallback((pane: AgentPane, event: AgentTaskEvent): AgentPane => {
+    const projectPath = snapRef.current.project?.path ?? project.path
+    return applyAgentEvent(
+      pane,
+      event,
+      (runtimeId) => unscopeLocalPipelineId(projectPath, runtimeId),
+      tabsRef.current,
+      snapRef.current.project,
+      gitRef.current
+    )
+  }, [project.path])
 
   /** Agent panes are keyed `ap:${taskId}`; scan when ids drift after restore. */
   const agentPaneByTaskId = useCallback(
@@ -1111,7 +1894,7 @@ function ProjectWorkspace({
             for (const event of queued) {
               const pane = agentPaneByTaskId(panes, event.taskId)
               if (!pane) continue
-              const updated = applyAgentEvent(pane, event)
+              const updated = applyAgentEventToPane(pane, event)
               if (updated !== pane) panes = { ...panes, [pane.id]: updated }
             }
             if (panes === tab.panes) return tab
@@ -1121,7 +1904,7 @@ function ProjectWorkspace({
           return touched ? next : prev
         })
       } catch (error) {
-        console.error('[buildflow] agent event flush failed', error)
+        console.error('[farol] agent event flush failed', error)
       }
     }
     const off = api.agent.onEvent((event: AgentTaskEvent) => {
@@ -1140,7 +1923,7 @@ function ProjectWorkspace({
       if (agentFlush.current !== null) window.clearTimeout(agentFlush.current)
       agentFlush.current = null
     }
-  }, [applyAgentEvent, agentPaneByTaskId])
+  }, [applyAgentEventToPane, agentPaneByTaskId])
 
   const sendAgentMessage = useCallback(
     (text: string, providerOverride?: AppSettings['agent'], ownerOverride?: Tab, cwdOverride?: string) => {
@@ -1183,7 +1966,8 @@ function ProjectWorkspace({
       const runAgent = (mode: 'message' | 'start'): void => {
         if (mode === 'message') {
           // Prefer start when the task is gone (e.g. after a restart).
-          void api.agent.message(pane.taskId, clean, provider).then((result) => {
+          // Pass current pipelines so mid-chat edits (AI provider, steps) stick.
+          void api.agent.message(pane.taskId, clean, provider, availablePipelines).then((result) => {
             if (result.ok) return
             runAgent('start')
           })
@@ -1192,10 +1976,12 @@ function ProjectWorkspace({
         void api.agent.start(startRequest).then((result) => {
           if (result.ok) return
           // Still winding down after Stop — queue with the selected provider.
-          void api.agent.message(pane.taskId, clean, provider).then((queued) => {
-            if (queued.ok) return
-            failStart(result.message || queued.message)
-          })
+          void api.agent
+            .message(pane.taskId, clean, provider, availablePipelines)
+            .then((queued) => {
+              if (queued.ok) return
+              failStart(result.message || queued.message)
+            })
         })
       }
 
@@ -1336,7 +2122,7 @@ function ProjectWorkspace({
                       ...pane,
                       cwd,
                       term: writeLine(ensureNewline(emptyTerm()), `── rerun ${clockStamp()} ──`, {
-                        color: '#8b94a3',
+                        color: '#94A3B8',
                         dim: true
                       })
                     }
@@ -1353,7 +2139,7 @@ function ProjectWorkspace({
       )
       setSelId(pipelineId)
       setEditor(null)
-      setDetailLogs([{ t: clockStamp(), text: `Queued pipeline: ${p.name}`, color: '#a9b2c1' }])
+      setDetailLogs([{ t: clockStamp(), text: `Queued pipeline: ${p.name}`, color: '#94A3B8' }])
       setActiveTab(tabId)
       setView('terminal')
       const runtimeId = runtimePipelineId(pipelineId)
@@ -1391,205 +2177,20 @@ function ProjectWorkspace({
 
   useEffect(() => {
     const handle = (e: RunEvent): void => {
-      const pipelineId = localPipelineId(e.pipelineId)
-      if (!pipelineId) return
-      const p = pipelinesRef.current.find((x) => x.id === pipelineId)
-      if (!p) return
-      const { branch } = e
-      const tabId = `run:${pipelineId}:${branch}`
-      const paneId = `rp:${pipelineId}:${branch}`
-      const nodes = topoSort(p.nodes) ?? p.nodes
-      const byId = new Map(nodes.map((n) => [n.id, n]))
-      const total = nodes.length
-
-      const term = (fn: (pane: RunPane) => RunPane): void =>
-        patchPane(paneId, (pane) => (pane.kind === 'run' ? fn(pane) : pane))
-      const patchRun = (fn: (r: RunState) => RunState): void =>
-        setRuns((prev) => {
-          const cur = prev[pipelineId]?.[branch]
-          if (!cur) return prev
-          // Ignore output from a cancelled predecessor after a newer run was queued.
-          if (cur.runId !== e.runId) return prev
-          return { ...prev, [pipelineId]: { ...prev[pipelineId], [branch]: fn(cur) } }
-        })
-      const stepAt = (nodeId: string, v: StepState): void =>
-        patchRun((r) => ({ ...r, stepResults: { ...r.stepResults, [nodeId]: v } }))
-
-      switch (e.kind) {
-        case 'start': {
-          lastRunOut.current = null
-          // A run the user started already made its tab. One an agent asked
-          // for has none, so make it here — otherwise the run is invisible.
-          if (isAgentRun(e.origin)) {
-            setTabs((prev) =>
-              prev.some((t) => t.id === tabId)
-                ? prev
-                : [
-                    ...prev,
-                    {
-                      id: tabId,
-                      kind: 'run',
-                      title: p.name,
-                      status: 'running',
-                      branch,
-                      root: leaf(paneId),
-                      focus: paneId,
-                      panes: {
-                        [paneId]: { id: paneId, kind: 'run', title: p.name, cwd: '', term: emptyTerm() }
-                      }
-                    }
-                  ]
-            )
-            setSelId(pipelineId)
-          }
-          setRuns((prev) => {
-            const cur = prev[pipelineId]?.[branch]
-            if (cur) {
-              if (cur.runId === e.runId) return prev
-              if (
-                cur.status === 'running' &&
-                (cur.runId.startsWith('pending:') || cur.runId.startsWith('agent:'))
-              ) {
-                // Bind the optimistic slot to the real run id.
-              } else if (cur.status === 'running') {
-                // A newer live run already owns this slot.
-                return prev
-              } else if (!isAgentRun(e.origin)) {
-                // Stop/finish already settled the UI — ignore a late start.
-                return prev
-              }
-            }
-            return {
-              ...prev,
-              [pipelineId]: {
-                ...prev[pipelineId],
-                [branch]: {
-                  runId: e.runId,
-                  status: 'running',
-                  label: 'Running…',
-                  startedAt: Date.now(),
-                  stepResults: Object.fromEntries(nodes.map((n) => [n.id, 'pending' as StepState]))
-                }
-              }
-            }
-          })
-          patchTab(tabId, (t) => ({ ...t, status: 'running' }))
-          term((pane) => ({
-            ...pane,
-            term: writeLine(
-              writeLine(
-                writeLine(
-                  ensureNewline(pane.term),
-                  `▶ ${p.name} — ${total} step${total === 1 ? '' : 's'}`,
-                  seg('head')
-                ),
-                `  branch ${branch} · ${new Date().toLocaleTimeString()}`,
-                seg('dim')
-              ),
-              '',
-              {}
-            )
-          }))
-          break
-        }
-
-        case 'step-start': {
-          lastRunOut.current = null
-          const name = byId.get(e.nodeId)?.name || e.nodeId
-          stepAt(e.nodeId, 'running')
-          pushLog(`Starting step: ${name}`, '#a9b2c1')
-          term((pane) => ({
-            ...pane,
-            term: writeLine(
-              ensureNewline(clearIndent(pane.term)),
-              `[${e.index + 1}/${total}] ${name}`,
-              seg('step')
-            )
-          }))
-          break
-        }
-
-        case 'output': {
-          const name = byId.get(e.nodeId)?.name || e.nodeId
-          const prefix = nodeLogPrefix(name)
-          const switched =
-            lastRunOut.current?.paneId !== paneId || lastRunOut.current?.nodeId !== e.nodeId
-          lastRunOut.current = { paneId, nodeId: e.nodeId }
-          term((pane) => {
-            const t = switched ? setIndent(ensureNewline(clearIndent(pane.term)), prefix) : pane.term
-            return { ...pane, term: trimTo(write(t, e.chunk), MAX_LINES) }
-          })
-          break
-        }
-
-        case 'step-end': {
-          lastRunOut.current = null
-          const st: StepState = e.skipped ? 'skip' : e.ok ? 'pass' : e.cancelled ? 'skip' : 'fail'
-          stepAt(e.nodeId, st)
-          const name = byId.get(e.nodeId)?.name || e.nodeId
-          const text = e.skipped
-            ? `– ${name} skipped`
-            : e.ok
-              ? `✓ ${name} (${fmtDuration(e.durationMs)})`
-              : e.cancelled
-                ? `■ ${name} cancelled`
-                : `✗ ${name} (${fmtDuration(e.durationMs)}) — exit code ${e.code}`
-          pushLog(text, e.ok ? '#5fd39a' : e.skipped || e.cancelled ? '#8b94a3' : '#e07b7b')
-          term((pane) => ({
-            ...pane,
-            term: writeLine(
-              ensureNewline(clearIndent(pane.term)),
-              text,
-              seg(e.ok ? 'ok' : e.skipped || e.cancelled ? 'dim' : 'err')
-            )
-          }))
-          break
-        }
-
-        case 'end': {
-          lastRunOut.current = null
-          const failedName = e.failedNodeId
-            ? byId.get(e.failedNodeId)?.name || e.failedNodeId
-            : nodes[e.failedAt ?? 0]?.name
-          patchRun((r) => {
-            const time = fmtTime(r.startedAt)
-            return {
-              ...r,
-              status: e.ok ? 'pass' : 'fail',
-              label: e.cancelled
-                ? `Cancelled on ${branch} · ${time}`
-                : e.ok
-                  ? `Passed on ${branch} · ${time}`
-                  : `Failed on ${branch} · ${time}`
-            }
-          })
-          const summary = e.cancelled
-            ? `■ Cancelled on ${branch}`
-            : e.ok
-              ? `✔ Passed on ${branch} — all ${total} step${total === 1 ? '' : 's'} succeeded`
-              : `✖ Failed on ${branch}` + (failedName ? ` — ${failedName} failed` : '')
-          pushLog(
-            e.ok ? 'Pipeline finished — all steps passed' : e.cancelled ? 'Pipeline cancelled' : 'Pipeline failed',
-            e.ok ? '#5fd39a' : e.cancelled ? '#8b94a3' : '#e07b7b'
-          )
-          patchTab(tabId, (t) => ({ ...t, status: e.ok ? 'pass' : 'fail' }))
-          // Only runs a person started hand off; otherwise an agent that runs
-          // a pipeline and fails would spawn another agent, and so on.
-          if (!isAgentRun(e.origin) && !e.ok && !e.cancelled && e.reportPath && settingsRef.current.autoFix) {
-            const runCwd = tabsRef.current.find((t) => t.id === tabId)?.panes[paneId]?.cwd
-            if (runCwd) sendToAgentRef.current(branch, runCwd)
-          }
-          term((pane) => ({
-            ...pane,
-            term: writeLine(
-              writeLine(ensureNewline(clearIndent(pane.term)), '', {}),
-              summary,
-              seg(e.ok ? 'ok' : e.cancelled ? 'dim' : 'err')
-            )
-          }))
-          break
-        }
-      }
+      handleRunEvent(e, {
+        localPipelineId,
+        pipelines: pipelinesRef.current,
+        lastRunOut,
+        patchPane,
+        patchTab,
+        pushLog,
+        setRuns,
+        setTabs,
+        setSelId,
+        settingsRef,
+        tabsRef,
+        sendToAgentRef
+      })
     }
 
     // A talkative test suite emits output line by line, and every line used to
@@ -1604,7 +2205,7 @@ function ProjectWorkspace({
         try {
           handle(event)
         } catch (error) {
-          console.error('[buildflow] run event failed', event, error)
+          console.error('[farol] run event failed', event, error)
         }
       }
     }
@@ -1633,40 +2234,24 @@ function ProjectWorkspace({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      // The dialog is modal: let it own Escape and Return.
-      if (!visible || newTabOpen || editor || paletteOpen) return
-      if (!(e.metaKey || e.ctrlKey) || e.altKey) return
-      const k = e.key.toLowerCase()
-      if (k === 't') {
-        e.preventDefault()
-        newShellTab()
-      } else if (k === 'd') {
-        e.preventDefault()
-        // Pane splits when a shell is active; otherwise toggle chat/terminal split.
-        const tab = tabsRef.current.find((t) => t.id === activeTab)
-        if (tab?.kind === 'shell' && view !== 'chat') {
-          splitPane(e.shiftKey ? 'col' : 'row')
-        } else {
-          setView((v) => (v === 'split' ? 'chat' : 'split'))
-        }
-      } else if (k === 'k') {
-        e.preventDefault()
-        setPaletteOpen(true)
-      } else if (k === 'w') {
-        e.preventDefault()
-        if (e.shiftKey && active) {
-          closePane(active.id, active.focus)
-        } else if (activeTab) {
-          closeTab(activeTab)
-        }
-      } else if (k >= '1' && k <= '9') {
-        const tab = termTabs[+k - 1]
-        if (tab) {
-          e.preventDefault()
-          setActiveTab(tab.id)
-          setView((v) => (v === 'chat' ? 'split' : v))
-        }
-      }
+      handleWorkspaceKeyDown(e, {
+        visible,
+        newTabOpen,
+        editor,
+        paletteOpen,
+        activeTab,
+        active,
+        view,
+        termTabs,
+        tabsRef,
+        newShellTab,
+        splitPane,
+        closePane,
+        closeTab,
+        setView,
+        setPaletteOpen,
+        setActiveTab
+      })
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -1759,7 +2344,7 @@ function ProjectWorkspace({
   )
 
   const selected = pipelines.find((p) => p.id === selId) ?? null
-  const runBranch = project ? branchForTab(active, project.path, git) : git.branch || '—'
+  const runBranch = resolveRunBranch(project, active, git)
 
   const openRunLogs = useCallback(() => {
     if (!selId) return
@@ -1867,187 +2452,77 @@ function ProjectWorkspace({
     0
   )
 
-  const cwdLabel = displayPath(active?.panes[active.focus]?.cwd ?? project?.path ?? '', project)
+  const cwdLabel = displayPath(active?.panes[active.focus]?.cwd ?? project.path, project)
 
   return (
-    <div
-      style={{
-        width: '100%',
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        background: liquid ? G.appBg : GRADIENT_BG,
-        color: C.text,
-        fontFamily: UI,
-        fontSize: 13,
-        WebkitFontSmoothing: 'antialiased',
-        userSelect: 'none',
-        overflow: 'hidden'
-      }}
-    >
-      <Toolbar
-        liquid={liquid}
-        project={project}
-        view={view}
-        onView={setView}
-        onNewTerminal={newShellTab}
-        recents={recents}
-        menuOpen={menuOpen}
-        onMenuToggle={() => {
-          setMenuOpen((v) => !v)
-          void api.project.recents().then(setRecents)
-        }}
-        onMenuClose={() => setMenuOpen(false)}
-        onOpenProject={onOpenProject}
-        onOpenRecent={onOpenPath}
-        onCloseProject={onCloseProject}
-        updateVersion={updateVersion}
-        onInstallUpdate={() => api.update.install()}
-        settings={settings}
-        onSettings={(next) => {
-          setSettings(next)
-          void api.settings.save(next)
-        }}
-      />
-
-      {project && (
-        <>
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 12, padding: '0 14px 12px' }}>
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 12 }}>
-              {view !== 'terminal' && (
-                <ErrorBoundary compact>
-                  <ChatPane
-                    key={`${project.path}:${chatOwner?.id ?? 'chat'}`}
-                    pane={chatPane}
-                    pipelines={pipelines}
-                    view={view}
-                    projectPath={project.path}
-                    defaultProvider={settings.agent}
-                    onMessage={sendAgentMessage}
-                    onCancel={cancelAgent}
-                    onProviderChange={setAgentProvider}
-                    onOpenPipeline={(tabId) => showTerminal(tabId, 'terminal')}
-                    onNewChat={requestNewChat}
-                    clearChatConfirm={clearChatConfirm}
-                    onConfirmClearChat={() => clearChat(true)}
-                    onCancelClearChat={() => setClearChatConfirm(false)}
-                    chatClearedNotice={chatClearedNotice}
-                    onDismissChatCleared={() => setChatClearedNotice(false)}
-                    composerRef={composerRef}
-                  />
-                </ErrorBoundary>
-              )}
-              {/* Keep terminals mounted in Chat view so PTY scrollback is not lost. */}
-              <div
-                style={{
-                  flex: view === 'split' ? '1 1 50%' : '1 1 100%',
-                  minWidth: 0,
-                  minHeight: 0,
-                  display: view === 'chat' ? 'none' : 'flex',
-                  flexDirection: 'column'
-                }}
-                aria-hidden={view === 'chat'}
-              >
-                <TerminalPane
-                  key={project.path}
-                  tabs={termTabs}
-                  activeId={active?.id ?? ''}
-                  view={view === 'chat' ? 'terminal' : view}
-                  workspaceVisible={visible && view !== 'chat'}
-                  branch={runBranch}
-                  cwd={cwdLabel}
-                  onSelect={setActiveTab}
-                  onClose={closeTab}
-                  onNew={newShellTab}
-                  onFocusPane={(tabId, paneId) =>
-                    patchTab(tabId, (tab) => (tab.focus === paneId ? tab : { ...tab, focus: paneId }))
-                  }
-                  onClosePane={closePane}
-                  onResize={(tabId, nodeId, size) =>
-                    patchTab(tabId, (tab) => ({
-                      ...tab,
-                      root: setSize(tab.root, nodeId, size)
-                    }))
-                  }
-                  onSplitRight={() => splitPane('row')}
-                  onSplitDown={() => splitPane('col')}
-                  canSplit={
-                    !!active &&
-                    active.kind === 'shell' &&
-                    active.panes[active.focus]?.kind === 'shell'
-                  }
-                />
-              </div>
-            </div>
-
-            <Sidebar
-              pipelines={pipelines}
-              runs={branchRuns}
-              logs={detailLogs}
-              selected={selected}
-              onSelect={(id) => {
-                setSelId(id)
-                setEditor(null)
-              }}
-              onNew={() => setEditor({ id: null, name: '', nodes: [blankNode()] })}
-              onRun={runPipeline}
-              onStop={(id) => stopPipeline(id, runBranch)}
-              onEdit={(p) => setEditor({ id: p.id, name: p.name, nodes: p.nodes.map((n) => ({ ...n })) })}
-              onDelete={deletePipeline}
-              onOpenTerminal={openRunLogs}
-              collapsed={pipesCollapsed}
-              onSetCollapsed={setPipesCollapsed}
-            />
-          </div>
-
-          <StatusBar
-            branch={git.isRepo ? runBranch : ''}
-            running={anyRunning}
-            runningLabel={anyRunning ? 'Pipeline running' : 'Idle'}
-            processCount={processCount}
-            onBranch={() => void openBranchDialog()}
-            onStop={runningPipelineId ? () => stopPipeline(runningPipelineId, runBranch) : undefined}
-          />
-        </>
-      )}
-
-      <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
-
-      {newTabOpen && project && (
-        <NewTabDialog
-          liquid={liquid}
-          git={git}
-          projectPath={project.path}
-          repoName={project.name}
-          busy={creating}
-          error={newTabError}
-          onCancel={() => setNewTabOpen(false)}
-          onOpenExisting={openExistingWorktree}
-          onCreate={(req) => void createBranchProject(req)}
-        />
-      )}
-
-      {editor && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            // Above the app toolbar (zIndex 30) so Save/Cancel stay clickable.
-            zIndex: 80,
-            display: 'flex',
-            flexDirection: 'column',
-            background: '#07090d'
-          }}
-        >
-          <PipelineCanvas
-            editor={editor}
-            onChange={setEditor}
-            onCancel={() => setEditor(null)}
-            onSave={saveEditor}
-          />
-        </div>
-      )}
-    </div>
+    <ProjectWorkspaceView
+      liquid={liquid}
+      project={project}
+      visible={visible}
+      view={view}
+      setView={setView}
+      newShellTab={newShellTab}
+      recents={recents}
+      menuOpen={menuOpen}
+      setMenuOpen={setMenuOpen}
+      setRecents={setRecents}
+      onOpenProject={onOpenProject}
+      onOpenPath={onOpenPath}
+      onCloseProject={onCloseProject}
+      updateVersion={updateVersion}
+      settings={settings}
+      setSettings={setSettings}
+      chatOwner={chatOwner}
+      chatPane={chatPane}
+      pipelines={pipelines}
+      sendAgentMessage={sendAgentMessage}
+      cancelAgent={cancelAgent}
+      setAgentProvider={setAgentProvider}
+      showTerminal={showTerminal}
+      requestNewChat={requestNewChat}
+      clearChatConfirm={clearChatConfirm}
+      clearChat={clearChat}
+      setClearChatConfirm={setClearChatConfirm}
+      chatClearedNotice={chatClearedNotice}
+      setChatClearedNotice={setChatClearedNotice}
+      composerRef={composerRef}
+      termTabs={termTabs}
+      active={active}
+      runBranch={runBranch}
+      cwdLabel={cwdLabel}
+      setActiveTab={setActiveTab}
+      closeTab={closeTab}
+      patchTab={patchTab}
+      closePane={closePane}
+      splitPane={splitPane}
+      branchRuns={branchRuns}
+      detailLogs={detailLogs}
+      selected={selected}
+      setSelId={setSelId}
+      setEditor={setEditor}
+      runPipeline={runPipeline}
+      stopPipeline={stopPipeline}
+      deletePipeline={deletePipeline}
+      openRunLogs={openRunLogs}
+      pipesCollapsed={pipesCollapsed}
+      setPipesCollapsed={setPipesCollapsed}
+      git={git}
+      anyRunning={anyRunning}
+      processCount={processCount}
+      openBranchDialog={openBranchDialog}
+      runningPipelineId={runningPipelineId}
+      paletteOpen={paletteOpen}
+      paletteItems={paletteItems}
+      setPaletteOpen={setPaletteOpen}
+      newTabOpen={newTabOpen}
+      creating={creating}
+      newTabError={newTabError}
+      setNewTabOpen={setNewTabOpen}
+      openExistingWorktree={openExistingWorktree}
+      createBranchProject={createBranchProject}
+      editor={editor}
+      saveEditor={saveEditor}
+    />
   )
 }
 
@@ -2064,6 +2539,7 @@ export default function App() {
     nonce: 0
   })
   const [agentBusyPaths, setAgentBusyPaths] = useState<ReadonlySet<string>>(() => new Set())
+  const [agentUnreadPaths, setAgentUnreadPaths] = useState<ReadonlySet<string>>(() => new Set())
   const hydrated = useRef(false)
 
   const setAgentBusy = useCallback((projectPath: string, busy: boolean) => {
@@ -2072,6 +2548,17 @@ export default function App() {
       if (busy === has) return prev
       const next = new Set(prev)
       if (busy) next.add(projectPath)
+      else next.delete(projectPath)
+      return next
+    })
+  }, [])
+
+  const setAgentUnread = useCallback((projectPath: string, unread: boolean) => {
+    setAgentUnreadPaths((prev) => {
+      const has = prev.has(projectPath)
+      if (unread === has) return prev
+      const next = new Set(prev)
+      if (unread) next.add(projectPath)
       else next.delete(projectPath)
       return next
     })
@@ -2104,6 +2591,8 @@ export default function App() {
 
   const closeProject = useCallback(
     (projectPath: string) => {
+      setAgentBusy(projectPath, false)
+      setAgentUnread(projectPath, false)
       setProjects((prev) => {
         const index = prev.findIndex((item) => item.path === projectPath)
         const next = prev.filter((item) => item.path !== projectPath)
@@ -2113,7 +2602,7 @@ export default function App() {
         return next
       })
     },
-    [activePath]
+    [activePath, setAgentBusy, setAgentUnread]
   )
 
   const requestBranchDialog = useCallback((projectPath: string) => {
@@ -2229,6 +2718,7 @@ export default function App() {
         projects={projects}
         activePath={activePath}
         busyPaths={agentBusyPaths}
+        unreadPaths={agentUnreadPaths}
         onSelect={setActivePath}
         onClose={closeProject}
         onNewBranch={requestBranchDialog}
@@ -2272,6 +2762,7 @@ export default function App() {
                 onOpenPath={(path) => void openPath(path)}
                 onCloseProject={() => closeProject(project.path)}
                 onAgentBusyChange={setAgentBusy}
+                onAgentUnreadChange={setAgentUnread}
               />
             </div>
           )

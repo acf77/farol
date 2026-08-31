@@ -60,7 +60,7 @@ function dirName(p: string): string {
 }
 
 /**
- * Directory that owns `.buildflow/pipelines.json` for every checkout of this
+ * Directory that owns `.farol/pipelines.json` for every checkout of this
  * repo. Linked worktrees read and write the primary checkout's file.
  */
 export function pipelineStoreRoot(

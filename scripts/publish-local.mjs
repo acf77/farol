@@ -5,17 +5,23 @@ import { fileURLToPath } from 'url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const dist = path.join(root, 'dist')
-const dest = path.join(os.homedir(), '.buildflow', 'updates')
+const dest = path.join(os.homedir(), '.farol', 'updates')
 
 function zipName(dir, version) {
-  const zips = fs.readdirSync(dir).filter((f) => /^BuildFlow-.*\.zip$/.test(f))
+  const zips = fs.readdirSync(dir).filter((f) => /^Farol-.*\.zip$/.test(f))
   return zips.find((f) => f.includes(`-${version}-`)) ?? zips.find((f) => f.includes(version)) ?? null
 }
 
-/** Drop packaged builds from prior versions so dist/ only holds the latest release. */
+/** Drop packaged builds from prior versions so dist/ only holds the latest release.
+ *  Also clears leftover `BuildFlow-*` artifacts from before the rename. */
 function pruneOldBuilds(dir, version) {
   for (const f of fs.readdirSync(dir)) {
-    if (!/^BuildFlow-/.test(f)) continue
+    if (!/^(Farol|BuildFlow)-/.test(f)) continue
+    // Legacy BuildFlow packages are never current — always remove them.
+    if (/^BuildFlow-/.test(f)) {
+      fs.unlinkSync(path.join(dir, f))
+      continue
+    }
     if (f.includes(`-${version}-`) || f.includes(`-${version}.`)) continue
     fs.unlinkSync(path.join(dir, f))
   }
@@ -29,7 +35,7 @@ if (!fs.existsSync(dist)) {
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const zip = zipName(dist, pkg.version)
 if (!zip) {
-  console.error(`publish-local: no BuildFlow zip for ${pkg.version} in dist/`)
+  console.error(`publish-local: no Farol zip for ${pkg.version} in dist/`)
   process.exit(1)
 }
 

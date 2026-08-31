@@ -4,7 +4,7 @@ import { DEFAULT_FG, segments } from '../ansi'
 import type { TermState } from '../ansi'
 
 /**
- * A pipeline run's log. Unlike a shell pane this is BuildFlow's own output —
+ * A pipeline run's log. Unlike a shell pane this is Farol's own output —
  * step headings, results and the captured output of each step — so it keeps
  * the line-based rendering the design specifies.
  */

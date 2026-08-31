@@ -54,7 +54,7 @@ export function applyGlass(win: BrowserWindow): boolean {
     win.setWindowButtonVisibility(false)
     const id = g.addView(win.getNativeWindowHandle(), {
       cornerRadius: 0,
-      tintColor: '#1c1c1ecc',
+      tintColor: '#080D17cc',
       opaque: false
     })
     if (id < 0) return false

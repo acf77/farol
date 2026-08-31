@@ -66,8 +66,18 @@
         "cmd": "npx tsc --noEmit",
         "after": [],
         "gate": true,
-        "x": 300,
-        "y": 48
+        "x": 464,
+        "y": 123
+      },
+      {
+        "id": "n3",
+        "name": "Cyclomatic Complexity",
+        "type": "shell",
+        "cmd": "npx --yes oxlint --deny complexity",
+        "after": [],
+        "gate": true,
+        "x": 258,
+        "y": 121
       }
     ]
   },
@@ -100,7 +110,7 @@
         "name": "AI Review",
         "type": "ai",
         "cmd": "Review lint/type output and the diff; flag risks",
-        "ai": "claude",
+        "ai": "cursor",
         "after": [
           "n1",
           "n2"
@@ -114,7 +124,7 @@
         "name": "Summarize",
         "type": "ai",
         "cmd": "Post a one-paragraph summary to the run log",
-        "ai": "claude",
+        "ai": "cursor",
         "after": [
           "n3"
         ],

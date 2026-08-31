@@ -1,12 +1,12 @@
-# BuildFlow
+# Farol
 
 A desktop terminal workspace with runnable pipelines. Open a project folder, get
 shell tabs backed by your machine's own default shell, and run named pipelines
 whose steps are real commands — or prompts handed to Claude, Codex, Cursor, or
 OpenCode — streaming into their own tab.
 
-Implemented from the `BuildFlow.dc.html` design spec in the
-[BuildFlow App Design Spec](https://claude.ai/design/p/e5f280c0-b106-4b8d-b38c-a92c4f18a3bb)
+Implemented from the `Farol.dc.html` design spec in the
+[Farol App Design Spec](https://claude.ai/design/p/e5f280c0-b106-4b8d-b38c-a92c4f18a3bb)
 Claude Design project.
 
 ## Running it
@@ -17,18 +17,28 @@ npm run dev     # dev build with HMR for the renderer
 npm run build   # production build into out/
 npm start       # alias for electron-vite preview
 npm run dist         # Mac .dmg + .zip into dist/, publish local update feed
-npm run install:app  # same, then replace /Applications/BuildFlow.app
+npm run install:app  # same, then replace /Applications/Farol.app
 npm test             # unit tests for the terminal parser
 npm run typecheck
 ```
 
 After the first install, new builds do not need another DMG. `npm run dist` writes the
-update into `~/.buildflow/updates`; the running app notices and offers **Restart to
-update** (or BuildFlow → Check for Updates…). Quit and relaunch once if you are
+update into `~/.farol/updates`; the running app notices and offers **Restart to
+update** (or Farol → Check for Updates…). Quit and relaunch once if you are
 still on the original 0.1.0 build — that version cannot self-update.
 
+**Upgrading from BuildFlow:** the rename changed the app id, bundle name, and
+update feed (`~/.buildflow/updates` → `~/.farol/updates`). An installed
+BuildFlow build cannot self-update to Farol — run `npm run install:app` (or
+open the DMG and drag Farol into Applications). `install:app` also removes
+`/Applications/BuildFlow.app` if it is still present. Opening a project in Farol
+migrates `.buildflow/pipelines.json` into `.farol/` and replaces the old
+`buildflow` MCP entry with `farol`. Recents and the last workspace layout are
+copied once from the old Application Support folder (`BuildFlow` / `buildflow`)
+into Farol's userData when those files are not already present.
+
 To install the packaged app the first time, open the DMG in `dist/` and drag
-BuildFlow into Applications, or run `npm run install:app`. The build is ad-hoc
+Farol into Applications, or run `npm run install:app`. The build is ad-hoc
 signed; on first launch, right-click the app and choose Open.
 
 ## How it works
@@ -54,7 +64,7 @@ src/
 
 Each pane runs your default shell (`$SHELL`, falling back to the passwd entry)
 as an interactive login shell on a PTY, wired to **xterm.js** — the same
-terminal emulator VS Code and Hyper embed. BuildFlow does not interpret the
+terminal emulator VS Code and Hyper embed. Farol does not interpret the
 byte stream at all, so a pane behaves like a window of your own terminal:
 
 - your prompt, your theme, your aliases, your PATH — `.zprofile` and `.zshrc`
@@ -118,7 +128,7 @@ detail pane in the sidebar shows the resulting order, annotated with what each
 step did on the last run: `then` between steps, `and` where two run off the
 same parent, `skipped` under the one that failed.
 
-Pipelines are stored in the project itself, at `.buildflow/pipelines.json`, so
+Pipelines are stored in the project itself, at `.farol/pipelines.json`, so
 they can be committed and shared. A project without one is seeded with the four
 starter pipelines from the design spec.
 
@@ -126,15 +136,15 @@ starter pipelines from the design spec.
 
 Click **✦** beside the new-tab button to open an agent session:
 
-- **Chat — enforced** runs the coding CLI through BuildFlow's managed harness.
+- **Chat — enforced** runs the coding CLI through Farol's managed harness.
   The agent receives the current pipeline catalog and selects relevant
   pipelines when it finishes a code change (or `[]` when it changed nothing).
-  BuildFlow runs every selection directly; failures are fed into another repair
+  Farol runs every selection directly; failures are fed into another repair
   turn, and the task is only marked complete after all selected pipelines pass
   — or immediately when none were selected. This does not depend on the
-  provider granting its CLI permission to call BuildFlow's MCP tools.
+  provider granting its CLI permission to call Farol's MCP tools.
 - **Terminal — MCP** opens Claude, Codex, Cursor, or OpenCode interactively in a
-  real terminal. The BuildFlow MCP server is available to list and run
+  real terminal. The Farol MCP server is available to list and run
   pipelines, but tool use is controlled by that external CLI and is therefore
   not enforced. Open Terminal from a Chat tab to place both side by side.
 

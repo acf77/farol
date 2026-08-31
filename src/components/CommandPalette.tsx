@@ -102,7 +102,7 @@ export default function CommandPalette({ open, items, onClose }: Props) {
         style={{
           width: 480,
           maxWidth: '92vw',
-          background: '#111621',
+          background: '#111827',
           border: `1px solid ${C.cardBorder}`,
           borderRadius: 12,
           boxShadow: '0 24px 60px rgba(0,0,0,0.55)',
@@ -123,7 +123,7 @@ export default function CommandPalette({ open, items, onClose }: Props) {
             color: C.text,
             fontSize: 14,
             padding: '14px 16px',
-            borderBottom: '1px solid #1e2532'
+            borderBottom: '1px solid #273449'
           }}
         />
         <div style={{ maxHeight: 320, overflow: 'auto', padding: 6 }}>
@@ -153,13 +153,13 @@ export default function CommandPalette({ open, items, onClose }: Props) {
                   border: 'none',
                   borderRadius: 8,
                   padding: '9px 10px',
-                  background: on ? '#1b2433' : 'transparent',
+                  background: on ? '#1F2937' : 'transparent',
                   color: on ? C.textStrong : C.textSoft,
                   cursor: 'pointer'
                 }}
               >
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: 'block', fontSize: 13, fontWeight: 500 }}>{item.label}</span>
+                  <span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>{item.label}</span>
                   {(item.detail || item.group) && (
                     <span
                       style={{

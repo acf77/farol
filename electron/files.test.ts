@@ -38,13 +38,13 @@ describe('listProjectFiles', () => {
 })
 
 describe('saveChatAttachment', () => {
-  it('writes images under .buildflow/attachments', () => {
+  it('writes images under .farol/attachments', () => {
     const root = tmp()
     const saved = saveChatAttachment(root, 'screenshot.png', Buffer.from('png-bytes'))
     expect(saved).toBeTruthy()
     expect(saved!.startsWith(root)).toBe(true)
     expect(fs.readFileSync(saved!, 'utf8')).toBe('png-bytes')
-    expect(saved!).toContain(`${path.sep}.buildflow${path.sep}attachments${path.sep}`)
+    expect(saved!).toContain(`${path.sep}.farol${path.sep}attachments${path.sep}`)
   })
 
   it('rejects non-image extensions', () => {

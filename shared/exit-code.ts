@@ -26,7 +26,7 @@ const SIGNAL_NUMBERS: Record<string, number> = {
 
 /**
  * `128 + signum`, the convention every shell uses — so a step killed by a
- * signal reports the same code BuildFlow's own terminal would show.
+ * signal reports the same code Farol's own terminal would show.
  *
  * This matters for diagnosis: collapsing every signal to 130 makes a crash
  * indistinguishable from someone pressing Stop. A Node process that runs out

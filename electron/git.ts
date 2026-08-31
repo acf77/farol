@@ -129,21 +129,17 @@ async function resolveBase(
   return null
 }
 
-/**
- * Open `branch` in a separate working copy so the project's current checkout
- * is left alone. Reuses an existing worktree for that branch when there is
- * one; otherwise creates a sibling folder (`repo-branch-name`, or `folder`).
- *
- * `base` only applies when the branch is being created — an existing branch is
- * checked out as it stands rather than being silently reset onto something else.
- */
-export async function addWorktree(
-  cwd: string,
-  req: WorktreeRequest
-): Promise<{ ok: boolean; path?: string; branch?: string; reused?: boolean; message: string }> {
-  const name = req.branch.trim()
-  if (!name) return { ok: false, message: 'Enter a branch name' }
+type WorktreeResult = {
+  ok: boolean
+  path?: string
+  branch?: string
+  reused?: boolean
+  message: string
+}
 
+async function resolveWorktreeRoot(
+  cwd: string
+): Promise<{ toplevel: string; bare: boolean } | { message: string }> {
   const [top, bareRes] = await Promise.all([
     git(cwd, ['rev-parse', '--show-toplevel']),
     git(cwd, ['rev-parse', '--is-bare-repository'])
@@ -152,9 +148,17 @@ export async function addWorktree(
   // Bare hubs have no work-tree toplevel; sibling worktrees still live next to `cwd`.
   const toplevel = top.code === 0 ? top.out.trim() : bare ? path.resolve(cwd) : ''
   if (!toplevel) {
-    return { ok: false, message: (top.err || top.out).trim() || 'not a git repository' }
+    return { message: (top.err || top.out).trim() || 'not a git repository' }
   }
+  return { toplevel, bare }
+}
 
+async function reuseExistingWorktree(
+  cwd: string,
+  name: string,
+  toplevel: string,
+  bare: boolean
+): Promise<WorktreeResult | null> {
   const listed = await git(cwd, ['worktree', 'list', '--porcelain'])
   const trees = parseWorktreeList(listed.out)
   const existing = trees.find((t) => t.branch === name)
@@ -167,10 +171,17 @@ export async function addWorktree(
   if (!bare && head.out.trim() === name) {
     return { ok: true, path: toplevel, branch: name, reused: true, message: '' }
   }
+  return null
+}
 
+async function resolveWorktreeDest(
+  toplevel: string,
+  name: string,
+  folder: string | undefined
+): Promise<{ dest: string } | WorktreeResult> {
   const destBase = path.join(
     path.dirname(toplevel),
-    worktreeFolderName(path.basename(toplevel), name, req.folder)
+    worktreeFolderName(path.basename(toplevel), name, folder)
   )
   if (fs.existsSync(destBase)) {
     const at = await git(destBase, ['rev-parse', '--abbrev-ref', 'HEAD'])
@@ -178,30 +189,65 @@ export async function addWorktree(
       return { ok: true, path: destBase, branch: name, reused: true, message: '' }
     }
     // A folder the user named explicitly is not something to silently sidestep.
-    if (req.folder?.trim()) {
+    if (folder?.trim()) {
       return { ok: false, message: `${path.basename(destBase)} already exists` }
     }
   }
 
   let dest = destBase
   for (let n = 2; fs.existsSync(dest); n++) dest = `${destBase}-${n}`
+  return { dest }
+}
 
-  let args: string[]
+async function buildWorktreeArgs(
+  cwd: string,
+  name: string,
+  dest: string,
+  base: string | undefined
+): Promise<{ args: string[] } | { message: string }> {
   if (await refExists(cwd, `refs/heads/${name}`)) {
-    args = ['worktree', 'add', dest, name]
-  } else if (req.base?.trim()) {
-    const from = await resolveBase(cwd, req.base)
-    if (!from) return { ok: false, message: `unknown branch ${req.base.trim()}` }
-    args = from.remote
-      ? ['worktree', 'add', '--track', '-b', name, dest, from.ref]
-      : ['worktree', 'add', '-b', name, dest, from.ref]
-  } else if (await refExists(cwd, `refs/remotes/origin/${name}`)) {
-    args = ['worktree', 'add', '--track', '-b', name, dest, `origin/${name}`]
-  } else {
-    args = ['worktree', 'add', '-b', name, dest]
+    return { args: ['worktree', 'add', dest, name] }
   }
+  if (base?.trim()) {
+    const from = await resolveBase(cwd, base)
+    if (!from) return { message: `unknown branch ${base.trim()}` }
+    return {
+      args: from.remote
+        ? ['worktree', 'add', '--track', '-b', name, dest, from.ref]
+        : ['worktree', 'add', '-b', name, dest, from.ref]
+    }
+  }
+  if (await refExists(cwd, `refs/remotes/origin/${name}`)) {
+    return { args: ['worktree', 'add', '--track', '-b', name, dest, `origin/${name}`] }
+  }
+  return { args: ['worktree', 'add', '-b', name, dest] }
+}
 
-  const res = await git(cwd, args, 120_000)
+/**
+ * Open `branch` in a separate working copy so the project's current checkout
+ * is left alone. Reuses an existing worktree for that branch when there is
+ * one; otherwise creates a sibling folder (`repo-branch-name`, or `folder`).
+ *
+ * `base` only applies when the branch is being created — an existing branch is
+ * checked out as it stands rather than being silently reset onto something else.
+ */
+export async function addWorktree(cwd: string, req: WorktreeRequest): Promise<WorktreeResult> {
+  const name = req.branch.trim()
+  if (!name) return { ok: false, message: 'Enter a branch name' }
+
+  const root = await resolveWorktreeRoot(cwd)
+  if ('message' in root) return { ok: false, message: root.message }
+
+  const reused = await reuseExistingWorktree(cwd, name, root.toplevel, root.bare)
+  if (reused) return reused
+
+  const destOrReuse = await resolveWorktreeDest(root.toplevel, name, req.folder)
+  if ('ok' in destOrReuse) return destOrReuse
+
+  const built = await buildWorktreeArgs(cwd, name, destOrReuse.dest, req.base)
+  if ('message' in built) return { ok: false, message: built.message }
+
+  const res = await git(cwd, built.args, 120_000)
   if (res.code !== 0) {
     const message = (res.err || res.out).trim().split('\n').filter(Boolean).pop() || 'could not create worktree'
     const open = parseAlreadyOpenPath(message)
@@ -210,10 +256,10 @@ export async function addWorktree(
     }
     return { ok: false, message }
   }
-  return { ok: true, path: dest, branch: name, message: '' }
+  return { ok: true, path: destOrReuse.dest, branch: name, message: '' }
 }
 
-/** Resolve the checkout that stores `.buildflow/pipelines.json` for this repo. */
+/** Resolve the checkout that stores `.farol/pipelines.json` for this repo. */
 export async function pipelineStoreRootFor(cwd: string): Promise<string> {
   const abs = path.resolve(cwd)
   const [inside, trees, common] = await Promise.all([

@@ -4,7 +4,7 @@ body,
   margin: 0;
   padding: 0;
   height: 100%;
-  background: #07090d;
+  background: #080D17;
   overflow: hidden;
   font-family:
     -apple-system,
@@ -24,11 +24,11 @@ html.bf-glass #root {
 }
 
 a {
-  color: #4d8dfb;
+  color: #60A5FA;
   text-decoration: none;
 }
 a:hover {
-  color: #7aa9fc;
+  color: #93C5FD;
 }
 
 input,
@@ -40,7 +40,7 @@ select {
 
 input::placeholder,
 textarea::placeholder {
-  color: #6d7686;
+  color: #64748B;
 }
 
 button:disabled {
@@ -69,6 +69,18 @@ button:disabled {
  * none`. The animations are declared inline on the elements, which is why the
  * selectors match on that declaration and why the overrides are !important.
  */
+/*
+ * Reduced transparency. When the user asks for less blur/glass, chrome that
+ * rides native Liquid Glass must frost over so controls stay legible.
+ */
+@media (prefers-reduced-transparency: reduce) {
+  html.bf-glass,
+  html.bf-glass body,
+  html.bf-glass #root {
+    background: #080D17 !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   /*
    * Safety net first: anything that animates or transitions is reduced to a
@@ -85,7 +97,7 @@ button:disabled {
     scroll-behavior: auto !important;
   }
   /*
-   * Freeze the spinner mid-turn. The ring keeps its faint Signal Blue circle
+   * Freeze the spinner mid-turn. The ring keeps its faint Beacon Blue circle
    * and its bright arc, held off-axis so it still reads as a partial ring in
    * progress rather than a plain dot outline.
    */
@@ -103,12 +115,21 @@ button:disabled {
   }
 }
 
+/*
+ * Side panel collapse. Width is animated on the shell; content swaps after the
+ * close finishes so the open panel clips away instead of jumping to the rail.
+ */
+.bf-side-panel {
+  transition: width 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: width;
+}
+
 ::-webkit-scrollbar {
   width: 9px;
   height: 9px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a3040;
+  background: #273449;
   border-radius: 6px;
   border: 2px solid transparent;
   background-clip: padding-box;
@@ -117,7 +138,7 @@ button:disabled {
   background: transparent;
 }
 ::selection {
-  background: rgba(47, 124, 246, 0.35);
+  background: rgba(37, 99, 235, 0.35);
 }
 
 /*
@@ -136,12 +157,35 @@ button:disabled {
   cursor: pointer;
 }
 .bf-menu-item:hover {
-  background: #2f7cf6 !important;
+  background: #2563EB !important;
   color: #fff !important;
 }
 
 .bf-btn-primary:hover:not(:disabled) {
-  background: #3b88ff !important;
+  background: #60A5FA !important;
+}
+
+/*
+ * Press feedback on pointer-down (Apple Response). Brightness only — DESIGN.md
+ * forbids scale/transform on buttons. Reduced-motion leaves this intact because
+ * it is not vestibular motion.
+ */
+.bf-focus:active:not(:disabled),
+.bf-icon-btn:active:not(:disabled),
+.bf-hover-fill:active:not(:disabled),
+.bf-runbtn:active:not(:disabled),
+.bf-suggest:active,
+.bf-chip:active,
+.bf-menu-item:active,
+.bf-row:active,
+.bf-term-tab:active,
+.bf-composer-btn:active,
+.bf-split-btn:active {
+  filter: brightness(0.92);
+}
+.bf-btn-primary:active:not(:disabled) {
+  background: #1D4ED8 !important;
+  filter: none;
 }
 
 .bf-tab:hover {
@@ -149,7 +193,7 @@ button:disabled {
 }
 
 .bf-tab-close:hover {
-  background: rgba(255, 255, 255, 0.12) !important;
+  background: rgba(248, 250, 252, 0.12) !important;
   color: #fff !important;
 }
 
@@ -167,7 +211,7 @@ button:disabled {
 }
 
 .bf-danger:hover {
-  background: rgba(224, 123, 123, 0.14) !important;
+  background: rgba(239, 68, 68, 0.12) !important;
 }
 
 .bf-dashed:hover {
@@ -176,7 +220,7 @@ button:disabled {
 }
 
 .bf-input:focus {
-  border-color: #2f7cf6 !important;
+  border-color: #2563EB !important;
 }
 
 .bf-split-btn:hover {
@@ -189,44 +233,44 @@ button:disabled {
  * matches the spec's hover colour for that surface.
  */
 .bf-chip:hover {
-  background: #1c222e !important;
+  background: rgba(255, 255, 255, 0.08) !important;
 }
 
 .bf-suggest:hover {
-  background: #181f2a !important;
-  border-color: #2d364a !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #F8FAFC !important;
 }
 
 .bf-newpipe:hover {
-  background: #222b3a !important;
+  background: rgba(255, 255, 255, 0.08) !important;
 }
 
 .bf-term-tab:hover {
-  background: #171e29 !important;
+  background: rgba(255, 255, 255, 0.05) !important;
 }
 .bf-term-tab-active:hover {
-  background: #0b0f16 !important;
+  background: #080D17 !important;
 }
 .bf-term-tab:focus-visible {
-  box-shadow: inset 0 0 0 2px #2f7cf6;
+  box-shadow: inset 0 0 0 2px #2563EB;
 }
 
 .bf-composer-btn:hover {
-  background: #242d3c !important;
+  background: rgba(255, 255, 255, 0.08) !important;
 }
 
 .bf-linkish:hover {
-  color: #c3cad6 !important;
+  color: #E2E8F0 !important;
 }
 
 .bf-status-item:hover {
-  color: #eef1f6 !important;
+  color: #F8FAFC !important;
 }
 
 /* The run button fills in on hover, so an idle pipeline shows how to start it. */
 .bf-runbtn:hover {
-  background: #2f7cf6 !important;
-  border-color: #2f7cf6 !important;
+  background: #2563EB !important;
+  border-color: #2563EB !important;
 }
 .bf-runbtn:hover .bf-runbtn-play {
   display: block !important;
@@ -241,11 +285,11 @@ button:disabled {
   outline: none;
 }
 .bf-focus:focus-visible {
-  outline: 2px solid #2f7cf6 !important;
+  outline: 2px solid #2563EB !important;
   outline-offset: 1px !important;
   /*
    * A contrast collar, not elevation: under Liquid Glass the effective
-   * backdrop can be light and Signal Blue alone would sink into it. The
+   * backdrop can be light and Beacon Blue alone would sink into it. The
    * outline paints over this, leaving a dark hairline either side of the ring
    * on any surface. No spread reaches layout.
    */
@@ -253,7 +297,7 @@ button:disabled {
 }
 
 /*
- * The primary button is a Signal Blue fill, where a Signal Blue ring would
+ * The primary button is a Beacon Blue fill, where a Beacon Blue ring would
  * read as part of the button. Same geometry, white ring.
  */
 .bf-btn-primary.bf-focus:focus-visible {
@@ -275,7 +319,7 @@ button:disabled {
   font-size: 12px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: #0e131b;
-  border: 1px solid #212938;
-  color: #d7dde8;
+  background: #080D17;
+  border: 1px solid #273449;
+  color: #F8FAFC;
 }

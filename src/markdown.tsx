@@ -2,10 +2,10 @@ import type { ReactNode } from 'react'
 import { C, MONO } from './theme'
 
 /** Control lines the managed harness reads — hide them from the transcript. */
-const CONTROL_LINE = /^\s*BUILDFLOW_(?:PIPELINES|BLOCKED):.*$/
+const CONTROL_LINE = /^\s*FAROL_(?:PIPELINES|BLOCKED):.*$/
 
 /**
- * Drop BuildFlow harness markers so they do not clutter the chat once the
+ * Drop Farol harness markers so they do not clutter the chat once the
  * controller has already consumed them.
  */
 export function stripControlMarkers(text: string): string {
@@ -40,7 +40,7 @@ function inline(text: string, keyPrefix: string, depth = 0): ReactNode[] {
       )
     } else if (bold) {
       nodes.push(
-        <strong key={key} style={{ fontWeight: 600, color: '#eef1f6' }}>
+        <strong key={key} style={{ fontWeight: 600, color: '#F8FAFC' }}>
           {inline(bold.slice(2, -2), key, depth + 1)}
         </strong>
       )
@@ -80,7 +80,7 @@ function heading(level: number, text: string, key: string): ReactNode {
         fontSize: size,
         fontWeight: weight,
         letterSpacing: level === 1 ? '-0.2px' : undefined,
-        color: '#eef1f6',
+        color: '#F8FAFC',
         marginTop: level === 1 ? 4 : 2,
         marginBottom: 2
       }}
@@ -97,14 +97,14 @@ function codeBlock(body: string, lang: string | undefined, key: string): ReactNo
       style={{
         margin: '4px 0',
         padding: '12px 14px',
-        background: '#0e131b',
-        border: '1px solid #212938',
+        background: '#080D17',
+        border: '1px solid #273449',
         borderRadius: 9,
         overflowX: 'auto',
         fontFamily: MONO,
         fontSize: 12,
         lineHeight: 1.5,
-        color: '#c3cad6'
+        color: '#CBD5E1'
       }}
     >
       {lang ? (
@@ -122,7 +122,7 @@ function listItem(text: string, ordered: boolean, index: number, key: string): R
         style={{
           flex: 'none',
           minWidth: ordered ? 18 : 10,
-          color: '#7f889a',
+          color: '#94A3B8',
           fontFamily: ordered ? MONO : 'inherit',
           fontSize: ordered ? 12 : 13.5,
           lineHeight: 1.6
@@ -133,6 +133,123 @@ function listItem(text: string, ordered: boolean, index: number, key: string): R
       <span style={{ flex: 1, minWidth: 0 }}>{inline(text, key)}</span>
     </div>
   )
+}
+
+type BlockParse = { node: ReactNode; next: number }
+
+function parseFence(lines: string[], i: number, key: string): BlockParse | null {
+  const fence = /^```([\w-]*)\s*$/.exec(lines[i])
+  if (!fence) return null
+  const lang = fence[1] || undefined
+  const body: string[] = []
+  let j = i + 1
+  while (j < lines.length && !/^```\s*$/.test(lines[j])) {
+    body.push(lines[j])
+    j++
+  }
+  if (j < lines.length) j++ // closing fence
+  return { node: codeBlock(body.join('\n'), lang, key), next: j }
+}
+
+function parseHeading(line: string, key: string, next: number): BlockParse | null {
+  const head = /^(#{1,3})\s+(.+)$/.exec(line)
+  if (!head) return null
+  return { node: heading(head[1].length, head[2].trim(), key), next }
+}
+
+function parseHr(line: string, key: string, next: number): BlockParse | null {
+  if (!/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) return null
+  return {
+    node: (
+      <hr key={key} style={{ border: 'none', borderTop: '1px solid #273449', margin: '10px 0' }} />
+    ),
+    next
+  }
+}
+
+function parseQuote(lines: string[], i: number, key: string): BlockParse | null {
+  if (!/^>\s?/.test(lines[i])) return null
+  const quote: string[] = []
+  let j = i
+  while (j < lines.length && /^>\s?/.test(lines[j])) {
+    quote.push(lines[j].replace(/^>\s?/, ''))
+    j++
+  }
+  return {
+    node: (
+      <div
+        key={key}
+        style={{
+          borderLeft: '2px solid #273449',
+          paddingLeft: 12,
+          color: '#94A3B8',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4
+        }}
+      >
+        {quote.map((q, qi) => (
+          <div key={`${key}-q${qi}`}>{inline(q, `${key}-q${qi}`) || '\u00a0'}</div>
+        ))}
+      </div>
+    ),
+    next: j
+  }
+}
+
+function parseList(
+  lines: string[],
+  i: number,
+  key: string,
+  pattern: RegExp,
+  strip: RegExp,
+  ordered: boolean
+): BlockParse | null {
+  if (!pattern.test(lines[i])) return null
+  const items: string[] = []
+  let j = i
+  while (j < lines.length && pattern.test(lines[j])) {
+    items.push(lines[j].replace(strip, ''))
+    j++
+  }
+  return {
+    node: (
+      <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {items.map((item, ii) => listItem(item, ordered, ii + 1, `${key}-i${ii}`))}
+      </div>
+    ),
+    next: j
+  }
+}
+
+/** True while a paragraph should keep absorbing the line. */
+function continuesParagraph(line: string): boolean {
+  return (
+    !!line.trim() &&
+    !/^```/.test(line) &&
+    !/^#{1,3}\s+/.test(line) &&
+    !/^>\s?/.test(line) &&
+    !/^[-*+]\s+/.test(line) &&
+    !/^\d+\.\s+/.test(line) &&
+    !/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)
+  )
+}
+
+function parseParagraph(lines: string[], i: number, key: string): BlockParse {
+  const para: string[] = []
+  let j = i
+  while (j < lines.length && continuesParagraph(lines[j])) {
+    para.push(lines[j])
+    j++
+  }
+  return {
+    node: (
+      <div key={key} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+        {inline(para.join('\n'), key)}
+      </div>
+    ),
+    next: j
+  }
 }
 
 /**
@@ -150,95 +267,17 @@ export function renderMarkdown(source: string): ReactNode[] {
     const line = lines[i]
     const key = `b${block++}`
 
-    // Fenced code block
-    const fence = /^```([\w-]*)\s*$/.exec(line)
-    if (fence) {
-      const lang = fence[1] || undefined
-      const body: string[] = []
-      i++
-      while (i < lines.length && !/^```\s*$/.test(lines[i])) {
-        body.push(lines[i])
-        i++
-      }
-      if (i < lines.length) i++ // closing fence
-      nodes.push(codeBlock(body.join('\n'), lang, key))
-      continue
-    }
+    const parsed =
+      parseFence(lines, i, key) ??
+      parseHeading(line, key, i + 1) ??
+      parseHr(line, key, i + 1) ??
+      parseQuote(lines, i, key) ??
+      parseList(lines, i, key, /^[-*+]\s+/, /^[-*+]\s+/, false) ??
+      parseList(lines, i, key, /^\d+\.\s+/, /^\d+\.\s+/, true)
 
-    // Headings
-    const head = /^(#{1,3})\s+(.+)$/.exec(line)
-    if (head) {
-      nodes.push(heading(head[1].length, head[2].trim(), key))
-      i++
-      continue
-    }
-
-    // Horizontal rule
-    if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-      nodes.push(
-        <hr
-          key={key}
-          style={{ border: 'none', borderTop: '1px solid #242c3b', margin: '10px 0' }}
-        />
-      )
-      i++
-      continue
-    }
-
-    // Blockquote
-    if (/^>\s?/.test(line)) {
-      const quote: string[] = []
-      while (i < lines.length && /^>\s?/.test(lines[i])) {
-        quote.push(lines[i].replace(/^>\s?/, ''))
-        i++
-      }
-      nodes.push(
-        <div
-          key={key}
-          style={{
-            borderLeft: '2px solid #3a4558',
-            paddingLeft: 12,
-            color: '#9aa3b2',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 4
-          }}
-        >
-          {quote.map((q, qi) => (
-            <div key={`${key}-q${qi}`}>{inline(q, `${key}-q${qi}`) || '\u00a0'}</div>
-          ))}
-        </div>
-      )
-      continue
-    }
-
-    // Unordered list
-    if (/^[-*+]\s+/.test(line)) {
-      const items: string[] = []
-      while (i < lines.length && /^[-*+]\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^[-*+]\s+/, ''))
-        i++
-      }
-      nodes.push(
-        <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {items.map((item, ii) => listItem(item, false, ii + 1, `${key}-i${ii}`))}
-        </div>
-      )
-      continue
-    }
-
-    // Ordered list
-    if (/^\d+\.\s+/.test(line)) {
-      const items: string[] = []
-      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^\d+\.\s+/, ''))
-        i++
-      }
-      nodes.push(
-        <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {items.map((item, ii) => listItem(item, true, ii + 1, `${key}-i${ii}`))}
-        </div>
-      )
+    if (parsed) {
+      nodes.push(parsed.node)
+      i = parsed.next
       continue
     }
 
@@ -248,26 +287,9 @@ export function renderMarkdown(source: string): ReactNode[] {
       continue
     }
 
-    // Paragraph: gather consecutive plain lines
-    const para: string[] = []
-    while (
-      i < lines.length &&
-      lines[i].trim() &&
-      !/^```/.test(lines[i]) &&
-      !/^#{1,3}\s+/.test(lines[i]) &&
-      !/^>\s?/.test(lines[i]) &&
-      !/^[-*+]\s+/.test(lines[i]) &&
-      !/^\d+\.\s+/.test(lines[i]) &&
-      !/^(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[i])
-    ) {
-      para.push(lines[i])
-      i++
-    }
-    nodes.push(
-      <div key={key} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-        {inline(para.join('\n'), key)}
-      </div>
-    )
+    const para = parseParagraph(lines, i, key)
+    nodes.push(para.node)
+    i = para.next
   }
 
   return nodes
@@ -278,7 +300,7 @@ export function MarkdownBody({ text }: { text: string }) {
   try {
     body = renderMarkdown(typeof text === 'string' ? text : String(text ?? ''))
   } catch (error) {
-    console.error('[buildflow] markdown render failed', error)
+    console.error('[farol] markdown render failed', error)
     body = typeof text === 'string' ? text : String(text ?? '')
   }
   return (
@@ -287,7 +309,7 @@ export function MarkdownBody({ text }: { text: string }) {
       style={{
         fontSize: 13.5,
         lineHeight: 1.6,
-        color: '#dfe4ec',
+        color: '#F8FAFC',
         textWrap: 'pretty',
         display: 'flex',
         flexDirection: 'column',

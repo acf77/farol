@@ -20,14 +20,14 @@ function variantStyle(v: BtnVariant, disabled?: boolean): React.CSSProperties {
   if (v === 'primary') {
     return {
       border: 'none',
-      background: disabled ? 'rgba(47,124,246,0.35)' : C.accent,
+      background: disabled ? 'rgba(37,99,235,0.35)' : C.accent,
       color: '#fff',
       fontWeight: 600
     }
   }
   if (v === 'secondary') {
     return {
-      border: '1px solid rgba(255,255,255,0.12)',
+      border: '1px solid #273449',
       background: 'rgba(255,255,255,0.05)',
       color: C.textSoft
     }
@@ -78,7 +78,7 @@ export function Button({
 /**
  * A destructive action that arms on first press and commits on the second.
  *
- * Deleting a pipeline rewrites `.buildflow/pipelines.json`, a file meant to be
+ * Deleting a pipeline rewrites `.farol/pipelines.json`, a file meant to be
  * committed and shared, and there is no undo — so the button asks once, in
  * place. Escape, blur or six seconds of hesitation disarm it. A modal would be
  * the lazy answer here and DESIGN.md rules it out.
@@ -145,7 +145,7 @@ export function ConfirmButton({
           disarm()
           onConfirm()
         }}
-        style={{ background: 'rgba(255,69,58,0.14)' }}
+        style={{ background: 'rgba(239,68,68,0.14)' }}
       >
         Delete
       </Button>
@@ -176,7 +176,7 @@ export function SegmentedControl<T extends string>({
   label?: string
   style?: React.CSSProperties
 }) {
-  const activeBg = tone === 'ai' ? 'rgba(201,138,94,0.22)' : 'rgba(255,255,255,0.14)'
+  const activeBg = tone === 'ai' ? 'rgba(191,90,242,0.22)' : 'rgba(255,255,255,0.14)'
   const activeFg = tone === 'ai' ? C.purpleSoft : '#fff'
 
   const move = (dir: 1 | -1): void => {
@@ -191,7 +191,7 @@ export function SegmentedControl<T extends string>({
       aria-label={label}
       style={{
         display: 'flex',
-        border: '1px solid rgba(255,255,255,0.12)',
+        border: '1px solid #273449',
         borderRadius: 7,
         overflow: 'hidden',
         ...style

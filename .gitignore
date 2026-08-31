@@ -3,5 +3,8 @@ out/
 dist/
 .DS_Store
 *.log
+.farol/last-failure.md
+.farol/attachments/
+# Pre-rename paths — keep ignoring if an old BuildFlow build still writes here.
 .buildflow/last-failure.md
 .buildflow/attachments/

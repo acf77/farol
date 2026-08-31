@@ -17,28 +17,28 @@ import type { Segment } from '@shared/types'
  * are detected and reported rather than rendered as garbage.
  */
 
-export const DEFAULT_FG = '#dfe4ec'
+export const DEFAULT_FG = '#F8FAFC'
 
 const BASIC = [
-  '#3a4356', // black
-  '#e07b7b', // red
-  '#5fd39a', // green
-  '#e2b258', // yellow
-  '#4d8dfb', // blue
-  '#c98a5e', // magenta
-  '#5ac8fa', // cyan
-  '#dfe4ec' // white
+  '#64748B', // black
+  '#EF4444', // red
+  '#22C55E', // green
+  '#F59E0B', // yellow
+  '#60A5FA', // blue (Soft Blue — AA on Deep Navy)
+  '#bf5af2', // magenta (AI violet)
+  '#38BDF8', // cyan
+  '#F8FAFC' // white
 ]
 
 const BRIGHT = [
-  '#6d7686',
-  '#f0a3a3',
-  '#8ee6bb',
-  '#eec685',
-  '#7aa9fc',
-  '#e3b892',
-  '#7fdbff',
-  '#ffffff'
+  '#94A3B8',
+  '#F87171',
+  '#4ADE80',
+  '#FBBF24',
+  '#93C5FD',
+  '#d7a5f7',
+  '#BAE6FD',
+  '#FFFFFF'
 ]
 
 function xterm256(n: number): string {
@@ -111,31 +111,64 @@ export function rowText(row: Row): string {
   return row.map((c) => c.ch).join('')
 }
 
+/** Parse 38/48 extended colour params starting at `modeIdx`; returns colour + codes consumed after the 38/48. */
+function parseExtendedColor(codes: number[], modeIdx: number): { color: string | undefined; consumed: number } {
+  const mode = codes[modeIdx]
+  if (mode === 5) {
+    return { color: xterm256(codes[modeIdx + 1] ?? 0), consumed: 2 }
+  }
+  if (mode === 2) {
+    return {
+      color: `rgb(${codes[modeIdx + 1] ?? 0},${codes[modeIdx + 2] ?? 0},${codes[modeIdx + 3] ?? 0})`,
+      consumed: 4
+    }
+  }
+  return { color: undefined, consumed: 0 }
+}
+
+/** Apply a single SGR code; returns extra codes to skip (for 38/48 sequences). */
+function applyOneSgr(next: Sgr, c: number, codes: number[], i: number): { next: Sgr; skip: number } {
+  if (c === 0) return { next: {}, skip: 0 }
+  if (c === 1) {
+    next.bold = true
+    return { next, skip: 0 }
+  }
+  if (c === 2) {
+    next.dim = true
+    return { next, skip: 0 }
+  }
+  if (c === 22) {
+    next.bold = false
+    next.dim = false
+    return { next, skip: 0 }
+  }
+  if (c >= 30 && c <= 37) {
+    next.color = BASIC[c - 30]
+    return { next, skip: 0 }
+  }
+  if (c >= 90 && c <= 97) {
+    next.color = BRIGHT[c - 90]
+    return { next, skip: 0 }
+  }
+  if (c === 39) {
+    next.color = undefined
+    return { next, skip: 0 }
+  }
+  if (c === 38 || c === 48) {
+    const { color, consumed } = parseExtendedColor(codes, i + 1)
+    if (c === 38 && color) next.color = color
+    return { next, skip: consumed }
+  }
+  return { next, skip: 0 }
+}
+
 function applySgr(sgr: Sgr, params: string): Sgr {
   const codes = params.split(';').map((p) => (p === '' ? 0 : parseInt(p, 10)))
   let next: Sgr = { ...sgr }
   for (let i = 0; i < codes.length; i++) {
-    const c = codes[i]
-    if (c === 0) next = {}
-    else if (c === 1) next.bold = true
-    else if (c === 2) next.dim = true
-    else if (c === 22) {
-      next.bold = false
-      next.dim = false
-    } else if (c >= 30 && c <= 37) next.color = BASIC[c - 30]
-    else if (c >= 90 && c <= 97) next.color = BRIGHT[c - 90]
-    else if (c === 39) next.color = undefined
-    else if (c === 38 || c === 48) {
-      const mode = codes[i + 1]
-      const color =
-        mode === 5
-          ? xterm256(codes[i + 2] ?? 0)
-          : mode === 2
-            ? `rgb(${codes[i + 2] ?? 0},${codes[i + 3] ?? 0},${codes[i + 4] ?? 0})`
-            : undefined
-      i += mode === 5 ? 2 : mode === 2 ? 4 : 0
-      if (c === 38 && color) next.color = color
-    }
+    const result = applyOneSgr(next, codes[i], codes, i)
+    next = result.next
+    i += result.skip
   }
   return next
 }
@@ -179,6 +212,166 @@ function readEscape(rest: string): { kind: 'csi' | 'osc' | 'esc'; seq: string } 
   return null
 }
 
+interface Writer {
+  rows: Row[]
+  cur: Cell[]
+  sgr: Sgr
+  col: number
+  indent: string
+  alt: boolean
+}
+
+function note(w: Writer, text: string): void {
+  if (w.cur.length) {
+    w.cur = []
+    w.rows.push(w.cur)
+  }
+  for (const ch of text) w.cur.push({ ch, color: '#94A3B8' })
+  w.cur = []
+  w.rows.push(w.cur)
+  w.col = 0
+}
+
+function newline(w: Writer): void {
+  w.cur = []
+  w.rows.push(w.cur)
+  w.col = 0
+  for (const ch of w.indent) w.cur.push({ ch })
+  w.col = w.indent.length
+}
+
+/** Write one character at the cursor, padding with blanks to reach it. */
+function put(w: Writer, ch: string): void {
+  if (w.col >= MAX_COLS) return
+  while (w.cur.length < w.col) w.cur.push({ ...BLANK })
+  w.cur[w.col] = { ch, color: w.sgr.color, bold: w.sgr.bold, dim: w.sgr.dim }
+  w.col++
+}
+
+function eraseInLine(cur: Cell[], col: number, n: number | undefined): void {
+  if (n === 1) for (let k = 0; k < col && k < cur.length; k++) cur[k] = { ...BLANK }
+  else if (n === 2) cur.length = 0
+  else cur.length = Math.min(cur.length, col)
+}
+
+function eraseChars(cur: Cell[], col: number, n: number | undefined): void {
+  const count = Math.max(1, n ?? 1)
+  const end = Math.min(MAX_COLS, col + count)
+  while (cur.length < end) cur.push({ ...BLANK })
+  for (let k = col; k < end; k++) cur[k] = { ...BLANK }
+}
+
+function applyCursorMove(col: number, final: string, nums: number[], n: number | undefined): number {
+  switch (final) {
+    case 'C': // cursor forward
+      return Math.min(MAX_COLS, col + Math.max(1, n ?? 1))
+    case 'D': // cursor back
+      return Math.max(0, col - Math.max(1, n ?? 1))
+    case 'G': // cursor to column
+    case '`':
+      return Math.max(0, Math.min(MAX_COLS, (n ?? 1) - 1))
+    case 'H': // cursor position — only the column applies to a line buffer
+    case 'f': {
+      const c = Number.isFinite(nums[1]) ? nums[1] : 1
+      return Math.max(0, Math.min(MAX_COLS, c - 1))
+    }
+    default:
+      return col
+  }
+}
+
+const ALT_SCREEN_MODES = new Set([1049, 1047, 47])
+
+/** Handle DEC private mode CSI (?…h / ?…l), e.g. alternate screen. */
+function handlePrivateCsi(w: Writer, final: string, n: number | undefined): void {
+  if (final === 'h' && n !== undefined && ALT_SCREEN_MODES.has(n)) {
+    if (!w.alt) {
+      w.alt = true
+      note(w, '[full-screen program — output not shown in this pane]')
+    }
+  } else if (final === 'l' && n !== undefined && ALT_SCREEN_MODES.has(n)) {
+    w.alt = false
+  }
+}
+
+function applyCsi(w: Writer, seq: string): void {
+  const final = seq[seq.length - 1]
+  const body = seq.slice(2, -1)
+  const priv = body.startsWith('?')
+  const nums = (priv ? body.slice(1) : body).split(';').map((p) => parseInt(p, 10))
+  const n = Number.isFinite(nums[0]) ? nums[0] : undefined
+
+  if (priv) {
+    handlePrivateCsi(w, final, n)
+    return
+  }
+  if (w.alt) return
+
+  switch (final) {
+    case 'm':
+      w.sgr = applySgr(w.sgr, body)
+      break
+    case 'C':
+    case 'D':
+    case 'G':
+    case '`':
+    case 'H':
+    case 'f':
+      w.col = applyCursorMove(w.col, final, nums, n)
+      break
+    case 'K': // erase in line
+      eraseInLine(w.cur, w.col, n)
+      break
+    case 'X': // erase n characters
+      eraseChars(w.cur, w.col, n)
+      break
+    default:
+      break
+  }
+}
+
+/**
+ * Consume an escape at `buf[i]`. Returns next index, or -1 if the rest is
+ * incomplete (caller should stash `buf.slice(i)` as pending).
+ */
+function handleEscape(w: Writer, buf: string, i: number): number {
+  const rest = buf.slice(i)
+  const read = readEscape(rest)
+  if (read === 'incomplete') return -1
+  if (read === null) return i + 1
+
+  const { kind, seq } = read
+  const next = i + seq.length
+  if (kind === 'csi') applyCsi(w, seq)
+  return next
+}
+
+/** Handle a single printable/control character. Returns bytes consumed (always 1). */
+function handleByte(w: Writer, ch: string): void {
+  if (w.alt) return
+
+  if (ch === '\n') {
+    newline(w)
+    return
+  }
+  if (ch === '\r') {
+    w.col = 0
+    return
+  }
+  if (ch === '\b') {
+    w.col = Math.max(0, w.col - 1)
+    return
+  }
+  if (ch === '\t') {
+    const target = Math.min(MAX_COLS, w.col + (8 - (w.col % 8)))
+    while (w.col < target) put(w, ' ')
+    return
+  }
+  if (ch < ' ' || ch === '\x7f') return
+
+  put(w, ch)
+}
+
 export function write(state: TermState, chunk: string): TermState {
   const buf = state.pending + chunk
   const rows = state.rows.slice()
@@ -186,157 +379,39 @@ export function write(state: TermState, chunk: string): TermState {
   let cur = rows[rows.length - 1].map((c) => ({ ...c }))
   rows[rows.length - 1] = cur
 
-  let sgr = state.sgr
-  let col = state.col
-  const indent = state.indent
-  let alt = state.altScreen
+  const w: Writer = {
+    rows,
+    cur,
+    sgr: state.sgr,
+    col: state.col,
+    indent: state.indent,
+    alt: state.altScreen
+  }
+
   let pending = ''
-
-  const note = (text: string): void => {
-    if (cur.length) {
-      cur = []
-      rows.push(cur)
-    }
-    for (const ch of text) cur.push({ ch, color: '#7f889a' })
-    cur = []
-    rows.push(cur)
-    col = 0
-  }
-
-  const newline = (): void => {
-    cur = []
-    rows.push(cur)
-    col = 0
-    for (const ch of indent) cur.push({ ch })
-    col = indent.length
-  }
-
-  /** Write one character at the cursor, padding with blanks to reach it. */
-  const put = (ch: string): void => {
-    if (col >= MAX_COLS) return
-    while (cur.length < col) cur.push({ ...BLANK })
-    cur[col] = { ch, color: sgr.color, bold: sgr.bold, dim: sgr.dim }
-    col++
-  }
-
   let i = 0
   while (i < buf.length) {
     const ch = buf[i]
-
     if (ch === '\x1b') {
-      const rest = buf.slice(i)
-      const read = readEscape(rest)
-      if (read === 'incomplete') {
-        pending = rest
+      const next = handleEscape(w, buf, i)
+      if (next < 0) {
+        pending = buf.slice(i)
         break
       }
-      if (read === null) {
-        i += 1
-        continue
-      }
-      const { kind, seq } = read
-      i += seq.length
-      if (kind !== 'csi') continue
-
-      const final = seq[seq.length - 1]
-      const body = seq.slice(2, -1)
-      const priv = body.startsWith('?')
-      const nums = (priv ? body.slice(1) : body).split(';').map((p) => parseInt(p, 10))
-      const n = Number.isFinite(nums[0]) ? nums[0] : undefined
-
-      if (priv) {
-        // Alternate screen: the program is drawing a whole display.
-        if (final === 'h' && (n === 1049 || n === 1047 || n === 47)) {
-          if (!alt) {
-            alt = true
-            note('[full-screen program — output not shown in this pane]')
-          }
-        } else if (final === 'l' && (n === 1049 || n === 1047 || n === 47)) {
-          alt = false
-        }
-        continue
-      }
-      if (alt) continue
-
-      switch (final) {
-        case 'm':
-          sgr = applySgr(sgr, body)
-          break
-        case 'C': // cursor forward
-          col = Math.min(MAX_COLS, col + Math.max(1, n ?? 1))
-          break
-        case 'D': // cursor back
-          col = Math.max(0, col - Math.max(1, n ?? 1))
-          break
-        case 'G': // cursor to column
-        case '`':
-          col = Math.max(0, Math.min(MAX_COLS, (n ?? 1) - 1))
-          break
-        case 'H': // cursor position — only the column applies to a line buffer
-        case 'f': {
-          const c = Number.isFinite(nums[1]) ? nums[1] : 1
-          col = Math.max(0, Math.min(MAX_COLS, c - 1))
-          break
-        }
-        case 'K': // erase in line
-          if (n === 1) for (let k = 0; k < col && k < cur.length; k++) cur[k] = { ...BLANK }
-          else if (n === 2) cur.length = 0
-          else cur.length = Math.min(cur.length, col)
-          break
-        case 'X': {
-          // erase n characters
-          const count = Math.max(1, n ?? 1)
-          const end = Math.min(MAX_COLS, col + count)
-          while (cur.length < end) cur.push({ ...BLANK })
-          for (let k = col; k < end; k++) cur[k] = { ...BLANK }
-          break
-        }
-        default:
-          break
-      }
+      i = next
       continue
     }
-
-    if (alt) {
-      // Swallow the program's redraw traffic, but keep line breaks out of it.
-      i++
-      continue
-    }
-
-    if (ch === '\n') {
-      newline()
-      i++
-      continue
-    }
-    if (ch === '\r') {
-      col = 0
-      i++
-      continue
-    }
-    if (ch === '\b') {
-      col = Math.max(0, col - 1)
-      i++
-      continue
-    }
-    if (ch === '\t') {
-      const target = Math.min(MAX_COLS, col + (8 - (col % 8)))
-      while (col < target) put(' ')
-      i++
-      continue
-    }
-    if (ch < ' ' || ch === '\x7f') {
-      i++
-      continue
-    }
-
-    put(ch)
+    handleByte(w, ch)
     i++
   }
 
-  return { rows, sgr, pending, indent, col, altScreen: alt }
+  // Keep last-row reference in sync — helpers may have replaced `w.cur`.
+  w.rows[w.rows.length - 1] = w.cur
+
+  return { rows: w.rows, sgr: w.sgr, pending, indent: w.indent, col: w.col, altScreen: w.alt }
 }
 
-/** Write a whole styled line of BuildFlow's own text (run logs, echoes). */
+/** Write a whole styled line of Farol's own text (run logs, echoes). */
 export function writeLine(state: TermState, text: string, style: Omit<Segment, 'text'>): TermState {
   const rows = state.rows.slice()
   const last = rows[rows.length - 1]
