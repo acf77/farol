@@ -323,3 +323,53 @@ button:disabled {
   border: 1px solid #273449;
   color: #F8FAFC;
 }
+
+/* Agent-authored tables stay semantic and scroll within narrow chat panes. */
+.bf-md-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  border: 1px solid #273449;
+  border-radius: 6px;
+}
+
+.bf-md-table {
+  width: max-content;
+  min-width: 100%;
+  border-spacing: 0;
+  border-collapse: separate;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.bf-md-table th,
+.bf-md-table td {
+  min-width: 96px;
+  max-width: 360px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #273449;
+  border-inline-end: 1px solid #273449;
+  vertical-align: top;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.bf-md-table th {
+  background: #111827;
+  color: #F8FAFC;
+  font-weight: 600;
+}
+
+.bf-md-table td {
+  color: #E2E8F0;
+}
+
+.bf-md-table th:last-child,
+.bf-md-table td:last-child {
+  border-inline-end: 0;
+}
+
+.bf-md-table tbody tr:last-child td {
+  border-bottom: 0;
+}

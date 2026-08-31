@@ -376,7 +376,7 @@ export function write(state: TermState, chunk: string): TermState {
   const buf = state.pending + chunk
   const rows = state.rows.slice()
   if (rows.length === 0) rows.push([])
-  let cur = rows[rows.length - 1].map((c) => ({ ...c }))
+  const cur = rows[rows.length - 1].map((c) => ({ ...c }))
   rows[rows.length - 1] = cur
 
   const w: Writer = {
