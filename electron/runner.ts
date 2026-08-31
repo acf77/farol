@@ -93,6 +93,7 @@ function aiEnv(): Record<string, string> {
 function writeFailureReport(
   cwd: string,
   pipelineName: string,
+  pipelineId: string,
   branch: string,
   node: PipelineNode | undefined,
   output: string,
@@ -113,6 +114,7 @@ function writeFailureReport(
       file,
       failureReport({
         pipeline: pipelineName,
+        pipelineId,
         step: node.name || node.id,
         branch,
         cwd,
@@ -605,6 +607,7 @@ export class PipelineRunner {
         ? writeFailureReport(
             cwd,
             pipeline.name,
+            pipeline.id,
             branch,
             graph.byId.get(graph.failedNodeId),
             graph.outputs[graph.failedNodeId] || '',

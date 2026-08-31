@@ -80,8 +80,47 @@ describe('AgentStreamParser', () => {
     expect(parse(parser, 'warning: node 18 is deprecated\n')).toEqual([
       { kind: 'raw', text: 'warning: node 18 is deprecated\n' }
     ])
-    expect(parse(parser, '{"type":"assistant",BROKEN\n')).toEqual([
-      { kind: 'raw', text: '{"type":"assistant",BROKEN\n' }
+  })
+
+  it('drops broken provider JSON instead of dumping it into Chat', () => {
+    const parser = new AgentStreamParser()
+    expect(parse(parser, '{"type":"assistant",BROKEN\n')).toEqual([])
+  })
+
+  it('recovers a Codex shell card from truncated item.completed JSON', () => {
+    const parser = new AgentStreamParser()
+    // Real Codex lines put identifying fields before the huge aggregated_output.
+    // Truncation mid-string must still close the spinner — never print the JSON.
+    const truncated =
+      '{"type":"item.completed","item":{"id":"item_148","type":"command_execution",' +
+      '"command":"/bin/zsh -lc oxlint","status":"completed","exit_code":1,' +
+      '"aggregated_output":"file.js\\n  ! error\\nTHIS IS CUT'
+    expect(parse(parser, `${truncated}\n`)).toEqual([
+      {
+        kind: 'tool',
+        toolId: 'item_148',
+        name: 'shell',
+        detail: '/bin/zsh -lc oxlint',
+        state: 'error'
+      }
+    ])
+  })
+
+  it('recovers a Codex shell card when an oversized line hits the buffer cap', () => {
+    const parser = new AgentStreamParser()
+    const prefix =
+      '{"type":"item.completed","item":{"id":"item_99","type":"command_execution",' +
+      '"command":"npm test","status":"completed","exit_code":0,"aggregated_output":"'
+    // 8MB+ without a newline trips MAX_LINE; only the prefix is needed to recover.
+    const huge = `${prefix}${'x'.repeat(8_100_000)}`
+    expect(parse(parser, huge)).toEqual([
+      {
+        kind: 'tool',
+        toolId: 'item_99',
+        name: 'shell',
+        detail: 'npm test',
+        state: 'done'
+      }
     ])
   })
 
@@ -104,6 +143,132 @@ describe('AgentStreamParser', () => {
       { kind: 'tool', toolId: 'call-7b6 fc_b13', name: 'shell', detail: 'cat a.txt', state: 'running' },
       { kind: 'tool', toolId: 'call-7b6 fc_b13', name: 'shell', detail: 'cat a.txt', state: 'done' }
     ])
+  })
+
+  it('reads Codex command lifecycle events and assistant messages', () => {
+    const parser = new AgentStreamParser()
+    const started = JSON.stringify({
+      type: 'item.started',
+      item: {
+        id: 'item_1',
+        type: 'command_execution',
+        command: '/bin/zsh -lc pwd',
+        status: 'in_progress'
+      }
+    })
+    const completed = JSON.stringify({
+      type: 'item.completed',
+      item: {
+        id: 'item_1',
+        type: 'command_execution',
+        command: '/bin/zsh -lc pwd',
+        status: 'completed',
+        exit_code: 0
+      }
+    })
+    const message = JSON.stringify({
+      type: 'item.completed',
+      item: { id: 'item_2', type: 'agent_message', text: 'Done.' }
+    })
+    expect(parse(parser, `${started}\n${completed}\n${message}\n`)).toEqual([
+      { kind: 'tool', toolId: 'item_1', name: 'shell', detail: '/bin/zsh -lc pwd', state: 'running' },
+      { kind: 'tool', toolId: 'item_1', name: 'shell', detail: '/bin/zsh -lc pwd', state: 'done' },
+      { kind: 'text', text: 'Done.' }
+    ])
+  })
+
+  it('maps Codex file, MCP, web, and failed command items to tool cards', () => {
+    const parser = new AgentStreamParser()
+    // file_change / web_search often arrive only as item.completed (no started).
+    const events = [
+      {
+        type: 'item.completed',
+        item: {
+          id: 'edit_1',
+          type: 'file_change',
+          changes: [{ path: 'src/app.ts' }],
+          status: 'completed'
+        }
+      },
+      {
+        type: 'item.completed',
+        item: {
+          id: 'mcp_1',
+          type: 'mcp_tool_call',
+          server: 'docs',
+          tool: 'search',
+          arguments: { query: 'Codex JSONL' },
+          status: 'completed'
+        }
+      },
+      {
+        type: 'item.completed',
+        item: { id: 'web_1', type: 'webSearch', query: 'Codex app server', status: 'completed' }
+      },
+      {
+        type: 'item.completed',
+        item: {
+          id: 'cmd_2',
+          type: 'commandExecution',
+          command: 'npm test',
+          status: 'failed',
+          exitCode: 1
+        }
+      }
+    ].map((event) => JSON.stringify(event))
+    expect(parse(parser, `${events.join('\n')}\n`)).toEqual([
+      { kind: 'tool', toolId: 'edit_1', name: 'apply_patch', detail: 'src/app.ts', state: 'done' },
+      { kind: 'tool', toolId: 'mcp_1', name: 'docs.search', detail: 'Codex JSONL', state: 'done' },
+      { kind: 'tool', toolId: 'web_1', name: 'web_search', detail: 'Codex app server', state: 'done' },
+      { kind: 'tool', toolId: 'cmd_2', name: 'shell', detail: 'npm test', state: 'error' }
+    ])
+  })
+
+  it('keeps plan cards live on Codex item.updated events', () => {
+    const parser = new AgentStreamParser()
+    const started = JSON.stringify({
+      type: 'item.started',
+      item: { id: 'todo_1', type: 'todo_list', status: 'in_progress' }
+    })
+    const updated = JSON.stringify({
+      type: 'item.updated',
+      item: { id: 'todo_1', type: 'todo_list', status: 'in_progress' }
+    })
+    expect(parse(parser, `${started}\n${updated}\n`)).toEqual([
+      { kind: 'tool', toolId: 'todo_1', name: 'update_plan', state: 'running' },
+      { kind: 'tool', toolId: 'todo_1', name: 'update_plan', state: 'running' }
+    ])
+  })
+
+  it('surfaces a Codex turn failure instead of dropping its JSON', () => {
+    const parser = new AgentStreamParser()
+    const failed = JSON.stringify({
+      type: 'turn.failed',
+      error: { message: 'Usage limit exceeded' }
+    })
+    expect(parse(parser, `${failed}\n`)).toEqual([
+      { kind: 'raw', text: 'Usage limit exceeded\n' }
+    ])
+  })
+
+  it('surfaces a top-level Codex error event (auth/quota) in Chat', () => {
+    const parser = new AgentStreamParser()
+    const error = JSON.stringify({
+      type: 'error',
+      error: { message: 'Authentication failed' }
+    })
+    expect(parse(parser, `${error}\n`)).toEqual([
+      { kind: 'raw', text: 'Authentication failed\n' }
+    ])
+  })
+
+  it('drops transient Codex reconnect noise from the transcript', () => {
+    const parser = new AgentStreamParser()
+    const reconnect = JSON.stringify({
+      type: 'error',
+      error: { message: 'Reconnecting to the app server…' }
+    })
+    expect(parse(parser, `${reconnect}\n`)).toEqual([])
   })
 
   it('ignores an unknown event type rather than showing its JSON', () => {

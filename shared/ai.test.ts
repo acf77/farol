@@ -19,7 +19,14 @@ describe('normalizeAi', () => {
 describe('aiCommand', () => {
   it('builds a non-interactive argv for each provider', () => {
     expect(aiCommand('claude', 'review this').args).toEqual(['-p', 'review this'])
-    expect(aiCommand('codex', 'review this').args).toEqual(['exec', 'review this'])
+    expect(aiCommand('codex', 'review this').args).toEqual([
+      'exec',
+      '-c',
+      'approval_policy=never',
+      '--sandbox',
+      'read-only',
+      'review this'
+    ])
     expect(aiCommand('cursor', 'review this').args).toEqual([
       '-p',
       '--force',
@@ -49,9 +56,16 @@ describe('managedAiCommand', () => {
     ])
     expect(managedAiCommand('codex', 'fix this').args).toEqual([
       'exec',
-      '--full-auto',
+      '--json',
+      '-c',
+      'approval_policy=never',
+      '--sandbox',
+      'workspace-write',
       'fix this'
     ])
+    expect(managedAiCommand('codex', 'fix this').args).not.toContain(
+      'sandbox_workspace_write.network_access=true'
+    )
     expect(managedAiCommand('cursor', 'fix this').args).toEqual([
       '-p',
       '--force',
@@ -68,10 +82,10 @@ describe('managedAiCommand', () => {
 
   it('marks the providers whose stdout has to be decoded as NDJSON', () => {
     // Claude and Cursor print nothing under `text` until the run ends, so
-    // Chat would sit blank; the other two narrate their progress as they go.
+    // Chat would sit blank; OpenCode narrates its progress as plain text.
     expect(managedAiCommand('claude', 'x').stream).toBe('ndjson')
     expect(managedAiCommand('cursor', 'x').stream).toBe('ndjson')
-    expect(managedAiCommand('codex', 'x').stream).toBeUndefined()
+    expect(managedAiCommand('codex', 'x').stream).toBe('ndjson')
     expect(managedAiCommand('opencode', 'x').stream).toBeUndefined()
   })
 })

@@ -172,16 +172,16 @@ function CollapsedRail({
             onClick={() => onStop(running.id)}
             title="Stop pipeline"
             style={{
-              width: 26,
-              height: 26,
+              width: 28,
+              height: 28,
               borderRadius: '50%',
-              background: C.accent,
+              background: C.red,
               display: 'grid',
               placeItems: 'center',
               cursor: 'pointer'
             }}
           >
-            <StopIcon />
+            <StopIcon size={12} />
           </div>
         </div>
       ) : (
@@ -352,14 +352,14 @@ function PipelineCard({
               width: 20,
               height: 20,
               borderRadius: '50%',
-              background: C.accent,
+              background: C.red,
               display: 'grid',
               placeItems: 'center',
               flex: 'none',
               cursor: 'pointer'
             }}
           >
-            <StopIcon />
+            <StopIcon size={10} />
           </div>
         ) : (
           <div
@@ -373,6 +373,7 @@ function PipelineCard({
               width: 20,
               height: 20,
               borderRadius: '50%',
+              background: run?.status === 'pass' ? C.green : 'transparent',
               border: `1.5px solid ${runStatusColor(run?.status)}`,
               display: 'grid',
               placeItems: 'center',
@@ -380,6 +381,11 @@ function PipelineCard({
               cursor: 'pointer'
             }}
           >
+            {run?.status === 'pass' && (
+              <span className="bf-runbtn-check">
+                <CheckIcon size={11} color="#fff" />
+              </span>
+            )}
             <span className="bf-runbtn-play" style={{ display: 'none' }}>
               <PlayIcon size={8} />
             </span>
@@ -575,7 +581,7 @@ function SelectedPanelFooter({
           cursor: 'pointer'
         }}
       >
-        <StopIcon size={10} />
+        <StopIcon size={12} color={C.red} />
         <span>Stop {running.name}</span>
       </button>
     )
@@ -604,7 +610,7 @@ function SelectedPanelFooter({
           cursor: 'pointer'
         }}
       >
-        <StopIcon size={10} />
+        <StopIcon size={12} color={C.red} />
         <span>Stop pipeline</span>
       </button>
     )

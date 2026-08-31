@@ -157,24 +157,6 @@ export function GearIcon({ size = 17, color = '#94A3B8' }: IconProps) {
   )
 }
 
-/** The agent's mark — an eight-point sparkle, in AI violet. */
-export function Sparkle({ size = 15, color = '#bf5af2', width = 1.2 }: IconProps & { width?: number }) {
-  return (
-    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={width}>
-      <path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4l-9.2 9.2" />
-    </svg>
-  )
-}
-
-/** The larger greeting mark: same star, drawn edge-to-edge with a finer stroke. */
-export function SparkleLarge({ size = 30, color = '#bf5af2' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.15}>
-      <path d="M8 1v14M1 8h14M3.05 3.05l9.9 9.9M12.95 3.05l-9.9 9.9" />
-    </svg>
-  )
-}
-
 export function ToolIcon({ size = 13, color = '#94A3B8' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.3}>
@@ -243,9 +225,9 @@ export function PlayIcon({ size = 9 }: IconProps) {
   )
 }
 
-export function StopIcon({ size = 9 }: IconProps) {
+export function StopIcon({ size = 9, color = '#fff' }: IconProps) {
   return (
-    <svg {...S(size)} viewBox="0 0 10 10" fill="#fff">
+    <svg {...S(size)} viewBox="0 0 10 10" fill={color}>
       <rect x="2.6" y="2.6" width="4.8" height="4.8" rx="1" />
     </svg>
   )

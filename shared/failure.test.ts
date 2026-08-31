@@ -44,7 +44,7 @@ describe('failureReport', () => {
   it('names the failing step in the instructions, not just the header', () => {
     const md = failureReport(base)
     expect(md).toContain('The `ESLint` step ran this command')
-    expect(md).toContain('iterate quickly on `ESLint`')
+    expect(md).toContain('fixing the `ESLint` step')
   })
 
   it('explains a signal exit code instead of leaving 134 bare', () => {
@@ -62,16 +62,49 @@ describe('failureReport', () => {
   })
 
   it('tells the agent how to verify, naming the pipeline to re-run', () => {
-    const md = failureReport(base)
+    const md = failureReport({ ...base, pipelineId: 'repo-abc:managed-pipeline:lint' })
     expect(md).toContain('run_pipeline')
     expect(md).toContain('list_pipelines')
+    // Prefer the real catalog id so agents do not invent a literal "id".
+    expect(md).toContain('FAROL_PIPELINES: ["repo-abc:managed-pipeline:lint"]')
+    expect(md).not.toContain('FAROL_PIPELINES: ["id"]')
     // Without the name the agent has to guess which of several pipelines to run.
     expect(md).toMatch(/run_pipeline` with pipeline `Lint & Typecheck`/)
+    expect(md).toContain('name or bare id from `list_pipelines`')
   })
 
-  it('gives a fallback for agents with no MCP server', () => {
+  it('maps a UI runner slot to the managed Chat catalog id', () => {
+    const md = failureReport({ ...base, pipelineId: 'repo-abc:pipeline:lint' })
+    expect(md).toContain('FAROL_PIPELINES: ["repo-abc:managed-pipeline:lint"]')
+    expect(md).not.toContain('FAROL_PIPELINES: ["repo-abc:pipeline:lint"]')
+  })
+
+  it('maps an MCP runner slot to the managed Chat catalog id', () => {
+    const md = failureReport({ ...base, pipelineId: 'repo-abc:mcp-pipeline:lint' })
+    expect(md).toContain('FAROL_PIPELINES: ["repo-abc:managed-pipeline:lint"]')
+    expect(md).not.toContain('FAROL_PIPELINES: ["repo-abc:mcp-pipeline:lint"]')
+  })
+
+  it('uses a catalog placeholder when the pipeline id is unknown', () => {
     const md = failureReport(base)
-    expect(md).toContain('If that tool is not available')
+    expect(md).toContain('FAROL_PIPELINES: ["<pipeline-id-from-catalog>"]')
+    expect(md).not.toContain('FAROL_PIPELINES: ["id"]')
+  })
+
+  it('omits bare or unrecognized ids rather than pasting an invalid marker', () => {
+    expect(failureReport({ ...base, pipelineId: 'lint' })).toContain(
+      'FAROL_PIPELINES: ["<pipeline-id-from-catalog>"]'
+    )
+    expect(failureReport({ ...base, pipelineId: 'lint' })).not.toContain(
+      'FAROL_PIPELINES: ["lint"]'
+    )
+  })
+
+  it('prefers Farol but keeps a last-resort direct command when MCP is absent', () => {
+    const md = failureReport(base)
+    expect(md).toContain('Do not re-run the failing command yourself when Farol is available')
+    expect(md).toContain('If neither managed Chat nor that MCP tool is available')
+    expect(md).not.toContain('iterate quickly')
     expect(md.indexOf('## Output')).toBeLessThan(md.indexOf('## Verify your fix'))
   })
 
@@ -105,6 +138,8 @@ describe('aiFixPrompt', () => {
   it('points at the report a failed run left', () => {
     expect(aiFixPrompt()).toContain('.farol/last-failure.md')
     expect(aiFixPrompt()).toMatch(/just failed/)
+    expect(aiFixPrompt()).toContain('Verify section')
+    expect(aiFixPrompt()).toMatch(/do not invent a literal id/i)
   })
 })
 

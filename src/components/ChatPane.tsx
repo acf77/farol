@@ -13,11 +13,11 @@ import {
   ClearChatIcon,
   CopyIcon,
   SendIcon,
-  SparkleLarge,
   Spinner,
   ThumbIcon,
   ToolIcon
 } from './icons'
+import farolMark from '../assets/farol-mark.png'
 
 interface Props {
   pane: AgentPane | null
@@ -437,7 +437,14 @@ function ChatClearedBanner({ onDismissChatCleared }: { onDismissChatCleared?: ()
 function ChatGreeting({ availableCount }: { availableCount: number }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
-      <SparkleLarge />
+      <img
+        src={farolMark}
+        alt=""
+        width={40}
+        height={40}
+        draggable={false}
+        style={{ borderRadius: 10, display: 'block' }}
+      />
       <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: '-0.2px', marginTop: 18 }}>
         {greetingFor(new Date())}
       </div>

@@ -272,6 +272,9 @@ button:disabled {
   background: #2563EB !important;
   border-color: #2563EB !important;
 }
+.bf-runbtn:hover .bf-runbtn-check {
+  display: none !important;
+}
 .bf-runbtn:hover .bf-runbtn-play {
   display: block !important;
 }
