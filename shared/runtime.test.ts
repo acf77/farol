@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { repositoryRuntimePrefix, scopedRuntimeId, unscopedRuntimeId } from './runtime'
+import {
+  managedCatalogPipelineId,
+  repositoryRuntimePrefix,
+  scopedRuntimeId,
+  unscopedRuntimeId
+} from './runtime'
 
 describe('repository runtime ids', () => {
   it('keeps identical local ids separate across repositories', () => {
@@ -22,5 +27,29 @@ describe('repository runtime ids', () => {
     const scoped = scopedRuntimeId('/repos/one', 'agent:1')
 
     expect(unscopedRuntimeId('/repos/two', scoped)).toBeNull()
+  })
+})
+
+describe('managedCatalogPipelineId', () => {
+  it('maps UI and MCP runner slots to the managed Chat catalog form', () => {
+    expect(managedCatalogPipelineId('repo-abc:pipeline:lint')).toBe(
+      'repo-abc:managed-pipeline:lint'
+    )
+    expect(managedCatalogPipelineId('repo-abc:mcp-pipeline:lint')).toBe(
+      'repo-abc:managed-pipeline:lint'
+    )
+    expect(managedCatalogPipelineId('repo-abc:managed-pipeline:lint')).toBe(
+      'repo-abc:managed-pipeline:lint'
+    )
+  })
+
+  it('preserves unscoped slot prefixes when no repo scope is present', () => {
+    expect(managedCatalogPipelineId('pipeline:lint')).toBe('managed-pipeline:lint')
+    expect(managedCatalogPipelineId('mcp-pipeline:full')).toBe('managed-pipeline:full')
+  })
+
+  it('rejects bare catalog ids and unrelated runtime ids', () => {
+    expect(managedCatalogPipelineId('lint')).toBeUndefined()
+    expect(managedCatalogPipelineId('repo-abc:agent:1')).toBeUndefined()
   })
 })

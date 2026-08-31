@@ -1,5 +1,7 @@
 /** The failure report an agent reads. Pure, so it can be unit-tested. */
 
+import { managedCatalogPipelineId } from './runtime'
+
 /** Where a failed run leaves its report, relative to the run's working copy. */
 export const FAILURE_REPORT_REL = '.farol/last-failure.md'
 
@@ -8,6 +10,11 @@ export const REPORT_OUTPUT_LIMIT = 12000
 
 export interface FailureReport {
   pipeline: string
+  /**
+   * Runner slot or managed catalog id. The Verify marker always uses the
+   * managed-Chat form (`…:managed-pipeline:…`); raw UI/MCP slots are mapped.
+   */
+  pipelineId?: string
   step: string
   branch: string
   /** The working copy the run happened in — a worktree has its own. */
@@ -38,22 +45,29 @@ function codeNote(code: number): string {
 }
 
 /**
- * Tell the agent how to check its own work, and where. Re-running the whole
- * pipeline is the real test — the failing command alone can pass while a later
- * step still breaks — so the MCP tool comes first, with the bare command as
- * the fallback for agents with no Farol MCP server wired up.
+ * Tell the agent how to check its own work. Re-running the whole pipeline is
+ * the real test — the failing command alone can pass while a later step still
+ * breaks — so prefer Farol (managed Chat marker or MCP) over shelling the
+ * step. Direct command is last-resort only when neither path exists.
  */
 function verifySection(r: FailureReport): string[] {
+  // Auto-fix → managed Chat; never embed a UI/MCP runner slot as the example.
+  const catalogId = r.pipelineId ? managedCatalogPipelineId(r.pipelineId) : undefined
+  const markerExample = catalogId
+    ? `FAROL_PIPELINES: ${JSON.stringify([catalogId])}`
+    : 'FAROL_PIPELINES: ["<pipeline-id-from-catalog>"]'
   return [
     '## Verify your fix',
     '',
     `You are fixing the \`${r.step}\` step of the \`${r.pipeline}\` pipeline, on branch \`${r.branch}\` in \`${r.cwd}\`.`,
     'Confirm you are in that directory and on that branch before you start — a fix made in another worktree will not be exercised by the run below.',
     '',
-    `1. Re-run the failing command above to iterate quickly on \`${r.step}\`.`,
-    `2. Then re-run the whole pipeline: the \`farol\` MCP tool \`run_pipeline\` with pipeline \`${r.pipeline}\` (call \`list_pipelines\` first if you need the exact id). It executes in the Farol window, so the user can watch it.`,
+    `Do not re-run the failing command yourself when Farol is available. After you fix the errors, re-run the whole \`${r.pipeline}\` pipeline through Farol:`,
+    `- In Farol managed Chat: end your response with \`${markerExample}\` (JSON array of catalog ids only; never shell the step cmd or invent a placeholder id).`,
+    `- Elsewhere: call the \`farol\` MCP tool \`run_pipeline\` with pipeline \`${r.pipeline}\` (name or bare id from \`list_pipelines\` — not the managed Chat marker id). It executes in the Farol window, so the user can watch it.`,
+    '- If neither managed Chat nor that MCP tool is available, run the failing command above and say so in your summary.',
     '',
-    'A green command is weaker evidence than a green pipeline: other steps may depend on what you changed. If that tool is not available to you, run the command directly and say so in your summary.',
+    'A green single command is weaker evidence than a green pipeline: other steps may depend on what you changed.',
     ''
   ]
 }

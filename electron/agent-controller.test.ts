@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentTaskEvent, AgentTaskRequest, PipelineRunResult } from '../shared/types'
+import { failureReport } from '../shared/failure'
 import { AgentController } from './agent-controller'
 
 const request: AgentTaskRequest = {
@@ -73,6 +74,7 @@ describe('AgentController', () => {
     expect(execute.mock.calls[0][1]).toContain('Lint [id: lint]')
     expect(execute.mock.calls[0][1]).toContain('npm run lint')
     expect(execute.mock.calls[0][1]).toContain('Do not call the Farol MCP tools')
+    expect(execute.mock.calls[0][1]).toContain('Never run the catalog\'s shell commands yourself')
     expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate', 'lint'])
   })
 
@@ -150,6 +152,7 @@ describe('AgentController', () => {
     expect(execute).toHaveBeenCalledTimes(2)
     expect(run).toHaveBeenCalledTimes(2)
     expect(execute.mock.calls[1][1]).toContain('one test failed')
+    expect(execute.mock.calls[1][1]).toContain('Do not re-run the failing shell commands yourself')
     expect(execute.mock.calls[1][1]).toContain('Farol pipeline activity for this chat:')
     expect(execute.mock.calls[1][1]).toMatch(
       /Validate \(validate\) started at .*; finished at .*; status FAILED; duration \d+ms; run id run-false\./
@@ -694,5 +697,166 @@ describe('AgentController', () => {
       ok: false,
       message: 'This agent task is no longer available.'
     })
+  })
+
+  it('accepts FAROL_PIPELINES ids from a manual UI failure report handoff', async () => {
+    // Manual Run uses pipeline:; autoFix hands the report into managed Chat,
+    // whose catalog only lists managed-pipeline: ids.
+    const uiSlot = 'repo-abc:pipeline:lint'
+    const managedId = 'repo-abc:managed-pipeline:lint'
+    const report = failureReport({
+      pipeline: 'Lint & Typecheck',
+      pipelineId: uiSlot,
+      step: 'TypeScript',
+      branch: 'main',
+      cwd: '/tmp/project',
+      cmd: 'npx tsc --noEmit',
+      code: 1,
+      output: 'error TS2322'
+    })
+    const marker = report.match(/FAROL_PIPELINES: (\[[^\]]+\])/)
+    expect(marker).toBeTruthy()
+    const ids = JSON.parse(marker![1]) as string[]
+    expect(ids).toEqual([managedId])
+
+    const events: AgentTaskEvent[] = []
+    const lint = {
+      id: managedId,
+      name: 'Lint & Typecheck',
+      nodes: [
+        {
+          id: 'tsc',
+          name: 'TypeScript',
+          type: 'shell' as const,
+          cmd: 'npx tsc --noEmit',
+          after: [] as string[],
+          x: 0,
+          y: 0
+        }
+      ]
+    }
+    const run = vi.fn().mockResolvedValue({
+      runId: 'run-ok',
+      pipelineId: managedId,
+      ok: true,
+      steps: [{ nodeId: 'tsc', ok: true, code: 0, output: '' }]
+    })
+    const execute = selecting(...ids)
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, pipelines: [lint] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(
+        true
+      )
+    )
+
+    expect(run.mock.calls.map((call) => call[0].id)).toEqual([managedId])
+    expect(
+      events.some(
+        (event) =>
+          event.kind === 'status' &&
+          event.status === 'failed' &&
+          typeof event.message === 'string' &&
+          event.message.includes('Unknown pipeline')
+      )
+    ).toBe(false)
+  })
+
+  it('rejects empty FAROL_PIPELINES when the agent shelled a catalog command', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = vi
+      .fn()
+      .mockImplementationOnce(
+        async (
+          _request: AgentTaskRequest,
+          _prompt: string,
+          output: (chunk: string) => void,
+          onTool?: (event: {
+            toolId: string
+            name: string
+            detail?: string
+            state: 'running' | 'done' | 'error'
+          }) => void
+        ) => {
+          onTool?.({
+            toolId: 'shell-1',
+            name: 'shell',
+            detail: 'npm test',
+            state: 'running'
+          })
+          onTool?.({
+            toolId: 'shell-1',
+            name: 'shell',
+            detail: 'npm test',
+            state: 'done'
+          })
+          output('Looks green\nFAROL_PIPELINES: []\n')
+          return 0
+        }
+      )
+      .mockImplementationOnce(
+        async (
+          _request: AgentTaskRequest,
+          _prompt: string,
+          output: (chunk: string) => void
+        ) => {
+          output('FAROL_PIPELINES: ["validate"]\n')
+          return 0
+        }
+      )
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(
+        true
+      )
+    )
+
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute.mock.calls[1][1]).toContain('bypassed pipelines')
+    expect(execute.mock.calls[1][1]).toContain('npm test')
+    expect(execute.mock.calls[1][1]).toContain('FAROL_PIPELINES: ["validate"]')
+    expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate'])
+  })
+
+  it('allows catalog shell self-runs when the owning pipeline is still selected', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = vi.fn().mockImplementation(
+      async (
+        _request: AgentTaskRequest,
+        _prompt: string,
+        output: (chunk: string) => void,
+        onTool?: (event: {
+          toolId: string
+          name: string
+          detail?: string
+          state: 'running' | 'done' | 'error'
+        }) => void
+      ) => {
+        onTool?.({
+          toolId: 'shell-1',
+          name: 'command_execution',
+          detail: 'npm test',
+          state: 'done'
+        })
+        output('FAROL_PIPELINES: ["validate"]\n')
+        return 0
+      }
+    )
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(
+        true
+      )
+    )
+
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate'])
   })
 })

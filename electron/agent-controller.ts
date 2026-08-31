@@ -13,6 +13,12 @@ import type {
 } from '../shared/types'
 import { isAiProvider, managedAiCommand, normalizeAi } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
+import {
+  catalogShellCommands,
+  isShellToolName,
+  matchedCatalogShells,
+  pipelinesForCatalogCmds
+} from '../shared/catalog-shell'
 import { plainText } from '../shared/terminal'
 import { shellEnv } from './session'
 import { killPidTree } from './kill'
@@ -27,10 +33,18 @@ interface ValidationRunner {
   ): Promise<PipelineRunResult>
 }
 
+export type AgentToolReport = {
+  toolId: string
+  name: string
+  detail?: string
+  state: 'running' | 'done' | 'error'
+}
+
 export type AgentExecutor = (
   request: AgentTaskRequest,
   prompt: string,
-  onOutput: (chunk: string) => void
+  onOutput: (chunk: string) => void,
+  onTool?: (event: AgentToolReport) => void
 ) => Promise<number>
 
 /**
@@ -165,6 +179,7 @@ function repairPromptOpening(
     `Continue the original task: ${originalPrompt}`,
     '',
     `Farol validation attempt ${attempt} failed. Fix the code, then finish so Farol can validate again.`,
+    `Do not re-run the failing shell commands yourself. Follow the failure report's Verify section: select the same pipelines again via ${PIPELINES_MARKER} so Farol re-runs them.`,
     ...failures.flatMap(({ pipeline, result }) => [
       result.reportPath ? `Read the full failure report at ${result.reportPath}.` : '',
       failureContext(pipeline, result)
@@ -178,6 +193,33 @@ function repairPromptOpening(
 function activityStatus(result: PipelineRunResult): PipelineActivity['status'] {
   if (result.cancelled) return 'cancelled'
   return result.ok ? 'passed' : 'failed'
+}
+
+/**
+ * When the agent shelled catalog step cmds itself, it must still select the
+ * pipelines that own those cmds. Opting out with [] after a private `npm test`
+ * is how Codex skips Farol validation.
+ */
+function catalogShellBypassError(
+  shellInvocations: string[],
+  available: Pipeline[],
+  selected: Pipeline[]
+): string | undefined {
+  const catalog = catalogShellCommands(available)
+  const matched = matchedCatalogShells(shellInvocations, catalog)
+  if (!matched.length) return undefined
+  const required = pipelinesForCatalogCmds(available, matched)
+  if (!required.length) return undefined
+  const selectedIds = new Set(selected.map((pipeline) => pipeline.id))
+  const missing = required.filter((pipeline) => !selectedIds.has(pipeline.id))
+  if (!missing.length) return undefined
+  const cmds = matched.map((cmd) => `\`${cmd}\``).join(', ')
+  const ids = missing.map((pipeline) => pipeline.id)
+  return (
+    `You ran catalog shell command(s) yourself (${cmds}). ` +
+    `Do not do that — select the owning pipeline(s) via ${PIPELINES_MARKER} ${JSON.stringify(ids)} ` +
+    `and let Farol execute them.`
+  )
 }
 
 function selectedPipelines(
@@ -433,7 +475,12 @@ export class AgentController {
 
   private cycleSink(
     task: Task,
-    scan: { assistant: string; output: string; blocked: string | null }
+    scan: {
+      assistant: string
+      output: string
+      blocked: string | null
+      shellInvocations: string[]
+    }
   ): AgentSink {
     const check = (): void => {
       const reason = blockedMarker(scan.assistant) ?? providerFailure(scan.output)
@@ -455,7 +502,13 @@ export class AgentController {
         scan.output = (`${scan.output}\n${text}`).slice(-SCAN_WINDOW)
         check()
       },
-      tool: (event) => this.emit({ kind: 'tool', taskId: task.request.id, ...event }),
+      tool: (event) => {
+        this.emit({ kind: 'tool', taskId: task.request.id, ...event })
+        // Codex sometimes only fills command on item.completed; accept either.
+        if (event.detail && isShellToolName(event.name) && event.state !== 'error') {
+          scan.shellInvocations.push(event.detail)
+        }
+      },
       noise: (chunk) => {
         scan.output = (scan.output + chunk).slice(-SCAN_WINDOW)
         check()
@@ -534,10 +587,15 @@ export class AgentController {
     )
     // What the agent said, which is what the markers are read from, and
     // everything it printed, which is where provider failures show up.
-    const scan = { assistant: '', output: '', blocked: null as string | null }
+    const scan = {
+      assistant: '',
+      output: '',
+      blocked: null as string | null,
+      shellInvocations: [] as string[]
+    }
     const sink = this.cycleSink(task, scan)
     const code = this.executor
-      ? await this.executor(task.request, prompt, sink.text)
+      ? await this.executor(task.request, prompt, sink.text, sink.tool)
       : await this.runAgent(task, prompt, sink)
     if (task.cancelled) {
       this.settleCancel(task)
@@ -572,6 +630,21 @@ export class AgentController {
         prompt: this.prompt(
           task,
           `Continue the original task: ${task.request.prompt}\n\nFarol could not validate because your pipeline selection was invalid: ${selection.error}`
+        )
+      }
+    }
+
+    const bypass = catalogShellBypassError(
+      scan.shellInvocations,
+      task.request.pipelines,
+      selection.pipelines
+    )
+    if (bypass) {
+      return {
+        kind: 'retry',
+        prompt: this.prompt(
+          task,
+          `Continue the original task: ${task.request.prompt}\n\nFarol could not validate because you bypassed pipelines: ${bypass}`
         )
       }
     }
@@ -656,6 +729,7 @@ export class AgentController {
       `Work only in ${task.request.cwd}.`,
       this.pipelineHistory(task),
       `When the requested code change is complete, select every relevant validation pipeline from the catalog below. If you made no code changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
+      `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
       `Do not call the Farol MCP tools in this managed Chat session. They require approval in some providers; the managed harness executes your selected pipelines directly.`,
       `End every response with exactly one line in this format: ${PIPELINES_MARKER} ["pipeline-id"] — or ${PIPELINES_MARKER} [] when no validation is needed. Use a JSON array and only ids from the catalog.`,
       '',

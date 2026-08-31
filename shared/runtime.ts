@@ -18,3 +18,23 @@ export function unscopedRuntimeId(projectPath: string, id: string): string | nul
   const prefix = repositoryRuntimePrefix(projectPath)
   return id.startsWith(prefix) ? id.slice(prefix.length) : null
 }
+
+/** Runner slot kinds: UI Run, managed Chat, and MCP each get their own slot. */
+const RUNTIME_PIPELINE_SLOT =
+  /^(?:(repo-[^:]+:))?(pipeline|managed-pipeline|mcp-pipeline):(.+)$/
+
+/**
+ * Map any runner slot id to the managed-Chat catalog id used in FAROL_PIPELINES.
+ *
+ * Auto-fix hands a failure report into managed Chat, whose catalog only
+ * accepts `managed-pipeline:` ids. Pasting a UI (`pipeline:`) or MCP
+ * (`mcp-pipeline:`) slot makes `selectedPipelines` reject the marker and
+ * validation never starts.
+ */
+export function managedCatalogPipelineId(runtimeId: string): string | undefined {
+  const m = RUNTIME_PIPELINE_SLOT.exec(runtimeId)
+  if (!m) return undefined
+  const [, repoPrefix = '', , bare] = m
+  if (!bare) return undefined
+  return `${repoPrefix}managed-pipeline:${bare}`
+}

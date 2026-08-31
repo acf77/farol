@@ -42,7 +42,9 @@ export function aiCommand(provider: AiProvider, prompt: string): AiCommand {
     case 'codex':
       return {
         bins: ['codex'],
-        args: ['exec', prompt],
+        // Force approval_policy=never via -c: --sandbox alone does not override a
+        // user config that still asks for approval, which would hang headless reviews.
+        args: ['exec', '-c', 'approval_policy=never', '--sandbox', 'read-only', prompt],
         hint: "Install the Codex CLI (npm i -g @openai/codex) to run Codex steps."
       }
     case 'cursor':
@@ -76,15 +78,32 @@ export function aiCommand(provider: AiProvider, prompt: string): AiCommand {
  * Claude and Cursor print nothing at all under `--output-format text` until
  * the whole run is over, which leaves Chat blank while the agent works, so
  * both run in `stream-json` and are decoded by `shared/agent-stream.ts`.
- * Codex and OpenCode already narrate their progress on stdout as they go.
+ * Codex also emits NDJSON when passed `--json`; decoding it lets managed Chat
+ * render command, file, MCP, and web-search activity as tool cards.
+ * OpenCode already narrates its progress on stdout as it goes.
  */
 export function managedAiCommand(provider: AiProvider, prompt: string): AiCommand {
   switch (provider) {
     case 'codex':
       return {
         bins: ['codex'],
-        args: ['exec', '--full-auto', prompt],
-        hint: "Install the Codex CLI (npm i -g @openai/codex) to use managed Chat."
+        // Codex removed `--full-auto` (closer to workspace-write + on-request).
+        // Use approval_policy=never + sandbox so headless Chat never prompts;
+        // do not use --dangerously-bypass-approvals-and-sandbox (no sandbox at all).
+        // Keep workspace-write network_access off (default): never-approve + network
+        // would let model shell commands reach the internet without confirmation.
+        // Native Codex web search is `--search`, not sandbox network_access.
+        args: [
+          'exec',
+          '--json',
+          '-c',
+          'approval_policy=never',
+          '--sandbox',
+          'workspace-write',
+          prompt
+        ],
+        hint: "Install the Codex CLI (npm i -g @openai/codex) to use managed Chat.",
+        stream: 'ndjson'
       }
     case 'cursor':
       return {
@@ -125,7 +144,7 @@ import { FAILURE_REPORT_REL } from './failure'
 
 /** Prompt that points the UI chat (or a CLI) at the report a failed run left. */
 export function aiFixPrompt(reportPath = FAILURE_REPORT_REL): string {
-  return `Read ${reportPath} - it describes a pipeline step that just failed. Fix the errors it reports.`
+  return `Read ${reportPath} - it describes a pipeline step that just failed. Fix the errors it reports, then follow its Verify section (Farol pipelines / FAROL_PIPELINES catalog ids — do not invent a literal id).`
 }
 
 /**
