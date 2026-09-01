@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useState, type CSSProperties, type RefObject } from 'react'
-import type { AiProvider, GitFileKind, GitHubInfo, GitStatus, PullRequest } from '@shared/types'
+import type { AiProvider, GitCommit, GitFileKind, GitHubInfo, GitStatus, PullRequest } from '@shared/types'
 import { useGitPanel } from '../hooks/useGitPanel'
 import { C, MONO } from '../theme'
 import { Button } from './controls'
@@ -193,6 +193,59 @@ function GitPanelHeader({ loading, onRefresh }: { loading: boolean; onRefresh: (
   )
 }
 
+function RecentCommitsBlock({ commits }: { commits: GitCommit[] }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={sectionLabel}>RECENT COMMITS</div>
+      {commits.length === 0 && (
+        <div style={{ fontSize: 11.5, color: C.faint }}>No commits yet</div>
+      )}
+      {commits.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {commits.map((c) => (
+            <div
+              key={c.hash}
+              title={`${c.subject}\n${c.author} · ${c.when}`}
+              style={{
+                padding: '6px 8px',
+                borderRadius: 7,
+                background: 'rgba(255,255,255,0.02)',
+                border: `1px solid ${C.cardBorder}`
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 6,
+                  marginBottom: 2
+                }}
+              >
+                <span style={{ fontFamily: MONO, fontSize: 10, color: C.accentBright }}>{c.hash}</span>
+                <span
+                  style={{
+                    fontSize: 11,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    flex: 1
+                  }}
+                >
+                  {c.subject}
+                </span>
+              </div>
+              <div style={{ fontSize: 10, color: C.faint }}>
+                {c.author}
+                {c.when ? ` · ${c.when}` : ''}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function PullRequestsBlock({ github }: { github: GitHubInfo | null }) {
   return (
     <div style={{ marginBottom: 12 }}>
@@ -244,6 +297,100 @@ function ChangesBlock({ branch, status }: { branch: string; status: GitStatus | 
   )
 }
 
+function useEscapeClose(open: boolean, onClose: () => void): void {
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+}
+
+function gitActionState(
+  status: GitStatus | null,
+  github: GitHubInfo | null,
+  committing: boolean
+): { hasConflicts: boolean; prConflicts: boolean; canAct: boolean; pushOnly: boolean } {
+  const hasConflicts = (status?.conflicts.length ?? 0) > 0
+  const prConflicts = github?.prs.some((p) => p.hasConflicts) ?? false
+  const dirty = status && !status.clean
+  const unpushed = (status?.ahead ?? 0) > 0
+  return {
+    hasConflicts,
+    prConflicts,
+    canAct: (!!dirty || unpushed) && !hasConflicts && !committing,
+    pushOnly: !dirty && unpushed
+  }
+}
+
+function ConflictAlert({
+  hasConflicts,
+  prConflicts
+}: {
+  hasConflicts: boolean
+  prConflicts: boolean
+}) {
+  if (!hasConflicts && !prConflicts) return null
+  return (
+    <div style={alertBox('conflict')}>
+      {hasConflicts
+        ? 'Merge conflicts in the working tree — resolve before committing.'
+        : 'An open pull request has merge conflicts.'}
+    </div>
+  )
+}
+
+function GitActionButton({
+  provider,
+  committing,
+  canAct,
+  pushOnly,
+  onCommit
+}: {
+  provider: AiProvider
+  committing: boolean
+  canAct: boolean
+  pushOnly: boolean
+  onCommit: () => void
+}) {
+  const title = pushOnly
+    ? 'Push unpushed commits to the remote'
+    : `Stage all, generate a message with ${provider}, commit, and push`
+  let label: string
+  if (committing) label = pushOnly ? 'Pushing…' : 'Committing & pushing…'
+  else if (pushOnly) label = 'Push'
+  else label = 'Commit & push with AI'
+
+  return (
+    <div
+      style={{
+        flex: 'none',
+        padding: '10px 12px 12px',
+        borderTop: `1px solid ${C.cardBorder}`
+      }}
+    >
+      <Button
+        variant="primary"
+        size="md"
+        disabled={!canAct}
+        onClick={() => void onCommit()}
+        title={title}
+        style={{ width: '100%' }}
+      >
+        {committing ? (
+          <>
+            <Spinner /> {label}
+          </>
+        ) : (
+          label
+        )}
+      </Button>
+    </div>
+  )
+}
+
 function usePopoverPosition(
   anchorRef: RefObject<HTMLElement | null>,
   open: boolean
@@ -280,6 +427,7 @@ export default function GitPane({
   branch,
   provider,
   status,
+  commits,
   github,
   loading,
   committing,
@@ -292,22 +440,11 @@ export default function GitPane({
   anchorRef
 }: Props) {
   const pos = usePopoverPosition(anchorRef, open)
-
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  useEscapeClose(open, onClose)
 
   if (!open || !pos) return null
 
-  const hasConflicts = (status?.conflicts.length ?? 0) > 0
-  const prConflicts = github?.prs.some((p) => p.hasConflicts) ?? false
-  const dirty = status && !status.clean
-  const canCommit = !!dirty && !hasConflicts && !committing
+  const { hasConflicts, prConflicts, canAct, pushOnly } = gitActionState(status, github, committing)
 
   return (
     <>
@@ -334,44 +471,21 @@ export default function GitPane({
         <GitPanelHeader loading={loading} onRefresh={() => void refresh()} />
 
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 10px 12px' }}>
-          {(hasConflicts || prConflicts) && (
-            <div style={alertBox('conflict')}>
-              {hasConflicts
-                ? 'Merge conflicts in the working tree — resolve before committing.'
-                : 'An open pull request has merge conflicts.'}
-            </div>
-          )}
-
+          <ConflictAlert hasConflicts={hasConflicts} prConflicts={prConflicts} />
           <PullRequestsBlock github={github} />
+          <RecentCommitsBlock commits={commits} />
           <ChangesBlock branch={branch} status={status} />
           {error && <div style={alertBox('error')}>{error}</div>}
           {lastMessage && <div style={alertBox('success')}>{lastMessage}</div>}
         </div>
 
-        <div
-          style={{
-            flex: 'none',
-            padding: '10px 12px 12px',
-            borderTop: `1px solid ${C.cardBorder}`
-          }}
-        >
-          <Button
-            variant="primary"
-            size="md"
-            disabled={!canCommit}
-            onClick={() => void aiCommit()}
-            title={`Stage all, generate a message with ${provider}, and commit`}
-            style={{ width: '100%' }}
-          >
-            {committing ? (
-              <>
-                <Spinner /> Committing…
-              </>
-            ) : (
-              'Commit with AI'
-            )}
-          </Button>
-        </div>
+        <GitActionButton
+          provider={provider}
+          committing={committing}
+          canAct={canAct}
+          pushOnly={pushOnly}
+          onCommit={aiCommit}
+        />
       </div>
     </>
   )

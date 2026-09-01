@@ -25,7 +25,7 @@ import {
   validateRunnable
 } from '../shared/graph'
 import { aiEnv, resolveBinFrom } from './bin'
-import { defaultShell, pipelineEnv, PtySession, shellEnv } from './session'
+import { defaultShell, pipelineEnv, PtySession } from './session'
 import { killPidTree, killPty } from './kill'
 import { shellFamily } from './protocol'
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { AiProvider, GitHubInfo, GitInfo, GitStatus } from '@shared/types'
+import type { AiProvider, GitCommit, GitHubInfo, GitInfo, GitStatus } from '@shared/types'
 
 const api = window.farol
 
@@ -20,6 +20,7 @@ export function useGitPanel(
   opts?: UseGitPanelOptions
 ) {
   const [status, setStatus] = useState<GitStatus | null>(null)
+  const [commits, setCommits] = useState<GitCommit[]>([])
   const [github, setGithub] = useState<GitHubInfo | null>(null)
   const [loading, setLoading] = useState(false)
   const [committing, setCommitting] = useState(false)
@@ -28,6 +29,7 @@ export function useGitPanel(
 
   useEffect(() => {
     setStatus(null)
+    setCommits([])
     setGithub(null)
     setLastMessage(null)
     setError(null)
@@ -37,12 +39,14 @@ export function useGitPanel(
     if (!projectPath) return
     setLoading(true)
     try {
-      const [st, gh] = await Promise.all([
+      const [st, gh, log] = await Promise.all([
         api.git.status(projectPath),
-        api.git.github(projectPath)
+        api.git.github(projectPath),
+        api.git.recentCommits(projectPath)
       ])
       setStatus(st)
       setGithub(gh)
+      setCommits(log)
     } finally {
       setLoading(false)
     }
@@ -82,6 +86,7 @@ export function useGitPanel(
 
   return {
     status,
+    commits,
     github,
     loading,
     committing,

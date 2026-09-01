@@ -1,4 +1,5 @@
 import { execFile } from 'child_process'
+import { aiEnv, resolveBin } from './bin'
 
 export function execCli(
   bin: string,
@@ -6,11 +7,13 @@ export function execCli(
   args: string[],
   timeout: number
 ): Promise<{ code: number; out: string; err: string }> {
+  const resolved = resolveBin(bin) ?? bin
+  const env = aiEnv()
   return new Promise((resolve) => {
     execFile(
-      bin,
+      resolved,
       args,
-      { cwd, timeout, maxBuffer: 4 * 1024 * 1024 },
+      { cwd, timeout, maxBuffer: 4 * 1024 * 1024, env },
       (error, stdout, stderr) => {
         const code =
           error && typeof (error as NodeJS.ErrnoException & { code?: number }).code === 'number'

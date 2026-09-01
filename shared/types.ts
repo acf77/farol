@@ -89,6 +89,13 @@ export interface GitStatus {
   behind: number
 }
 
+export interface GitCommit {
+  hash: string
+  subject: string
+  author: string
+  when: string
+}
+
 
 export interface PullRequest {
   number: number
@@ -332,6 +339,7 @@ export interface FarolApi {
       message: string
     }>
     status(projectPath: string): Promise<GitStatus>
+    recentCommits(projectPath: string): Promise<GitCommit[]>
     aiCommit(
       projectPath: string,
       provider: AiProvider

@@ -12,7 +12,7 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, aiCommit, checkout, info as gitInfo, status as gitStatus } from './git'
+import { HeadWatcher, addWorktree, aiCommit, checkout, info as gitInfo, recentCommits, status as gitStatus } from './git'
 import { githubInfo } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, PipelineWatcher } from './store'
@@ -562,6 +562,7 @@ function registerIpc(): void {
     return res
   })
   ipcMain.handle('git:status', (_e, projectPath: string) => gitStatus(projectPath))
+  ipcMain.handle('git:recentCommits', (_e, projectPath: string) => recentCommits(projectPath))
   ipcMain.handle('git:aiCommit', (_e, projectPath: string, provider: AgentTaskRequest['provider']) =>
     aiCommit(projectPath, provider)
   )

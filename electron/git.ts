@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import { runAiOnce } from './ai-oneshot'
 import { parseAheadBehind, parseGitStatus } from '../shared/git-status'
-import type { AiProvider, GitInfo, GitStatus } from '../shared/types'
+import type { AiProvider, GitCommit, GitInfo, GitStatus } from '../shared/types'
 import type { WorktreeRequest } from '../shared/worktree'
 import { parseAlreadyOpenPath, parseWorktreeList, pipelineStoreRoot, worktreeFolderName } from '../shared/worktree'
 
@@ -266,9 +266,34 @@ export async function status(cwd: string): Promise<GitStatus> {
   return { ...parsed, ahead, behind }
 }
 
+/** Latest commits on the current branch, newest first. */
+export async function recentCommits(cwd: string, limit = 8): Promise<GitCommit[]> {
+  const res = await git(cwd, [
+    'log',
+    `-n${limit}`,
+    '--format=%h\t%s\t%an\t%cr'
+  ])
+  if (res.code !== 0) return []
+  return res.out
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      const [hash, subject, author, when] = line.split('\t')
+      if (!hash || !subject) return []
+      return [{ hash, subject, author: author || '', when: when || '' }]
+    })
+}
+
 async function stageAll(cwd: string): Promise<{ ok: boolean; message: string }> {
   const res = await git(cwd, ['add', '-A'])
   return { ok: res.code === 0, message: cliFirstLine(res) }
+}
+
+async function push(cwd: string): Promise<{ ok: boolean; message: string }> {
+  const res = await git(cwd, ['push'], 120_000)
+  const line = cliFirstLine(res)
+  return { ok: res.code === 0, message: line || (res.code === 0 ? 'Pushed' : 'Push failed') }
 }
 
 async function commit(cwd: string, message: string): Promise<{ ok: boolean; message: string }> {
@@ -319,16 +344,25 @@ async function generateCommitMessage(
   return { ok: true, message }
 }
 
-/** Stage everything, generate a message with AI, and commit in one step. */
+/** Stage everything, generate a message with AI, commit, and push. Pushes only when already clean but ahead. */
 export async function aiCommit(
   cwd: string,
   provider: AiProvider
 ): Promise<{ ok: boolean; message?: string; error?: string }> {
   const st = await status(cwd)
-  if (st.clean) return { ok: false, error: 'Working tree is clean — nothing to commit.' }
   if (st.conflicts.length) {
     return { ok: false, error: 'Resolve merge conflicts before committing.' }
   }
+
+  if (st.clean) {
+    if (st.ahead <= 0) {
+      return { ok: false, error: 'Working tree is clean — nothing to commit or push.' }
+    }
+    const pushed = await push(cwd)
+    if (!pushed.ok) return { ok: false, error: pushed.message || 'Push failed' }
+    return { ok: true, message: pushed.message }
+  }
+
   const staged = await stageAll(cwd)
   if (!staged.ok) return { ok: false, error: staged.message || 'Could not stage changes' }
   const generated = await generateCommitMessage(cwd, provider)
@@ -337,6 +371,10 @@ export async function aiCommit(
   }
   const done = await commit(cwd, generated.message)
   if (!done.ok) return { ok: false, error: done.message || 'Commit failed' }
+  const pushed = await push(cwd)
+  if (!pushed.ok) {
+    return { ok: false, error: `${generated.message}\n\nCommitted, but push failed: ${pushed.message}` }
+  }
   return { ok: true, message: generated.message }
 }
 
