@@ -1,7 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { Pipeline, PipelineNode, StepState } from '@shared/types'
 import { topoSort } from '@shared/graph'
-import { C, MONO, UI } from '../theme'
+import { C, MONO } from '../theme'
+import {
+  RailLabel,
+  sidePanelShellStyle,
+  useCollapseRail
+} from './side-panel'
 import type { DetailLog, RunState } from '../types'
 import { CaretLeft, CaretRight, CheckIcon, ChevronRight, ChevronUp, PlayIcon, Spinner, StopIcon } from './icons'
 
@@ -22,8 +27,7 @@ interface Props {
   onSetCollapsed: (collapsed: boolean) => void
 }
 
-const RAIL_WIDTH = 54
-const PANEL_WIDTH = 300
+const PIPELINE_PANEL_WIDTH = 300
 
 interface Status {
   label: string
@@ -60,60 +64,26 @@ function stepLabel(state: StepState | undefined): string {
   return ''
 }
 
-/** Vertical label used by the collapsed rail (the spec's `writing-mode: vertical-rl`). */
-function RailLabel({
-  children,
-  color,
-  weight
-}: {
-  children: React.ReactNode
-  color: string
-  weight?: number
-}) {
-  return (
-    <div
-      style={{
-        writingMode: 'vertical-rl',
-        transform: 'rotate(180deg)',
-        fontSize: weight ? 11.5 : 11,
-        fontWeight: weight,
-        letterSpacing: weight ? '0.02em' : undefined,
-        color,
-        maxHeight: 220,
-        overflow: 'hidden',
-        whiteSpace: 'nowrap',
-        textOverflow: 'ellipsis'
-      }}
-    >
-      {children}
-    </div>
-  )
-}
-
 function CollapsedRail({
   shellStyle,
   pipelines,
   runs,
   selected,
   running,
-  collapsed,
   onSetCollapsed,
   onSelect,
   onStop,
-  setExpanded,
-  setShowRail
+  setExpanded
 }: {
   shellStyle: React.CSSProperties
   pipelines: Pipeline[]
   runs: Record<string, RunState>
   selected: Pipeline | null
   running: Pipeline | undefined
-  collapsed: boolean
   onSetCollapsed: (collapsed: boolean) => void
   onSelect: (id: string) => void
   onStop: (id: string) => void
   setExpanded: (id: string) => void
-  setShowRail: (v: boolean) => void
 }) {
   const railFor = running ?? selected
   const runningRun = running ? runs[running.id] : undefined
@@ -130,10 +100,6 @@ function CollapsedRail({
         alignItems: 'center',
         gap: 14,
         padding: '11px 0 14px'
-      }}
-      onTransitionEnd={(e) => {
-        if (e.propertyName !== 'width' || e.target !== e.currentTarget) return
-        if (collapsed) setShowRail(true)
       }}
     >
       <button
@@ -714,29 +680,9 @@ export default function Sidebar({
 }: Props) {
   const [expanded, setExpanded] = useState<string | null>(selected?.id ?? null)
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
-  // Keep the full panel mounted while the width shrinks, then swap to the rail.
-  const [showRail, setShowRail] = useState(collapsed)
+  const { showRail, onWidthTransitionEnd } = useCollapseRail(collapsed)
   const running = pipelines.find((p) => runs[p.id]?.status === 'running')
-
-  useEffect(() => {
-    if (!collapsed) setShowRail(false)
-  }, [collapsed])
-
-  const shellStyle: React.CSSProperties = {
-    width: collapsed ? RAIL_WIDTH : PANEL_WIDTH,
-    flex: 'none',
-    minHeight: 0,
-    alignSelf: 'stretch',
-    display: 'flex',
-    flexDirection: 'column',
-    background: '#111827',
-    border: '1px solid #273449',
-    borderRadius: 8,
-    overflow: 'hidden',
-    fontFamily: UI,
-    fontSize: 13,
-    WebkitFontSmoothing: 'antialiased'
-  }
+  const shellStyle = sidePanelShellStyle(collapsed, { panelWidth: PIPELINE_PANEL_WIDTH })
 
   if (showRail) {
     return (
@@ -746,12 +692,10 @@ export default function Sidebar({
         runs={runs}
         selected={selected}
         running={running}
-        collapsed={collapsed}
         onSetCollapsed={onSetCollapsed}
         onSelect={onSelect}
         onStop={onStop}
         setExpanded={setExpanded}
-        setShowRail={setShowRail}
       />
     )
   }
@@ -768,14 +712,11 @@ export default function Sidebar({
     <div
       className="bf-side-panel"
       style={shellStyle}
-      onTransitionEnd={(e) => {
-        if (e.propertyName !== 'width' || e.target !== e.currentTarget) return
-        if (collapsed) setShowRail(true)
-      }}
+      onTransitionEnd={onWidthTransitionEnd}
     >
       <div
         style={{
-          width: PANEL_WIDTH,
+          width: PIPELINE_PANEL_WIDTH,
           flex: 1,
           minHeight: 0,
           display: 'flex',

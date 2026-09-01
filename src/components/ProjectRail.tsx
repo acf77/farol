@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { GitInfo, Project } from '@shared/types'
 import { groupOpenProjects } from '@shared/project-groups'
 import { C, UI } from '../theme'
+import { RailLabel, sidePanelShellStyle, useCollapseRail } from './side-panel'
 import { BranchIcon, CaretLeft, CaretRight, ChevronDown, ChevronRight, ClearChatIcon, ProjectIcon } from './icons'
 
 const api = window.farol
@@ -83,36 +84,6 @@ function TrafficLight({
   )
 }
 
-/** Vertical label used by the collapsed rail. */
-function RailLabel({
-  children,
-  color,
-  weight
-}: {
-  children: React.ReactNode
-  color: string
-  weight?: number
-}) {
-  return (
-    <div
-      style={{
-        writingMode: 'vertical-rl',
-        transform: 'rotate(180deg)',
-        fontSize: weight ? 11.5 : 11,
-        fontWeight: weight,
-        letterSpacing: weight ? '0.02em' : undefined,
-        color,
-        maxHeight: 220,
-        overflow: 'hidden',
-        whiteSpace: 'nowrap',
-        textOverflow: 'ellipsis'
-      }}
-    >
-      {children}
-    </div>
-  )
-}
-
 export default function ProjectRail({
   projects,
   activePath,
@@ -129,12 +100,13 @@ export default function ProjectRail({
   const agentUnread = (path: string): boolean => !!unreadPaths?.has(path)
   const [gitByPath, setGitByPath] = useState<Record<string, GitInfo>>({})
   const [groupCollapsed, setGroupCollapsed] = useState<Record<string, boolean>>({})
-  // Keep the full panel mounted while the width shrinks, then swap to the rail.
-  const [showRail, setShowRail] = useState(collapsed)
-
-  useEffect(() => {
-    if (!collapsed) setShowRail(false)
-  }, [collapsed])
+  const { showRail, onWidthTransitionEnd } = useCollapseRail(collapsed)
+  const shellStyle = {
+    ...sidePanelShellStyle(collapsed, { panelWidth: PANEL_WIDTH, railWidth: RAIL_WIDTH }),
+    border: undefined,
+    borderRadius: undefined,
+    borderRight: '1px solid #273449'
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -179,31 +151,16 @@ export default function ProjectRail({
   const activeBranch =
     activeGroup?.projects.find((p) => p.project.path === activePath)?.branch ?? ''
 
-  const onWidthEnd = (e: React.TransitionEvent<HTMLElement>): void => {
-    if (e.propertyName !== 'width' || e.target !== e.currentTarget) return
-    if (collapsed) setShowRail(true)
-  }
-
   if (showRail) {
     return (
       <aside
         aria-label="Projects"
         className="bf-side-panel"
-        onTransitionEnd={onWidthEnd}
         style={{
-          width: collapsed ? RAIL_WIDTH : PANEL_WIDTH,
-          flex: 'none',
-          display: 'flex',
-          flexDirection: 'column',
+          ...shellStyle,
           alignItems: 'center',
           gap: 14,
-          padding: '11px 0 14px',
-          background: '#111827',
-          borderRight: '1px solid #273449',
-          overflow: 'hidden',
-          fontFamily: UI,
-          fontSize: 13,
-          WebkitFontSmoothing: 'antialiased'
+          padding: '11px 0 14px'
         }}
       >
         <div
@@ -298,19 +255,8 @@ export default function ProjectRail({
     <aside
       aria-label="Projects"
       className="bf-side-panel"
-      onTransitionEnd={onWidthEnd}
-      style={{
-        width: collapsed ? RAIL_WIDTH : PANEL_WIDTH,
-        flex: 'none',
-        display: 'flex',
-        flexDirection: 'column',
-        background: '#111827',
-        borderRight: '1px solid #273449',
-        overflow: 'hidden',
-        fontFamily: UI,
-        fontSize: 13,
-        WebkitFontSmoothing: 'antialiased'
-      }}
+      style={shellStyle}
+      onTransitionEnd={onWidthTransitionEnd}
     >
       <div
         style={{

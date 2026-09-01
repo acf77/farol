@@ -1,8 +1,5 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { StringDecoder } from 'string_decoder'
-import fs from 'fs'
-import os from 'os'
-import path from 'path'
 import type {
   AgentTaskEvent,
   AgentTaskRequest,
@@ -20,7 +17,7 @@ import {
   pipelinesForCatalogCmds
 } from '../shared/catalog-shell'
 import { plainText } from '../shared/terminal'
-import { shellEnv } from './session'
+import { aiEnv, resolveBinFrom } from './bin'
 import { killPidTree } from './kill'
 
 interface ValidationRunner {
@@ -121,41 +118,6 @@ function providerFailure(output: string): string | null {
       output
     )
   return match ? match[0] : null
-}
-
-function searchPath(): string {
-  const env = shellEnv()
-  const dirs = (env.PATH || '').split(path.delimiter).filter(Boolean)
-  const home = os.homedir()
-  for (const dir of [
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    path.join(home, '.local', 'bin'),
-    path.join(home, '.cursor', 'bin'),
-    path.join(home, '.npm-global', 'bin'),
-    path.join(home, '.bun', 'bin')
-  ]) {
-    if (!dirs.includes(dir)) dirs.unshift(dir)
-  }
-  return dirs.join(path.delimiter)
-}
-
-function resolveBin(names: string[], search: string): string | null {
-  const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : ['']
-  for (const name of names) {
-    for (const dir of search.split(path.delimiter)) {
-      for (const extension of extensions) {
-        const candidate = path.join(dir, name + extension)
-        try {
-          fs.accessSync(candidate, fs.constants.X_OK)
-          return candidate
-        } catch {
-          // Try the next candidate.
-        }
-      }
-    }
-  }
-  return null
 }
 
 function failureContext(pipeline: Pipeline, result: PipelineRunResult): string {
@@ -757,9 +719,8 @@ export class AgentController {
 
   private runAgent(task: Task, prompt: string, sink: AgentSink): Promise<number> {
     const spec = managedAiCommand(task.request.provider, prompt)
-    const env = shellEnv()
-    env.PATH = searchPath()
-    const bin = resolveBin(spec.bins, env.PATH)
+    const env = aiEnv()
+    const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       sink.text(`farol: ${spec.hint}\n`)
       return Promise.resolve(127)

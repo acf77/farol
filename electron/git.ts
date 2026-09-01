@@ -1,7 +1,9 @@
-import { execFile } from 'child_process'
+import { execCli } from './exec-cli'
 import fs from 'fs'
 import path from 'path'
-import type { GitInfo } from '../shared/types'
+import { runAiOnce } from './ai-oneshot'
+import { parseAheadBehind, parseGitStatus } from '../shared/git-status'
+import type { AiProvider, GitInfo, GitStatus } from '../shared/types'
 import type { WorktreeRequest } from '../shared/worktree'
 import { parseAlreadyOpenPath, parseWorktreeList, pipelineStoreRoot, worktreeFolderName } from '../shared/worktree'
 
@@ -15,22 +17,16 @@ function git(
   args: string[],
   timeout = 10_000
 ): Promise<{ code: number; out: string; err: string }> {
-  return new Promise((resolve) => {
-    execFile(
-      'git',
-      args,
-      { cwd, timeout, maxBuffer: 4 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        const code =
-          error && typeof (error as NodeJS.ErrnoException & { code?: number }).code === 'number'
-            ? ((error as unknown as { code: number }).code as number)
-            : error
-              ? 1
-              : 0
-        resolve({ code, out: stdout.toString(), err: stderr.toString() })
-      }
-    )
-  })
+  return execCli('git', cwd, args, timeout)
+}
+
+function cliFirstLine(res: { out: string; err: string }): string {
+  return (res.err || res.out).trim().split('\n').filter(Boolean)[0] ?? ''
+}
+
+function cliLastLine(res: { out: string; err: string }): string {
+  const lines = (res.err || res.out).trim().split('\n').filter(Boolean)
+  return lines.length ? lines[lines.length - 1]! : ''
 }
 
 async function refExists(cwd: string, ref: string): Promise<boolean> {
@@ -108,7 +104,7 @@ export async function checkout(cwd: string, branch: string): Promise<{ ok: boole
   }
   const res = await git(cwd, ['checkout', branch])
   // git writes "Switched to branch 'x'" to stderr, so use it for both outcomes.
-  const message = (res.err || res.out).trim().split('\n')[0] || ''
+  const message = cliFirstLine(res)
   return { ok: res.code === 0, message }
 }
 
@@ -249,7 +245,7 @@ export async function addWorktree(cwd: string, req: WorktreeRequest): Promise<Wo
 
   const res = await git(cwd, built.args, 120_000)
   if (res.code !== 0) {
-    const message = (res.err || res.out).trim().split('\n').filter(Boolean).pop() || 'could not create worktree'
+    const message = cliLastLine(res) || 'could not create worktree'
     const open = parseAlreadyOpenPath(message)
     if (open && fs.existsSync(open)) {
       return { ok: true, path: open, branch: name, reused: true, message: '' }
@@ -257,6 +253,91 @@ export async function addWorktree(cwd: string, req: WorktreeRequest): Promise<Wo
     return { ok: false, message }
   }
   return { ok: true, path: destOrReuse.dest, branch: name, message: '' }
+}
+
+export async function status(cwd: string): Promise<GitStatus> {
+  const [porcelain, tracking] = await Promise.all([
+    git(cwd, ['status', '--porcelain=v1']),
+    git(cwd, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD'])
+  ])
+  const parsed = parseGitStatus(porcelain.out)
+  const { ahead, behind } =
+    tracking.code === 0 ? parseAheadBehind(tracking.out) : { ahead: 0, behind: 0 }
+  return { ...parsed, ahead, behind }
+}
+
+async function stageAll(cwd: string): Promise<{ ok: boolean; message: string }> {
+  const res = await git(cwd, ['add', '-A'])
+  return { ok: res.code === 0, message: cliFirstLine(res) }
+}
+
+async function commit(cwd: string, message: string): Promise<{ ok: boolean; message: string }> {
+  const trimmed = message.trim()
+  if (!trimmed) return { ok: false, message: 'Commit message is empty' }
+  const res = await git(cwd, ['commit', '-m', trimmed])
+  const line = cliFirstLine(res)
+  return { ok: res.code === 0, message: line || (res.code === 0 ? 'Committed' : 'Commit failed') }
+}
+
+const COMMIT_MSG_LIMIT = 24_000
+
+/** Strip markdown fences and cap AI commit output to a short message. */
+export function sanitizeCommitMessage(raw: string): string {
+  let message = raw.trim()
+  if (message.startsWith('```')) {
+    message = message.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '').trim()
+  }
+  return message
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 12)
+    .join('\n')
+}
+
+function commitMessagePrompt(diff: string): string {
+  return [
+    'Write a concise git commit message (1–2 sentences) for the staged changes below.',
+    'Use conventional commit style when it fits. Output ONLY the commit message — no quotes, labels, or explanation.',
+    '',
+    '---',
+    diff.slice(0, COMMIT_MSG_LIMIT)
+  ].join('\n')
+}
+
+async function generateCommitMessage(
+  cwd: string,
+  provider: AiProvider
+): Promise<{ ok: boolean; message?: string; error?: string }> {
+  const diffRes = await git(cwd, ['diff', '--cached', '--stat', '--patch'])
+  const diff = diffRes.out.trim()
+  if (!diff) return { ok: false, error: 'Nothing staged — stage changes before generating a message.' }
+  const ai = await runAiOnce(provider, commitMessagePrompt(diff), cwd)
+  if (!ai.ok) return { ok: false, error: ai.error || 'Could not generate commit message' }
+  const message = sanitizeCommitMessage(ai.text)
+  if (!message) return { ok: false, error: 'AI returned an empty commit message' }
+  return { ok: true, message }
+}
+
+/** Stage everything, generate a message with AI, and commit in one step. */
+export async function aiCommit(
+  cwd: string,
+  provider: AiProvider
+): Promise<{ ok: boolean; message?: string; error?: string }> {
+  const st = await status(cwd)
+  if (st.clean) return { ok: false, error: 'Working tree is clean — nothing to commit.' }
+  if (st.conflicts.length) {
+    return { ok: false, error: 'Resolve merge conflicts before committing.' }
+  }
+  const staged = await stageAll(cwd)
+  if (!staged.ok) return { ok: false, error: staged.message || 'Could not stage changes' }
+  const generated = await generateCommitMessage(cwd, provider)
+  if (!generated.ok || !generated.message) {
+    return { ok: false, error: generated.error || 'Could not generate commit message' }
+  }
+  const done = await commit(cwd, generated.message)
+  if (!done.ok) return { ok: false, error: done.message || 'Commit failed' }
+  return { ok: true, message: generated.message }
 }
 
 /** Resolve the checkout that stores `.farol/pipelines.json` for this repo. */

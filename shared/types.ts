@@ -71,6 +71,42 @@ export interface GitChanged {
   info: GitInfo
 }
 
+export type GitFileKind = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict'
+
+export interface GitStatusFile {
+  path: string
+  kind: GitFileKind
+  staged: boolean
+}
+
+export interface GitStatus {
+  clean: boolean
+  staged: GitStatusFile[]
+  unstaged: GitStatusFile[]
+  untracked: GitStatusFile[]
+  conflicts: GitStatusFile[]
+  ahead: number
+  behind: number
+}
+
+
+export interface PullRequest {
+  number: number
+  title: string
+  url: string
+  headRef: string
+  hasConflicts: boolean
+  hasChecks: boolean
+  checksPending: number
+  checksFailed: number
+}
+
+export interface GitHubInfo {
+  available: boolean
+  message?: string
+  prs: PullRequest[]
+}
+
 /** Fired when `.farol/pipelines.json` changes on disk (including outside the app). */
 export interface PipelinesChanged {
   projectPath: string
@@ -295,6 +331,12 @@ export interface FarolApi {
       reused?: boolean
       message: string
     }>
+    status(projectPath: string): Promise<GitStatus>
+    aiCommit(
+      projectPath: string,
+      provider: AiProvider
+    ): Promise<{ ok: boolean; message?: string; error?: string }>
+    github(projectPath: string): Promise<GitHubInfo>
     /** Fires when HEAD changes, including from outside the app. */
     onChanged(cb: (changed: GitChanged) => void): () => void
   }

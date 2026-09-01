@@ -51,6 +51,8 @@ import ChatPane from './components/ChatPane'
 import TerminalPane from './components/TerminalPane'
 import ProjectRail from './components/ProjectRail'
 import Sidebar from './components/Sidebar'
+import GitPane from './components/GitPane'
+import { useGitPanel } from './hooks/useGitPanel'
 import StatusBar from './components/StatusBar'
 import PipelineCanvas from './components/PipelineCanvas'
 import CommandPalette, { type PaletteItem } from './components/CommandPalette'
@@ -977,6 +979,9 @@ interface ProjectWorkspaceViewProps {
   openRunLogs: () => void
   pipesCollapsed: boolean
   setPipesCollapsed: Dispatch<SetStateAction<boolean>>
+  gitCollapsed: boolean
+  setGitCollapsed: Dispatch<SetStateAction<boolean>>
+  gitPanel: ReturnType<typeof useGitPanel>
   git: GitInfo
   anyRunning: boolean
   processCount: number
@@ -1047,6 +1052,9 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     openRunLogs,
     pipesCollapsed,
     setPipesCollapsed,
+    gitCollapsed,
+    setGitCollapsed,
+    gitPanel,
     git,
     anyRunning,
     processCount,
@@ -1170,6 +1178,14 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           </div>
         </div>
 
+        <GitPane
+          branch={runBranch}
+          provider={settings.agent}
+          {...gitPanel}
+          collapsed={gitCollapsed}
+          onSetCollapsed={setGitCollapsed}
+        />
+
         <Sidebar
           pipelines={pipelines}
           runs={branchRuns}
@@ -1289,6 +1305,7 @@ function ProjectWorkspace({
   const [settings, setSettings] = useState<AppSettings>(defaultSettings)
   const [liquid, setLiquid] = useState(false)
   const [pipesCollapsed, setPipesCollapsed] = useState(false)
+  const [gitCollapsed, setGitCollapsed] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [clearChatConfirm, setClearChatConfirm] = useState(false)
   const [chatClearedNotice, setChatClearedNotice] = useState(false)
@@ -1296,6 +1313,10 @@ function ProjectWorkspace({
   const seq = useRef({ shell: 1, pane: 0, split: 0 })
   const pipelinesRef = useRef<Pipeline[]>([])
   const settingsRef = useRef<AppSettings>(settings)
+  const gitPanel = useGitPanel(project.path, () => settingsRef.current.agent, {
+    enabled: visible && git.isRepo,
+    onHeadChange: setGit
+  })
   const sendToAgentRef = useRef<(branch: string, cwd: string) => void>(() => {})
   const worktreeBusy = useRef(false)
   const lastRunOut = useRef<{ paneId: string; nodeId: string } | null>(null)
@@ -1778,14 +1799,6 @@ function ProjectWorkspace({
     }
   }, [])
 
-  // HEAD can move from a shell pane or another app; follow it either way.
-  useEffect(
-    () =>
-      api.git.onChanged((changed) => {
-        if (normPath(changed.projectPath) === normPath(project.path)) setGit(changed.info)
-      }),
-    [project.path]
-  )
 
   // Agents (and other editors) rewrite `.farol/pipelines.json` on disk —
   // pick that up without requiring an app restart.
@@ -2506,6 +2519,9 @@ function ProjectWorkspace({
       openRunLogs={openRunLogs}
       pipesCollapsed={pipesCollapsed}
       setPipesCollapsed={setPipesCollapsed}
+      gitCollapsed={gitCollapsed}
+      setGitCollapsed={setGitCollapsed}
+      gitPanel={gitPanel}
       git={git}
       anyRunning={anyRunning}
       processCount={processCount}

@@ -297,3 +297,15 @@ export function ClearChatIcon({ size = 14, color = '#94A3B8' }: IconProps) {
     </svg>
   )
 }
+
+/** Source control — branch node with a commit dot. */
+export function GitIcon({ size = 13, color = 'currentColor' }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.4}>
+      <circle cx="5" cy="4" r="1.6" fill={color} stroke="none" />
+      <circle cx="5" cy="12" r="1.6" fill={color} stroke="none" />
+      <circle cx="11" cy="8" r="1.6" fill={color} stroke="none" />
+      <path d="M5 5.6v4.8M5 4v0M5 12v0M7.2 8h2.2" />
+    </svg>
+  )
+}

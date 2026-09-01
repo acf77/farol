@@ -12,7 +12,8 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, checkout, info as gitInfo } from './git'
+import { HeadWatcher, addWorktree, aiCommit, checkout, info as gitInfo, status as gitStatus } from './git'
+import { githubInfo } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, PipelineWatcher } from './store'
 import { listProjectFiles, saveChatAttachment } from './files'
@@ -560,6 +561,11 @@ function registerIpc(): void {
     if (res.ok && res.path && res.path !== projectPath) installMcpConfig(res.path, projectPath)
     return res
   })
+  ipcMain.handle('git:status', (_e, projectPath: string) => gitStatus(projectPath))
+  ipcMain.handle('git:aiCommit', (_e, projectPath: string, provider: AgentTaskRequest['provider']) =>
+    aiCommit(projectPath, provider)
+  )
+  ipcMain.handle('git:github', (_e, projectPath: string) => githubInfo(projectPath))
 
   ipcMain.handle('run:start', (_e, pipeline: Pipeline, cwd: string, branch: string) =>
     runner.start(pipeline, cwd, branch)

@@ -1,7 +1,6 @@
 import * as pty from 'node-pty'
 import { spawn, type ChildProcess } from 'child_process'
 import fs from 'fs'
-import os from 'os'
 import path from 'path'
 import type {
   Pipeline,
@@ -25,6 +24,7 @@ import {
   topoSort,
   validateRunnable
 } from '../shared/graph'
+import { aiEnv, resolveBinFrom } from './bin'
 import { defaultShell, pipelineEnv, PtySession, shellEnv } from './session'
 import { killPidTree, killPty } from './kill'
 import { shellFamily } from './protocol'
@@ -40,50 +40,6 @@ const LIVE_OUTPUT_LIMIT = Math.max(CONTEXT_LIMIT, REPORT_OUTPUT_LIMIT)
 /** Trailing window for AI verdict parsing — only the end of the stream matters. */
 const VERDICT_SCAN_LIMIT = 16_384
 const STEP_RESULT_LIMIT = 4000
-
-function extraBinDirs(): string[] {
-  const home = os.homedir()
-  return [
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    path.join(home, '.local', 'bin'),
-    path.join(home, '.cursor', 'bin'),
-    path.join(home, '.npm-global', 'bin'),
-    path.join(home, '.bun', 'bin')
-  ]
-}
-
-function searchDirs(): string[] {
-  const fromPath = (process.env.PATH || '').split(path.delimiter).filter(Boolean)
-  const extra = extraBinDirs().filter((dir) => !fromPath.includes(dir))
-  return [...extra, ...fromPath]
-}
-
-function resolveBin(name: string): string | null {
-  if (name.includes(path.sep)) return fs.existsSync(name) ? name : null
-  const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : ['']
-  for (const dir of searchDirs()) {
-    for (const ext of exts) {
-      const candidate = path.join(dir, name + ext)
-      try {
-        fs.accessSync(candidate, fs.constants.X_OK)
-        return candidate
-      } catch {
-        /* keep looking */
-      }
-    }
-  }
-  return null
-}
-
-function aiEnv(): Record<string, string> {
-  const env = shellEnv()
-  const fromPath = (env.PATH || '').split(path.delimiter).filter(Boolean)
-  const extra = extraBinDirs().filter((dir) => !fromPath.includes(dir))
-  env.PATH = [...extra, ...fromPath].join(path.delimiter)
-  return env
-}
-
 
 /**
  * Leave a failed step somewhere an agent can read it. The file lives in the
@@ -667,11 +623,7 @@ export class PipelineRunner {
       verdictPromptSuffix()
     ].join('\n')
     const spec = aiCommand(normalizeAi(node.ai), prompt)
-    let bin: string | null = null
-    for (const name of spec.bins) {
-      bin = resolveBin(name)
-      if (bin) break
-    }
+    const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       const listed = spec.bins.map((b) => `'${b}'`).join(' or ')
       onChunk(`farol: ${listed} is not on PATH. ${spec.hint}\r\n`)
