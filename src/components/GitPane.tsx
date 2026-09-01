@@ -1,21 +1,27 @@
-import type { CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useState, type CSSProperties, type RefObject } from 'react'
 import type { AiProvider, GitFileKind, GitHubInfo, GitStatus, PullRequest } from '@shared/types'
 import { useGitPanel } from '../hooks/useGitPanel'
 import { C, MONO } from '../theme'
 import { Button } from './controls'
-import {
-  RailLabel,
-  SIDE_PANEL_WIDTH,
-  sidePanelShellStyle,
-  useCollapseRail
-} from './side-panel'
-import { CaretLeft, CaretRight, CheckIcon, GitIcon, RetryIcon, Spinner } from './icons'
+import { SIDE_PANEL_WIDTH } from './side-panel'
+import { CheckIcon, GitIcon, RetryIcon, Spinner } from './icons'
 
 interface Props extends ReturnType<typeof useGitPanel> {
   branch: string
   provider: AiProvider
-  collapsed: boolean
-  onSetCollapsed: (collapsed: boolean) => void
+  open: boolean
+  onClose: () => void
+  anchorRef: RefObject<HTMLElement | null>
+}
+
+export function gitStatusDotColor(
+  status: GitStatus | null,
+  github: GitHubInfo | null
+): string {
+  const hasConflicts = (status?.conflicts.length ?? 0) > 0
+  const prConflicts = github?.prs.some((p) => p.hasConflicts) ?? false
+  const dirty = status && !status.clean
+  return hasConflicts || prConflicts ? C.red : dirty ? C.yellow : C.green
 }
 
 const sectionLabel: CSSProperties = {
@@ -157,51 +163,7 @@ function FileList({ title, files, color }: { title: string; files: GitStatus['st
   )
 }
 
-function GitCollapsedRail({
-  shellStyle,
-  dotColor,
-  onExpand
-}: {
-  shellStyle: CSSProperties
-  dotColor: string
-  onExpand: () => void
-}) {
-  return (
-    <div
-      className="bf-side-panel"
-      style={{ ...shellStyle, cursor: 'pointer', alignItems: 'center', paddingTop: 12, gap: 10 }}
-      onClick={onExpand}
-      title="Expand git panel"
-    >
-      <GitIcon size={14} color={C.textMuted} />
-      <RailLabel color={C.textMuted}>GIT</RailLabel>
-      <span style={{ width: 7, height: 7, borderRadius: '50%', background: dotColor, flex: 'none' }} />
-      <button
-        type="button"
-        className="bf-focus bf-icon-btn"
-        onClick={(e) => {
-          e.stopPropagation()
-          onExpand()
-        }}
-        title="Expand git panel"
-        aria-label="Expand git panel"
-        style={{ ...iconBtn, marginTop: 'auto', marginBottom: 10 }}
-      >
-        <CaretLeft />
-      </button>
-    </div>
-  )
-}
-
-function GitPanelHeader({
-  loading,
-  onRefresh,
-  onCollapse
-}: {
-  loading: boolean
-  onRefresh: () => void
-  onCollapse: () => void
-}) {
+function GitPanelHeader({ loading, onRefresh }: { loading: boolean; onRefresh: () => void }) {
   return (
     <div
       style={{
@@ -210,7 +172,8 @@ function GitPanelHeader({
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '0 7px 0 12px'
+        padding: '0 7px 0 12px',
+        borderBottom: `1px solid ${C.cardBorder}`
       }}
     >
       <GitIcon size={14} color={C.textMuted} />
@@ -225,16 +188,6 @@ function GitPanelHeader({
         style={{ ...iconBtn, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.5 : 1 }}
       >
         {loading ? <Spinner /> : <RetryIcon size={14} />}
-      </button>
-      <button
-        type="button"
-        className="bf-focus bf-icon-btn"
-        onClick={onCollapse}
-        title="Collapse panel"
-        aria-label="Collapse git panel"
-        style={iconBtn}
-      >
-        <CaretRight />
       </button>
     </div>
   )
@@ -291,6 +244,38 @@ function ChangesBlock({ branch, status }: { branch: string; status: GitStatus | 
   )
 }
 
+function usePopoverPosition(
+  anchorRef: RefObject<HTMLElement | null>,
+  open: boolean
+): { left: number; bottom: number } | null {
+  const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null)
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null)
+      return
+    }
+    const anchor = anchorRef.current
+    if (!anchor) return
+    const update = (): void => {
+      const rect = anchor.getBoundingClientRect()
+      setPos({
+        left: rect.left,
+        bottom: window.innerHeight - rect.top + 8
+      })
+    }
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [anchorRef, open])
+
+  return pos
+}
+
 export default function GitPane({
   branch,
   provider,
@@ -302,46 +287,53 @@ export default function GitPane({
   error,
   refresh,
   aiCommit,
-  collapsed,
-  onSetCollapsed
+  open,
+  onClose,
+  anchorRef
 }: Props) {
-  const { showRail, onWidthTransitionEnd } = useCollapseRail(collapsed)
-  const shellStyle = sidePanelShellStyle(collapsed, { animate: true })
+  const pos = usePopoverPosition(anchorRef, open)
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  if (!open || !pos) return null
 
   const hasConflicts = (status?.conflicts.length ?? 0) > 0
   const prConflicts = github?.prs.some((p) => p.hasConflicts) ?? false
   const dirty = status && !status.clean
   const canCommit = !!dirty && !hasConflicts && !committing
-  const dotColor = hasConflicts || prConflicts ? C.red : dirty ? C.yellow : C.green
-
-  if (showRail) {
-    return (
-      <GitCollapsedRail
-        shellStyle={shellStyle}
-        dotColor={dotColor}
-        onExpand={() => onSetCollapsed(false)}
-      />
-    )
-  }
 
   return (
-    <div
-      className="bf-side-panel"
-      style={shellStyle}
-      onTransitionEnd={onWidthTransitionEnd}
-    >
+    <>
+      <div aria-hidden onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 55 }} />
       <div
+        role="dialog"
+        aria-label="Git"
         style={{
+          position: 'fixed',
+          left: pos.left,
+          bottom: pos.bottom,
+          zIndex: 60,
           width: SIDE_PANEL_WIDTH,
-          flex: 1,
-          minHeight: 0,
+          maxHeight: 'min(70vh, 520px)',
           display: 'flex',
-          flexDirection: 'column'
+          flexDirection: 'column',
+          background: '#111827',
+          border: `1px solid ${C.cardBorder}`,
+          borderRadius: 10,
+          boxShadow: '0 18px 44px rgba(0,0,0,0.55)',
+          overflow: 'hidden'
         }}
       >
-        <GitPanelHeader loading={loading} onRefresh={() => void refresh()} onCollapse={() => onSetCollapsed(true)} />
+        <GitPanelHeader loading={loading} onRefresh={() => void refresh()} />
 
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 10px 12px' }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 10px 12px' }}>
           {(hasConflicts || prConflicts) && (
             <div style={alertBox('conflict')}>
               {hasConflicts
@@ -381,6 +373,6 @@ export default function GitPane({
           </Button>
         </div>
       </div>
-    </div>
+    </>
   )
 }

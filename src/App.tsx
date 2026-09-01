@@ -51,7 +51,7 @@ import ChatPane from './components/ChatPane'
 import TerminalPane from './components/TerminalPane'
 import ProjectRail from './components/ProjectRail'
 import Sidebar from './components/Sidebar'
-import GitPane from './components/GitPane'
+import GitPane, { gitStatusDotColor } from './components/GitPane'
 import { useGitPanel } from './hooks/useGitPanel'
 import StatusBar from './components/StatusBar'
 import PipelineCanvas from './components/PipelineCanvas'
@@ -979,8 +979,9 @@ interface ProjectWorkspaceViewProps {
   openRunLogs: () => void
   pipesCollapsed: boolean
   setPipesCollapsed: Dispatch<SetStateAction<boolean>>
-  gitCollapsed: boolean
-  setGitCollapsed: Dispatch<SetStateAction<boolean>>
+  gitOpen: boolean
+  onGitOpenChange: Dispatch<SetStateAction<boolean>>
+  gitAnchorRef: RefObject<HTMLButtonElement>
   gitPanel: ReturnType<typeof useGitPanel>
   git: GitInfo
   anyRunning: boolean
@@ -1052,8 +1053,9 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     openRunLogs,
     pipesCollapsed,
     setPipesCollapsed,
-    gitCollapsed,
-    setGitCollapsed,
+    gitOpen,
+    onGitOpenChange,
+    gitAnchorRef,
     gitPanel,
     git,
     anyRunning,
@@ -1178,14 +1180,6 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           </div>
         </div>
 
-        <GitPane
-          branch={runBranch}
-          provider={settings.agent}
-          {...gitPanel}
-          collapsed={gitCollapsed}
-          onSetCollapsed={setGitCollapsed}
-        />
-
         <Sidebar
           pipelines={pipelines}
           runs={branchRuns}
@@ -1251,6 +1245,17 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           />
         </div>
       )}
+
+      {git.isRepo && (
+        <GitPane
+          branch={runBranch}
+          provider={settings.agent}
+          {...gitPanel}
+          open={gitOpen}
+          onClose={() => onGitOpenChange(false)}
+          anchorRef={gitAnchorRef}
+        />
+      )}
     </div>
   )
 }
@@ -1262,6 +1267,10 @@ interface ProjectWorkspaceProps {
   branchDialogNonce: number
   /** Incremented when the rail asks this project to clear its chat. */
   newChatNonce: number
+  gitOpen: boolean
+  onGitOpenChange: Dispatch<SetStateAction<boolean>>
+  gitAnchorRef: RefObject<HTMLButtonElement>
+  onGitControlChange: (control: { dotColor: string } | null) => void
   onOpenProject: () => void
   onOpenPath: (path: string) => void
   onCloseProject: () => void
@@ -1276,6 +1285,10 @@ function ProjectWorkspace({
   visible,
   branchDialogNonce,
   newChatNonce,
+  gitOpen,
+  onGitOpenChange,
+  gitAnchorRef,
+  onGitControlChange,
   onOpenProject,
   onOpenPath,
   onCloseProject,
@@ -1305,7 +1318,6 @@ function ProjectWorkspace({
   const [settings, setSettings] = useState<AppSettings>(defaultSettings)
   const [liquid, setLiquid] = useState(false)
   const [pipesCollapsed, setPipesCollapsed] = useState(false)
-  const [gitCollapsed, setGitCollapsed] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [clearChatConfirm, setClearChatConfirm] = useState(false)
   const [chatClearedNotice, setChatClearedNotice] = useState(false)
@@ -1317,6 +1329,22 @@ function ProjectWorkspace({
     enabled: visible && git.isRepo,
     onHeadChange: setGit
   })
+
+  useEffect(() => {
+    if (!visible) return
+    if (!git.isRepo) {
+      onGitControlChange(null)
+      return
+    }
+    onGitControlChange({
+      dotColor: gitStatusDotColor(gitPanel.status, gitPanel.github)
+    })
+    return () => onGitControlChange(null)
+  }, [visible, git.isRepo, gitPanel.status, gitPanel.github, onGitControlChange])
+
+  useEffect(() => {
+    if (!visible) onGitOpenChange(false)
+  }, [visible, onGitOpenChange])
   const sendToAgentRef = useRef<(branch: string, cwd: string) => void>(() => {})
   const worktreeBusy = useRef(false)
   const lastRunOut = useRef<{ paneId: string; nodeId: string } | null>(null)
@@ -2519,8 +2547,9 @@ function ProjectWorkspace({
       openRunLogs={openRunLogs}
       pipesCollapsed={pipesCollapsed}
       setPipesCollapsed={setPipesCollapsed}
-      gitCollapsed={gitCollapsed}
-      setGitCollapsed={setGitCollapsed}
+      gitOpen={gitOpen}
+      onGitOpenChange={onGitOpenChange}
+      gitAnchorRef={gitAnchorRef}
       gitPanel={gitPanel}
       git={git}
       anyRunning={anyRunning}
@@ -2546,6 +2575,9 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
   const [projectsCollapsed, setProjectsCollapsed] = useState(false)
+  const [gitOpen, setGitOpen] = useState(false)
+  const [gitControl, setGitControl] = useState<{ dotColor: string } | null>(null)
+  const gitAnchorRef = useRef<HTMLButtonElement>(null)
   const [branchDialog, setBranchDialog] = useState<{ path: string; nonce: number }>({
     path: '',
     nonce: 0
@@ -2630,6 +2662,14 @@ export default function App() {
     setActivePath(projectPath)
     setChatRequest((prev) => ({ path: projectPath, nonce: prev.nonce + 1 }))
   }, [])
+
+  useEffect(() => {
+    setGitOpen(false)
+  }, [activePath])
+
+  useEffect(() => {
+    if (!gitControl) setGitOpen(false)
+  }, [gitControl])
 
   useEffect(() => {
     let cancelled = false
@@ -2741,6 +2781,11 @@ export default function App() {
         onNewChat={requestNewChat}
         collapsed={projectsCollapsed}
         onSetCollapsed={setProjectsCollapsed}
+        gitAnchorRef={gitAnchorRef}
+        showGit={!!gitControl}
+        gitOpen={gitOpen}
+        gitDotColor={gitControl?.dotColor}
+        onGitToggle={() => setGitOpen((open) => !open)}
       />
       <div style={{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden' }}>
         {projects.map((project) => {
@@ -2774,6 +2819,10 @@ export default function App() {
                   branchDialog.path === project.path ? branchDialog.nonce : 0
                 }
                 newChatNonce={chatRequest.path === project.path ? chatRequest.nonce : 0}
+                gitOpen={gitOpen}
+                onGitOpenChange={setGitOpen}
+                gitAnchorRef={gitAnchorRef}
+                onGitControlChange={setGitControl}
                 onOpenProject={openProject}
                 onOpenPath={(path) => void openPath(path)}
                 onCloseProject={() => closeProject(project.path)}

@@ -3,7 +3,16 @@ import type { GitInfo, Project } from '@shared/types'
 import { groupOpenProjects } from '@shared/project-groups'
 import { C, UI } from '../theme'
 import { RailLabel, sidePanelShellStyle, useCollapseRail } from './side-panel'
-import { BranchIcon, CaretLeft, CaretRight, ChevronDown, ChevronRight, ClearChatIcon, ProjectIcon } from './icons'
+import {
+  BranchIcon,
+  CaretLeft,
+  CaretRight,
+  ChevronDown,
+  ChevronRight,
+  ClearChatIcon,
+  GitIcon,
+  ProjectIcon
+} from './icons'
 
 const api = window.farol
 
@@ -26,6 +35,12 @@ interface Props {
   onNewChat: (projectPath: string) => void
   collapsed: boolean
   onSetCollapsed: (collapsed: boolean) => void
+  /** Anchor for the git popover on the active repo checkout. */
+  gitAnchorRef?: React.RefObject<HTMLButtonElement>
+  showGit?: boolean
+  gitOpen?: boolean
+  gitDotColor?: string
+  onGitToggle?: () => void
 }
 
 /** Status dot — green pulse while busy, blue until the chat is opened, then off. */
@@ -94,7 +109,12 @@ export default function ProjectRail({
   onNewBranch,
   onNewChat,
   collapsed,
-  onSetCollapsed
+  onSetCollapsed,
+  gitAnchorRef,
+  showGit,
+  gitOpen,
+  gitDotColor,
+  onGitToggle
 }: Props) {
   const agentBusy = (path: string): boolean => !!busyPaths?.has(path)
   const agentUnread = (path: string): boolean => !!unreadPaths?.has(path)
@@ -150,6 +170,62 @@ export default function ProjectRail({
   const activeGroup = groups.find((g) => g.projects.some((p) => p.project.path === activePath))
   const activeBranch =
     activeGroup?.projects.find((p) => p.project.path === activePath)?.branch ?? ''
+
+  const gitFooter = showGit && onGitToggle && (
+    <div
+      style={{
+        flex: 'none',
+        padding: collapsed ? '0 0 12px' : '0 8px 12px',
+        display: 'flex',
+        justifyContent: 'center',
+        WebkitAppRegion: 'no-drag'
+      } as React.CSSProperties}
+    >
+      <button
+        ref={gitAnchorRef}
+        type="button"
+        className="bf-focus bf-icon-btn"
+        onClick={onGitToggle}
+        title="Git status and commit"
+        aria-label="Git status and commit"
+        aria-expanded={gitOpen}
+        style={{
+          ...noDrag,
+          width: collapsed ? 34 : '100%',
+          height: 34,
+          borderRadius: 8,
+          border: `1px solid ${gitOpen ? C.accent : C.cardBorder}`,
+          background: gitOpen ? 'rgba(37,99,235,0.12)' : 'rgba(255,255,255,0.03)',
+          color: C.textSoft,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+          cursor: 'pointer',
+          position: 'relative'
+        }}
+      >
+        <GitIcon size={14} color={C.textMuted} />
+        {!collapsed && (
+          <span style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: '0.04em' }}>Git</span>
+        )}
+        {gitDotColor && (
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: '50%',
+              background: gitDotColor,
+              flex: 'none',
+              ...(collapsed
+                ? { position: 'absolute', top: 6, right: 6 }
+                : { marginLeft: 'auto', marginRight: 2 })
+            }}
+          />
+        )}
+      </button>
+    </div>
+  )
 
   if (showRail) {
     return (
@@ -247,6 +323,7 @@ export default function ProjectRail({
             )
           })}
         </div>
+        {gitFooter}
       </aside>
     )
   }
@@ -530,6 +607,8 @@ export default function ProjectRail({
           )
         })}
       </div>
+
+      {gitFooter}
       </div>
     </aside>
   )
