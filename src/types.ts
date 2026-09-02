@@ -59,6 +59,8 @@ export interface AgentPane extends BasePane {
   status: AgentTaskStatus | 'idle'
   attempt: number
   provider: AiProvider
+  /** Model id for `provider`. Omitted uses the CLI's own default. */
+  model?: string
   messages: AgentMessage[]
 }
 

@@ -175,4 +175,19 @@ describe('sanitizeSettings', () => {
       autoFix: false
     })
   })
+
+  it('keeps a chosen model so a new chat can reuse it', () => {
+    expect(sanitizeSettings({ agent: 'claude', autoFix: true, model: 'opus' })).toEqual({
+      agent: 'claude',
+      model: 'opus',
+      autoFix: true
+    })
+  })
+
+  it('drops a blank model so the CLI default applies', () => {
+    expect(sanitizeSettings({ agent: 'cursor', autoFix: true, model: '  ' })).toEqual({
+      agent: 'cursor',
+      autoFix: true
+    })
+  })
 })

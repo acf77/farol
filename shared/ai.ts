@@ -10,6 +10,40 @@ export const AI_LABELS: Record<AiProvider, string> = {
   opencode: 'OpenCode'
 }
 
+/** Models each CLI accepts via `--model`. Ids are what the binary takes. */
+export interface AiModel {
+  id: string
+  label: string
+}
+
+export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
+  claude: [
+    { id: 'sonnet', label: 'Sonnet 5' },
+    { id: 'opus', label: 'Opus 5' },
+    { id: 'fable', label: 'Fable 5.1' },
+    { id: 'haiku', label: 'Haiku' }
+  ],
+  codex: [
+    { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+    { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+    { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' }
+  ],
+  cursor: [
+    { id: 'composer-2.5', label: 'Composer 2.5' },
+    { id: 'gpt-5.6', label: 'GPT-5.6' },
+    { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+    { id: 'claude-opus-5', label: 'Opus 5' },
+    { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
+    { id: 'grok-4.6', label: 'Grok 4.6' }
+  ],
+  opencode: [
+    { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5' },
+    { id: 'anthropic/claude-opus-5', label: 'Claude Opus 5' },
+    { id: 'openai/gpt-5.6', label: 'GPT-5.6' },
+    { id: 'google/gemini-3-flash', label: 'Gemini 3 Flash' }
+  ]
+}
+
 export function isAiProvider(value: unknown): value is AiProvider {
   return value === 'claude' || value === 'codex' || value === 'cursor' || value === 'opencode'
 }
@@ -17,6 +51,43 @@ export function isAiProvider(value: unknown): value is AiProvider {
 /** Older pipelines omit `ai`; they keep running Claude. */
 export function normalizeAi(value: unknown): AiProvider {
   return isAiProvider(value) ? value : 'claude'
+}
+
+/** Empty or non-string values mean "use the CLI's own default". */
+export function normalizeModel(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const id = value.trim()
+  return id || undefined
+}
+
+export function aiModelLabel(provider: AiProvider, model?: string): string | undefined {
+  const id = normalizeModel(model)
+  if (!id) return undefined
+  return AI_MODELS[provider].find((m) => m.id === id)?.label ?? id
+}
+
+/** `Claude` or `Claude · Sonnet 5`. */
+export function aiSelectionLabel(provider: AiProvider, model?: string): string {
+  const cli = AI_LABELS[provider]
+  const label = aiModelLabel(provider, model)
+  return label ? `${cli} · ${label}` : cli
+}
+
+/** Models offered in the picker, plus a stored custom id so it stays selectable. */
+export function modelsFor(provider: AiProvider, current?: string): readonly AiModel[] {
+  const listed = AI_MODELS[provider]
+  const id = normalizeModel(current)
+  if (id && !listed.some((m) => m.id === id)) return [...listed, { id, label: id }]
+  return listed
+}
+
+/** Insert `--model <id>` before the trailing prompt. */
+export function withModel(args: string[], model?: string): string[] {
+  const id = normalizeModel(model)
+  if (!id) return args
+  const prompt = args[args.length - 1]
+  if (prompt === undefined) return ['--model', id]
+  return [...args.slice(0, -1), '--model', id, prompt]
 }
 
 export interface AiCommand {
@@ -37,32 +108,35 @@ export interface AiCommand {
  * text so a review step returns a string instead of Agent "ACT" chrome.
  * `--force` still auto-approves read tools so it cannot stall on a prompt.
  */
-export function aiCommand(provider: AiProvider, prompt: string): AiCommand {
+export function aiCommand(provider: AiProvider, prompt: string, model?: string): AiCommand {
   switch (provider) {
     case 'codex':
       return {
         bins: ['codex'],
         // Force approval_policy=never via -c: --sandbox alone does not override a
         // user config that still asks for approval, which would hang headless reviews.
-        args: ['exec', '-c', 'approval_policy=never', '--sandbox', 'read-only', prompt],
+        args: withModel(
+          ['exec', '-c', 'approval_policy=never', '--sandbox', 'read-only', prompt],
+          model
+        ),
         hint: "Install the Codex CLI (npm i -g @openai/codex) to run Codex steps."
       }
     case 'cursor':
       return {
         bins: ['agent', 'cursor-agent'],
-        args: ['-p', '--force', '--mode=ask', '--output-format', 'text', prompt],
+        args: withModel(['-p', '--force', '--mode=ask', '--output-format', 'text', prompt], model),
         hint: 'Install the Cursor CLI (https://cursor.com/docs/cli) to run Cursor steps.'
       }
     case 'opencode':
       return {
         bins: ['opencode'],
-        args: ['run', '--auto', prompt],
+        args: withModel(['run', '--auto', prompt], model),
         hint: 'Install the OpenCode CLI (https://opencode.ai) to run OpenCode steps.'
       }
     case 'claude':
       return {
         bins: ['claude'],
-        args: ['-p', prompt],
+        args: withModel(['-p', prompt], model),
         hint: 'Install the Claude Code CLI (npm i -g @anthropic-ai/claude-code) to run Claude steps.'
       }
   }
@@ -82,7 +156,7 @@ export function aiCommand(provider: AiProvider, prompt: string): AiCommand {
  * render command, file, MCP, and web-search activity as tool cards.
  * OpenCode already narrates its progress on stdout as it goes.
  */
-export function managedAiCommand(provider: AiProvider, prompt: string): AiCommand {
+export function managedAiCommand(provider: AiProvider, prompt: string, model?: string): AiCommand {
   switch (provider) {
     case 'codex':
       return {
@@ -93,15 +167,18 @@ export function managedAiCommand(provider: AiProvider, prompt: string): AiComman
         // Keep workspace-write network_access off (default): never-approve + network
         // would let model shell commands reach the internet without confirmation.
         // Native Codex web search is `--search`, not sandbox network_access.
-        args: [
-          'exec',
-          '--json',
-          '-c',
-          'approval_policy=never',
-          '--sandbox',
-          'workspace-write',
-          prompt
-        ],
+        args: withModel(
+          [
+            'exec',
+            '--json',
+            '-c',
+            'approval_policy=never',
+            '--sandbox',
+            'workspace-write',
+            prompt
+          ],
+          model
+        ),
         hint: "Install the Codex CLI (npm i -g @openai/codex) to use managed Chat.",
         stream: 'ndjson'
       }
@@ -110,14 +187,14 @@ export function managedAiCommand(provider: AiProvider, prompt: string): AiComman
         bins: ['agent', 'cursor-agent'],
         // Agent mode is the CLI default. Current Cursor releases only accept
         // explicit `plan` and `ask` values for --mode.
-        args: ['-p', '--force', '--output-format', 'stream-json', prompt],
+        args: withModel(['-p', '--force', '--output-format', 'stream-json', prompt], model),
         hint: 'Install the Cursor CLI (https://cursor.com/docs/cli) to use managed Chat.',
         stream: 'ndjson'
       }
     case 'opencode':
       return {
         bins: ['opencode'],
-        args: ['run', '--dangerously-skip-permissions', prompt],
+        args: withModel(['run', '--dangerously-skip-permissions', prompt], model),
         hint: 'Install OpenCode (https://opencode.ai) to use managed Chat.'
       }
     case 'claude':
@@ -125,15 +202,18 @@ export function managedAiCommand(provider: AiProvider, prompt: string): AiComman
         bins: ['claude'],
         // `--verbose` is what makes stream-json emit each turn as it happens;
         // without it the CLI still waits and prints one final event.
-        args: [
-          '-p',
-          '--output-format',
-          'stream-json',
-          '--verbose',
-          '--permission-mode',
-          'bypassPermissions',
-          prompt
-        ],
+        args: withModel(
+          [
+            '-p',
+            '--output-format',
+            'stream-json',
+            '--verbose',
+            '--permission-mode',
+            'bypassPermissions',
+            prompt
+          ],
+          model
+        ),
         hint: 'Install Claude Code (npm i -g @anthropic-ai/claude-code) to use managed Chat.',
         stream: 'ndjson'
       }

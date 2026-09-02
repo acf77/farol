@@ -581,13 +581,14 @@ function registerIpc(): void {
       taskId: string,
       text: string,
       provider?: AgentTaskRequest['provider'],
-      pipelines?: AgentTaskRequest['pipelines']
-    ) => agents.message(taskId, text, provider, pipelines)
+      pipelines?: AgentTaskRequest['pipelines'],
+      model?: string
+    ) => agents.message(taskId, text, provider, pipelines, model)
   )
   ipcMain.handle(
     'agent:setProvider',
-    (_e, taskId: string, provider: AgentTaskRequest['provider']) =>
-      agents.setProvider(taskId, provider)
+    (_e, taskId: string, provider: AgentTaskRequest['provider'], model?: string) =>
+      agents.setProvider(taskId, provider, model)
   )
   ipcMain.handle('agent:cancel', (_e, taskId: string) => agents.cancel(taskId))
   ipcMain.handle('agent:dispose', (_e, taskId: string) => agents.dispose(taskId))

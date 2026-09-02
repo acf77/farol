@@ -10,7 +10,14 @@ export { aiFixCommand } from './ai'
 export { FAILURE_REPORT_REL } from './failure'
 export { parseVerdict, VERDICT_MARKER, verdictPromptSuffix } from './verdict'
 export { defaultSettings, sanitizeSettings } from './settings'
-export { AI_LABELS, AI_PROVIDERS, normalizeAi } from './ai'
+export {
+  AI_LABELS,
+  AI_MODELS,
+  AI_PROVIDERS,
+  aiSelectionLabel,
+  normalizeAi,
+  normalizeModel
+} from './ai'
 
 export interface Project {
   name: string
@@ -29,6 +36,8 @@ export interface Step {
   cmd: string
   /** Which CLI to invoke for `ai` steps. Omitted AI steps run Claude. */
   ai?: AiProvider
+  /** Model id for that CLI. Omitted AI steps use the CLI's own default. */
+  model?: string
 }
 
 /** One node on the pipeline canvas. `after` is the parent ids to wait on. */
@@ -192,6 +201,8 @@ export interface AgentTaskRequest {
   id: string
   prompt: string
   provider: AiProvider
+  /** Model id for `provider`. Omitted uses the CLI's own default. */
+  model?: string
   /** Snapshot of every pipeline the agent may select for validation. */
   pipelines: Pipeline[]
   cwd: string
@@ -361,11 +372,13 @@ export interface FarolApi {
       taskId: string,
       text: string,
       provider?: AiProvider,
-      pipelines?: Pipeline[]
+      pipelines?: Pipeline[],
+      model?: string
     ): Promise<{ ok: boolean; message?: string }>
     setProvider(
       taskId: string,
-      provider: AiProvider
+      provider: AiProvider,
+      model?: string
     ): Promise<{ ok: boolean; message?: string }>
     cancel(taskId: string): Promise<void>
     /** Cancel and drop the task so cleared chats cannot retain prompt history. */

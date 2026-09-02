@@ -1,5 +1,11 @@
 import type { Pipeline, PipelineNode, Step, StepType } from './types'
-import { normalizeAi } from './ai'
+import { normalizeAi, normalizeModel, type AiProvider } from './ai'
+
+function aiFields(raw: { ai?: unknown; model?: unknown }): { ai: AiProvider; model?: string } {
+  const ai = normalizeAi(raw.ai)
+  const model = normalizeModel(raw.model)
+  return model ? { ai, model } : { ai }
+}
 
 export function defaultGate(type: StepType): boolean {
   return type === 'shell'
@@ -15,7 +21,7 @@ export function chainToNodes(steps: Step[]): PipelineNode[] {
     name: s.name,
     type: s.type,
     cmd: s.cmd,
-    ...(s.type === 'ai' ? { ai: normalizeAi(s.ai) } : {}),
+    ...(s.type === 'ai' ? aiFields(s) : {}),
     after: i === 0 ? [] : [`n${i}`],
     gate: defaultGate(s.type),
     x: 72,
@@ -195,7 +201,7 @@ function sanitizeNode(raw: unknown, fallbackId: string): PipelineNode | null {
     name: typeof n.name === 'string' ? n.name : '',
     type,
     cmd: typeof n.cmd === 'string' ? n.cmd : '',
-    ...(type === 'ai' ? { ai: normalizeAi(n.ai) } : {}),
+    ...(type === 'ai' ? aiFields(n) : {}),
     after,
     gate,
     x,
@@ -211,7 +217,7 @@ function sanitizeStep(raw: unknown): Step | null {
     name: typeof s.name === 'string' ? s.name : '',
     type,
     cmd: typeof s.cmd === 'string' ? s.cmd : '',
-    ...(type === 'ai' ? { ai: normalizeAi(s.ai) } : {})
+    ...(type === 'ai' ? aiFields(s) : {})
   }
 }
 

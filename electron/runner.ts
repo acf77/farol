@@ -622,7 +622,7 @@ export class PipelineRunner {
       context ? `${node.cmd}\n\n--- Pipeline output so far ---\n${context}` : node.cmd,
       verdictPromptSuffix()
     ].join('\n')
-    const spec = aiCommand(normalizeAi(node.ai), prompt)
+    const spec = aiCommand(normalizeAi(node.ai), prompt, node.model)
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       const listed = spec.bins.map((b) => `'${b}'`).join(' or ')

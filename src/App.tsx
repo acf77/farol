@@ -246,6 +246,7 @@ function tabsFromSession(sess: ProjectSession): Tab[] {
                   : 'needs-attention') as AgentPane['status'],
               attempt: p.attempt,
               provider: p.provider,
+              ...(p.model ? { model: p.model } : {}),
               messages: trimAgentMessages(
                 [
                   ...p.messages.map(sanitizeAgentMessage),
@@ -333,6 +334,7 @@ function toSession(
                 status: p.status,
                 attempt: p.attempt,
                 provider: p.provider,
+                ...(p.model ? { model: p.model } : {}),
                 // A restored transcript is for reading, not for replaying a
                 // whole run's output — the workspace file is rewritten often.
                 messages: p.messages.map((m) => ({
@@ -947,10 +949,11 @@ interface ProjectWorkspaceViewProps {
     text: string,
     providerOverride?: AppSettings['agent'],
     ownerOverride?: Tab,
-    cwdOverride?: string
+    cwdOverride?: string,
+    modelOverride?: string | null
   ) => void
   cancelAgent: () => void
-  setAgentProvider: (provider: AppSettings['agent']) => void
+  setAgentProvider: (provider: AppSettings['agent'], model?: string) => void
   showTerminal: (tabId?: string, mode?: 'split' | 'terminal') => void
   requestNewChat: () => void
   clearChatConfirm: boolean
@@ -1127,7 +1130,10 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                 view={view}
                 projectPath={project.path}
                 defaultProvider={settings.agent}
-                onMessage={sendAgentMessage}
+                defaultModel={settings.model}
+                onMessage={(text, provider, model) =>
+                  sendAgentMessage(text, provider, undefined, undefined, model ?? null)
+                }
                 onCancel={cancelAgent}
                 onProviderChange={setAgentProvider}
                 onOpenPipeline={(tabId) => showTerminal(tabId, 'terminal')}
@@ -1518,6 +1524,7 @@ function ProjectWorkspace({
       const cwd = owner.panes[owner.focus]?.cwd || project.path
       const taskId = scopedRuntimeId(project.path, `agent:${owner.id}:${Date.now()}`)
       const paneId = `ap:${taskId}`
+      const { agent, model } = settingsRef.current
       const pane: AgentPane = {
         id: paneId,
         kind: 'agent',
@@ -1526,7 +1533,8 @@ function ProjectWorkspace({
         taskId,
         status: 'idle',
         attempt: 0,
-        provider: settingsRef.current.agent,
+        provider: agent,
+        ...(model ? { model } : {}),
         messages: []
       }
       setTabs((prev) => [
@@ -1974,7 +1982,13 @@ function ProjectWorkspace({
   }, [applyAgentEventToPane, agentPaneByTaskId])
 
   const sendAgentMessage = useCallback(
-    (text: string, providerOverride?: AppSettings['agent'], ownerOverride?: Tab, cwdOverride?: string) => {
+    (
+      text: string,
+      providerOverride?: AppSettings['agent'],
+      ownerOverride?: Tab,
+      cwdOverride?: string,
+      modelOverride?: string | null
+    ) => {
       setChatClearedNotice(false)
       const context = ensureChat(ownerOverride)
       if (!context || !project) return
@@ -1982,6 +1996,7 @@ function ProjectWorkspace({
       const clean = text.trim()
       if (!clean) return
       const provider = providerOverride ?? pane.provider
+      const model = modelOverride === null ? undefined : (modelOverride ?? pane.model)
 
       const availablePipelines = pipelinesRef.current
         .filter((pipeline) => pipeline.nodes.length)
@@ -2007,6 +2022,7 @@ function ProjectWorkspace({
         id: pane.taskId,
         prompt: clean,
         provider,
+        ...(model ? { model } : {}),
         pipelines: availablePipelines,
         cwd: cwdOverride || pane.cwd,
         branch
@@ -2015,7 +2031,7 @@ function ProjectWorkspace({
         if (mode === 'message') {
           // Prefer start when the task is gone (e.g. after a restart).
           // Pass current pipelines so mid-chat edits (AI provider, steps) stick.
-          void api.agent.message(pane.taskId, clean, provider, availablePipelines).then((result) => {
+          void api.agent.message(pane.taskId, clean, provider, availablePipelines, model).then((result) => {
             if (result.ok) return
             runAgent('start')
           })
@@ -2025,7 +2041,7 @@ function ProjectWorkspace({
           if (result.ok) return
           // Still winding down after Stop — queue with the selected provider.
           void api.agent
-            .message(pane.taskId, clean, provider, availablePipelines)
+            .message(pane.taskId, clean, provider, availablePipelines, model)
             .then((queued) => {
               if (queued.ok) return
               failStart(result.message || queued.message)
@@ -2041,6 +2057,7 @@ function ProjectWorkspace({
                 status: 'working',
                 attempt: 1,
                 provider,
+                ...(model ? { model } : { model: undefined }),
                 messages: [
                   ...current.messages,
                   {
@@ -2056,7 +2073,7 @@ function ProjectWorkspace({
       }
 
       patchPane(pane.id, (current) =>
-        current.kind === 'agent' ? { ...current, status: 'working', provider } : current
+        current.kind === 'agent' ? { ...current, status: 'working', provider, model } : current
       )
       // Resume the same task so history and the selected provider carry forward.
       runAgent('message')
@@ -2086,9 +2103,11 @@ function ProjectWorkspace({
   sendToAgentRef.current = sendToAgent
 
   const setAgentProvider = useCallback(
-    (provider: AppSettings['agent']) => {
+    (provider: AppSettings['agent'], model?: string) => {
       setSettings((prev) => {
-        const next = { ...prev, agent: provider }
+        const next = model
+          ? { ...prev, agent: provider, model }
+          : { ...prev, agent: provider, model: undefined }
         void api.settings.save(next)
         return next
       })
@@ -2096,9 +2115,9 @@ function ProjectWorkspace({
       // Always record the choice on the pane so the next start/message uses it,
       // including when the user switches after a usage/session limit mid-chat.
       patchPane(chatPane.id, (pane) =>
-        pane.kind === 'agent' ? { ...pane, provider } : pane
+        pane.kind === 'agent' ? { ...pane, provider, model } : pane
       )
-      void api.agent.setProvider(chatPane.taskId, provider)
+      void api.agent.setProvider(chatPane.taskId, provider, model)
     },
     [chatPane, patchPane]
   )

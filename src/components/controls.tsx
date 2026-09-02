@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  AI_LABELS,
+  AI_PROVIDERS,
+  aiSelectionLabel,
+  modelsFor,
+  normalizeAi,
+  normalizeModel,
+  type AiProvider
+} from '@shared/ai'
 import { C } from '../theme'
+import { CaretLeft, CheckIcon, ChevronDown, ChevronRight } from './icons'
 
 /**
  * Shared interactive primitives.
@@ -274,5 +284,228 @@ export function Checkbox({
       />
       {children}
     </label>
+  )
+}
+
+type MenuPos = { left: number; width: number } & ({ top: number } | { bottom: number })
+
+/**
+ * Two-step picker: choose a CLI, then a model that CLI accepts.
+ * `Default` omits `--model` so the binary uses its own setting.
+ */
+export function CliModelMenu({
+  provider,
+  model,
+  pos,
+  onPick,
+  onClose
+}: {
+  provider: AiProvider
+  model?: string
+  pos: MenuPos
+  onPick: (provider: AiProvider, model: string | undefined) => void
+  onClose: () => void
+}) {
+  const [page, setPage] = useState<AiProvider | 'cli'>('cli')
+  const current = normalizeAi(provider)
+  const selectedModel = normalizeModel(model)
+
+  const place: React.CSSProperties =
+    'bottom' in pos ? { left: pos.left, bottom: pos.bottom } : { left: pos.left, top: pos.top }
+
+  return (
+    <>
+      <div
+        aria-hidden
+        onMouseDown={(e) => {
+          e.preventDefault()
+          onClose()
+        }}
+        style={{ position: 'fixed', inset: 0, zIndex: 65 }}
+      />
+      <div
+        role="menu"
+        aria-label={page === 'cli' ? 'CLI' : `${AI_LABELS[page]} model`}
+        onMouseDown={(e) => e.preventDefault()}
+        style={{
+          position: 'fixed',
+          ...place,
+          zIndex: 70,
+          width: pos.width,
+          background: C.panel,
+          border: `1px solid ${C.cardBorder}`,
+          borderRadius: 8,
+          boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+          padding: 4
+        }}
+      >
+        {page === 'cli'
+          ? AI_PROVIDERS.map((p) => (
+              <button
+                key={p}
+                type="button"
+                role="menuitem"
+                className="bf-focus bf-menu-item"
+                onClick={() => setPage(p)}
+                style={{
+                  display: 'flex',
+                  width: '100%',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  border: 'none',
+                  background: 'transparent',
+                  color: p === current ? C.textStrong : C.textMuted,
+                  cursor: 'pointer'
+                }}
+              >
+                <span>{AI_LABELS[p]}</span>
+                <ChevronRight size={11} color="currentColor" />
+              </button>
+            ))
+          : [
+              <button
+                key="back"
+                type="button"
+                role="menuitem"
+                className="bf-focus bf-menu-item"
+                onClick={() => setPage('cli')}
+                style={{
+                  display: 'flex',
+                  width: '100%',
+                  alignItems: 'center',
+                  gap: 6,
+                  border: 'none',
+                  background: 'transparent',
+                  color: C.textMuted,
+                  cursor: 'pointer'
+                }}
+              >
+                <CaretLeft size={12} />
+                <span>{AI_LABELS[page]}</span>
+              </button>,
+              <button
+                key="default"
+                type="button"
+                role="menuitem"
+                className="bf-focus bf-menu-item"
+                onClick={() => onPick(page, undefined)}
+                style={{
+                  display: 'flex',
+                  width: '100%',
+                  justifyContent: 'space-between',
+                  border: 'none',
+                  background: 'transparent',
+                  color: page === current && !selectedModel ? C.textStrong : C.textMuted,
+                  cursor: 'pointer'
+                }}
+              >
+                <span>Default</span>
+                {page === current && !selectedModel && <CheckIcon size={12} />}
+              </button>,
+              ...modelsFor(page, page === current ? selectedModel : undefined).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  role="menuitem"
+                  className="bf-focus bf-menu-item"
+                  onClick={() => onPick(page, m.id)}
+                  style={{
+                    display: 'flex',
+                    width: '100%',
+                    justifyContent: 'space-between',
+                    border: 'none',
+                    background: 'transparent',
+                    color: page === current && selectedModel === m.id ? C.textStrong : C.textMuted,
+                    cursor: 'pointer'
+                  }}
+                >
+                  <span>{m.label}</span>
+                  {page === current && selectedModel === m.id && <CheckIcon size={12} />}
+                </button>
+              ))
+            ]}
+      </div>
+    </>
+  )
+}
+
+/** Inspector-style trigger that opens {@link CliModelMenu} under the field. */
+export function CliModelDropdown({
+  provider,
+  model,
+  onChange,
+  label
+}: {
+  provider: AiProvider
+  model?: string
+  onChange: (provider: AiProvider, model: string | undefined) => void
+  label?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState<MenuPos | null>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+
+  const toggle = (): void => {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    const rect = btnRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setPos({ left: rect.left, top: rect.bottom + 4, width: Math.max(rect.width, 168) })
+    setOpen(true)
+  }
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className="bf-focus"
+        aria-label={label}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={toggle}
+        style={{
+          height: 24,
+          padding: '0 8px',
+          borderRadius: 5,
+          border: '1px solid rgba(255,255,255,0.1)',
+          background: 'rgba(255,255,255,0.05)',
+          color: C.text,
+          fontSize: 12,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          cursor: 'pointer',
+          width: '100%',
+          textAlign: 'left'
+        }}
+      >
+        <span
+          style={{
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          {aiSelectionLabel(provider, model)}
+        </span>
+        <ChevronDown size={10} color={C.textMuted} />
+      </button>
+      {open && pos && (
+        <CliModelMenu
+          provider={provider}
+          model={model}
+          pos={pos}
+          onPick={(p, m) => {
+            onChange(p, m)
+            setOpen(false)
+          }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
   )
 }

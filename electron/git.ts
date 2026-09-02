@@ -267,7 +267,7 @@ export async function status(cwd: string): Promise<GitStatus> {
 }
 
 /** Latest commits on the current branch, newest first. */
-export async function recentCommits(cwd: string, limit = 8): Promise<GitCommit[]> {
+export async function recentCommits(cwd: string, limit = 3): Promise<GitCommit[]> {
   const res = await git(cwd, [
     'log',
     `-n${limit}`,

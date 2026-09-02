@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AiProvider, Pipeline } from '@shared/types'
-import { AI_LABELS, AI_PROVIDERS, normalizeAi } from '@shared/ai'
+import { AI_LABELS, aiSelectionLabel, normalizeAi, normalizeModel } from '@shared/ai'
 import type { AgentMessage, AgentPane, View } from '../types'
 import { C, MONO, PANE } from '../theme'
 import { MarkdownBody, stripControlMarkers } from '../markdown'
 import { MessageErrorBoundary } from '../ErrorBoundary'
+import { CliModelMenu } from './controls'
 import {
   CheckIcon,
   ChevronDown,
@@ -26,9 +27,11 @@ interface Props {
   projectPath: string
   /** Settings default used when no chat pane exists yet. */
   defaultProvider: AiProvider
-  onMessage: (text: string, provider: AiProvider) => void
+  /** Last-chosen model for `defaultProvider`. Omitted means the CLI default. */
+  defaultModel?: string
+  onMessage: (text: string, provider: AiProvider, model?: string) => void
   onCancel: () => void
-  onProviderChange: (provider: AiProvider) => void
+  onProviderChange: (provider: AiProvider, model?: string) => void
   onOpenPipeline: (tabId: string) => void
   onNewChat: () => void
   clearChatConfirm?: boolean
@@ -628,64 +631,24 @@ function MentionMenu({
 function AgentMenu({
   agentMenuPos,
   provider,
+  model,
   onPick,
   onClose
 }: {
   agentMenuPos: { left: number; bottom: number }
   provider: AiProvider
-  onPick: (p: AiProvider) => void
+  model?: string
+  onPick: (p: AiProvider, model?: string) => void
   onClose: () => void
 }) {
   return (
-    <>
-      <div
-        aria-hidden
-        onMouseDown={(e) => {
-          e.preventDefault()
-          onClose()
-        }}
-        style={{ position: 'fixed', inset: 0, zIndex: 65 }}
-      />
-      <div
-        role="menu"
-        aria-label="Agent"
-        onMouseDown={(e) => e.preventDefault()}
-        style={{
-          position: 'fixed',
-          left: agentMenuPos.left,
-          bottom: agentMenuPos.bottom,
-          zIndex: 70,
-          width: 168,
-          background: '#111827',
-          border: `1px solid ${C.cardBorder}`,
-          borderRadius: 10,
-          boxShadow: '0 14px 36px rgba(0,0,0,0.5)',
-          padding: 4
-        }}
-      >
-        {AI_PROVIDERS.map((p) => (
-          <button
-            key={p}
-            type="button"
-            role="menuitem"
-            className="bf-focus bf-menu-item"
-            onClick={() => onPick(p)}
-            style={{
-              display: 'flex',
-              width: '100%',
-              justifyContent: 'space-between',
-              border: 'none',
-              background: 'transparent',
-              color: p === provider ? C.textStrong : C.textMuted,
-              cursor: 'pointer'
-            }}
-          >
-            <span>{AI_LABELS[p]}</span>
-            {p === provider && <CheckIcon size={12} />}
-          </button>
-        ))}
-      </div>
-    </>
+    <CliModelMenu
+      provider={provider}
+      model={model}
+      pos={{ left: agentMenuPos.left, bottom: agentMenuPos.bottom, width: 188 }}
+      onPick={onPick}
+      onClose={onClose}
+    />
   )
 }
 
@@ -799,6 +762,7 @@ function ComposerBox({
   availableCount,
   isBusy,
   provider,
+  model,
   canChangeProvider,
   textareaRef,
   onMessage,
@@ -812,13 +776,14 @@ function ComposerBox({
   availableCount: number
   isBusy: boolean
   provider: AiProvider
+  model?: string
   canChangeProvider: boolean
   textareaRef: React.RefObject<HTMLTextAreaElement>
-  onMessage: (text: string, provider: AiProvider) => void
+  onMessage: (text: string, provider: AiProvider, model?: string) => void
   onCancel: () => void
-  onProviderChange: (provider: AiProvider) => void
+  onProviderChange: (provider: AiProvider, model?: string) => void
   onNewChat: () => void
-  onProviderLocal: (provider: AiProvider) => void
+  onProviderLocal: (provider: AiProvider, model?: string) => void
   /** Lets the parent fire the same send path suggestions used before (incl. history). */
   sendTextRef: React.MutableRefObject<(clean: string) => void>
 }) {
@@ -891,7 +856,7 @@ function ComposerBox({
     const r = agentBtnRef.current?.getBoundingClientRect()
     if (r) {
       setAgentMenuPos({
-        left: Math.min(Math.max(8, r.right - 168), window.innerWidth - 176),
+        left: Math.min(Math.max(8, r.right - 188), window.innerWidth - 196),
         bottom: window.innerHeight - r.top + 6
       })
     }
@@ -954,7 +919,7 @@ function ComposerBox({
 
   const sendText = (clean: string): void => {
     if (!clean) return
-    onMessage(clean, provider)
+    onMessage(clean, provider, model)
     const history = historyRef.current
     if (history[history.length - 1] !== clean) history.push(clean)
     if (history.length > 100) history.splice(0, history.length - 100)
@@ -1148,7 +1113,7 @@ function ComposerBox({
             type="button"
             className="bf-focus"
             onClick={openAgentMenu}
-            title={`Agent: ${AI_LABELS[provider]}`}
+            title={`Agent: ${aiSelectionLabel(provider, model)}`}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -1162,7 +1127,16 @@ function ComposerBox({
               opacity: canChangeProvider ? 1 : 0.55
             }}
           >
-            <span>{AI_LABELS[provider]}</span>
+            <span
+              style={{
+                maxWidth: 168,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {aiSelectionLabel(provider, model)}
+            </span>
             <ChevronDown size={11} />
           </button>
           <button
@@ -1202,10 +1176,11 @@ function ComposerBox({
         <AgentMenu
           agentMenuPos={agentMenuPos}
           provider={provider}
+          model={model}
           onClose={() => setModelOpen(false)}
-          onPick={(p) => {
-            onProviderLocal(p)
-            onProviderChange(p)
+          onPick={(p, m) => {
+            onProviderLocal(p, m)
+            onProviderChange(p, m)
             setModelOpen(false)
             window.setTimeout(() => textareaRef.current?.focus(), 0)
           }}
@@ -1283,6 +1258,7 @@ export default function ChatPane({
   view,
   projectPath,
   defaultProvider,
+  defaultModel,
   onMessage,
   onCancel,
   onProviderChange,
@@ -1296,6 +1272,7 @@ export default function ChatPane({
   composerRef
 }: Props) {
   const [provider, setProvider] = useState<AiProvider>(normalizeAi(pane?.provider ?? defaultProvider))
+  const [model, setModel] = useState<string | undefined>(normalizeModel(pane?.model ?? defaultModel))
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
   const localRef = useRef<HTMLTextAreaElement>(null)
@@ -1312,8 +1289,9 @@ export default function ChatPane({
   const showSuggestions = messages.length < 3 && availableCount > 0
 
   useEffect(() => {
-    if (pane?.provider) setProvider(normalizeAi(pane.provider))
-  }, [pane?.provider])
+    setProvider(normalizeAi(pane?.provider ?? defaultProvider))
+    setModel(normalizeModel(pane?.model ?? defaultModel))
+  }, [pane?.provider, pane?.model, defaultProvider, defaultModel])
 
   // Follow the stream only while the reader is already at the bottom, so
   // scrolling up to read something does not get yanked back by the next event.
@@ -1361,13 +1339,17 @@ export default function ChatPane({
         availableCount={availableCount}
         isBusy={isBusy}
         provider={provider}
+        model={model}
         canChangeProvider={canChangeProvider}
         textareaRef={textareaRef}
         onMessage={onMessage}
         onCancel={onCancel}
         onProviderChange={onProviderChange}
         onNewChat={onNewChat}
-        onProviderLocal={setProvider}
+        onProviderLocal={(p, m) => {
+          setProvider(p)
+          setModel(m)
+        }}
         sendTextRef={sendTextRef}
       />
     </div>

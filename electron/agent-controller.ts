@@ -8,7 +8,7 @@ import type {
   Pipeline,
   PipelineRunResult
 } from '../shared/types'
-import { isAiProvider, managedAiCommand, normalizeAi } from '../shared/ai'
+import { isAiProvider, managedAiCommand, normalizeAi, normalizeModel } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
 import {
   catalogShellCommands,
@@ -245,8 +245,11 @@ function pipelineCatalog(pipelines: Pipeline[]): string {
       const tag = pipeline.mandatory ? ' [mandatory]' : ''
       const steps = pipeline.nodes
         .map((node) => {
+          const model = normalizeModel(node.model)
           const kind =
-            node.type === 'ai' ? `ai/${normalizeAi(node.ai)}` : node.type
+            node.type === 'ai'
+              ? `ai/${normalizeAi(node.ai)}${model ? `/${model}` : ''}`
+              : node.type
           return `  - ${node.name || node.id} (${kind}): ${node.cmd}`
         })
         .join('\n')
@@ -308,7 +311,8 @@ export class AgentController {
     taskId: string,
     text: string,
     provider?: AiProvider,
-    pipelines?: Pipeline[]
+    pipelines?: Pipeline[],
+    model?: string
   ): { ok: boolean; message?: string } {
     const task = this.tasks.get(taskId)
     const clean = text.trim()
@@ -316,7 +320,10 @@ export class AgentController {
     if (!clean) return { ok: false, message: 'Enter a message.' }
     // A provider switch mid-chat (e.g. after a usage limit) must stick before
     // the next cycle, including when the follow-up is only queued.
-    if (isAiProvider(provider)) task.request.provider = provider
+    if (isAiProvider(provider)) {
+      task.request.provider = provider
+      task.request.model = normalizeModel(model)
+    }
     // Pipeline edits (e.g. AI step provider) are snapshotted at start; refresh
     // on every follow-up so validation uses what the user configured now.
     if (pipelines) {
@@ -335,11 +342,12 @@ export class AgentController {
   }
 
   /** Switch provider on an existing task without sending a message. */
-  setProvider(taskId: string, provider: AiProvider): { ok: boolean; message?: string } {
+  setProvider(taskId: string, provider: AiProvider, model?: string): { ok: boolean; message?: string } {
     const task = this.tasks.get(taskId)
     if (!task) return { ok: false, message: 'This agent task is no longer available.' }
     if (!isAiProvider(provider)) return { ok: false, message: 'Unknown agent provider.' }
     task.request.provider = provider
+    task.request.model = normalizeModel(model)
     return { ok: true }
   }
 
@@ -748,7 +756,7 @@ export class AgentController {
   }
 
   private runAgent(task: Task, prompt: string, sink: AgentSink): Promise<number> {
-    const spec = managedAiCommand(task.request.provider, prompt)
+    const spec = managedAiCommand(task.request.provider, prompt, task.request.model)
     const env = aiEnv()
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {

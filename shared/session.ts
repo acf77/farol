@@ -2,7 +2,7 @@
 
 import type { AppSettings } from './settings'
 import type { AiProvider } from './ai'
-import { normalizeAi } from './ai'
+import { normalizeAi, normalizeModel } from './ai'
 
 export type SavedNode =
   | { t: 'leaf'; id: string }
@@ -24,6 +24,8 @@ export interface SavedAgentPane {
   status: string
   attempt: number
   provider: AiProvider
+  /** Model id for `provider`. Omitted uses the CLI's own default. */
+  model?: string
   messages: { role: 'user' | 'assistant' | 'system'; text: string }[]
 }
 
@@ -125,6 +127,7 @@ function sanitizePane(raw: unknown): SavedPane | null {
   }
   if (pane.kind !== 'agent' || typeof pane.taskId !== 'string') return base
   const messages = Array.isArray(pane.messages) ? sanitizeAgentMessages(pane.messages) : []
+  const model = normalizeModel(pane.model)
   return {
     ...base,
     kind: 'agent',
@@ -132,6 +135,7 @@ function sanitizePane(raw: unknown): SavedPane | null {
     status: typeof pane.status === 'string' ? pane.status : 'needs-attention',
     attempt: typeof pane.attempt === 'number' && Number.isFinite(pane.attempt) ? pane.attempt : 0,
     provider: normalizeAi(pane.provider),
+    ...(model ? { model } : {}),
     messages
   }
 }

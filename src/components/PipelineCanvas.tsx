@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PipelineNode, StepType } from '@shared/types'
-import { AI_LABELS, AI_PROVIDERS, normalizeAi } from '@shared/types'
+import { aiSelectionLabel, normalizeAi } from '@shared/types'
 import { defaultGate, nextNodeId, newNodePos, nodeGate, topoSort } from '@shared/graph'
 import { C, MONO, UI } from '../theme'
-import { Checkbox, ConfirmButton, SegmentedControl } from './controls'
+import { Checkbox, CliModelDropdown, ConfirmButton, SegmentedControl } from './controls'
 import type { EditorState } from '../types'
 
 interface Props {
@@ -56,7 +56,21 @@ export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: P
   const patch = (id: string, next: Partial<PipelineNode>): void =>
     onChange({
       ...editor,
-      nodes: editor.nodes.map((n) => (n.id === id ? { ...n, ...next } : n))
+      nodes: editor.nodes.map((n) => {
+        if (n.id !== id) return n
+        const merged = { ...n, ...next }
+        if (merged.type !== 'shell') return merged
+        return {
+          id: merged.id,
+          name: merged.name,
+          type: 'shell',
+          cmd: merged.cmd,
+          after: merged.after,
+          gate: merged.gate,
+          x: merged.x,
+          y: merged.y
+        }
+      })
     })
 
   const addNode = (type: StepType): void => {
@@ -503,10 +517,13 @@ export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: P
                     fontSize: 9 * cam.z,
                     fontWeight: 700,
                     letterSpacing: '0.4px',
-                    color: ai ? C.purpleSoft : C.dim
+                    color: ai ? C.purpleSoft : C.dim,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
                   }}
                 >
-                  {ai ? `AI · ${AI_LABELS[normalizeAi(n.ai)]}` : 'SHELL'}
+                  {ai ? `AI · ${aiSelectionLabel(normalizeAi(n.ai), n.model)}` : 'SHELL'}
                   {nodeGate(n) ? ' · GATE' : ''}
                 </div>
                 <div
@@ -601,12 +618,11 @@ function Inspector({
         style={inputStyle}
       />
       {ai && (
-        <SegmentedControl
-          label="AI provider"
-          options={AI_PROVIDERS.map((p) => ({ value: p, label: AI_LABELS[p] }))}
-          value={normalizeAi(node.ai)}
-          tone="ai"
-          onChange={(p) => onPatch({ ai: p })}
+        <CliModelDropdown
+          label="CLI and model"
+          provider={normalizeAi(node.ai)}
+          model={node.model}
+          onChange={(p, m) => onPatch({ ai: p, model: m })}
         />
       )}
       {ai ? (
@@ -614,7 +630,7 @@ function Inspector({
           className="bf-input"
           value={node.cmd}
           onChange={(e) => onPatch({ cmd: e.target.value })}
-          placeholder={`Prompt for ${AI_LABELS[normalizeAi(node.ai)]}`}
+          placeholder={`Prompt for ${aiSelectionLabel(normalizeAi(node.ai), node.model)}`}
           rows={8}
           spellCheck={false}
           style={{

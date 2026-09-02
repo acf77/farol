@@ -94,6 +94,18 @@
         "gate": true,
         "x": 78.11111111111111,
         "y": 160
+      },
+      {
+        "id": "n3",
+        "name": "Fast  Slop Checker",
+        "type": "shell",
+        "cmd": "bash cerebras-slop.bash",
+        "after": [
+          "n2"
+        ],
+        "gate": true,
+        "x": 303,
+        "y": 282
       }
     ]
   }

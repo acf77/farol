@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { aiCommand, isAiProvider, managedAiCommand, normalizeAi } from './ai'
+import {
+  aiCommand,
+  aiSelectionLabel,
+  isAiProvider,
+  managedAiCommand,
+  modelsFor,
+  normalizeAi,
+  normalizeModel,
+  withModel
+} from './ai'
 
 describe('normalizeAi', () => {
   it('keeps a known provider', () => {
@@ -13,6 +22,28 @@ describe('normalizeAi', () => {
     expect(normalizeAi(undefined)).toBe('claude')
     expect(normalizeAi('gpt')).toBe('claude')
     expect(isAiProvider('agent')).toBe(false)
+  })
+})
+
+describe('normalizeModel', () => {
+  it('treats blank values as the CLI default', () => {
+    expect(normalizeModel(undefined)).toBeUndefined()
+    expect(normalizeModel('  ')).toBeUndefined()
+    expect(normalizeModel('sonnet')).toBe('sonnet')
+  })
+
+  it('labels a stored id, including ones not in the catalog', () => {
+    expect(aiSelectionLabel('claude', undefined)).toBe('Claude')
+    expect(aiSelectionLabel('claude', 'sonnet')).toBe('Claude · Sonnet 5')
+    expect(aiSelectionLabel('claude', 'custom-id')).toBe('Claude · custom-id')
+    expect(modelsFor('claude', 'custom-id').some((m) => m.id === 'custom-id')).toBe(true)
+  })
+})
+
+describe('withModel', () => {
+  it('inserts --model before the trailing prompt', () => {
+    expect(withModel(['-p', 'review this'], 'sonnet')).toEqual(['-p', '--model', 'sonnet', 'review this'])
+    expect(withModel(['-p', 'review this'], undefined)).toEqual(['-p', 'review this'])
   })
 })
 
@@ -36,6 +67,26 @@ describe('aiCommand', () => {
       'review this'
     ])
     expect(aiCommand('opencode', 'review this').args).toEqual(['run', '--auto', 'review this'])
+  })
+
+  it('passes --model through to each CLI', () => {
+    expect(aiCommand('claude', 'review this', 'sonnet').args).toEqual([
+      '-p',
+      '--model',
+      'sonnet',
+      'review this'
+    ])
+    expect(aiCommand('codex', 'review this', 'gpt-5.6-terra').args).toContain('--model')
+    expect(aiCommand('cursor', 'review this', 'composer-2.5').args).toEqual([
+      '-p',
+      '--force',
+      '--mode=ask',
+      '--output-format',
+      'text',
+      '--model',
+      'composer-2.5',
+      'review this'
+    ])
   })
 
   it('tries Cursor as agent, then cursor-agent', () => {
@@ -87,5 +138,19 @@ describe('managedAiCommand', () => {
     expect(managedAiCommand('cursor', 'x').stream).toBe('ndjson')
     expect(managedAiCommand('codex', 'x').stream).toBe('ndjson')
     expect(managedAiCommand('opencode', 'x').stream).toBeUndefined()
+  })
+
+  it('passes --model through on managed commands', () => {
+    expect(managedAiCommand('claude', 'fix this', 'opus').args).toEqual([
+      '-p',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--permission-mode',
+      'bypassPermissions',
+      '--model',
+      'opus',
+      'fix this'
+    ])
   })
 })

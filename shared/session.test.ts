@@ -62,6 +62,7 @@ describe('sanitizeSession', () => {
               status: 'working',
               attempt: 1,
               provider: 'claude',
+              model: 'sonnet',
               messages: []
             }
           ]
@@ -70,6 +71,7 @@ describe('sanitizeSession', () => {
     })
 
     expect(s?.tabs[1].ownerTabId).toBe('sh2')
+    expect(s?.tabs[1].panes[0]).toMatchObject({ kind: 'agent', provider: 'claude', model: 'sonnet' })
   })
 })
 

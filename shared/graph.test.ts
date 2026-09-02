@@ -39,6 +39,14 @@ describe('chainToNodes', () => {
     expect(nodes[1].after).toEqual(['n1'])
     expect(nodes[0].gate).toBe(true)
     expect(nodes[1].gate).toBe(false)
+    expect(nodes[1].ai).toBe('claude')
+    expect(nodes[1].model).toBeUndefined()
+  })
+
+  it('keeps a model on an AI step', () => {
+    const nodes = chainToNodes([{ name: 'B', type: 'ai', ai: 'cursor', model: 'composer-2.5', cmd: 'review' }])
+    expect(nodes[0].ai).toBe('cursor')
+    expect(nodes[0].model).toBe('composer-2.5')
   })
 })
 
@@ -156,6 +164,59 @@ describe('sanitizePipeline', () => {
     expect(p?.nodes[2].after).toEqual(['a'])
     expect(p?.nodes[1].gate).toBe(false)
     expect(p?.nodes[0].gate).toBe(true)
+  })
+
+  it('keeps an AI step model id', () => {
+    const p = sanitizePipeline({
+      id: 'x',
+      name: 'X',
+      nodes: [
+        {
+          id: 'a',
+          name: 'A',
+          type: 'ai',
+          ai: 'cursor',
+          model: 'composer-2.5',
+          cmd: 'review',
+          after: [],
+          x: 0,
+          y: 0
+        }
+      ]
+    })
+    expect(p?.nodes[0].ai).toBe('cursor')
+    expect(p?.nodes[0].model).toBe('composer-2.5')
+  })
+
+  it('drops a blank model so the CLI default applies', () => {
+    const p = sanitizePipeline({
+      id: 'x',
+      name: 'X',
+      nodes: [{ id: 'a', name: 'A', type: 'ai', ai: 'claude', model: '  ', cmd: 'x', after: [], x: 0, y: 0 }]
+    })
+    expect(p?.nodes[0].model).toBeUndefined()
+  })
+
+  it('strips leftover AI fields from a shell step', () => {
+    const p = sanitizePipeline({
+      id: 'x',
+      name: 'X',
+      nodes: [
+        {
+          id: 'a',
+          name: 'A',
+          type: 'shell',
+          ai: 'claude',
+          model: 'opus',
+          cmd: 'ls',
+          after: [],
+          x: 0,
+          y: 0
+        }
+      ]
+    })
+    expect(p?.nodes[0].ai).toBeUndefined()
+    expect(p?.nodes[0].model).toBeUndefined()
   })
 
   it('drops duplicate node ids', () => {
