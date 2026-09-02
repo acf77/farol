@@ -111,4 +111,5 @@ export interface EditorState {
   id: string | null
   name: string
   nodes: PipelineNode[]
+  mandatory?: boolean
 }

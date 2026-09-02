@@ -232,7 +232,6 @@ export function sanitizePipeline(raw: unknown): Pipeline | null {
     })
     nodes = chainToNodes(steps)
   }
-  if (!nodes.length) return { id: p.id, name: p.name, nodes: [] }
   // Drop duplicate ids — maps keyed by id would otherwise overwrite mid-run.
   const seen = new Set<string>()
   nodes = nodes.filter((n) => {
@@ -248,7 +247,12 @@ export function sanitizePipeline(raw: unknown): Pipeline | null {
       after: i === 0 ? [] : [nodes[i - 1].id]
     }))
   }
-  return { id: p.id, name: p.name, nodes }
+  return {
+    id: p.id,
+    name: p.name,
+    nodes,
+    ...(p.mandatory === true ? { mandatory: true } : {})
+  }
 }
 
 /** Reject graphs the runner cannot execute safely (cycles or duplicate ids). */

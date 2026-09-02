@@ -16,6 +16,12 @@ import {
   matchedCatalogShells,
   pipelinesForCatalogCmds
 } from '../shared/catalog-shell'
+import {
+  isCodeChangeToolName,
+  mandatoryOptOutError,
+  mandatoryPipelines,
+  mergeWithMandatory
+} from '../shared/mandatory'
 import { plainText } from '../shared/terminal'
 import { aiEnv, resolveBinFrom } from './bin'
 import { killPidTree } from './kill'
@@ -234,6 +240,7 @@ function selectedPipelines(
 function pipelineCatalog(pipelines: Pipeline[]): string {
   return pipelines
     .map((pipeline) => {
+      const tag = pipeline.mandatory ? ' [mandatory]' : ''
       const steps = pipeline.nodes
         .map((node) => {
           const kind =
@@ -241,7 +248,7 @@ function pipelineCatalog(pipelines: Pipeline[]): string {
           return `  - ${node.name || node.id} (${kind}): ${node.cmd}`
         })
         .join('\n')
-      return `- ${pipeline.name} [id: ${pipeline.id}]\n${steps}`
+      return `- ${pipeline.name} [id: ${pipeline.id}]${tag}\n${steps}`
     })
     .join('\n')
 }
@@ -442,6 +449,7 @@ export class AgentController {
       output: string
       blocked: string | null
       shellInvocations: string[]
+      codeChanged: boolean
     }
   ): AgentSink {
     const check = (): void => {
@@ -469,6 +477,9 @@ export class AgentController {
         // Codex sometimes only fills command on item.completed; accept either.
         if (event.detail && isShellToolName(event.name) && event.state !== 'error') {
           scan.shellInvocations.push(event.detail)
+        }
+        if (event.state !== 'error' && isCodeChangeToolName(event.name)) {
+          scan.codeChanged = true
         }
       },
       noise: (chunk) => {
@@ -553,7 +564,8 @@ export class AgentController {
       assistant: '',
       output: '',
       blocked: null as string | null,
-      shellInvocations: [] as string[]
+      shellInvocations: [] as string[],
+      codeChanged: false
     }
     const sink = this.cycleSink(task, scan)
     const code = this.executor
@@ -586,14 +598,15 @@ export class AgentController {
     }
 
     const selection = selectedPipelines(scan.assistant, task.request.pipelines)
+    const retryInvalid = (reason: string) => ({
+      kind: 'retry' as const,
+      prompt: this.prompt(
+        task,
+        `Continue the original task: ${task.request.prompt}\n\nFarol could not validate because ${reason}`
+      )
+    })
     if (selection.error) {
-      return {
-        kind: 'retry',
-        prompt: this.prompt(
-          task,
-          `Continue the original task: ${task.request.prompt}\n\nFarol could not validate because your pipeline selection was invalid: ${selection.error}`
-        )
-      }
+      return retryInvalid(`your pipeline selection was invalid: ${selection.error}`)
     }
 
     const bypass = catalogShellBypassError(
@@ -601,15 +614,14 @@ export class AgentController {
       task.request.pipelines,
       selection.pipelines
     )
-    if (bypass) {
-      return {
-        kind: 'retry',
-        prompt: this.prompt(
-          task,
-          `Continue the original task: ${task.request.prompt}\n\nFarol could not validate because you bypassed pipelines: ${bypass}`
-        )
-      }
-    }
+    if (bypass) return retryInvalid(`you bypassed pipelines: ${bypass}`)
+
+    const mandatoryBypass = mandatoryOptOutError(
+      task.request.pipelines,
+      selection.pipelines,
+      scan.codeChanged
+    )
+    if (mandatoryBypass) return retryInvalid(`you skipped mandatory pipelines: ${mandatoryBypass}`)
 
     // No code changes → no validation. The agent opted out with [].
     if (!selection.pipelines.length) {
@@ -621,9 +633,10 @@ export class AgentController {
       return { kind: 'done' }
     }
 
-    const names = selection.pipelines.map((pipeline) => pipeline.name).join(', ')
+    const pipelines = mergeWithMandatory(task.request.pipelines, selection.pipelines)
+    const names = pipelines.map((pipeline) => pipeline.name).join(', ')
     this.status(task, 'validating', attempt, `Running ${names}`)
-    const outcome = await this.runValidationPipelines(task, selection.pipelines, attempt)
+    const outcome = await this.runValidationPipelines(task, pipelines, attempt)
     if (outcome.kind === 'cancelled') {
       this.settleCancel(task)
       return { kind: 'done' }
@@ -685,12 +698,17 @@ export class AgentController {
   }
 
   private prompt(task: Task, opening: string): string {
+    const mandatoryIds = mandatoryPipelines(task.request.pipelines).map((pipeline) => pipeline.id)
+    const mandatoryNote = mandatoryIds.length
+      ? `Mandatory pipelines (always run when you change code): ${mandatoryIds.join(', ')}. ${PIPELINES_MARKER} [] is only valid when you made no code changes.`
+      : ''
     return [
       opening,
       '',
       `Work only in ${task.request.cwd}.`,
       this.pipelineHistory(task),
       `When the requested code change is complete, select every relevant validation pipeline from the catalog below. If you made no code changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
+      mandatoryNote,
       `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
       `Do not call the Farol MCP tools in this managed Chat session. They require approval in some providers; the managed harness executes your selected pipelines directly.`,
       `End every response with exactly one line in this format: ${PIPELINES_MARKER} ["pipeline-id"] — or ${PIPELINES_MARKER} [] when no validation is needed. Use a JSON array and only ids from the catalog.`,

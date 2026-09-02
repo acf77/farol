@@ -170,6 +170,13 @@ describe('sanitizePipeline', () => {
     expect(p?.nodes).toHaveLength(1)
     expect(p?.nodes[0].name).toBe('A')
   })
+
+  it('persists mandatory only when true', () => {
+    const nodes = [{ id: 'a', name: 'A', type: 'shell', cmd: 'a', after: [], x: 0, y: 0 }]
+    expect(sanitizePipeline({ id: 'lint', name: 'Lint', mandatory: true, nodes })?.mandatory).toBe(true)
+    expect(sanitizePipeline({ id: 'x', name: 'X', mandatory: false, nodes })?.mandatory).toBeUndefined()
+    expect(sanitizePipeline({ id: 'e', name: 'E', mandatory: true, nodes: [] })?.mandatory).toBe(true)
+  })
 })
 
 describe('validateRunnable', () => {

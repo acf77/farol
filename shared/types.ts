@@ -48,6 +48,8 @@ export interface Pipeline {
   id: string
   name: string
   nodes: PipelineNode[]
+  /** When true, managed Chat always runs this pipeline after code-changing turns. */
+  mandatory?: boolean
 }
 
 export type StepState = 'pending' | 'running' | 'pass' | 'fail' | 'skip'

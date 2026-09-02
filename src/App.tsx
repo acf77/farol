@@ -1192,7 +1192,14 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           onNew={() => setEditor({ id: null, name: '', nodes: [blankNode()] })}
           onRun={runPipeline}
           onStop={(id) => stopPipeline(id, runBranch)}
-          onEdit={(p) => setEditor({ id: p.id, name: p.name, nodes: p.nodes.map((n) => ({ ...n })) })}
+          onEdit={(p) =>
+            setEditor({
+              id: p.id,
+              name: p.name,
+              nodes: p.nodes.map((n) => ({ ...n })),
+              ...(p.mandatory === true ? { mandatory: true } : {})
+            })
+          }
           onDelete={deletePipeline}
           onOpenTerminal={openRunLogs}
           collapsed={pipesCollapsed}
@@ -2319,8 +2326,14 @@ function ProjectWorkspace({
       name: n.name.trim() || n.cmd.trim() || 'Step',
       after: n.after.filter((a) => ids.has(a))
     }))
+    const saved = (id: string): Pipeline => ({
+      id,
+      name: editor.name.trim(),
+      nodes,
+      ...(editor.mandatory === true ? { mandatory: true } : {})
+    })
     if (editor.id) {
-      persist(pipelines.map((p) => (p.id === editor.id ? { ...p, name: editor.name.trim(), nodes } : p)))
+      persist(pipelines.map((p) => (p.id === editor.id ? saved(p.id) : p)))
       setRuns((prev) => {
         const next = { ...prev }
         delete next[editor.id as string]
@@ -2329,7 +2342,7 @@ function ProjectWorkspace({
       setSelId(editor.id)
     } else {
       const id = `pl${Date.now()}`
-      persist([...pipelines, { id, name: editor.name.trim(), nodes }])
+      persist([...pipelines, saved(id)])
       setSelId(id)
     }
     setEditor(null)

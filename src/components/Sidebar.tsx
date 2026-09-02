@@ -368,6 +368,22 @@ function PipelineCard({
             }}
           >
             {pipeline.name}
+            {pipeline.mandatory && (
+              <span
+                title="Mandatory in Chat — always runs when the agent changes code"
+                style={{
+                  marginLeft: 6,
+                  fontSize: 9.5,
+                  fontWeight: 600,
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                  color: C.accent,
+                  verticalAlign: 'middle'
+                }}
+              >
+                Required
+              </span>
+            )}
           </div>
           <div style={{ fontSize: 12, marginTop: 3, color: st.color }}>{st.label}</div>
         </div>

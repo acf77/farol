@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentTaskEvent, AgentTaskRequest, PipelineRunResult } from '../shared/types'
 import { failureReport } from '../shared/failure'
-import { AgentController } from './agent-controller'
+import { AgentController, type AgentExecutor } from './agent-controller'
 
 const request: AgentTaskRequest = {
   id: 'task-1',
@@ -50,6 +50,14 @@ function selecting(...ids: string[]) {
       return 0
     }
   )
+}
+
+const lintMandatory = {
+  ...request.pipelines[0],
+  id: 'lint',
+  name: 'Lint',
+  mandatory: true,
+  nodes: [{ ...request.pipelines[0].nodes[0], id: 'lint-step', cmd: 'npm run lint' }]
 }
 
 describe('AgentController', () => {
@@ -858,5 +866,69 @@ describe('AgentController', () => {
 
     expect(execute).toHaveBeenCalledTimes(1)
     expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate'])
+  })
+
+  it('auto-runs mandatory pipelines even when the agent omits them', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = selecting('validate')
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, pipelines: [request.pipelines[0], lintMandatory] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(run.mock.calls.map((call) => call[0].id)).toEqual(['lint', 'validate'])
+    expect(execute.mock.calls[0][1]).toContain('[mandatory]')
+    expect(execute.mock.calls[0][1]).toContain('Mandatory pipelines')
+  })
+
+  it('rejects empty FAROL_PIPELINES when mandatory pipelines exist and code changed', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = vi
+      .fn<AgentExecutor>()
+      .mockImplementationOnce(async (_request, _prompt, output, onTool) => {
+        onTool?.({ toolId: 'edit-1', name: 'apply_patch', detail: 'src/app.ts', state: 'done' })
+        output('Done\nFAROL_PIPELINES: []\n')
+        return 0
+      })
+      .mockImplementationOnce(async (_request, _prompt, output) => {
+        output('FAROL_PIPELINES: ["validate"]\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, pipelines: [request.pipelines[0], lintMandatory] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute.mock.calls[1][1]).toContain('skipped mandatory pipelines')
+    expect(run.mock.calls.map((call) => call[0].id)).toEqual(['lint', 'validate'])
+  })
+
+  it('allows empty FAROL_PIPELINES with mandatory pipelines when no code changed', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = selecting()
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, pipelines: [lintMandatory] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(run).not.toHaveBeenCalled()
+    expect(
+      events.some(
+        (event) =>
+          event.kind === 'status' &&
+          event.status === 'completed' &&
+          event.message.includes('No validation needed')
+      )
+    ).toBe(true)
   })
 })

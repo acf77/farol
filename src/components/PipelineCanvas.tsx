@@ -214,6 +214,12 @@ export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: P
           spellCheck={false}
           style={{ ...inputStyle, width: 220, height: 26 }}
         />
+        <Checkbox
+          checked={editor.mandatory === true}
+          onChange={(v) => onChange({ ...editor, mandatory: v })}
+        >
+          Mandatory in Chat
+        </Checkbox>
         <button className="bf-hover-fill" onClick={() => addNode('shell')} style={toolBtn}>
           + Shell
         </button>
