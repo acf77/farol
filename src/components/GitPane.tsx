@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useState, type CSSProperties, type RefObject } from 'react'
+import { aiSelectionLabel } from '@shared/ai'
+import { commitBlockReason, draftMatchesStatus, pushBlockReason } from '@shared/git-status'
 import type { AiProvider, GitCommit, GitFileKind, GitHubInfo, GitStatus, PullRequest } from '@shared/types'
 import { useGitPanel } from '../hooks/useGitPanel'
 import { C, MONO } from '../theme'
@@ -9,6 +11,7 @@ import { CheckIcon, GitIcon, RetryIcon, Spinner } from './icons'
 interface Props extends ReturnType<typeof useGitPanel> {
   branch: string
   provider: AiProvider
+  model?: string
   open: boolean
   onClose: () => void
   anchorRef: RefObject<HTMLElement | null>
@@ -311,17 +314,15 @@ function useEscapeClose(open: boolean, onClose: () => void): void {
 function gitActionState(
   status: GitStatus | null,
   github: GitHubInfo | null,
-  committing: boolean
-): { hasConflicts: boolean; prConflicts: boolean; canAct: boolean; pushOnly: boolean } {
+  gitAction: 'commit' | 'push' | null
+): { hasConflicts: boolean; prConflicts: boolean; canCommit: boolean; canPush: boolean } {
   const hasConflicts = (status?.conflicts.length ?? 0) > 0
   const prConflicts = github?.prs.some((p) => p.hasConflicts) ?? false
-  const dirty = status && !status.clean
-  const unpushed = (status?.ahead ?? 0) > 0
   return {
     hasConflicts,
     prConflicts,
-    canAct: (!!dirty || unpushed) && !hasConflicts && !committing,
-    pushOnly: !dirty && unpushed
+    canCommit: !!status && !commitBlockReason(status) && !gitAction,
+    canPush: !!status && !pushBlockReason(status) && !gitAction
   }
 }
 
@@ -342,51 +343,163 @@ function ConflictAlert({
   )
 }
 
-function GitActionButton({
+function GitActionButtons({
   provider,
-  committing,
-  canAct,
-  pushOnly,
-  onCommit
+  model,
+  gitAction,
+  draft,
+  draftStale,
+  ahead,
+  canCommit,
+  canPush,
+  onPrepare,
+  onDraftMessage,
+  onCancelDraft,
+  onConfirm,
+  onPush
 }: {
   provider: AiProvider
-  committing: boolean
-  canAct: boolean
-  pushOnly: boolean
-  onCommit: () => void
+  model?: string
+  gitAction: 'commit' | 'push' | null
+  draft: ReturnType<typeof useGitPanel>['draft']
+  draftStale: boolean
+  ahead: number
+  canCommit: boolean
+  canPush: boolean
+  onPrepare: () => void
+  onDraftMessage: (message: string) => void
+  onCancelDraft: () => void
+  onConfirm: () => void
+  onPush: () => void
 }) {
-  const title = pushOnly
-    ? 'Push unpushed commits to the remote'
-    : `Stage all, generate a message with ${provider}, commit, and push`
-  let label: string
-  if (committing) label = pushOnly ? 'Pushing…' : 'Committing & pushing…'
-  else if (pushOnly) label = 'Push'
-  else label = 'Commit & push with AI'
+  const [pushArmed, setPushArmed] = useState(false)
+  const pushTitle =
+    ahead > 0
+      ? `Push ${ahead} unpushed commit${ahead === 1 ? '' : 's'} to the remote`
+      : 'Nothing to push'
+  const commitBusy = gitAction === 'commit'
+
+  useEffect(() => {
+    if (!canPush) {
+      setPushArmed(false)
+      return
+    }
+    if (!pushArmed) return
+    const timer = window.setTimeout(() => setPushArmed(false), 6000)
+    return () => window.clearTimeout(timer)
+  }, [canPush, pushArmed])
 
   return (
     <div
       style={{
         flex: 'none',
         padding: '10px 12px 12px',
-        borderTop: `1px solid ${C.cardBorder}`
+        borderTop: `1px solid ${C.cardBorder}`,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8
       }}
     >
-      <Button
-        variant="primary"
-        size="md"
-        disabled={!canAct}
-        onClick={() => void onCommit()}
-        title={title}
-        style={{ width: '100%' }}
-      >
-        {committing ? (
+      {draft && (
+        <>
+          {draft.skipped.length > 0 && (
+            <div style={{ fontSize: 10.5, color: C.yellow, lineHeight: 1.4 }}>
+              Skipped {draft.skipped.join(', ')} — looks like a secret
+            </div>
+          )}
+          {draftStale && (
+            <div style={{ fontSize: 10.5, color: C.yellow, lineHeight: 1.4 }}>
+              Working tree changed — generate the message again.
+            </div>
+          )}
+          <textarea
+            className="bf-input bf-focus"
+            value={draft.message}
+            onChange={(e) => onDraftMessage(e.target.value)}
+            rows={3}
+            spellCheck={false}
+            aria-label="Commit message"
+            style={{
+              width: '100%',
+              resize: 'vertical',
+              padding: '6px 8px',
+              borderRadius: 7,
+              border: `1px solid ${C.cardBorder}`,
+              background: 'rgba(255,255,255,0.03)',
+              color: C.textSoft,
+              fontFamily: MONO,
+              fontSize: 11,
+              lineHeight: 1.45,
+              boxSizing: 'border-box'
+            }}
+          />
+        </>
+      )}
+      <div style={{ display: 'flex', gap: 8 }}>
+        {draft ? (
           <>
-            <Spinner /> {label}
+            <Button
+              variant="primary"
+              size="md"
+              disabled={commitBusy || draftStale || !draft.message.trim()}
+              onClick={() => void onConfirm()}
+              title={`Commit ${draft.files.length} file${draft.files.length === 1 ? '' : 's'}`}
+              style={{ flex: 1 }}
+            >
+              {commitBusy ? (
+                <>
+                  <Spinner /> Committing…
+                </>
+              ) : (
+                `Commit ${draft.files.length} file${draft.files.length === 1 ? '' : 's'}`
+              )}
+            </Button>
+            <Button variant="ghost" size="md" disabled={commitBusy} onClick={onCancelDraft}>
+              Cancel
+            </Button>
           </>
         ) : (
-          label
+          <Button
+            variant="primary"
+            size="md"
+            disabled={!canCommit}
+            onClick={() => void onPrepare()}
+            title={`Generate a commit message with ${aiSelectionLabel(provider, model)}`}
+            style={{ flex: 1 }}
+          >
+            {commitBusy ? (
+              <>
+                <Spinner /> Generating…
+              </>
+            ) : (
+              'Commit with AI'
+            )}
+          </Button>
         )}
-      </Button>
+        {gitAction === 'push' ? (
+          <Button variant="secondary" size="md" disabled style={{ flex: 1 }}>
+            <Spinner /> Pushing…
+          </Button>
+        ) : (
+          <Button
+            variant="secondary"
+            size="md"
+            disabled={!canPush}
+            title={pushArmed ? (ahead === 1 ? 'Click again to push 1 commit' : `Click again to push ${ahead} commits`) : pushTitle}
+            onClick={() => {
+              if (!pushArmed) {
+                setPushArmed(true)
+                return
+              }
+              setPushArmed(false)
+              void onPush()
+            }}
+            style={{ flex: 1 }}
+          >
+            {pushArmed ? (ahead === 1 ? 'Confirm push' : `Push ${ahead}?`) : 'Push'}
+          </Button>
+        )}
+      </div>
     </div>
   )
 }
@@ -426,15 +539,21 @@ function usePopoverPosition(
 export default function GitPane({
   branch,
   provider,
+  model,
   status,
   commits,
   github,
   loading,
-  committing,
+  gitAction,
+  draft,
   lastMessage,
   error,
   refresh,
-  aiCommit,
+  prepareCommit,
+  setDraftMessage,
+  cancelDraft,
+  confirmCommit,
+  push,
   open,
   onClose,
   anchorRef
@@ -444,7 +563,12 @@ export default function GitPane({
 
   if (!open || !pos) return null
 
-  const { hasConflicts, prConflicts, canAct, pushOnly } = gitActionState(status, github, committing)
+  const { hasConflicts, prConflicts, canCommit, canPush } = gitActionState(
+    status,
+    github,
+    gitAction
+  )
+  const draftStale = !!draft && !!status && !draftMatchesStatus(draft.files, status)
 
   return (
     <>
@@ -479,12 +603,20 @@ export default function GitPane({
           {lastMessage && <div style={alertBox('success')}>{lastMessage}</div>}
         </div>
 
-        <GitActionButton
+        <GitActionButtons
           provider={provider}
-          committing={committing}
-          canAct={canAct}
-          pushOnly={pushOnly}
-          onCommit={aiCommit}
+          model={model}
+          gitAction={gitAction}
+          draft={draft}
+          draftStale={draftStale}
+          ahead={status?.ahead ?? 0}
+          canCommit={canCommit}
+          canPush={canPush}
+          onPrepare={prepareCommit}
+          onDraftMessage={setDraftMessage}
+          onCancelDraft={cancelDraft}
+          onConfirm={confirmCommit}
+          onPush={push}
         />
       </div>
     </>

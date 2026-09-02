@@ -89,3 +89,61 @@ export function parseAheadBehind(raw: string): { ahead: number; behind: number }
   const ahead = Number(parts[1]) || 0
   return { ahead, behind }
 }
+
+const SECRET_KEYS = new Set([
+  'id_rsa',
+  'id_ed25519',
+  'id_dsa',
+  'id_ecdsa',
+  'credentials',
+  'credentials.json',
+  'secrets.json',
+  'service-account.json',
+  '.npmrc',
+  '.envrc'
+])
+const SECRET_EXT = /\.(pem|key|p12|pfx|jks|kdbx|tfvars)$/
+
+/** Untracked or pending files that should not be staged, sent to an AI CLI, or committed. */
+export function isSecretPath(filePath: string): boolean {
+  const name = (filePath.split(/[/\\]/).pop() ?? filePath).toLowerCase()
+  if (name === '.env') return true
+  if (name.startsWith('.env.') && name !== '.env.example' && name !== '.env.sample') return true
+  return SECRET_KEYS.has(name) || SECRET_EXT.test(name)
+}
+
+/** Files an AI commit may include, minus secret-looking paths. */
+export function committableFiles(st: GitStatus): { files: string[]; skipped: string[] } {
+  const paths = [...new Set([...st.staged, ...st.unstaged, ...st.untracked].map((f) => f.path))]
+  const files: string[] = []
+  const skipped: string[] = []
+  for (const p of paths) {
+    if (isSecretPath(p)) skipped.push(p)
+    else files.push(p)
+  }
+  return { files, skipped }
+}
+
+/** True when `files` is exactly the current committable set (order-insensitive). */
+export function draftMatchesStatus(files: string[], st: GitStatus): boolean {
+  const live = committableFiles(st).files
+  if (files.length !== live.length) return false
+  const set = new Set(files)
+  return live.every((p) => set.has(p))
+}
+
+export function commitBlockReason(st: GitStatus): string | null {
+  if (st.conflicts.length) return 'Resolve merge conflicts before committing.'
+  if (st.clean) return 'Working tree is clean — nothing to commit.'
+  if (!committableFiles(st).files.length) {
+    return 'Only secret-looking files are left — they were not staged.'
+  }
+  return null
+}
+
+export function pushBlockReason(st: GitStatus): string | null {
+  if (st.conflicts.length) return 'Resolve merge conflicts before pushing.'
+  if (st.behind > 0) return 'Branch is behind upstream — pull before pushing.'
+  if (st.ahead === 0) return 'Nothing to push — branch is even with upstream.'
+  return null
+}

@@ -2,7 +2,14 @@ import { execCli } from './exec-cli'
 import fs from 'fs'
 import path from 'path'
 import { runAiOnce } from './ai-oneshot'
-import { parseAheadBehind, parseGitStatus } from '../shared/git-status'
+import {
+  commitBlockReason,
+  committableFiles,
+  draftMatchesStatus,
+  parseAheadBehind,
+  parseGitStatus,
+  pushBlockReason
+} from '../shared/git-status'
 import type { AiProvider, GitCommit, GitInfo, GitStatus } from '../shared/types'
 import type { WorktreeRequest } from '../shared/worktree'
 import { parseAlreadyOpenPath, parseWorktreeList, pipelineStoreRoot, worktreeFolderName } from '../shared/worktree'
@@ -266,15 +273,9 @@ export async function status(cwd: string): Promise<GitStatus> {
   return { ...parsed, ahead, behind }
 }
 
-/** Latest commits on the current branch, newest first. */
-export async function recentCommits(cwd: string, limit = 3): Promise<GitCommit[]> {
-  const res = await git(cwd, [
-    'log',
-    `-n${limit}`,
-    '--format=%h\t%s\t%an\t%cr'
-  ])
-  if (res.code !== 0) return []
-  return res.out
+/** Parse `git log --format=%h\\t%s\\t%an\\t%cr` lines. */
+export function parseCommitLog(out: string): GitCommit[] {
+  return out
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
@@ -285,12 +286,34 @@ export async function recentCommits(cwd: string, limit = 3): Promise<GitCommit[]
     })
 }
 
-async function stageAll(cwd: string): Promise<{ ok: boolean; message: string }> {
-  const res = await git(cwd, ['add', '-A'])
+/** Latest commits on the current branch, newest first. */
+export async function recentCommits(cwd: string, limit = 3): Promise<GitCommit[]> {
+  const res = await git(cwd, ['log', `-n${limit}`, '--format=%h\t%s\t%an\t%cr'])
+  return res.code === 0 ? parseCommitLog(res.out) : []
+}
+
+async function stageFiles(
+  cwd: string,
+  files: string[],
+  skipped: string[]
+): Promise<{ ok: boolean; message: string }> {
+  if (skipped.length) {
+    const reset = await git(cwd, ['reset', '-q', 'HEAD', '--', ...skipped])
+    if (reset.code !== 0) return { ok: false, message: cliFirstLine(reset) || 'Could not unstage secret files' }
+  }
+  if (!files.length) return { ok: false, message: 'Nothing safe to commit' }
+  const res = await git(cwd, ['add', '--', ...files])
   return { ok: res.code === 0, message: cliFirstLine(res) }
 }
 
-async function push(cwd: string): Promise<{ ok: boolean; message: string }> {
+async function unstageFiles(cwd: string, files: string[]): Promise<void> {
+  if (!files.length) return
+  await git(cwd, ['reset', '-q', 'HEAD', '--', ...files])
+}
+
+export async function push(cwd: string): Promise<{ ok: boolean; message: string }> {
+  const blocked = pushBlockReason(await status(cwd))
+  if (blocked) return { ok: false, message: blocked }
   const res = await git(cwd, ['push'], 120_000)
   const line = cliFirstLine(res)
   return { ok: res.code === 0, message: line || (res.code === 0 ? 'Pushed' : 'Push failed') }
@@ -320,62 +343,93 @@ export function sanitizeCommitMessage(raw: string): string {
     .join('\n')
 }
 
-function commitMessagePrompt(diff: string): string {
+function commitMessagePrompt(diff: string, untracked: string[]): string {
+  const extra = untracked.length
+    ? `\nUntracked files that will be added:\n${untracked.map((f) => `- ${f}`).join('\n')}`
+    : ''
   return [
-    'Write a concise git commit message (1–2 sentences) for the staged changes below.',
+    'Write a concise git commit message (1–2 sentences) for the changes below.',
     'Use conventional commit style when it fits. Output ONLY the commit message — no quotes, labels, or explanation.',
     '',
     '---',
-    diff.slice(0, COMMIT_MSG_LIMIT)
+    (diff + extra).slice(0, COMMIT_MSG_LIMIT)
   ].join('\n')
 }
 
-async function generateCommitMessage(
+export type CommitDraft = {
+  ok: boolean
+  message?: string
+  files?: string[]
+  skipped?: string[]
+  error?: string
+}
+
+/** Generate a message from the working tree. Does not touch the index. */
+export async function draftCommit(
   cwd: string,
-  provider: AiProvider
-): Promise<{ ok: boolean; message?: string; error?: string }> {
-  const diffRes = await git(cwd, ['diff', '--cached', '--stat', '--patch'])
-  const diff = diffRes.out.trim()
-  if (!diff) return { ok: false, error: 'Nothing staged — stage changes before generating a message.' }
-  const ai = await runAiOnce(provider, commitMessagePrompt(diff), cwd)
+  provider: AiProvider,
+  model?: string
+): Promise<CommitDraft> {
+  const st = await status(cwd)
+  const blocked = commitBlockReason(st)
+  if (blocked) return { ok: false, error: blocked }
+
+  const { files, skipped } = committableFiles(st)
+  const untracked = st.untracked.map((f) => f.path).filter((p) => files.includes(p))
+  const tracked = files.filter((p) => !untracked.includes(p))
+  const parts: string[] = []
+  if (tracked.length) {
+    const diffRes = await git(cwd, ['diff', 'HEAD', '--stat', '--patch', '--', ...tracked])
+    if (diffRes.out.trim()) parts.push(diffRes.out.trim())
+  }
+  for (const file of untracked) {
+    const extra = await git(cwd, ['diff', '--no-index', '--stat', '--patch', '--', '/dev/null', file])
+    if (extra.out.trim()) parts.push(extra.out.trim())
+  }
+  const diff = parts.join('\n')
+  if (!diff && !untracked.length) {
+    return { ok: false, error: 'Nothing to commit.' }
+  }
+
+  const ai = await runAiOnce(provider, commitMessagePrompt(diff, untracked), cwd, 120_000, model)
   if (!ai.ok) return { ok: false, error: ai.error || 'Could not generate commit message' }
   const message = sanitizeCommitMessage(ai.text)
   if (!message) return { ok: false, error: 'AI returned an empty commit message' }
-  return { ok: true, message }
+  return { ok: true, message, files, skipped }
 }
 
-/** Stage everything, generate a message with AI, commit, and push. Pushes only when already clean but ahead. */
-export async function aiCommit(
+/** Stage only committable files and commit `message`. Restores newly staged paths on failure. */
+export async function commitAll(
   cwd: string,
-  provider: AiProvider
+  message: string,
+  files?: string[]
 ): Promise<{ ok: boolean; message?: string; error?: string }> {
   const st = await status(cwd)
-  if (st.conflicts.length) {
-    return { ok: false, error: 'Resolve merge conflicts before committing.' }
-  }
+  const blocked = commitBlockReason(st)
+  if (blocked) return { ok: false, error: blocked }
 
-  if (st.clean) {
-    if (st.ahead <= 0) {
-      return { ok: false, error: 'Working tree is clean — nothing to commit or push.' }
-    }
-    const pushed = await push(cwd)
-    if (!pushed.ok) return { ok: false, error: pushed.message || 'Push failed' }
-    return { ok: true, message: pushed.message }
+  const { files: live, skipped } = committableFiles(st)
+  if (files && !draftMatchesStatus(files, st)) {
+    return { ok: false, error: 'Working tree changed since the draft — generate the message again.' }
   }
+  const text = sanitizeCommitMessage(message)
+  if (!text) return { ok: false, error: 'Commit message is empty' }
 
-  const staged = await stageAll(cwd)
-  if (!staged.ok) return { ok: false, error: staged.message || 'Could not stage changes' }
-  const generated = await generateCommitMessage(cwd, provider)
-  if (!generated.ok || !generated.message) {
-    return { ok: false, error: generated.error || 'Could not generate commit message' }
+  const previouslyStaged = new Set(st.staged.map((f) => f.path).filter((p) => !skipped.includes(p)))
+  const added = live.filter((p) => !previouslyStaged.has(p))
+  const unstageSecrets = skipped.filter((p) => st.staged.some((f) => f.path === p))
+
+  const staged = await stageFiles(cwd, live, unstageSecrets)
+  if (!staged.ok) {
+    await unstageFiles(cwd, added)
+    return { ok: false, error: staged.message || 'Could not stage changes' }
   }
-  const done = await commit(cwd, generated.message)
-  if (!done.ok) return { ok: false, error: done.message || 'Commit failed' }
-  const pushed = await push(cwd)
-  if (!pushed.ok) {
-    return { ok: false, error: `${generated.message}\n\nCommitted, but push failed: ${pushed.message}` }
+  const done = await commit(cwd, text)
+  if (!done.ok) {
+    await unstageFiles(cwd, added)
+    return { ok: false, error: done.message || 'Commit failed' }
   }
-  return { ok: true, message: generated.message }
+  return { ok: true, message: text }
 }
 
 /** Resolve the checkout that stores `.farol/pipelines.json` for this repo. */

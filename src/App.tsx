@@ -1263,6 +1263,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         <GitPane
           branch={runBranch}
           provider={settings.agent}
+          model={settings.model}
           {...gitPanel}
           open={gitOpen}
           onClose={() => onGitOpenChange(false)}
@@ -1338,7 +1339,7 @@ function ProjectWorkspace({
   const seq = useRef({ shell: 1, pane: 0, split: 0 })
   const pipelinesRef = useRef<Pipeline[]>([])
   const settingsRef = useRef<AppSettings>(settings)
-  const gitPanel = useGitPanel(project.path, () => settingsRef.current.agent, {
+  const gitPanel = useGitPanel(project.path, () => settingsRef.current, {
     enabled: visible && git.isRepo,
     onHeadChange: setGit
   })

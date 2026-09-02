@@ -65,8 +65,11 @@ const api: FarolApi = {
     worktree: (projectPath, req) => ipcRenderer.invoke('git:worktree', projectPath, req),
     status: (projectPath: string) => ipcRenderer.invoke('git:status', projectPath),
     recentCommits: (projectPath: string) => ipcRenderer.invoke('git:recentCommits', projectPath),
-    aiCommit: (projectPath: string, provider) =>
-      ipcRenderer.invoke('git:aiCommit', projectPath, provider),
+    draftCommit: (projectPath: string, provider, model) =>
+      ipcRenderer.invoke('git:draftCommit', projectPath, provider, model),
+    commit: (projectPath, message, files) =>
+      ipcRenderer.invoke('git:commit', projectPath, message, files),
+    push: (projectPath: string) => ipcRenderer.invoke('git:push', projectPath),
     github: (projectPath: string) => ipcRenderer.invoke('git:github', projectPath),
     onChanged: (cb) => on<GitChanged>('git:changed', cb)
   },

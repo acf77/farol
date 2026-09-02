@@ -353,10 +353,23 @@ export interface FarolApi {
     }>
     status(projectPath: string): Promise<GitStatus>
     recentCommits(projectPath: string): Promise<GitCommit[]>
-    aiCommit(
+    draftCommit(
       projectPath: string,
-      provider: AiProvider
+      provider: AiProvider,
+      model?: string
+    ): Promise<{
+      ok: boolean
+      message?: string
+      files?: string[]
+      skipped?: string[]
+      error?: string
+    }>
+    commit(
+      projectPath: string,
+      message: string,
+      files?: string[]
     ): Promise<{ ok: boolean; message?: string; error?: string }>
+    push(projectPath: string): Promise<{ ok: boolean; message: string }>
     github(projectPath: string): Promise<GitHubInfo>
     /** Fires when HEAD changes, including from outside the app. */
     onChanged(cb: (changed: GitChanged) => void): () => void

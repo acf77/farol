@@ -12,7 +12,7 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, aiCommit, checkout, info as gitInfo, recentCommits, status as gitStatus } from './git'
+import { HeadWatcher, addWorktree, checkout, commitAll, draftCommit, info as gitInfo, push as gitPush, recentCommits, status as gitStatus } from './git'
 import { githubInfo } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, PipelineWatcher } from './store'
@@ -353,6 +353,20 @@ async function cwdAllowedForProject(projectPath: string, cwd: string): Promise<b
   return false
 }
 
+/** Commit/push only run in a project the app currently has open. */
+async function openProjectCwd(
+  projectPath: unknown
+): Promise<{ path: string } | { ok: false; error: string }> {
+  if (typeof projectPath !== 'string' || !projectPath.trim()) {
+    return { ok: false, error: 'Invalid project path' }
+  }
+  const { paths } = await loadOpenProjects()
+  const resolved = path.resolve(projectPath).replace(/[/\\]+$/, '')
+  const match = paths.find((p) => path.resolve(p).replace(/[/\\]+$/, '') === resolved)
+  if (!match) return { ok: false, error: 'Not an open project' }
+  return { path: path.resolve(match) }
+}
+
 async function handleBridge(req: BridgeRequest, projectPath: string): Promise<BridgeReply> {
   if (!(await cwdAllowedForProject(projectPath, req.cwd))) {
     return {
@@ -563,9 +577,31 @@ function registerIpc(): void {
   })
   ipcMain.handle('git:status', (_e, projectPath: string) => gitStatus(projectPath))
   ipcMain.handle('git:recentCommits', (_e, projectPath: string) => recentCommits(projectPath))
-  ipcMain.handle('git:aiCommit', (_e, projectPath: string, provider: AgentTaskRequest['provider']) =>
-    aiCommit(projectPath, provider)
+  ipcMain.handle(
+    'git:draftCommit',
+    async (_e, projectPath: string, provider: AgentTaskRequest['provider'], model?: string) => {
+      const cwd = await openProjectCwd(projectPath)
+      if ('error' in cwd) return cwd
+      return draftCommit(cwd.path, provider, typeof model === 'string' ? model : undefined)
+    }
   )
+  ipcMain.handle(
+    'git:commit',
+    async (_e, projectPath: string, message: string, files?: string[]) => {
+      const cwd = await openProjectCwd(projectPath)
+      if ('error' in cwd) return cwd
+      return commitAll(
+        cwd.path,
+        typeof message === 'string' ? message : '',
+        Array.isArray(files) ? files.filter((f) => typeof f === 'string') : undefined
+      )
+    }
+  )
+  ipcMain.handle('git:push', async (_e, projectPath: string) => {
+    const cwd = await openProjectCwd(projectPath)
+    if ('error' in cwd) return { ok: false, message: cwd.error }
+    return gitPush(cwd.path)
+  })
   ipcMain.handle('git:github', (_e, projectPath: string) => githubInfo(projectPath))
 
   ipcMain.handle('run:start', (_e, pipeline: Pipeline, cwd: string, branch: string) =>

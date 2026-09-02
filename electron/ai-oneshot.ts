@@ -7,9 +7,10 @@ export function runAiOnce(
   provider: AiProvider,
   prompt: string,
   cwd: string,
-  timeoutMs = 120_000
+  timeoutMs = 120_000,
+  model?: string
 ): Promise<{ ok: boolean; text: string; error?: string }> {
-  const spec = aiCommand(provider, prompt)
+  const spec = aiCommand(provider, prompt, model)
   const bin = resolveBinFrom(spec.bins)
   if (!bin) {
     const listed = spec.bins.map((b) => `'${b}'`).join(' or ')
