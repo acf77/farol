@@ -1,4 +1,3 @@
-import { isShellToolName } from './catalog-shell'
 import type { Pipeline } from './types'
 
 export function mandatoryPipelines(pipelines: Pipeline[]): Pipeline[] {
@@ -31,11 +30,6 @@ export function isWriteToolName(name: string): boolean {
   )
 }
 
-/** This-turn heuristic: write tools or any shell. Goal/read tools are not. */
-export function isCodeChangeToolName(name: string): boolean {
-  return isWriteToolName(name) || isShellToolName(name)
-}
-
 /** Empty FAROL_PIPELINES is invalid when mandatory pipelines still need to run. */
 export function mandatoryOptOutError(
   available: Pipeline[],
@@ -46,9 +40,9 @@ export function mandatoryOptOutError(
   const ids = mandatoryPipelines(available).map((pipeline) => pipeline.id)
   if (!ids.length) return undefined
   return (
-    `Mandatory pipeline(s) must run after a code change and after a failed mandatory run until they pass: ${ids.join(', ')}. ` +
+    `Mandatory pipeline(s) must run after a file change and after a failed mandatory run until they pass: ${ids.join(', ')}. ` +
     `Select them via FAROL_PIPELINES: ${JSON.stringify(ids)} (you may add other pipelines too) ` +
-    `and let Farol execute them — or use FAROL_PIPELINES: [] only when you made no code changes ` +
+    `and let Farol execute them — or use FAROL_PIPELINES: [] only when you made no file changes ` +
     `and no mandatory pipeline is still waiting to pass.`
   )
 }

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Pipeline } from './types'
 import {
-  isCodeChangeToolName,
   isWriteToolName,
   mandatoryOptOutError,
   mergeWithMandatory
@@ -31,33 +30,16 @@ describe('mergeWithMandatory', () => {
 })
 
 describe('mandatoryOptOutError', () => {
-  it('rejects an empty selection after code-changing tools', () => {
+  it('rejects an empty selection after file-changing tools', () => {
     const error = mandatoryOptOutError([lint, test], [], true)
     expect(error).toContain('lint')
     expect(error).toContain('FAROL_PIPELINES')
   })
 
-  it('allows opt-out when no code changed, a pipeline is selected, or none are mandatory', () => {
+  it('allows opt-out when no files changed, a pipeline is selected, or none are mandatory', () => {
     expect(mandatoryOptOutError([lint, test], [], false)).toBeUndefined()
     expect(mandatoryOptOutError([lint, test], [test], true)).toBeUndefined()
     expect(mandatoryOptOutError([test], [], true)).toBeUndefined()
-  })
-})
-
-describe('isCodeChangeToolName', () => {
-  it('treats shell and edit tools as code changes', () => {
-    expect(isCodeChangeToolName('shell')).toBe(true)
-    expect(isCodeChangeToolName('apply_patch')).toBe(true)
-    expect(isCodeChangeToolName('Write')).toBe(true)
-    expect(isCodeChangeToolName('NotebookEdit')).toBe(true)
-    expect(isCodeChangeToolName('EditNotebook')).toBe(true)
-  })
-
-  it('does not treat read-only or goal tools as code changes', () => {
-    expect(isCodeChangeToolName('Read')).toBe(false)
-    expect(isCodeChangeToolName('grep')).toBe(false)
-    expect(isCodeChangeToolName('CreateGoal')).toBe(false)
-    expect(isCodeChangeToolName('UpdateGoal')).toBe(false)
   })
 })
 

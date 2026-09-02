@@ -75,7 +75,7 @@ interface Task {
   guidance: string[]
   pipelineRuns: PipelineActivity[]
   abort: AbortController
-  /** Set on write tools / failed mandatory runs; cleared when they pass. */
+  /** Set on file writes / failed mandatory runs; cleared when they pass. */
   mandatoryOutstanding: boolean
 }
 
@@ -218,7 +218,7 @@ function selectedPipelines(
     return { pipelines: [], error: `The value after ${PIPELINES_MARKER} must be a JSON array of pipeline id strings.` }
   }
 
-  // An empty array means the agent made no code changes and wants to skip
+  // An empty array means the agent made no file changes and wants to skip
   // validation — that is intentional, not a parse error.
   if (!ids.length) return { pipelines: [] }
 
@@ -460,7 +460,7 @@ export class AgentController {
       output: string
       blocked: string | null
       shellInvocations: string[]
-      codeChanged: boolean
+      filesChanged: boolean
     }
   ): AgentSink {
     const check = (): void => {
@@ -489,13 +489,9 @@ export class AgentController {
         if (event.detail && isShellToolName(event.name) && event.state !== 'error') {
           scan.shellInvocations.push(event.detail)
         }
-        if (event.state !== 'error') {
-          if (isWriteToolName(event.name)) {
-            scan.codeChanged = true
-            task.mandatoryOutstanding = true
-          } else if (isShellToolName(event.name)) {
-            scan.codeChanged = true
-          }
+        if (event.state === 'done' && isWriteToolName(event.name)) {
+          scan.filesChanged = true
+          task.mandatoryOutstanding = true
         }
       },
       noise: (chunk) => {
@@ -581,7 +577,7 @@ export class AgentController {
       output: '',
       blocked: null as string | null,
       shellInvocations: [] as string[],
-      codeChanged: false
+      filesChanged: false
     }
     const sink = this.cycleSink(task, scan)
     const code = this.executor
@@ -632,15 +628,21 @@ export class AgentController {
     )
     if (bypass) return retryInvalid(`you bypassed pipelines: ${bypass}`)
 
+    const mustRunMandatory = scan.filesChanged || task.mandatoryOutstanding
     const mandatoryBypass = mandatoryOptOutError(
       task.request.pipelines,
       selection.pipelines,
-      scan.codeChanged || task.mandatoryOutstanding
+      mustRunMandatory
     )
     if (mandatoryBypass) return retryInvalid(`you skipped mandatory pipelines: ${mandatoryBypass}`)
 
-    // No code changes → no validation. The agent opted out with [].
-    if (!selection.pipelines.length) {
+    const pipelines = mustRunMandatory
+      ? mergeWithMandatory(task.request.pipelines, selection.pipelines)
+      : selection.pipelines.filter((pipeline) => pipeline.mandatory !== true)
+
+    // Mandatory pipelines do not run unless files changed (or a previous
+    // mandatory run is still waiting to pass).
+    if (!pipelines.length) {
       const next = this.continueIfGuidance(task)
       if (next) return { kind: 'retry', prompt: next }
       task.running = false
@@ -649,7 +651,6 @@ export class AgentController {
       return { kind: 'done' }
     }
 
-    const pipelines = mergeWithMandatory(task.request.pipelines, selection.pipelines)
     const names = pipelines.map((pipeline) => pipeline.name).join(', ')
     this.status(task, 'validating', attempt, `Running ${names}`)
     const outcome = await this.runValidationPipelines(task, pipelines, attempt)
@@ -720,14 +721,14 @@ export class AgentController {
   private prompt(task: Task, opening: string): string {
     const mandatoryIds = mandatoryPipelines(task.request.pipelines).map((pipeline) => pipeline.id)
     const mandatoryNote = mandatoryIds.length
-      ? `Mandatory pipelines (always run when you change code, and after a failed mandatory run until they pass): ${mandatoryIds.join(', ')}. ${PIPELINES_MARKER} [] is only valid when you made no code changes and no mandatory pipeline is still waiting to pass.`
+      ? `Mandatory pipelines (run only when files change, and after a failed mandatory run until they pass): ${mandatoryIds.join(', ')}. ${PIPELINES_MARKER} [] is only valid when you made no file changes and no mandatory pipeline is still waiting to pass.`
       : ''
     return [
       opening,
       '',
       `Work only in ${task.request.cwd}.`,
       this.pipelineHistory(task),
-      `When the requested code change is complete, select every relevant validation pipeline from the catalog below. If you made no code changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
+      `When the requested file change is complete, select every relevant validation pipeline from the catalog below. If you made no file changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
       mandatoryNote,
       `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
       `Do not call the Farol MCP tools in this managed Chat session. They require approval in some providers; the managed harness executes your selected pipelines directly.`,
