@@ -931,4 +931,101 @@ describe('AgentController', () => {
       )
     ).toBe(true)
   })
+
+  it('rejects empty FAROL_PIPELINES on a repair turn after a failed mandatory run', async () => {
+    const events: AgentTaskEvent[] = []
+    const lintFail = {
+      runId: 'run-lint-fail',
+      pipelineId: 'lint',
+      ok: false,
+      failedNodeId: 'lint-step',
+      steps: [{ nodeId: 'lint-step', ok: false, code: 1, output: 'lint error' }]
+    }
+    const lintPass = { ...lintFail, runId: 'run-lint-ok', ok: true, failedNodeId: undefined, steps: [{ nodeId: 'lint-step', ok: true, code: 0, output: '' }] }
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce(lintFail)
+      .mockResolvedValueOnce(result(true))
+      .mockResolvedValueOnce(lintPass)
+      .mockResolvedValueOnce(result(true))
+    const execute = vi
+      .fn<AgentExecutor>()
+      .mockImplementationOnce(async (_request, _prompt, output, onTool) => {
+        onTool?.({ toolId: 'edit-1', name: 'apply_patch', detail: 'src/app.ts', state: 'done' })
+        output('FAROL_PIPELINES: ["validate"]\n')
+        return 0
+      })
+      .mockImplementationOnce(async (_request, _prompt, output) => {
+        output('No further edits\nFAROL_PIPELINES: []\n')
+        return 0
+      })
+      .mockImplementationOnce(async (_request, _prompt, output) => {
+        output('FAROL_PIPELINES: ["validate"]\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, pipelines: [request.pipelines[0], lintMandatory] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(execute).toHaveBeenCalledTimes(3)
+    expect(execute.mock.calls[1][1]).toContain('Farol validation attempt')
+    expect(execute.mock.calls[2][1]).toContain('skipped mandatory pipelines')
+    expect(run.mock.calls.map((call) => call[0].id)).toEqual(['lint', 'validate', 'lint', 'validate'])
+  })
+
+  it('treats NotebookEdit as a code change and rejects empty FAROL_PIPELINES', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = vi
+      .fn<AgentExecutor>()
+      .mockImplementationOnce(async (_request, _prompt, output, onTool) => {
+        onTool?.({ toolId: 'nb-1', name: 'NotebookEdit', detail: 'notes.ipynb', state: 'done' })
+        output('FAROL_PIPELINES: []\n')
+        return 0
+      })
+      .mockImplementationOnce(async (_request, _prompt, output) => {
+        output('FAROL_PIPELINES: ["validate"]\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, pipelines: [request.pipelines[0], lintMandatory] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute.mock.calls[1][1]).toContain('skipped mandatory pipelines')
+    expect(run.mock.calls.map((call) => call[0].id)).toEqual(['lint', 'validate'])
+  })
+
+  it('does not treat CreateGoal as a code change', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = vi.fn<AgentExecutor>().mockImplementation(async (_request, _prompt, output, onTool) => {
+      onTool?.({ toolId: 'goal-1', name: 'CreateGoal', detail: 'Ship the widget', state: 'done' })
+      output('FAROL_PIPELINES: []\n')
+      return 0
+    })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, pipelines: [lintMandatory] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(run).not.toHaveBeenCalled()
+    expect(
+      events.some(
+        (event) =>
+          event.kind === 'status' &&
+          event.status === 'completed' &&
+          event.message.includes('No validation needed')
+      )
+    ).toBe(true)
+  })
 })

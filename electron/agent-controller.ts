@@ -17,7 +17,7 @@ import {
   pipelinesForCatalogCmds
 } from '../shared/catalog-shell'
 import {
-  isCodeChangeToolName,
+  isWriteToolName,
   mandatoryOptOutError,
   mandatoryPipelines,
   mergeWithMandatory
@@ -75,6 +75,8 @@ interface Task {
   guidance: string[]
   pipelineRuns: PipelineActivity[]
   abort: AbortController
+  /** Set on write tools / failed mandatory runs; cleared when they pass. */
+  mandatoryOutstanding: boolean
 }
 
 interface PipelineActivity {
@@ -293,7 +295,8 @@ export class AgentController {
       disposeWhenIdle: false,
       guidance: [],
       pipelineRuns: [],
-      abort: new AbortController()
+      abort: new AbortController(),
+      mandatoryOutstanding: false
     }
     this.tasks.set(request.id, task)
     this.emit({ kind: 'user', taskId: request.id, text: clean })
@@ -478,8 +481,13 @@ export class AgentController {
         if (event.detail && isShellToolName(event.name) && event.state !== 'error') {
           scan.shellInvocations.push(event.detail)
         }
-        if (event.state !== 'error' && isCodeChangeToolName(event.name)) {
-          scan.codeChanged = true
+        if (event.state !== 'error') {
+          if (isWriteToolName(event.name)) {
+            scan.codeChanged = true
+            task.mandatoryOutstanding = true
+          } else if (isShellToolName(event.name)) {
+            scan.codeChanged = true
+          }
         }
       },
       noise: (chunk) => {
@@ -619,7 +627,7 @@ export class AgentController {
     const mandatoryBypass = mandatoryOptOutError(
       task.request.pipelines,
       selection.pipelines,
-      scan.codeChanged
+      scan.codeChanged || task.mandatoryOutstanding
     )
     if (mandatoryBypass) return retryInvalid(`you skipped mandatory pipelines: ${mandatoryBypass}`)
 
@@ -643,6 +651,7 @@ export class AgentController {
     }
     if (outcome.kind === 'stopped') return { kind: 'done' }
     if (outcome.kind === 'passed') {
+      task.mandatoryOutstanding = false
       const next = this.continueIfGuidance(task)
       if (next) return { kind: 'retry', prompt: next }
       task.running = false
@@ -651,6 +660,9 @@ export class AgentController {
       return { kind: 'done' }
     }
 
+    if (outcome.failures.some(({ pipeline }) => pipeline.mandatory === true)) {
+      task.mandatoryOutstanding = true
+    }
     const guidance = task.guidance.splice(0).join('\n')
     return {
       kind: 'retry',
@@ -700,7 +712,7 @@ export class AgentController {
   private prompt(task: Task, opening: string): string {
     const mandatoryIds = mandatoryPipelines(task.request.pipelines).map((pipeline) => pipeline.id)
     const mandatoryNote = mandatoryIds.length
-      ? `Mandatory pipelines (always run when you change code): ${mandatoryIds.join(', ')}. ${PIPELINES_MARKER} [] is only valid when you made no code changes.`
+      ? `Mandatory pipelines (always run when you change code, and after a failed mandatory run until they pass): ${mandatoryIds.join(', ')}. ${PIPELINES_MARKER} [] is only valid when you made no code changes and no mandatory pipeline is still waiting to pass.`
       : ''
     return [
       opening,

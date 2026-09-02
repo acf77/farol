@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Pipeline } from './types'
 import {
   isCodeChangeToolName,
+  isWriteToolName,
   mandatoryOptOutError,
   mergeWithMandatory
 } from './mandatory'
@@ -48,10 +49,30 @@ describe('isCodeChangeToolName', () => {
     expect(isCodeChangeToolName('shell')).toBe(true)
     expect(isCodeChangeToolName('apply_patch')).toBe(true)
     expect(isCodeChangeToolName('Write')).toBe(true)
+    expect(isCodeChangeToolName('NotebookEdit')).toBe(true)
+    expect(isCodeChangeToolName('EditNotebook')).toBe(true)
   })
 
-  it('does not treat read-only tools as code changes', () => {
+  it('does not treat read-only or goal tools as code changes', () => {
     expect(isCodeChangeToolName('Read')).toBe(false)
     expect(isCodeChangeToolName('grep')).toBe(false)
+    expect(isCodeChangeToolName('CreateGoal')).toBe(false)
+    expect(isCodeChangeToolName('UpdateGoal')).toBe(false)
+  })
+})
+
+describe('isWriteToolName', () => {
+  it('matches write-tool aliases including NotebookEdit', () => {
+    expect(isWriteToolName('NotebookEdit')).toBe(true)
+    expect(isWriteToolName('EditNotebook')).toBe(true)
+    expect(isWriteToolName('StrReplace')).toBe(true)
+    expect(isWriteToolName('Write')).toBe(true)
+  })
+
+  it('does not persist shell or Cursor goal tools as writes', () => {
+    expect(isWriteToolName('shell')).toBe(false)
+    expect(isWriteToolName('CreateGoal')).toBe(false)
+    expect(isWriteToolName('UpdateGoal')).toBe(false)
+    expect(isWriteToolName('Read')).toBe(false)
   })
 })
