@@ -16,7 +16,9 @@ import { HeadWatcher, addWorktree, checkout, commitAll, draftCommit, info as git
 import { githubInfo } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, PipelineWatcher } from './store'
+import { isAiProvider } from '../shared/ai'
 import { listProjectFiles, saveChatAttachment } from './files'
+import { listAgentSkills } from './skills'
 import { AppUpdater } from './update'
 import { applyGlass, glassAvailable } from './glass'
 import { mergeMcpConfig, MCP_CONFIG_REL_PATHS, type McpServerEntry } from '../shared/mcp-config'
@@ -513,6 +515,12 @@ function registerIpc(): void {
 
   ipcMain.handle('project:listFiles', (_e, projectPath: string, query?: string) =>
     listProjectFiles(projectPath, typeof query === 'string' ? query : '')
+  )
+
+  ipcMain.handle('project:listSkills', (_e, projectPath: string, provider: unknown) =>
+    typeof projectPath === 'string' && isAiProvider(provider)
+      ? listAgentSkills(projectPath, provider)
+      : []
   )
 
   ipcMain.handle(
