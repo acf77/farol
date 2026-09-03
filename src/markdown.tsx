@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { C, MONO } from './theme'
 
 /** Control lines the managed harness reads — hide them from the transcript. */
-const CONTROL_LINE = /^\s*FAROL_(?:PIPELINES|BLOCKED):.*$/
+const CONTROL_LINE = /^\s*FAROL_(?:PIPELINES|BLOCKED|QUESTIONS):.*$/
 
 /**
  * Drop Farol harness markers so they do not clutter the chat once the

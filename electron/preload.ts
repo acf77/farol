@@ -86,6 +86,8 @@ const api: FarolApi = {
       ipcRenderer.invoke('agent:setProvider', taskId, provider, model),
     cancel: (taskId) => ipcRenderer.invoke('agent:cancel', taskId),
     dispose: (taskId) => ipcRenderer.invoke('agent:dispose', taskId),
+    answer: (taskId, requestId, answers) =>
+      ipcRenderer.invoke('agent:answer', taskId, requestId, answers),
     onEvent: (cb) => on<AgentTaskEvent>('agent:event', cb)
   },
   settings: {

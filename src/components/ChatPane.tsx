@@ -30,6 +30,8 @@ interface Props {
   /** Last-chosen model for `defaultProvider`. Omitted means the CLI default. */
   defaultModel?: string
   onMessage: (text: string, provider: AiProvider, model?: string) => void
+  /** `answers: null` dismisses the chooser. */
+  onAnswer: (requestId: string, answers: string[][] | null) => void
   onCancel: () => void
   onProviderChange: (provider: AiProvider, model?: string) => void
   onOpenPipeline: (tabId: string) => void
@@ -236,6 +238,209 @@ function AssistantFooter({
   )
 }
 
+function QuestionOptionButton({
+  option,
+  selected,
+  locked,
+  onSelect
+}: {
+  option: { label: string; description: string }
+  selected: boolean
+  locked: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className="bf-focus"
+      disabled={locked}
+      aria-pressed={selected}
+      onClick={onSelect}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: 2,
+        width: '100%',
+        padding: '8px 10px',
+        border: selected ? '1px solid #2563EB' : '1px solid #273449',
+        borderRadius: 8,
+        background: selected ? 'rgba(37,99,235,0.12)' : 'transparent',
+        color: '#E2E8F0',
+        cursor: locked ? 'default' : 'pointer',
+        textAlign: 'left',
+        fontFamily: 'inherit'
+      }}
+    >
+      <span style={{ fontSize: 12.5, fontWeight: 600 }}>{option.label}</span>
+      {option.description && (
+        <span style={{ fontSize: 12, lineHeight: 1.4, color: '#94A3B8' }}>{option.description}</span>
+      )}
+    </button>
+  )
+}
+
+function QuestionCard({
+  card,
+  onAnswer
+}: {
+  card: NonNullable<AgentMessage['question']>
+  onAnswer: (requestId: string, answers: string[][] | null) => void
+}) {
+  const locked = !!card.answers || !!card.dismissed
+  const [picks, setPicks] = useState<string[][]>(() =>
+    card.questions.map((_, i) => card.answers?.[i] ?? [])
+  )
+  const [custom, setCustom] = useState<string[]>(() => card.questions.map(() => ''))
+
+  const toggle = (qi: number, label: string): void => {
+    if (locked) return
+    setPicks((prev) =>
+      prev.map((row, i) => {
+        if (i !== qi) return row
+        if (card.questions[qi].multiple) {
+          return row.includes(label) ? row.filter((item) => item !== label) : [...row, label]
+        }
+        return row[0] === label ? [] : [label]
+      })
+    )
+    if (!card.questions[qi].multiple) {
+      setCustom((prev) => prev.map((value, i) => (i === qi ? '' : value)))
+    }
+  }
+
+  const answers = card.questions.map((question, i) => {
+    const typed = custom[i].trim()
+    if (question.multiple) return typed ? [...picks[i], typed] : picks[i]
+    return typed ? [typed] : picks[i]
+  })
+  const ready = answers.every((row) => row.length > 0)
+
+  return (
+    <div
+      style={{
+        border: '1px solid #273449',
+        borderRadius: 11,
+        overflow: 'hidden',
+        background: '#111827'
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '11px 14px',
+          borderBottom: '1px solid #273449'
+        }}
+      >
+        <ToolIcon />
+        <span style={{ fontFamily: MONO, fontSize: 12, color: '#CBD5E1' }}>
+          {card.dismissed
+            ? 'questions dismissed'
+            : `question${card.questions.length === 1 ? '' : 's'}`}
+        </span>
+        {locked && !card.dismissed ? <CheckIcon /> : null}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '13px 15px' }}>
+        {card.questions.map((question, qi) => {
+          const selected = new Set(card.answers?.[qi] ?? picks[qi])
+          const extras = (card.answers?.[qi] ?? []).filter(
+            (label) => !question.options.some((option) => option.label === label)
+          )
+          return (
+            <div key={`${card.requestId}-${qi}`} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B', letterSpacing: '0.02em' }}>
+                {question.header}
+              </div>
+              <div style={{ fontSize: 13.5, lineHeight: 1.45, color: '#E2E8F0' }}>{question.question}</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {question.options.map((option) => (
+                  <QuestionOptionButton
+                    key={option.label}
+                    option={option}
+                    selected={selected.has(option.label)}
+                    locked={locked}
+                    onSelect={() => toggle(qi, option.label)}
+                  />
+                ))}
+              </div>
+              {question.custom !== false && !locked && (
+                <input
+                  className="bf-focus"
+                  value={custom[qi]}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    setCustom((prev) => prev.map((item, i) => (i === qi ? value : item)))
+                    if (!question.multiple) {
+                      setPicks((prev) => prev.map((row, i) => (i === qi ? [] : row)))
+                    }
+                  }}
+                  placeholder="Type your own answer"
+                  aria-label={`Custom answer for ${question.header}`}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    border: '1px solid #273449',
+                    borderRadius: 8,
+                    background: '#080D17',
+                    color: '#F8FAFC',
+                    fontSize: 12.5,
+                    padding: '7px 10px',
+                    outline: 'none',
+                    fontFamily: 'inherit'
+                  }}
+                />
+              )}
+              {locked && extras.length > 0 && (
+                <div style={{ fontSize: 12, color: '#94A3B8' }}>{extras.join(', ')}</div>
+              )}
+            </div>
+          )
+        })}
+        {!locked && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button
+              type="button"
+              className="bf-focus"
+              onClick={() => onAnswer(card.requestId, null)}
+              style={{
+                border: '1px solid #273449',
+                background: 'transparent',
+                color: '#94A3B8',
+                borderRadius: 8,
+                padding: '6px 12px',
+                fontSize: 12.5,
+                cursor: 'pointer'
+              }}
+            >
+              Skip
+            </button>
+            <button
+              type="button"
+              className="bf-focus"
+              disabled={!ready}
+              onClick={() => onAnswer(card.requestId, answers)}
+              style={{
+                border: 'none',
+                background: ready ? C.accent : '#1F2937',
+                color: ready ? '#fff' : '#64748B',
+                borderRadius: 8,
+                padding: '6px 12px',
+                fontSize: 12.5,
+                fontWeight: 600,
+                cursor: ready ? 'pointer' : 'default'
+              }}
+            >
+              Continue
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Turn({
   m,
   i,
@@ -243,7 +448,8 @@ function Turn({
   isBusy,
   provider,
   onOpenPipeline,
-  onNewChat
+  onNewChat,
+  onAnswer
 }: {
   m: AgentMessage
   i: number
@@ -252,6 +458,7 @@ function Turn({
   provider: AiProvider
   onOpenPipeline: (tabId: string) => void
   onNewChat: () => void
+  onAnswer: (requestId: string, answers: string[][] | null) => void
 }) {
   if (m.role === 'user') {
     return (
@@ -279,6 +486,7 @@ function Turn({
     )
   }
 
+  if (m.question) return <QuestionCard card={m.question} onAnswer={onAnswer} />
   if (m.tool) return <ToolCard tool={m.tool} tight={!!messages[i - 1]?.tool} />
 
   const pc = m.pipeline
@@ -1195,13 +1403,15 @@ function MessageList({
   isBusy,
   provider,
   onOpenPipeline,
-  onNewChat
+  onNewChat,
+  onAnswer
 }: {
   messages: AgentMessage[]
   isBusy: boolean
   provider: AiProvider
   onOpenPipeline: (tabId: string) => void
   onNewChat: () => void
+  onAnswer: (requestId: string, answers: string[][] | null) => void
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 26, marginTop: 40 }}>
@@ -1215,6 +1425,7 @@ function MessageList({
             provider={provider}
             onOpenPipeline={onOpenPipeline}
             onNewChat={onNewChat}
+            onAnswer={onAnswer}
           />
         </MessageErrorBoundary>
       ))}
@@ -1260,6 +1471,7 @@ export default function ChatPane({
   defaultProvider,
   defaultModel,
   onMessage,
+  onAnswer,
   onCancel,
   onProviderChange,
   onOpenPipeline,
@@ -1329,6 +1541,7 @@ export default function ChatPane({
             provider={provider}
             onOpenPipeline={onOpenPipeline}
             onNewChat={onNewChat}
+            onAnswer={onAnswer}
           />
           <div style={{ height: 12 }} />
         </div>

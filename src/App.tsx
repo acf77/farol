@@ -107,6 +107,14 @@ function sanitizeAgentMessage(message: AgentMessage): AgentMessage {
             tabId: asText(message.pipeline.tabId)
           }
         }
+      : {}),
+    ...(message.question
+      ? {
+          question: {
+            ...message.question,
+            requestId: asText(message.question.requestId)
+          }
+        }
       : {})
   }
 }
@@ -426,12 +434,47 @@ function applyAgentOutputEvent(
     last?.role === 'assistant' &&
     !last.tool &&
     !last.pipeline &&
+    !last.question &&
     asText(last.text).length < MAX_MESSAGE_CHARS
   ) {
     messages[messages.length - 1] = { ...last, text: asText(last.text) + chunk }
   } else {
     messages.push({ role: 'assistant', text: chunk })
   }
+  return appendAgentMessages(pane, messages)
+}
+
+function applyAgentQuestionEvent(
+  pane: AgentPane,
+  event: Extract<AgentTaskEvent, { kind: 'question' }>
+): AgentPane {
+  const card = {
+    requestId: event.requestId,
+    questions: event.questions,
+    ...(event.answers ? { answers: event.answers } : {}),
+    ...(event.dismissed ? { dismissed: true } : {})
+  }
+  const message = {
+    role: 'system' as const,
+    text: event.dismissed
+      ? 'Questions dismissed'
+      : event.answers
+        ? event.questions
+            .map((q, i) => `${q.header}: ${(event.answers?.[i] ?? []).join(', ')}`)
+            .join('; ')
+        : event.questions.map((q) => q.header).join(', '),
+    question: card
+  }
+  const messages = [...pane.messages]
+  let existing = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].question?.requestId === event.requestId) {
+      existing = i
+      break
+    }
+  }
+  if (existing >= 0) messages[existing] = message
+  else messages.push(message)
   return appendAgentMessages(pane, messages)
 }
 
@@ -517,7 +560,8 @@ function applyAgentStatusEvent(
   pane: AgentPane,
   event: Extract<AgentTaskEvent, { kind: 'status' }>
 ): AgentPane {
-  const announce = event.status !== 'validating' && event.status !== 'completed'
+  const announce =
+    event.status !== 'validating' && event.status !== 'completed' && event.status !== 'asking'
   const message = asText(event.message)
   return {
     ...pane,
@@ -543,6 +587,7 @@ function applyAgentEvent(
     return appendAgentMessages(pane, [...pane.messages, { role: 'assistant', text: asText(event.text) }])
   }
   if (event.kind === 'tool') return applyAgentToolEvent(pane, event)
+  if (event.kind === 'question') return applyAgentQuestionEvent(pane, event)
   if (event.kind === 'user') {
     return appendAgentMessages(pane, [
       ...pane.messages,
@@ -1134,6 +1179,9 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                 onMessage={(text, provider, model) =>
                   sendAgentMessage(text, provider, undefined, undefined, model ?? null)
                 }
+                onAnswer={(requestId, answers) => {
+                  if (chatPane) void api.agent.answer(chatPane.taskId, requestId, answers)
+                }}
                 onCancel={cancelAgent}
                 onProviderChange={setAgentProvider}
                 onOpenPipeline={(tabId) => showTerminal(tabId, 'terminal')}

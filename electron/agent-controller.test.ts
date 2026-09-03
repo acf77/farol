@@ -1050,4 +1050,96 @@ describe('AgentController', () => {
       )
     ).toBe(true)
   })
+
+  const dbQuestion = {
+    question: 'Which database should we use?',
+    header: 'Database',
+    options: [
+      { label: 'Postgres', description: 'Existing stack' },
+      { label: 'SQLite', description: 'Local file' }
+    ]
+  }
+
+  it('pauses for FAROL_QUESTIONS instead of validating', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    const execute = vi.fn().mockImplementation(async (_request, _prompt, output: (chunk: string) => void) => {
+      output(`Need a choice.\nFAROL_QUESTIONS: ${JSON.stringify([dbQuestion])}\n`)
+      return 0
+    })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'asking')).toBe(true)
+    )
+
+    expect(run).not.toHaveBeenCalled()
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(execute.mock.calls[0][1]).toContain('FAROL_QUESTIONS:')
+    const asked = events.find((event) => event.kind === 'question')
+    expect(asked).toMatchObject({ kind: 'question', questions: [dbQuestion] })
+  })
+
+  it('feeds answers back and continues the task', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = vi
+      .fn()
+      .mockImplementationOnce(async (_request, _prompt, output: (chunk: string) => void) => {
+        output(`FAROL_QUESTIONS: ${JSON.stringify([dbQuestion])}\n`)
+        return 0
+      })
+      .mockImplementationOnce(async (_request, _prompt, output: (chunk: string) => void) => {
+        output('FAROL_PIPELINES: ["validate"]\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'question' && !event.answers)).toBe(true)
+    )
+    const asked = events.find((event) => event.kind === 'question')
+    if (!asked || asked.kind !== 'question') throw new Error('expected question event')
+
+    expect(controller.answer(request.id, asked.requestId, [['Postgres']])).toEqual({ ok: true })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute.mock.calls[1][1]).toContain('Which database should we use?')
+    expect(execute.mock.calls[1][1]).toContain('Postgres')
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(
+      events.some(
+        (event) => event.kind === 'question' && event.answers?.[0]?.[0] === 'Postgres'
+      )
+    ).toBe(true)
+  })
+
+  it('retries when the questions marker is invalid', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = vi
+      .fn()
+      .mockImplementationOnce(async (_request, _prompt, output: (chunk: string) => void) => {
+        output('FAROL_QUESTIONS: not-json\n')
+        return 0
+      })
+      .mockImplementationOnce(async (_request, _prompt, output: (chunk: string) => void) => {
+        output('FAROL_PIPELINES: ["validate"]\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(execute.mock.calls[1][1]).toContain('could not show your questions')
+    expect(run).toHaveBeenCalledTimes(1)
+  })
 })

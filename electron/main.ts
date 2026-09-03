@@ -628,6 +628,11 @@ function registerIpc(): void {
   )
   ipcMain.handle('agent:cancel', (_e, taskId: string) => agents.cancel(taskId))
   ipcMain.handle('agent:dispose', (_e, taskId: string) => agents.dispose(taskId))
+  ipcMain.handle(
+    'agent:answer',
+    (_e, taskId: string, requestId: string, answers: string[][] | null) =>
+      agents.answer(taskId, requestId, answers)
+  )
 
   ipcMain.handle('settings:load', () => loadSettings())
   ipcMain.handle('settings:save', (_e, settings: AppSettings) => saveSettings(settings))

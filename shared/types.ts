@@ -1,9 +1,12 @@
 /** Types shared between the main process, the preload bridge, and the renderer. */
 
 import type { AiProvider } from './ai'
+import type { AgentQuestion } from './questions'
 import type { ProjectSession } from './session'
 import type { WorktreeRequest } from './worktree'
 import type { AppSettings } from './settings'
+
+export type { AgentQuestion }
 
 export type { AiProvider, AppSettings, ProjectSession, WorktreeRequest }
 export { aiFixCommand } from './ai'
@@ -190,6 +193,7 @@ export interface PipelineRunResult {
 
 export type AgentTaskStatus =
   | 'working'
+  | 'asking'
   | 'validating'
   | 'repairing'
   | 'completed'
@@ -243,6 +247,15 @@ export type AgentTaskEvent =
       state: 'running' | 'done' | 'error'
     }
   | { kind: 'user'; taskId: string; text: string }
+  /** Agent asked the user; `answers` is set when they reply or dismiss. */
+  | {
+      kind: 'question'
+      taskId: string
+      requestId: string
+      questions: AgentQuestion[]
+      answers?: string[][]
+      dismissed?: boolean
+    }
 
 /** Every run event carries the branch the run started on. */
 interface RunEventBase {
@@ -396,6 +409,12 @@ export interface FarolApi {
     cancel(taskId: string): Promise<void>
     /** Cancel and drop the task so cleared chats cannot retain prompt history. */
     dispose(taskId: string): Promise<void>
+    /** Reply to an `asking` turn. `answers: null` dismisses the questions. */
+    answer(
+      taskId: string,
+      requestId: string,
+      answers: string[][] | null
+    ): Promise<{ ok: boolean; message?: string }>
     onEvent(cb: (e: AgentTaskEvent) => void): () => void
   }
   settings: {

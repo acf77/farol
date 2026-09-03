@@ -1,4 +1,4 @@
-import type { AgentTaskStatus, AiProvider, PipelineNode, StepState } from '@shared/types'
+import type { AgentQuestion, AgentTaskStatus, AiProvider, PipelineNode, StepState } from '@shared/types'
 import type { TermState } from './ansi'
 import type { PaneNode } from './layout'
 
@@ -32,6 +32,14 @@ export interface AgentPipelineCard {
   tabId: string
 }
 
+/** Questions the agent asked; stays interactive until the user answers. */
+export interface AgentQuestionCard {
+  requestId: string
+  questions: AgentQuestion[]
+  answers?: string[][]
+  dismissed?: boolean
+}
+
 /** A tool the agent called, rendered as a compact card in the transcript. */
 export interface AgentToolCard {
   /** Stable across the call's start and finish, so one card updates in place. */
@@ -46,6 +54,7 @@ export interface AgentMessage {
   text: string
   pipeline?: AgentPipelineCard
   tool?: AgentToolCard
+  question?: AgentQuestionCard
   /**
    * Epoch ms, shown under user bubbles. Render-only — the session sanitizer
    * rebuilds messages as `{role, text}`, so this does not survive a restart.

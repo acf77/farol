@@ -15,6 +15,9 @@ describe('stripControlMarkers', () => {
     expect(
       stripControlMarkers('Stopped.\nFAROL_BLOCKED: no access\n')
     ).toBe('Stopped.')
+    expect(
+      stripControlMarkers('Need a choice.\nFAROL_QUESTIONS: [{"question":"Go?"}]\n')
+    ).toBe('Need a choice.')
   })
 })
 

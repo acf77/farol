@@ -1,3 +1,5 @@
+import { isQuestionToolName, questionsFromToolInput, type AgentQuestion } from './questions'
+
 /**
  * Turning a coding CLI's realtime NDJSON stream into chat events.
  *
@@ -29,13 +31,20 @@ export interface AgentStreamTool {
   state: 'running' | 'done' | 'error'
 }
 
+/** A question tool — rendered as a chooser, not a generic tool card. */
+export interface AgentStreamQuestion {
+  kind: 'question'
+  toolId: string
+  questions: AgentQuestion[]
+}
+
 /** A line that was not JSON we understand; shown verbatim. */
 export interface AgentStreamRaw {
   kind: 'raw'
   text: string
 }
 
-export type AgentStreamEvent = AgentStreamText | AgentStreamTool | AgentStreamRaw
+export type AgentStreamEvent = AgentStreamText | AgentStreamTool | AgentStreamQuestion | AgentStreamRaw
 
 /**
  * Codex `item.completed` for a shell can embed the whole `aggregated_output` on
@@ -328,25 +337,33 @@ export class AgentStreamParser {
     const out: AgentStreamEvent[] = []
     for (const item of items) {
       if (!isRecord(item)) continue
-      if (role === 'assistant' && item.type === 'text' && typeof item.text === 'string') {
-        if (item.text.trim()) out.push({ kind: 'text', text: item.text })
-      } else if (role === 'assistant' && item.type === 'tool_use') {
-        const toolId = normalizeId(item.id, `tool-${this.names.size}`)
-        const name = typeof item.name === 'string' && item.name ? item.name : 'tool'
-        this.names.set(toolId, name)
-        out.push({ kind: 'tool', toolId, name, detail: toolDetail(item.input), state: 'running' })
-      } else if (role === 'user' && item.type === 'tool_result') {
-        const toolId = normalizeId(item.tool_use_id, '')
-        if (!toolId) continue
-        out.push({
-          kind: 'tool',
-          toolId,
-          name: this.names.get(toolId) ?? 'tool',
-          state: item.is_error === true ? 'error' : 'done'
-        })
-      }
+      const next = this.contentItem(item, role)
+      if (next) out.push(next)
     }
     return out
+  }
+
+  private contentItem(
+    item: Record<string, unknown>,
+    role: 'assistant' | 'user'
+  ): AgentStreamEvent | undefined {
+    if (role === 'assistant' && item.type === 'text' && typeof item.text === 'string') {
+      return item.text.trim() ? { kind: 'text', text: item.text } : undefined
+    }
+    if (role === 'assistant' && item.type === 'tool_use') {
+      const toolId = normalizeId(item.id, `tool-${this.names.size}`)
+      const name = typeof item.name === 'string' && item.name ? item.name : 'tool'
+      this.names.set(toolId, name)
+      const asked = isQuestionToolName(name) ? questionsFromToolInput(item.input) : undefined
+      if (asked) return { kind: 'question', toolId, questions: asked }
+      return { kind: 'tool', toolId, name, detail: toolDetail(item.input), state: 'running' }
+    }
+    if (role !== 'user' || item.type !== 'tool_result') return undefined
+    const toolId = normalizeId(item.tool_use_id, '')
+    if (!toolId) return undefined
+    const name = this.names.get(toolId) ?? 'tool'
+    if (isQuestionToolName(name)) return undefined
+    return { kind: 'tool', toolId, name, state: item.is_error === true ? 'error' : 'done' }
   }
 
   /** Cursor: `{ type: 'tool_call', subtype, call_id, tool_call: { shellToolCall: { args } } }`. */
@@ -358,6 +375,8 @@ export class AgentStreamParser {
     const body = call[key] as Record<string, unknown>
     const toolId = normalizeId(event.call_id, key)
     const name = cursorToolName(key)
+    const asked = isQuestionToolName(name) ? questionsFromToolInput(body.args) : undefined
+    if (asked) return [{ kind: 'question', toolId, questions: asked }]
     const detail = toolDetail(body.args)
     const subtype = event.subtype
     const state: AgentStreamTool['state'] =
@@ -379,6 +398,10 @@ export class AgentStreamParser {
     const meta = codexToolMeta(type, item)
     if (!meta) return []
     const toolId = normalizeId(item.id, `codex-${type || 'tool'}`)
+    const asked = isQuestionToolName(meta.name)
+      ? questionsFromToolInput(item.arguments ?? item)
+      : undefined
+    if (asked) return [{ kind: 'question', toolId, questions: asked }]
     const state = codexState(item, completed)
     return [
       {

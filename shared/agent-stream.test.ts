@@ -35,6 +35,58 @@ describe('AgentStreamParser', () => {
     ])
   })
 
+  it('turns a question tool_use into a question event, not a tool card', () => {
+    const parser = new AgentStreamParser()
+    const asked = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_q',
+            name: 'AskUserQuestion',
+            input: {
+              questions: [
+                {
+                  question: 'Which database should we use?',
+                  header: 'Database',
+                  options: [
+                    { label: 'Postgres', description: 'Existing stack' },
+                    { label: 'SQLite', description: 'Local file' }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    })
+    const result = JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ tool_use_id: 'toolu_q', type: 'tool_result', content: 'ok', is_error: false }]
+      }
+    })
+    expect(parse(parser, `${asked}\n${result}\n`)).toEqual([
+      {
+        kind: 'question',
+        toolId: 'toolu_q',
+        questions: [
+          {
+            question: 'Which database should we use?',
+            header: 'Database',
+            options: [
+              { label: 'Postgres', description: 'Existing stack' },
+              { label: 'SQLite', description: 'Local file' }
+            ]
+          }
+        ]
+      }
+    ])
+  })
+
   it('marks a failed tool result as an error', () => {
     const parser = new AgentStreamParser()
     const failed = JSON.stringify({
