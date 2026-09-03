@@ -4,7 +4,7 @@ body,
   margin: 0;
   padding: 0;
   height: 100%;
-  background: #080D17;
+  background: #181817;
   overflow: hidden;
   font-family:
     -apple-system,
@@ -24,11 +24,11 @@ html.bf-glass #root {
 }
 
 a {
-  color: #60A5FA;
+  color: #E3F86C;
   text-decoration: none;
 }
 a:hover {
-  color: #93C5FD;
+  color: #EDF99E;
 }
 
 input,
@@ -40,7 +40,7 @@ select {
 
 input::placeholder,
 textarea::placeholder {
-  color: #64748B;
+  color: #777772;
 }
 
 button:disabled {
@@ -77,7 +77,7 @@ button:disabled {
   html.bf-glass,
   html.bf-glass body,
   html.bf-glass #root {
-    background: #080D17 !important;
+    background: #181817 !important;
   }
 }
 
@@ -97,7 +97,7 @@ button:disabled {
     scroll-behavior: auto !important;
   }
   /*
-   * Freeze the spinner mid-turn. The ring keeps its faint Beacon Blue circle
+   * Freeze the spinner mid-turn. The ring keeps its faint Signal Lime circle
    * and its bright arc, held off-axis so it still reads as a partial ring in
    * progress rather than a plain dot outline.
    */
@@ -129,7 +129,7 @@ button:disabled {
   height: 9px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #273449;
+  background: #3E3E3A;
   border-radius: 6px;
   border: 2px solid transparent;
   background-clip: padding-box;
@@ -138,7 +138,7 @@ button:disabled {
   background: transparent;
 }
 ::selection {
-  background: rgba(37, 99, 235, 0.35);
+  background: rgba(214, 242, 58, 0.35);
 }
 
 /*
@@ -157,12 +157,13 @@ button:disabled {
   cursor: pointer;
 }
 .bf-menu-item:hover {
-  background: #2563EB !important;
-  color: #fff !important;
+  background: #D6F23A !important;
+  color: #1B1D13 !important;
 }
 
 .bf-btn-primary:hover:not(:disabled) {
-  background: #60A5FA !important;
+  background: #E3F86C !important;
+  color: #1B1D13 !important;
 }
 
 /*
@@ -180,11 +181,12 @@ button:disabled {
 .bf-row:active,
 .bf-term-tab:active,
 .bf-composer-btn:active,
-.bf-split-btn:active {
+.bf-split-btn:active,
+.bf-tile:active {
   filter: brightness(0.92);
 }
 .bf-btn-primary:active:not(:disabled) {
-  background: #1D4ED8 !important;
+  background: #BDD927 !important;
   filter: none;
 }
 
@@ -211,7 +213,7 @@ button:disabled {
 }
 
 .bf-danger:hover {
-  background: rgba(239, 68, 68, 0.12) !important;
+  background: rgba(255, 98, 90, 0.12) !important;
 }
 
 .bf-dashed:hover {
@@ -220,7 +222,7 @@ button:disabled {
 }
 
 .bf-input:focus {
-  border-color: #2563EB !important;
+  border-color: #D6F23A !important;
 }
 
 .bf-split-btn:hover {
@@ -238,7 +240,12 @@ button:disabled {
 
 .bf-suggest:hover {
   background: rgba(255, 255, 255, 0.06) !important;
-  color: #F8FAFC !important;
+  color: #F0F0EC !important;
+}
+
+.bf-tile:hover {
+  background: #2A2A28 !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
 }
 
 .bf-newpipe:hover {
@@ -249,10 +256,10 @@ button:disabled {
   background: rgba(255, 255, 255, 0.05) !important;
 }
 .bf-term-tab-active:hover {
-  background: #080D17 !important;
+  background: #181817 !important;
 }
 .bf-term-tab:focus-visible {
-  box-shadow: inset 0 0 0 2px #2563EB;
+  box-shadow: inset 0 0 0 2px #D6F23A;
 }
 
 .bf-composer-btn:hover {
@@ -260,17 +267,18 @@ button:disabled {
 }
 
 .bf-linkish:hover {
-  color: #E2E8F0 !important;
+  color: #D8D8D3 !important;
 }
 
 .bf-status-item:hover {
-  color: #F8FAFC !important;
+  color: #F0F0EC !important;
 }
 
 /* The run button fills in on hover, so an idle pipeline shows how to start it. */
 .bf-runbtn:hover {
-  background: #2563EB !important;
-  border-color: #2563EB !important;
+  background: #D6F23A !important;
+  border-color: #D6F23A !important;
+  color: #1B1D13 !important;
 }
 .bf-runbtn:hover .bf-runbtn-check {
   display: none !important;
@@ -288,11 +296,11 @@ button:disabled {
   outline: none;
 }
 .bf-focus:focus-visible {
-  outline: 2px solid #2563EB !important;
+  outline: 2px solid #D6F23A !important;
   outline-offset: 1px !important;
   /*
    * A contrast collar, not elevation: under Liquid Glass the effective
-   * backdrop can be light and Beacon Blue alone would sink into it. The
+   * backdrop can be light and Signal Lime alone would sink into it. The
    * outline paints over this, leaving a dark hairline either side of the ring
    * on any surface. No spread reaches layout.
    */
@@ -300,11 +308,10 @@ button:disabled {
 }
 
 /*
- * The primary button is a Beacon Blue fill, where a Beacon Blue ring would
- * read as part of the button. Same geometry, white ring.
+ * The primary button is a Signal Lime fill. A dark ring remains visible on it.
  */
 .bf-btn-primary.bf-focus:focus-visible {
-  outline-color: #fff !important;
+  outline-color: #1B1D13 !important;
 }
 
 /*
@@ -322,9 +329,9 @@ button:disabled {
   font-size: 12px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: #080D17;
-  border: 1px solid #273449;
-  color: #F8FAFC;
+  background: #181817;
+  border: 1px solid #3E3E3A;
+  color: #F0F0EC;
 }
 
 /* Agent-authored tables stay semantic and scroll within narrow chat panes. */
@@ -333,7 +340,7 @@ button:disabled {
   max-width: 100%;
   box-sizing: border-box;
   overflow-x: auto;
-  border: 1px solid #273449;
+  border: 1px solid #3E3E3A;
   border-radius: 6px;
 }
 
@@ -351,21 +358,21 @@ button:disabled {
   min-width: 96px;
   max-width: 360px;
   padding: 7px 10px;
-  border-bottom: 1px solid #273449;
-  border-inline-end: 1px solid #273449;
+  border-bottom: 1px solid #3E3E3A;
+  border-inline-end: 1px solid #3E3E3A;
   vertical-align: top;
   text-align: left;
   overflow-wrap: anywhere;
 }
 
 .bf-md-table th {
-  background: #111827;
-  color: #F8FAFC;
+  background: #232322;
+  color: #F0F0EC;
   font-weight: 600;
 }
 
 .bf-md-table td {
-  color: #E2E8F0;
+  color: #D8D8D3;
 }
 
 .bf-md-table th:last-child,

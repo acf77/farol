@@ -32,7 +32,7 @@ const field: React.CSSProperties = {
   height: 26,
   padding: '0 8px',
   borderRadius: 6,
-  border: '1px solid #273449',
+  border: '1px solid #3E3E3A',
   background: 'rgba(255,255,255,0.05)',
   color: C.text,
   fontSize: 12,
@@ -110,8 +110,8 @@ function ExistingWorkspaces({
             padding: '0 12px',
             borderRadius: 6,
             border: 'none',
-            background: canOpen ? C.accent : '#273449',
-            color: canOpen ? '#fff' : C.faint,
+            background: canOpen ? C.accent : '#3E3E3A',
+            color: canOpen ? C.accentInk : C.faint,
             fontSize: 12,
             fontWeight: 600,
             cursor: canOpen ? 'pointer' : 'default'
@@ -200,7 +200,7 @@ function BranchHint({
   defaultFolder: string
 }) {
   if (nameError) {
-    return <span style={{ color: '#F87171' }}>{nameError}</span>
+    return <span style={{ color: '#FF817B' }}>{nameError}</span>
   }
   if (existing) {
     return (
@@ -255,8 +255,8 @@ function DialogActions({
           padding: '0 14px',
           borderRadius: 6,
           border: 'none',
-          background: canSubmit ? C.accent : '#273449',
-          color: canSubmit ? '#fff' : C.faint,
+          background: canSubmit ? C.accent : '#3E3E3A',
+          color: canSubmit ? C.accentInk : C.faint,
           fontSize: 12,
           fontWeight: 600,
           cursor: canSubmit ? 'pointer' : 'default'
@@ -345,7 +345,7 @@ export default function NewTabDialog({
           padding: 16,
           borderRadius: 10,
           background: liquid ? G.panel : C.panel,
-          border: '1px solid #273449',
+          border: '1px solid #3E3E3A',
           boxShadow: '0 18px 48px rgba(0,0,0,0.55)',
           display: 'flex',
           flexDirection: 'column',
@@ -409,8 +409,8 @@ export default function NewTabDialog({
             style={{
               padding: '5px 8px',
               borderRadius: 6,
-              background: 'rgba(239,68,68,0.15)',
-              color: '#F87171',
+              background: 'rgba(255, 98, 90,0.15)',
+              color: '#FF817B',
               fontSize: 11
             }}
           >

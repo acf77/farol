@@ -41,7 +41,7 @@ function inline(text: string, keyPrefix: string, depth = 0): ReactNode[] {
       )
     } else if (bold) {
       nodes.push(
-        <strong key={key} style={{ fontWeight: 600, color: '#F8FAFC' }}>
+        <strong key={key} style={{ fontWeight: 600, color: '#F0F0EC' }}>
           {inline(bold.slice(2, -2), key, depth + 1)}
         </strong>
       )
@@ -81,7 +81,7 @@ function heading(level: number, text: string, key: string): ReactNode {
         fontSize: size,
         fontWeight: weight,
         letterSpacing: level === 1 ? '-0.2px' : undefined,
-        color: '#F8FAFC',
+        color: '#F0F0EC',
         marginTop: level === 1 ? 4 : 2,
         marginBottom: 2
       }}
@@ -98,14 +98,14 @@ function codeBlock(body: string, lang: string | undefined, key: string): ReactNo
       style={{
         margin: '4px 0',
         padding: '12px 14px',
-        background: '#080D17',
-        border: '1px solid #273449',
+        background: '#181817',
+        border: '1px solid #3E3E3A',
         borderRadius: 9,
         overflowX: 'auto',
         fontFamily: MONO,
         fontSize: 12,
         lineHeight: 1.5,
-        color: '#CBD5E1'
+        color: '#C4C4BE'
       }}
     >
       {lang ? (
@@ -123,7 +123,7 @@ function listItem(text: string, ordered: boolean, index: number, key: string): R
         style={{
           flex: 'none',
           minWidth: ordered ? 18 : 10,
-          color: '#94A3B8',
+          color: '#A1A19A',
           fontFamily: ordered ? MONO : 'inherit',
           fontSize: ordered ? 12 : 13.5,
           lineHeight: 1.6
@@ -302,7 +302,7 @@ function parseHr(line: string, key: string, next: number): BlockParse | null {
   if (!/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) return null
   return {
     node: (
-      <hr key={key} style={{ border: 'none', borderTop: '1px solid #273449', margin: '10px 0' }} />
+      <hr key={key} style={{ border: 'none', borderTop: '1px solid #3E3E3A', margin: '10px 0' }} />
     ),
     next
   }
@@ -321,9 +321,9 @@ function parseQuote(lines: string[], i: number, key: string): BlockParse | null 
       <div
         key={key}
         style={{
-          borderLeft: '2px solid #273449',
+          borderLeft: '2px solid #3E3E3A',
           paddingLeft: 12,
-          color: '#94A3B8',
+          color: '#A1A19A',
           display: 'flex',
           flexDirection: 'column',
           gap: 4
@@ -444,7 +444,7 @@ export function MarkdownBody({ text }: { text: string }) {
       style={{
         fontSize: 13.5,
         lineHeight: 1.6,
-        color: '#F8FAFC',
+        color: '#F0F0EC',
         textWrap: 'pretty',
         display: 'flex',
         flexDirection: 'column',

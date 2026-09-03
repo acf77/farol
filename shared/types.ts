@@ -102,6 +102,8 @@ export interface GitStatus {
   conflicts: GitStatusFile[]
   ahead: number
   behind: number
+  /** Merge-tree vs the default base (`staging`). Absent when that ref does not exist. */
+  baseMerge?: { base: string; conflicts: boolean }
 }
 
 export interface GitCommit {
@@ -114,13 +116,7 @@ export interface GitCommit {
 
 export interface PullRequest {
   number: number
-  title: string
-  url: string
-  headRef: string
   hasConflicts: boolean
-  hasChecks: boolean
-  checksPending: number
-  checksFailed: number
 }
 
 export interface GitHubInfo {
@@ -423,6 +419,18 @@ export interface FarolApi {
   settings: {
     load(): Promise<AppSettings>
     save(settings: AppSettings): Promise<void>
+  }
+  secrets: {
+    openRouterStatus(): Promise<{
+      configured: boolean
+      source: 'environment' | 'stored' | 'none'
+    }>
+    saveOpenRouterKey(key: string): Promise<{
+      ok: boolean
+      configured: boolean
+      source: 'environment' | 'stored' | 'none'
+      error?: string
+    }>
   }
   update: {
     check(): Promise<UpdateStatus>

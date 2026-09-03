@@ -9,7 +9,7 @@ const { runAiOnce } = vi.hoisted(() => ({
 }))
 vi.mock('./ai-oneshot', () => ({ runAiOnce }))
 
-import { commitAll, draftCommit, parseCommitLog, sanitizeCommitMessage } from './git'
+import { commitAll, draftCommit, mergeBaseConflicts, parseCommitLog, sanitizeCommitMessage } from './git'
 
 const dirs: string[] = []
 
@@ -116,5 +116,50 @@ describe('commitAll', () => {
     const res = await commitAll(cwd, 'feat: change', ['app.ts'])
     expect(res.ok).toBe(false)
     expect(res.error).toMatch(/changed/)
+  })
+})
+
+describe('mergeBaseConflicts', () => {
+  it('detects a conflict with staging', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'file.txt'), 'base\n')
+    git(cwd, ['add', 'file.txt'])
+    git(cwd, ['commit', '-m', 'init'])
+    git(cwd, ['branch', '-M', 'main'])
+    git(cwd, ['checkout', '-b', 'staging'])
+    fs.writeFileSync(path.join(cwd, 'file.txt'), 'staging\n')
+    git(cwd, ['add', 'file.txt'])
+    git(cwd, ['commit', '-m', 'staging'])
+    git(cwd, ['checkout', '-b', 'feat', 'main'])
+    fs.writeFileSync(path.join(cwd, 'file.txt'), 'feature\n')
+    git(cwd, ['add', 'file.txt'])
+    git(cwd, ['commit', '-m', 'feat'])
+    await expect(mergeBaseConflicts(cwd)).resolves.toEqual({ base: 'staging', conflicts: true })
+  })
+
+  it('reports a clean merge with staging', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'file.txt'), 'base\n')
+    git(cwd, ['add', 'file.txt'])
+    git(cwd, ['commit', '-m', 'init'])
+    git(cwd, ['branch', '-M', 'main'])
+    git(cwd, ['checkout', '-b', 'staging'])
+    fs.writeFileSync(path.join(cwd, 'other.txt'), 'staging only\n')
+    git(cwd, ['add', 'other.txt'])
+    git(cwd, ['commit', '-m', 'staging'])
+    git(cwd, ['checkout', '-b', 'feat', 'main'])
+    fs.writeFileSync(path.join(cwd, 'new.txt'), 'feature only\n')
+    git(cwd, ['add', 'new.txt'])
+    git(cwd, ['commit', '-m', 'feat'])
+    await expect(mergeBaseConflicts(cwd)).resolves.toEqual({ base: 'staging', conflicts: false })
+  })
+
+  it('skips when HEAD is staging', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'file.txt'), 'base\n')
+    git(cwd, ['add', 'file.txt'])
+    git(cwd, ['commit', '-m', 'init'])
+    git(cwd, ['checkout', '-b', 'staging'])
+    await expect(mergeBaseConflicts(cwd)).resolves.toBeUndefined()
   })
 })

@@ -53,7 +53,7 @@ Voice is quiet and factual. Labels are nouns and verbs, not slogans. "No Project
 
 ## Accessibility & Inclusion
 
-- **Target: WCAG 2.1 AA.** Body text, labels, and interactive controls meet 4.5:1 against their actual surface; large text and UI boundaries meet 3:1. The dense small type ramp (9px to 15px) makes this a real constraint, not a formality: dim metadata is the most likely failure point and should be checked against the surface it sits on, including the translucent Liquid Glass variants where the effective background shifts.
+- **Target: WCAG 2.1 AA.** Body text, labels, and interactive controls meet 4.5:1 against their actual surface; large text and UI boundaries meet 3:1. Working UI is small (10px to 13px), so dim metadata is the most likely failure point and should be checked against the surface it sits on, including the translucent Liquid Glass variants where the effective background shifts.
 - **Reduced motion.** Honor `prefers-reduced-motion`. The spin and pulse keyframes used for run status must degrade to a static or opacity-only state, never disappearing the status signal itself.
 - **Full keyboard operability.** Every action reachable by pointer is reachable by keyboard, with a visible focus indicator that survives on both opaque and translucent chrome. Focus order follows visual order. Nothing traps focus except a modal that can be dismissed with Escape.
 - **Status is never color alone.** Pass, fail, skipped, and stale carry a glyph or word alongside the green, red, grey, or amber. Run-log line kinds must stay distinguishable without color vision.

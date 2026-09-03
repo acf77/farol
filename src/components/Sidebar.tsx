@@ -8,7 +8,7 @@ import {
   useCollapseRail
 } from './side-panel'
 import type { DetailLog, RunState } from '../types'
-import { CaretLeft, CaretRight, CheckIcon, ChevronRight, ChevronUp, PlayIcon, Spinner, StopIcon } from './icons'
+import { CaretLeft, CaretRight, CheckIcon, ChevronRight, ChevronUp, PlayIcon, Spinner, StatusMark, StopIcon } from './icons'
 
 interface Props {
   pipelines: Pipeline[]
@@ -35,23 +35,13 @@ interface Status {
 }
 
 function statusOf(run: RunState | undefined): Status {
-  if (!run) return { label: 'Not run', color: '#94A3B8' }
+  if (!run) return { label: 'Not run', color: '#A1A19A' }
   if (run.status === 'running') return { label: 'Running', color: C.accentBright }
   if (run.status === 'pass') return { label: 'Passed', color: C.green }
   return { label: 'Failed', color: C.red }
 }
 
-function stepDot(state: StepState | undefined): string {
-  return state === 'pass'
-    ? '#64748B'
-    : state === 'running'
-      ? C.accentBright
-      : state === 'fail'
-        ? C.red
-        : '#334155'
-}
-
-function runStatusColor(status: string | undefined, idle = '#64748B'): string {
+function runStatusColor(status: string | undefined, idle = '#777772'): string {
   if (status === 'running') return C.accentBright
   if (status === 'pass') return C.green
   if (status === 'fail') return C.red
@@ -117,17 +107,17 @@ function CollapsedRail({
           display: 'grid',
           placeItems: 'center',
           cursor: 'pointer',
-          color: '#94A3B8'
+          color: '#A1A19A'
         }}
       >
         <CaretLeft />
       </button>
-      <div style={{ width: 22, height: 1, background: '#273449' }} />
+      <div style={{ width: 22, height: 1, background: '#3E3E3A' }} />
 
       {running ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
           <Spinner size={16} />
-          <RailLabel color="#F8FAFC" weight={500}>
+          <RailLabel color="#F0F0EC" weight={500}>
             {running.name}
           </RailLabel>
           <RailLabel color={C.accentBright}>
@@ -161,7 +151,7 @@ function CollapsedRail({
                 background: runStatusColor(sel?.status)
               }}
             />
-            <RailLabel color="#94A3B8">{statusOf(sel).label}</RailLabel>
+            <RailLabel color="#A1A19A">{statusOf(sel).label}</RailLabel>
           </div>
         )
       )}
@@ -184,7 +174,7 @@ function CollapsedRail({
                 height: 8,
                 borderRadius: '50%',
                 cursor: 'pointer',
-                background: runStatusColor(st?.status, '#334155')
+                background: runStatusColor(st?.status, '#3E3E3A')
               }}
             />
           )
@@ -210,20 +200,11 @@ function StepRow({
         alignItems: 'center',
         gap: 9,
         padding: '8px 9px',
-        borderBottom: isLast ? 'none' : '1px solid #273449',
-        color: !state || state === 'pending' ? '#94A3B8' : '#F8FAFC',
-        background: state === 'running' ? 'rgba(37,99,235,.07)' : 'transparent'
+        borderBottom: isLast ? 'none' : '1px solid #3E3E3A',
+        color: !state || state === 'pending' ? '#A1A19A' : '#F0F0EC',
+        background: state === 'running' ? 'rgba(214, 242, 58,.07)' : 'transparent'
       }}
     >
-      <div
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          flex: 'none',
-          background: stepDot(state)
-        }}
-      />
       <span
         title={node.cmd}
         style={{
@@ -237,23 +218,13 @@ function StepRow({
       >
         {node.name}
       </span>
-      <span style={{ fontSize: 11.5, color: '#94A3B8', flex: 'none' }}>{stepLabel(state)}</span>
-      {state === 'pass' && <CheckIcon style={{ flex: 'none' }} />}
+      <span style={{ fontSize: 11.5, color: '#A1A19A', flex: 'none' }}>{stepLabel(state)}</span>
+      {state === 'pass' && <StatusMark done size={18} />}
       {state === 'running' && <Spinner style={{ flex: 'none' }} />}
       {state === 'fail' && (
         <span style={{ fontSize: 12, fontWeight: 700, color: C.red, flex: 'none' }}>✗</span>
       )}
-      {(!state || state === 'pending') && (
-        <div
-          style={{
-            width: 12,
-            height: 12,
-            borderRadius: '50%',
-            border: '1.4px solid #334155',
-            flex: 'none'
-          }}
-        />
-      )}
+      {(!state || state === 'pending') && <StatusMark size={18} />}
     </div>
   )
 }
@@ -288,10 +259,10 @@ function PipelineCard({
     <div
       onContextMenu={onContextMenu}
       style={{
-        borderRadius: 7,
-        background: isSel ? '#1F2937' : '#111827',
-        border: `1px solid ${isSel ? C.accent : '#273449'}`,
-        boxShadow: isSel ? '0 0 0 1px rgba(37,99,235,.25)' : 'none'
+        borderRadius: 12,
+        background: isSel ? '#2D2D2B' : '#232322',
+        border: `1px solid ${isSel ? C.accent : '#3E3E3A'}`,
+        boxShadow: isSel ? '0 0 0 1px rgba(214, 242, 58,.25)' : 'none'
       }}
     >
       <div
@@ -339,8 +310,9 @@ function PipelineCard({
               width: 20,
               height: 20,
               borderRadius: '50%',
-              background: run?.status === 'pass' ? C.green : 'transparent',
-              border: `1.5px solid ${runStatusColor(run?.status)}`,
+              background: run?.status === 'pass' ? C.accent : 'transparent',
+              border: `1.5px solid ${run?.status === 'pass' ? C.accent : runStatusColor(run?.status)}`,
+              color: C.accentInk,
               display: 'grid',
               placeItems: 'center',
               flex: 'none',
@@ -349,7 +321,7 @@ function PipelineCard({
           >
             {run?.status === 'pass' && (
               <span className="bf-runbtn-check">
-                <CheckIcon size={11} color="#fff" />
+                <CheckIcon size={11} color="#1B1D13" />
               </span>
             )}
             <span className="bf-runbtn-play" style={{ display: 'none' }}>
@@ -387,7 +359,7 @@ function PipelineCard({
           </div>
           <div style={{ fontSize: 12, marginTop: 3, color: st.color }}>{st.label}</div>
         </div>
-        <span style={{ fontSize: 10.5, color: '#94A3B8', flex: 'none' }}>
+        <span style={{ fontSize: 10.5, color: '#A1A19A', flex: 'none' }}>
           {doneCount} / {nodes.length} steps
         </span>
         {isExp && <ChevronUp style={{ flex: 'none' }} />}
@@ -397,8 +369,8 @@ function PipelineCard({
         <div style={{ padding: '0 8px 8px' }}>
           <div
             style={{
-              background: '#111827',
-              border: '1px solid #273449',
+              background: '#232322',
+              border: '1px solid #3E3E3A',
               borderRadius: 9,
               overflow: 'hidden'
             }}
@@ -444,7 +416,7 @@ function SelectedPanel({
         minHeight: 0,
         display: 'flex',
         flexDirection: 'column',
-        borderTop: '1px solid #273449',
+        borderTop: '1px solid #3E3E3A',
         padding: '12px 12px 10px',
         overflow: 'hidden'
       }}
@@ -471,8 +443,8 @@ function SelectedPanel({
           marginTop: 13,
           display: 'flex',
           flexDirection: 'column',
-          background: '#111827',
-          border: '1px solid #273449',
+          background: '#232322',
+          border: '1px solid #3E3E3A',
           borderRadius: 7,
           padding: '11px 11px 5px',
           overflow: 'hidden'
@@ -486,7 +458,7 @@ function SelectedPanel({
             overflowY: 'auto',
             fontFamily: MONO,
             fontSize: 12,
-            color: '#94A3B8',
+            color: '#A1A19A',
             marginTop: 4,
             wordBreak: 'break-all'
           }}
@@ -498,7 +470,7 @@ function SelectedPanel({
             flex: 1,
             minHeight: 0,
             marginTop: 13,
-            background: '#080D17',
+            background: '#181817',
             borderRadius: 8,
             padding: '12px 13px',
             display: 'flex',
@@ -509,7 +481,7 @@ function SelectedPanel({
         >
           {logs.slice(-4).map((l, i) => (
             <div key={i} style={{ display: 'flex', gap: 14, fontFamily: MONO, fontSize: 11.5 }}>
-              <span style={{ color: '#64748B', flex: 'none' }}>{l.t}</span>
+              <span style={{ color: '#777772', flex: 'none' }}>{l.t}</span>
               <span style={{ color: l.color, minWidth: 0, overflowWrap: 'anywhere' }}>{l.text}</span>
             </div>
           ))}
@@ -555,8 +527,8 @@ function SelectedPanelFooter({
           marginTop: 10,
           padding: '8px 0 7px',
           borderRadius: 7,
-          border: '1px solid rgba(239, 68, 68, 0.35)',
-          background: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid rgba(255, 98, 90, 0.35)',
+          background: 'rgba(255, 98, 90, 0.1)',
           color: C.red,
           fontSize: 12,
           fontWeight: 600,
@@ -584,8 +556,8 @@ function SelectedPanelFooter({
           marginTop: 10,
           padding: '8px 0 7px',
           borderRadius: 7,
-          border: '1px solid rgba(239, 68, 68, 0.35)',
-          background: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid rgba(255, 98, 90, 0.35)',
+          background: 'rgba(255, 98, 90, 0.1)',
           color: C.red,
           fontSize: 12,
           fontWeight: 600,
@@ -608,7 +580,7 @@ function SelectedPanelFooter({
         justifyContent: 'center',
         gap: 8,
         padding: '10px 0 7px',
-        color: '#CBD5E1',
+        color: '#C4C4BE',
         cursor: 'pointer'
       }}
     >
@@ -642,7 +614,7 @@ function PipelineContextMenu({
           top: Math.min(menu.y, window.innerHeight - 90),
           zIndex: 61,
           width: 160,
-          background: '#111827',
+          background: '#232322',
           border: `1px solid ${C.cardBorder}`,
           borderRadius: 10,
           boxShadow: '0 14px 36px rgba(0,0,0,0.5)',
@@ -754,7 +726,7 @@ export default function Sidebar({
             fontSize: 10.5,
             fontWeight: 600,
             letterSpacing: '0.09em',
-            color: '#94A3B8',
+            color: '#A1A19A',
             flex: 1
           }}
         >
@@ -769,12 +741,12 @@ export default function Sidebar({
             alignItems: 'center',
             gap: 5,
             padding: '5px 10px',
-            background: '#1F2937',
-            border: '1px solid #273449',
+            background: '#2D2D2B',
+            border: '1px solid #3E3E3A',
             borderRadius: 7,
             fontSize: 11.5,
             fontWeight: 600,
-            color: '#F8FAFC',
+            color: '#F0F0EC',
             cursor: 'pointer'
           }}
         >
@@ -796,7 +768,7 @@ export default function Sidebar({
             display: 'grid',
             placeItems: 'center',
             cursor: 'pointer',
-            color: '#94A3B8'
+            color: '#A1A19A'
           }}
         >
           <CaretRight />

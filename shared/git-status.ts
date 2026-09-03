@@ -1,6 +1,6 @@
 /** Parse `git status --porcelain=v1` into structured file lists. */
 
-import type { GitFileKind, GitStatus, GitStatusFile } from './types'
+import type { GitFileKind, GitHubInfo, GitStatus, GitStatusFile } from './types'
 
 const CONFLICT = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'])
 
@@ -146,4 +146,51 @@ export function pushBlockReason(st: GitStatus): string | null {
   if (st.behind > 0) return 'Branch is behind upstream — pull before pushing.'
   if (st.ahead === 0) return 'Nothing to push — branch is even with upstream.'
   return null
+}
+
+export function conflictSignals(status: GitStatus | null, github: GitHubInfo | null) {
+  const workingTree = (status?.conflicts.length ?? 0) > 0
+  const baseMerge = status?.baseMerge
+  const pr = github?.prs[0]
+  const prConflicts = !!pr?.hasConflicts
+  return {
+    workingTree,
+    baseMerge,
+    pr,
+    prConflicts,
+    any: workingTree || prConflicts || !!baseMerge?.conflicts
+  }
+}
+
+export function conflictStatusItems(
+  status: GitStatus | null,
+  github: GitHubInfo | null
+): { tone: 'conflict' | 'ok' | 'muted'; text: string }[] {
+  const { workingTree, baseMerge, pr, prConflicts } = conflictSignals(status, github)
+  const items: { tone: 'conflict' | 'ok' | 'muted'; text: string }[] = []
+  if (workingTree) {
+    items.push({
+      tone: 'conflict',
+      text: 'Merge conflicts in the working tree — resolve before committing.'
+    })
+  }
+  if (baseMerge) {
+    items.push({
+      tone: baseMerge.conflicts ? 'conflict' : 'ok',
+      text: baseMerge.conflicts
+        ? `This branch has merge conflicts with ${baseMerge.base}.`
+        : `No conflicts with ${baseMerge.base}.`
+    })
+  }
+  if (pr) {
+    items.push({
+      tone: prConflicts ? 'conflict' : 'ok',
+      text: prConflicts
+        ? `Pull request #${pr.number} has merge conflicts.`
+        : `Pull request #${pr.number} has no merge conflicts.`
+    })
+  } else if (github?.available) {
+    items.push({ tone: 'muted', text: 'No open pull request from this branch.' })
+  }
+  return items
 }

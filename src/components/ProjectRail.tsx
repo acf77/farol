@@ -43,7 +43,7 @@ interface Props {
   onGitToggle?: () => void
 }
 
-/** Status dot — green pulse while busy, blue until the chat is opened, then off. */
+/** Status dot — green pulse while busy, lime until the chat is opened, then off. */
 function ChatActivityDot({ busy, unread }: { busy: boolean; unread: boolean }) {
   const title = busy ? 'Work in progress' : unread ? 'Unread chat updates' : undefined
   return (
@@ -125,7 +125,7 @@ export default function ProjectRail({
     ...sidePanelShellStyle(collapsed, { panelWidth: PANEL_WIDTH, railWidth: RAIL_WIDTH }),
     border: undefined,
     borderRadius: undefined,
-    borderRight: '1px solid #273449'
+    borderRight: '1px solid #3E3E3A'
   }
 
   useEffect(() => {
@@ -195,7 +195,7 @@ export default function ProjectRail({
           height: 34,
           borderRadius: 8,
           border: `1px solid ${gitOpen ? C.accent : C.cardBorder}`,
-          background: gitOpen ? 'rgba(37,99,235,0.12)' : 'rgba(255,255,255,0.03)',
+          background: gitOpen ? 'rgba(214, 242, 58,0.12)' : 'rgba(255,255,255,0.03)',
           color: C.textSoft,
           display: 'flex',
           alignItems: 'center',
@@ -271,17 +271,17 @@ export default function ProjectRail({
             display: 'grid',
             placeItems: 'center',
             cursor: 'pointer',
-            color: '#94A3B8'
+            color: '#A1A19A'
           }}
         >
           <CaretRight />
         </button>
-        <div style={{ width: 22, height: 1, background: '#273449' }} />
+        <div style={{ width: 22, height: 1, background: '#3E3E3A' }} />
 
         {activeGroup && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
             <ProjectIcon size={14} color={C.accentBright} />
-            <RailLabel color="#F8FAFC" weight={500}>
+            <RailLabel color="#F0F0EC" weight={500}>
               {activeGroup.label}
             </RailLabel>
             {activeBranch && <RailLabel color={C.textMuted}>{activeBranch}</RailLabel>}
@@ -375,7 +375,7 @@ export default function ProjectRail({
             display: 'grid',
             placeItems: 'center',
             cursor: 'pointer',
-            color: '#94A3B8'
+            color: '#A1A19A'
           }}
         >
           <CaretLeft />
@@ -388,7 +388,7 @@ export default function ProjectRail({
           fontSize: 10.5,
           fontWeight: 600,
           letterSpacing: '0.09em',
-          color: '#94A3B8'
+          color: '#A1A19A'
         }}
       >
         PROJECTS

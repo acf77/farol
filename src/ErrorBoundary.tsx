@@ -24,8 +24,8 @@ function fallbackUi(
           marginLeft: 41,
           padding: '8px 12px',
           borderRadius: 9,
-          background: '#111827',
-          border: '1px solid #273449',
+          background: '#232322',
+          border: '1px solid #3E3E3A',
           fontSize: 12.5,
           lineHeight: 1.45,
           color: C.textMuted
@@ -65,7 +65,7 @@ function fallbackUi(
         gap: 16,
         padding: 32,
         boxSizing: 'border-box',
-        background: '#080D17',
+        background: '#181817',
         color: C.text,
         fontFamily: UI,
         fontSize: 14,
@@ -84,7 +84,7 @@ function fallbackUi(
             className="bf-focus"
             onClick={onReset}
             style={{
-              border: '1px solid #273449',
+              border: '1px solid #3E3E3A',
               borderRadius: 9,
               padding: '10px 18px',
               background: 'transparent',
@@ -106,7 +106,7 @@ function fallbackUi(
             borderRadius: 9,
             padding: '10px 18px',
             background: C.accent,
-            color: '#fff',
+            color: C.accentInk,
             fontSize: 13.5,
             fontWeight: 600,
             cursor: 'pointer'
