@@ -4,11 +4,11 @@ import type { AiProvider } from './ai'
 import type { AgentQuestion } from './questions'
 import type { ProjectSession } from './session'
 import type { WorktreeRequest } from './worktree'
-import type { AppSettings } from './settings'
+import type { AppSettings, OpenRouterSettings } from './settings'
 
 export type { AgentQuestion }
 
-export type { AiProvider, AppSettings, ProjectSession, WorktreeRequest }
+export type { AiProvider, AppSettings, OpenRouterSettings, ProjectSession, WorktreeRequest }
 export { aiFixCommand } from './ai'
 export { FAILURE_REPORT_REL } from './failure'
 export { parseVerdict, VERDICT_MARKER, verdictPromptSuffix } from './verdict'
@@ -331,8 +331,14 @@ export interface FarolApi {
     onChanged(cb: (changed: PipelinesChanged) => void): () => void
   }
   shell: {
-    /** Start an interactive shell for a pane. */
-    open(paneId: string, cwd: string, cols?: number, rows?: number): Promise<void>
+    /** Start an interactive shell — or a dedicated AI CLI when `provider` is set. */
+    open(
+      paneId: string,
+      cwd: string,
+      cols?: number,
+      rows?: number,
+      provider?: AiProvider
+    ): Promise<void>
     /** Keystrokes from xterm, straight through to the PTY. */
     write(paneId: string, data: string): Promise<void>
     resize(paneId: string, cols: number, rows: number): Promise<void>
@@ -421,6 +427,12 @@ export interface FarolApi {
     load(): Promise<AppSettings>
     save(settings: AppSettings): Promise<void>
   }
+  openrouter: {
+    saveKey(key: string): Promise<{ settings: AppSettings; error?: string }>
+    clearKey(): Promise<{ settings: AppSettings; error?: string }>
+    refresh(): Promise<{ settings: AppSettings; error?: string }>
+    setPinned(ids: string[]): Promise<{ settings: AppSettings; error?: string }>
+  }
   update: {
     check(): Promise<UpdateStatus>
     install(): void
@@ -430,6 +442,7 @@ export interface FarolApi {
   ui: {
     glass(): Promise<boolean>
     onGlass(cb: (active: boolean) => void): () => void
+    onSettings(cb: () => void): () => void
   }
   window: {
     minimize(): void

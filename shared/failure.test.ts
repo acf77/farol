@@ -176,6 +176,29 @@ describe('sanitizeSettings', () => {
     })
   })
 
+  it('keeps OpenRouter pins and catalog, never a hasKey flag', () => {
+    expect(
+      sanitizeSettings({
+        agent: 'openrouter',
+        autoFix: true,
+        openrouter: {
+          hasKey: true,
+          autoPinned: true,
+          pinned: ['openai/gpt-4o', 'openai/gpt-4o'],
+          catalog: [{ id: 'openai/gpt-4o', label: 'GPT-4o' }]
+        }
+      })
+    ).toEqual({
+      agent: 'openrouter',
+      autoFix: true,
+      openrouter: {
+        autoPinned: true,
+        pinned: ['openai/gpt-4o'],
+        catalog: [{ id: 'openai/gpt-4o', label: 'GPT-4o' }]
+      }
+    })
+  })
+
   it('keeps a chosen model so a new chat can reuse it', () => {
     expect(sanitizeSettings({ agent: 'claude', autoFix: true, model: 'opus' })).toEqual({
       agent: 'claude',

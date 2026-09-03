@@ -20,7 +20,7 @@ export function runAiOnce(
   return new Promise((resolve) => {
     let stdout = ''
     let stderr = ''
-    const proc = spawn(bin, spec.args, { cwd, env: aiEnv(), stdio: ['ignore', 'pipe', 'pipe'] })
+    const proc = spawn(bin, spec.args, { cwd, env: aiEnv(provider), stdio: ['ignore', 'pipe', 'pipe'] })
     const timer = setTimeout(() => {
       proc.kill('SIGTERM')
     }, timeoutMs)

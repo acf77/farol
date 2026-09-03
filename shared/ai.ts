@@ -1,13 +1,19 @@
 /** Which coding CLI an AI pipeline step invokes. */
 
-export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode'] as const
+import { FAILURE_REPORT_REL } from './failure'
+import { openCodeModel } from './openrouter'
+
+export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'openrouter'] as const
 export type AiProvider = (typeof AI_PROVIDERS)[number]
+/** The binary Farol actually spawns — OpenRouter rides OpenCode. */
+export type AiCli = Exclude<AiProvider, 'openrouter'>
 
 export const AI_LABELS: Record<AiProvider, string> = {
   claude: 'Claude',
   codex: 'Codex',
   cursor: 'Cursor',
-  opencode: 'OpenCode'
+  opencode: 'OpenCode',
+  openrouter: 'OpenRouter'
 }
 
 /** Models each CLI accepts via `--model`. Ids are what the binary takes. */
@@ -41,11 +47,21 @@ export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
     { id: 'anthropic/claude-opus-5', label: 'Claude Opus 5' },
     { id: 'openai/gpt-5.6', label: 'GPT-5.6' },
     { id: 'google/gemini-3-flash', label: 'Gemini 3 Flash' }
-  ]
+  ],
+  /** Filled from Settings pins — see `modelsFor(..., listed)`. */
+  openrouter: []
 }
 
 export function isAiProvider(value: unknown): value is AiProvider {
-  return value === 'claude' || value === 'codex' || value === 'cursor' || value === 'opencode'
+  return typeof value === 'string' && (AI_PROVIDERS as readonly string[]).includes(value)
+}
+
+export function cliFor(provider: AiProvider): AiCli {
+  return provider === 'openrouter' ? 'opencode' : provider
+}
+
+export function usesOpenRouterEnv(provider: AiProvider): boolean {
+  return provider === 'openrouter' || provider === 'opencode'
 }
 
 /** Older pipelines omit `ai`; they keep running Claude. */
@@ -60,25 +76,59 @@ export function normalizeModel(value: unknown): string | undefined {
   return id || undefined
 }
 
-export function aiModelLabel(provider: AiProvider, model?: string): string | undefined {
+export function aiModelLabel(
+  provider: AiProvider,
+  model?: string,
+  listed?: readonly AiModel[]
+): string | undefined {
   const id = normalizeModel(model)
   if (!id) return undefined
-  return AI_MODELS[provider].find((m) => m.id === id)?.label ?? id
+  return (listed ?? AI_MODELS[provider]).find((m) => m.id === id)?.label ?? id
 }
 
 /** `Claude` or `Claude · Sonnet 5`. */
-export function aiSelectionLabel(provider: AiProvider, model?: string): string {
+export function aiSelectionLabel(
+  provider: AiProvider,
+  model?: string,
+  listed?: readonly AiModel[]
+): string {
   const cli = AI_LABELS[provider]
-  const label = aiModelLabel(provider, model)
+  const label = aiModelLabel(provider, model, listed)
   return label ? `${cli} · ${label}` : cli
 }
 
 /** Models offered in the picker, plus a stored custom id so it stays selectable. */
-export function modelsFor(provider: AiProvider, current?: string): readonly AiModel[] {
-  const listed = AI_MODELS[provider]
+export function modelsFor(
+  provider: AiProvider,
+  current?: string,
+  listed?: readonly AiModel[]
+): readonly AiModel[] {
+  const base = listed ?? AI_MODELS[provider]
   const id = normalizeModel(current)
-  if (id && !listed.some((m) => m.id === id)) return [...listed, { id, label: id }]
-  return listed
+  if (id && !base.some((m) => m.id === id)) return [...base, { id, label: id }]
+  return base
+}
+
+/** OpenRouter appears only after a key is saved and at least one model is pinned. */
+export function pickerProviders(openrouter?: {
+  hasKey?: boolean
+  pinned: string[]
+}): readonly AiProvider[] {
+  if (openrouter?.hasKey && openrouter.pinned.length) return AI_PROVIDERS
+  return AI_PROVIDERS.filter((p) => p !== 'openrouter')
+}
+
+export function openrouterModels(
+  catalog: readonly AiModel[],
+  pinned: readonly string[],
+  current?: string
+): readonly AiModel[] {
+  const byId = new Map(catalog.map((m) => [m.id, m]))
+  return modelsFor(
+    'openrouter',
+    current,
+    pinned.map((id) => byId.get(id) ?? { id, label: id })
+  )
 }
 
 /** Insert `--model <id>` before the trailing prompt. */
@@ -109,7 +159,9 @@ export interface AiCommand {
  * `--force` still auto-approves read tools so it cannot stall on a prompt.
  */
 export function aiCommand(provider: AiProvider, prompt: string, model?: string): AiCommand {
-  switch (provider) {
+  const cli = cliFor(provider)
+  const passed = provider === 'openrouter' ? openCodeModel(model) : model
+  switch (cli) {
     case 'codex':
       return {
         bins: ['codex'],
@@ -117,26 +169,26 @@ export function aiCommand(provider: AiProvider, prompt: string, model?: string):
         // user config that still asks for approval, which would hang headless reviews.
         args: withModel(
           ['exec', '-c', 'approval_policy=never', '--sandbox', 'read-only', prompt],
-          model
+          passed
         ),
         hint: "Install the Codex CLI (npm i -g @openai/codex) to run Codex steps."
       }
     case 'cursor':
       return {
         bins: ['agent', 'cursor-agent'],
-        args: withModel(['-p', '--force', '--mode=ask', '--output-format', 'text', prompt], model),
+        args: withModel(['-p', '--force', '--mode=ask', '--output-format', 'text', prompt], passed),
         hint: 'Install the Cursor CLI (https://cursor.com/docs/cli) to run Cursor steps.'
       }
     case 'opencode':
       return {
         bins: ['opencode'],
-        args: withModel(['run', '--auto', prompt], model),
+        args: withModel(['run', '--auto', prompt], passed),
         hint: 'Install the OpenCode CLI (https://opencode.ai) to run OpenCode steps.'
       }
     case 'claude':
       return {
         bins: ['claude'],
-        args: withModel(['-p', prompt], model),
+        args: withModel(['-p', prompt], passed),
         hint: 'Install the Claude Code CLI (npm i -g @anthropic-ai/claude-code) to run Claude steps.'
       }
   }
@@ -157,7 +209,9 @@ export function aiCommand(provider: AiProvider, prompt: string, model?: string):
  * OpenCode already narrates its progress on stdout as it goes.
  */
 export function managedAiCommand(provider: AiProvider, prompt: string, model?: string): AiCommand {
-  switch (provider) {
+  const cli = cliFor(provider)
+  const passed = provider === 'openrouter' ? openCodeModel(model) : model
+  switch (cli) {
     case 'codex':
       return {
         bins: ['codex'],
@@ -177,7 +231,7 @@ export function managedAiCommand(provider: AiProvider, prompt: string, model?: s
             'workspace-write',
             prompt
           ],
-          model
+          passed
         ),
         hint: "Install the Codex CLI (npm i -g @openai/codex) to use managed Chat.",
         stream: 'ndjson'
@@ -187,14 +241,14 @@ export function managedAiCommand(provider: AiProvider, prompt: string, model?: s
         bins: ['agent', 'cursor-agent'],
         // Agent mode is the CLI default. Current Cursor releases only accept
         // explicit `plan` and `ask` values for --mode.
-        args: withModel(['-p', '--force', '--output-format', 'stream-json', prompt], model),
+        args: withModel(['-p', '--force', '--output-format', 'stream-json', prompt], passed),
         hint: 'Install the Cursor CLI (https://cursor.com/docs/cli) to use managed Chat.',
         stream: 'ndjson'
       }
     case 'opencode':
       return {
         bins: ['opencode'],
-        args: withModel(['run', '--dangerously-skip-permissions', prompt], model),
+        args: withModel(['run', '--dangerously-skip-permissions', prompt], passed),
         hint: 'Install OpenCode (https://opencode.ai) to use managed Chat.'
       }
     case 'claude':
@@ -212,15 +266,13 @@ export function managedAiCommand(provider: AiProvider, prompt: string, model?: s
             'bypassPermissions',
             prompt
           ],
-          model
+          passed
         ),
         hint: 'Install Claude Code (npm i -g @anthropic-ai/claude-code) to use managed Chat.',
         stream: 'ndjson'
       }
   }
 }
-
-import { FAILURE_REPORT_REL } from './failure'
 
 /** Prompt that points the UI chat (or a CLI) at the report a failed run left. */
 export function aiFixPrompt(reportPath = FAILURE_REPORT_REL): string {
@@ -237,7 +289,7 @@ export function aiFixPrompt(reportPath = FAILURE_REPORT_REL): string {
  */
 export function aiFixCommand(provider: AiProvider, reportPath = FAILURE_REPORT_REL): string {
   const ask = aiFixPrompt(reportPath)
-  switch (provider) {
+  switch (cliFor(provider)) {
     case 'codex':
       return `codex "${ask}"`
     case 'cursor':
@@ -253,7 +305,7 @@ export function aiFixCommand(provider: AiProvider, reportPath = FAILURE_REPORT_R
 
 /** Interactive CLI entry point for a dedicated Terminal agent session. */
 export function interactiveAiCommand(provider: AiProvider): string {
-  switch (provider) {
+  switch (cliFor(provider)) {
     case 'codex':
       return 'codex'
     case 'cursor':

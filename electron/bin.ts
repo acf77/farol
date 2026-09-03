@@ -1,6 +1,9 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { usesOpenRouterEnv, type AiProvider } from '../shared/ai'
+import { OPENROUTER_API_KEY_ENV } from '../shared/openrouter'
+import { peekOpenRouterKey } from './secrets'
 import { shellEnv } from './session'
 
 export function extraBinDirs(): string[] {
@@ -51,8 +54,12 @@ export function resolveBinFrom(names: string[], dirs: string[] = searchDirs()): 
   return null
 }
 
-export function aiEnv(): Record<string, string> {
+export function aiEnv(provider?: AiProvider): Record<string, string> {
   const env = shellEnv()
   env.PATH = pathDirs(env.PATH).join(path.delimiter)
+  if (provider && usesOpenRouterEnv(provider)) {
+    const key = peekOpenRouterKey()
+    if (key) env[OPENROUTER_API_KEY_ENV] = key
+  }
   return env
 }

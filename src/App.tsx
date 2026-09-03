@@ -10,6 +10,7 @@ import {
 } from 'react'
 import type {
   AgentTaskEvent,
+  AiProvider,
   AppSettings,
   GitInfo,
   Pipeline,
@@ -21,7 +22,7 @@ import type {
   StepState,
   WorktreeRequest
 } from '@shared/types'
-import { aiFixPrompt } from '@shared/ai'
+import { AI_LABELS, aiFixPrompt } from '@shared/ai'
 import { defaultSettings } from '@shared/settings'
 import { sessionSeq } from '@shared/session'
 import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
@@ -56,6 +57,7 @@ import { useGitPanel } from './hooks/useGitPanel'
 import StatusBar from './components/StatusBar'
 import PipelineCanvas from './components/PipelineCanvas'
 import CommandPalette, { type PaletteItem } from './components/CommandPalette'
+import SettingsPage from './components/SettingsPage'
 import { FolderPlusIcon } from './components/icons'
 
 const api = window.farol
@@ -221,10 +223,16 @@ function clockStamp(): string {
     .join(':')
 }
 
-function shellPane(id: string, cwd: string): Pane {
+function shellPane(id: string, cwd: string, agent?: AiProvider): Pane {
   // No buffer, no input state: xterm.js and the PTY own everything a shell
   // pane does. Farol only tracks where it is, for the title bar.
-  return { id, kind: 'shell', title: api.shellName, cwd }
+  return {
+    id,
+    kind: 'shell',
+    title: agent ? AI_LABELS[agent] : api.shellName,
+    cwd,
+    ...(agent ? { agent } : {})
+  }
 }
 
 function tabsFromSession(sess: ProjectSession): Tab[] {
@@ -885,6 +893,8 @@ interface WorkspaceKeyCtx {
   newTabOpen: boolean
   editor: EditorState | null
   paletteOpen: boolean
+  settingsOpen: boolean
+  setSettingsOpen: Dispatch<SetStateAction<boolean>>
   activeTab: string
   active: Tab | undefined
   view: View
@@ -929,9 +939,14 @@ function handleDigitShortcut(e: KeyboardEvent, ctx: WorkspaceKeyCtx, digit: stri
 
 function handleWorkspaceKeyDown(e: KeyboardEvent, ctx: WorkspaceKeyCtx): void {
   // The dialog is modal: let it own Escape and Return.
-  if (!ctx.visible || ctx.newTabOpen || ctx.editor || ctx.paletteOpen) return
+  if (!ctx.visible || ctx.newTabOpen || ctx.editor || ctx.paletteOpen || ctx.settingsOpen) return
   if (!(e.metaKey || e.ctrlKey) || e.altKey) return
   const k = e.key.toLowerCase()
+  if (k === ',') {
+    e.preventDefault()
+    ctx.setSettingsOpen(true)
+    return
+  }
   if (k === 't') {
     e.preventDefault()
     ctx.newShellTab()
@@ -1039,6 +1054,8 @@ interface ProjectWorkspaceViewProps {
   paletteOpen: boolean
   paletteItems: PaletteItem[]
   setPaletteOpen: Dispatch<SetStateAction<boolean>>
+  settingsOpen: boolean
+  setSettingsOpen: Dispatch<SetStateAction<boolean>>
   newTabOpen: boolean
   creating: boolean
   newTabError: string | null
@@ -1113,6 +1130,8 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     paletteOpen,
     paletteItems,
     setPaletteOpen,
+    settingsOpen,
+    setSettingsOpen,
     newTabOpen,
     creating,
     newTabError,
@@ -1162,6 +1181,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           setSettings(next)
           void api.settings.save(next)
         }}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 12, padding: '0 14px 12px' }}>
@@ -1176,6 +1196,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                 projectPath={project.path}
                 defaultProvider={settings.agent}
                 defaultModel={settings.model}
+                settings={settings}
                 onMessage={(text, provider, model) =>
                   sendAgentMessage(text, provider, undefined, undefined, model ?? null)
                 }
@@ -1271,6 +1292,13 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       />
 
       <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
+      {settingsOpen && (
+        <SettingsPage
+          settings={settings}
+          onSettings={setSettings}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
 
       {newTabOpen && (
         <NewTabDialog
@@ -1300,6 +1328,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         >
           <PipelineCanvas
             editor={editor}
+            settings={settings}
             onChange={setEditor}
             onCancel={() => setEditor(null)}
             onSave={saveEditor}
@@ -1381,6 +1410,7 @@ function ProjectWorkspace({
   const [liquid, setLiquid] = useState(false)
   const [pipesCollapsed, setPipesCollapsed] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [clearChatConfirm, setClearChatConfirm] = useState(false)
   const [chatClearedNotice, setChatClearedNotice] = useState(false)
 
@@ -1639,6 +1669,28 @@ function ProjectWorkspace({
     openShellTab(project.path)
   }, [project, openShellTab])
 
+  /** Interactive coding CLI in a real PTY — OpenRouter key stays on that process only. */
+  const newAgentTerminal = useCallback(() => {
+    if (!project) return
+    const agent = settingsRef.current.agent
+    const id = `sh${++seq.current.shell}`
+    const paneId = nextPaneId()
+    setTabs((prev) => [
+      ...prev,
+      {
+        id,
+        kind: 'shell',
+        title: AI_LABELS[agent],
+        status: null,
+        root: leaf(paneId),
+        focus: paneId,
+        panes: { [paneId]: shellPane(paneId, project.path, agent) }
+      }
+    ])
+    setActiveTab(id)
+    showTerminal(id)
+  }, [project, showTerminal])
+
   /** Parallel branch work opens as its own project (separate worktree). */
   const openBranchDialog = useCallback(async () => {
     if (!project) return
@@ -1869,6 +1921,10 @@ function ProjectWorkspace({
   useEffect(() => {
     if (visible) void api.settings.load().then(setSettings)
   }, [visible])
+
+  useEffect(() => {
+    return api.ui.onSettings(() => setSettingsOpen(true))
+  }, [])
 
   useEffect(() => {
     if (!persistEnabled.current || !project) return
@@ -2355,6 +2411,8 @@ function ProjectWorkspace({
         newTabOpen,
         editor,
         paletteOpen,
+        settingsOpen,
+        setSettingsOpen,
         activeTab,
         active,
         view,
@@ -2380,6 +2438,7 @@ function ProjectWorkspace({
     newTabOpen,
     editor,
     paletteOpen,
+    settingsOpen,
     newShellTab,
     splitPane,
     closeTab,
@@ -2504,10 +2563,23 @@ function ProjectWorkspace({
         run: () => newShellTab()
       },
       {
+        id: 'new-agent-terminal',
+        label: 'New agent terminal',
+        group: 'Actions',
+        detail: AI_LABELS[settings.agent],
+        run: () => newAgentTerminal()
+      },
+      {
         id: 'open-project',
         label: 'Open project…',
         group: 'Actions',
         run: () => onOpenProject()
+      },
+      {
+        id: 'settings',
+        label: 'Settings',
+        group: 'Actions',
+        run: () => setSettingsOpen(true)
       },
       {
         id: 'focus-composer',
@@ -2551,7 +2623,7 @@ function ProjectWorkspace({
       })
     }
     return items
-  }, [pipelines, termTabs, newShellTab, onOpenProject, runPipeline])
+  }, [pipelines, termTabs, newShellTab, newAgentTerminal, onOpenProject, runPipeline, setSettingsOpen, settings.agent])
 
   const branchRuns = useMemo(() => {
     const out: Record<string, RunState> = {}
@@ -2640,6 +2712,8 @@ function ProjectWorkspace({
       paletteOpen={paletteOpen}
       paletteItems={paletteItems}
       setPaletteOpen={setPaletteOpen}
+      settingsOpen={settingsOpen}
+      setSettingsOpen={setSettingsOpen}
       newTabOpen={newTabOpen}
       creating={creating}
       newTabError={newTabError}

@@ -1,13 +1,13 @@
 import * as pty from 'node-pty'
+import { interactiveAiCommand, isAiProvider, type AiProvider } from '../shared/ai'
 import type { ShellCwd, ShellData, ShellExit } from '../shared/types'
+import { aiEnv, resolveBin } from './bin'
 import { defaultShell, shellEnv } from './session'
 
 /**
- * Shell panes are plain interactive login shells on a PTY, forwarded verbatim
- * to xterm.js in the renderer. Nothing is interpreted here: the shell draws its
- * own prompt, full-screen programs get a real screen buffer, and keystrokes go
- * straight through. That makes a pane behave exactly like a window of the
- * user's own terminal.
+ * Shell panes are interactive PTYs forwarded verbatim to xterm.js. A normal
+ * pane is the user's login shell. A dedicated agent pane runs that CLI
+ * directly — OpenRouter's key is injected only into that process via `aiEnv`.
  *
  * (Pipeline steps are different — they run through the scripted session in
  * `session.ts`, which reports exit codes.)
@@ -32,23 +32,25 @@ export class ShellManager {
     private onCwd: (e: ShellCwd) => void
   ) {}
 
-  open(paneId: string, cwd: string, cols = 100, rows = 30): void {
+  open(paneId: string, cwd: string, cols = 100, rows = 30, provider?: AiProvider): void {
     const existing = this.sessions.get(paneId)
     if (existing) return
 
-    const shell = defaultShell()
+    const agent = provider && isAiProvider(provider) ? provider : undefined
+    const command = agent ? interactiveAiCommand(agent) : defaultShell()
+    const args = agent || process.platform === 'win32' ? [] : ['-il']
     let proc: pty.IPty
     try {
-      proc = pty.spawn(shell, process.platform === 'win32' ? [] : ['-il'], {
+      proc = pty.spawn(agent ? (resolveBin(command) ?? command) : command, args, {
         name: 'xterm-256color',
         cols: Math.max(20, Math.min(500, Math.floor(cols))),
         rows: Math.max(5, Math.min(200, Math.floor(rows))),
         cwd,
-        env: shellEnv()
+        env: agent ? aiEnv(agent) : shellEnv()
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      this.onData({ tabId: paneId, chunk: `farol: cannot start ${shell}: ${message}\r\n` })
+      this.onData({ tabId: paneId, chunk: `farol: cannot start ${command}: ${message}\r\n` })
       return
     }
 

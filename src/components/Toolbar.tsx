@@ -7,6 +7,7 @@ import {
   BellIcon,
   ChatIcon,
   FolderPlusIcon,
+  GearIcon,
   SplitIcon,
   TerminalIcon
 } from './icons'
@@ -30,6 +31,7 @@ interface Props {
   onInstallUpdate: () => void
   settings: AppSettings
   onSettings: (next: AppSettings) => void
+  onOpenSettings: () => void
   /** Hide traffic lights when the project rail owns them. */
   showTrafficLights?: boolean
 }
@@ -93,6 +95,7 @@ export default function Toolbar({
   onInstallUpdate,
   settings,
   onSettings,
+  onOpenSettings,
   showTrafficLights = false
 }: Props) {
   const api = window.farol
@@ -239,6 +242,28 @@ export default function Toolbar({
           zIndex: 2
         }}
       >
+        <button
+          type="button"
+          className="bf-focus bf-icon-btn"
+          onClick={onOpenSettings}
+          title="Settings"
+          aria-label="Settings"
+          style={{
+            ...noDrag,
+            width: 28,
+            height: 28,
+            borderRadius: 7,
+            border: `1px solid ${C.border}`,
+            background: C.card,
+            color: C.text,
+            display: 'grid',
+            placeItems: 'center',
+            cursor: 'pointer'
+          }}
+        >
+          <GearIcon size={14} color="currentColor" />
+        </button>
+
         <button
           type="button"
           className="bf-focus bf-icon-btn"
@@ -389,6 +414,19 @@ export default function Toolbar({
               </button>
             </>
           )}
+          <div role="separator" style={{ height: 1, background: C.border, margin: '5px 6px' }} />
+          <button
+            type="button"
+            role="menuitem"
+            className="bf-focus bf-menu-item"
+            onClick={() => {
+              onMenuClose()
+              onOpenSettings()
+            }}
+            style={menuItem}
+          >
+            Settings…
+          </button>
           <div role="separator" style={{ height: 1, background: C.border, margin: '5px 6px' }} />
           <div style={{ padding: '6px 10px 8px' }}>
             <Checkbox

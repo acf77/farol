@@ -49,7 +49,8 @@ const api: FarolApi = {
     onChanged: (cb) => on<PipelinesChanged>('pipelines:changed', cb)
   },
   shell: {
-    open: (paneId, cwd, cols, rows) => ipcRenderer.invoke('shell:open', paneId, cwd, cols, rows),
+    open: (paneId, cwd, cols, rows, provider) =>
+      ipcRenderer.invoke('shell:open', paneId, cwd, cols, rows, provider),
     write: (paneId, data) => ipcRenderer.invoke('shell:write', paneId, data),
     resize: (paneId, cols, rows) => ipcRenderer.invoke('shell:resize', paneId, cols, rows),
     dispose: (paneId) => ipcRenderer.invoke('shell:dispose', paneId),
@@ -94,6 +95,12 @@ const api: FarolApi = {
     load: () => ipcRenderer.invoke('settings:load'),
     save: (settings) => ipcRenderer.invoke('settings:save', settings)
   },
+  openrouter: {
+    saveKey: (key) => ipcRenderer.invoke('openrouter:saveKey', key),
+    clearKey: () => ipcRenderer.invoke('openrouter:clearKey'),
+    refresh: () => ipcRenderer.invoke('openrouter:refresh'),
+    setPinned: (ids) => ipcRenderer.invoke('openrouter:setPinned', ids)
+  },
   update: {
     check: () => ipcRenderer.invoke('update:check'),
     install: () => ipcRenderer.send('update:install'),
@@ -101,7 +108,8 @@ const api: FarolApi = {
   },
   ui: {
     glass: () => ipcRenderer.invoke('ui:glass'),
-    onGlass: (cb) => on<boolean>('ui:glass', cb)
+    onGlass: (cb) => on<boolean>('ui:glass', cb),
+    onSettings: (cb) => on('ui:settings', () => cb())
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),

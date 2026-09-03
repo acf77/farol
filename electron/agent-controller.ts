@@ -879,7 +879,7 @@ export class AgentController {
 
   private runAgent(task: Task, prompt: string, sink: AgentSink): Promise<number> {
     const spec = managedAiCommand(task.request.provider, prompt, task.request.model)
-    const env = aiEnv()
+    const env = aiEnv(task.request.provider)
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       sink.text(`farol: ${spec.hint}\n`)

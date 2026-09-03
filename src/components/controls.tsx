@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import type { AppSettings } from '@shared/types'
 import {
   AI_LABELS,
-  AI_PROVIDERS,
   aiSelectionLabel,
   modelsFor,
   normalizeAi,
   normalizeModel,
+  openrouterModels,
+  pickerProviders,
   type AiProvider
 } from '@shared/ai'
 import { C } from '../theme'
@@ -297,18 +299,29 @@ export function CliModelMenu({
   provider,
   model,
   pos,
+  settings,
   onPick,
   onClose
 }: {
   provider: AiProvider
   model?: string
   pos: MenuPos
+  settings?: AppSettings
   onPick: (provider: AiProvider, model: string | undefined) => void
   onClose: () => void
 }) {
   const [page, setPage] = useState<AiProvider | 'cli'>('cli')
   const current = normalizeAi(provider)
   const selectedModel = normalizeModel(model)
+  const providers = pickerProviders(settings?.openrouter)
+  const orListed =
+    page === 'openrouter'
+      ? openrouterModels(
+          settings?.openrouter?.catalog ?? [],
+          settings?.openrouter?.pinned ?? [],
+          page === current ? selectedModel : undefined
+        )
+      : undefined
 
   const place: React.CSSProperties =
     'bottom' in pos ? { left: pos.left, bottom: pos.bottom } : { left: pos.left, top: pos.top }
@@ -340,7 +353,7 @@ export function CliModelMenu({
         }}
       >
         {page === 'cli'
-          ? AI_PROVIDERS.map((p) => (
+          ? providers.map((p) => (
               <button
                 key={p}
                 type="button"
@@ -402,7 +415,7 @@ export function CliModelMenu({
                 <span>Default</span>
                 {page === current && !selectedModel && <CheckIcon size={12} />}
               </button>,
-              ...modelsFor(page, page === current ? selectedModel : undefined).map((m) => (
+              ...modelsFor(page, page === current ? selectedModel : undefined, orListed).map((m) => (
                 <button
                   key={m.id}
                   type="button"
@@ -433,11 +446,13 @@ export function CliModelMenu({
 export function CliModelDropdown({
   provider,
   model,
+  settings,
   onChange,
   label
 }: {
   provider: AiProvider
   model?: string
+  settings?: AppSettings
   onChange: (provider: AiProvider, model: string | undefined) => void
   label?: string
 }) {
@@ -490,7 +505,13 @@ export function CliModelDropdown({
             whiteSpace: 'nowrap'
           }}
         >
-          {aiSelectionLabel(provider, model)}
+          {aiSelectionLabel(
+            provider,
+            model,
+            provider === 'openrouter'
+              ? openrouterModels(settings?.openrouter?.catalog ?? [], settings?.openrouter?.pinned ?? [])
+              : undefined
+          )}
         </span>
         <ChevronDown size={10} color={C.textMuted} />
       </button>
@@ -498,6 +519,7 @@ export function CliModelDropdown({
         <CliModelMenu
           provider={provider}
           model={model}
+          settings={settings}
           pos={pos}
           onPick={(p, m) => {
             onChange(p, m)

@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   aiCommand,
   aiSelectionLabel,
+  cliFor,
+  interactiveAiCommand,
   isAiProvider,
   managedAiCommand,
   modelsFor,
   normalizeAi,
   normalizeModel,
+  pickerProviders,
+  usesOpenRouterEnv,
   withModel
 } from './ai'
 
@@ -15,6 +19,7 @@ describe('normalizeAi', () => {
     expect(normalizeAi('codex')).toBe('codex')
     expect(normalizeAi('cursor')).toBe('cursor')
     expect(normalizeAi('opencode')).toBe('opencode')
+    expect(normalizeAi('openrouter')).toBe('openrouter')
     expect(normalizeAi('claude')).toBe('claude')
   })
 
@@ -138,6 +143,36 @@ describe('managedAiCommand', () => {
     expect(managedAiCommand('cursor', 'x').stream).toBe('ndjson')
     expect(managedAiCommand('codex', 'x').stream).toBe('ndjson')
     expect(managedAiCommand('opencode', 'x').stream).toBeUndefined()
+  })
+
+  it('runs OpenRouter through OpenCode with a prefixed --model', () => {
+    expect(cliFor('openrouter')).toBe('opencode')
+    expect(usesOpenRouterEnv('openrouter')).toBe(true)
+    expect(usesOpenRouterEnv('opencode')).toBe(true)
+    expect(usesOpenRouterEnv('claude')).toBe(false)
+    expect(aiCommand('openrouter', 'review this', 'anthropic/claude-sonnet-4').args).toEqual([
+      'run',
+      '--auto',
+      '--model',
+      'openrouter/anthropic/claude-sonnet-4',
+      'review this'
+    ])
+    expect(managedAiCommand('openrouter', 'fix this', 'openai/gpt-4o').args).toEqual([
+      'run',
+      '--dangerously-skip-permissions',
+      '--model',
+      'openrouter/openai/gpt-4o',
+      'fix this'
+    ])
+    expect(interactiveAiCommand('openrouter')).toBe('opencode')
+  })
+
+  it('hides OpenRouter in pickers until a key and pins exist', () => {
+    expect(pickerProviders().includes('openrouter')).toBe(false)
+    expect(pickerProviders({ hasKey: true, pinned: [] }).includes('openrouter')).toBe(false)
+    expect(pickerProviders({ hasKey: true, pinned: ['openai/gpt-4o'] }).includes('openrouter')).toBe(
+      true
+    )
   })
 
   it('passes --model through on managed commands', () => {
