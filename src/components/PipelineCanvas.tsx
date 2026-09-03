@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { PipelineNode, StepType } from '@shared/types'
+import type { AppSettings, PipelineNode, StepType } from '@shared/types'
 import { aiSelectionLabel, normalizeAi } from '@shared/types'
 import { defaultGate, nextNodeId, newNodePos, nodeGate, topoSort } from '@shared/graph'
 import { C, MONO, UI } from '../theme'
@@ -8,6 +8,7 @@ import type { EditorState } from '../types'
 
 interface Props {
   editor: EditorState
+  settings?: AppSettings
   onChange: (e: EditorState) => void
   onCancel: () => void
   onSave: () => void
@@ -41,7 +42,7 @@ function wouldCycle(nodes: PipelineNode[], childId: string, parentId: string): b
   return topoSort(next) === null
 }
 
-export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: Props) {
+export default function PipelineCanvas({ editor, settings, onChange, onCancel, onSave }: Props) {
   const [sel, setSel] = useState<string | null>(editor.nodes[0]?.id ?? null)
   const [selEdge, setSelEdge] = useState<{ from: string; to: string } | null>(null)
   const [cam, setCam] = useState({ x: 48, y: 36, z: 1 })
@@ -547,6 +548,7 @@ export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: P
         {selected && (
           <Inspector
             node={selected}
+            settings={settings}
             canDelete={editor.nodes.length > 1}
             onPatch={(p) => patch(selected.id, p)}
             onDelete={() => removeNode(selected.id)}
@@ -575,11 +577,13 @@ const TYPE_OPTIONS: { value: StepType; label: string }[] = [
 
 function Inspector({
   node,
+  settings,
   canDelete,
   onPatch,
   onDelete
 }: {
   node: PipelineNode
+  settings?: AppSettings
   canDelete: boolean
   onPatch: (p: Partial<PipelineNode>) => void
   onDelete: () => void
@@ -622,6 +626,7 @@ function Inspector({
           label="Provider and model"
           provider={normalizeAi(node.ai)}
           model={node.model}
+          settings={settings}
           onChange={(p, m) => onPatch({ ai: p, model: m })}
         />
       )}

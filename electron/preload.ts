@@ -28,6 +28,8 @@ const api: FarolApi = {
     recents: () => ipcRenderer.invoke('project:recents'),
     openPath: (p: string) => ipcRenderer.invoke('project:openPath', p),
     listFiles: (projectPath, query) => ipcRenderer.invoke('project:listFiles', projectPath, query),
+    listSkills: (projectPath, provider) =>
+      ipcRenderer.invoke('project:listSkills', projectPath, provider),
     saveAttachment: (projectPath, name, data) =>
       ipcRenderer.invoke('project:saveAttachment', projectPath, name, data),
     onOpened: (cb) => on<Project>('project:opened', cb)
@@ -49,7 +51,8 @@ const api: FarolApi = {
     onChanged: (cb) => on<PipelinesChanged>('pipelines:changed', cb)
   },
   shell: {
-    open: (paneId, cwd, cols, rows) => ipcRenderer.invoke('shell:open', paneId, cwd, cols, rows),
+    open: (paneId, cwd, cols, rows, provider) =>
+      ipcRenderer.invoke('shell:open', paneId, cwd, cols, rows, provider),
     write: (paneId, data) => ipcRenderer.invoke('shell:write', paneId, data),
     resize: (paneId, cols, rows) => ipcRenderer.invoke('shell:resize', paneId, cols, rows),
     dispose: (paneId) => ipcRenderer.invoke('shell:dispose', paneId),
@@ -94,9 +97,11 @@ const api: FarolApi = {
     load: () => ipcRenderer.invoke('settings:load'),
     save: (settings) => ipcRenderer.invoke('settings:save', settings)
   },
-  secrets: {
-    openRouterStatus: () => ipcRenderer.invoke('secrets:openrouterStatus'),
-    saveOpenRouterKey: (key) => ipcRenderer.invoke('secrets:saveOpenRouterKey', key)
+  openrouter: {
+    saveKey: (key) => ipcRenderer.invoke('openrouter:saveKey', key),
+    clearKey: () => ipcRenderer.invoke('openrouter:clearKey'),
+    refresh: () => ipcRenderer.invoke('openrouter:refresh'),
+    setPinned: (ids) => ipcRenderer.invoke('openrouter:setPinned', ids)
   },
   update: {
     check: () => ipcRenderer.invoke('update:check'),
@@ -105,7 +110,8 @@ const api: FarolApi = {
   },
   ui: {
     glass: () => ipcRenderer.invoke('ui:glass'),
-    onGlass: (cb) => on<boolean>('ui:glass', cb)
+    onGlass: (cb) => on<boolean>('ui:glass', cb),
+    onSettings: (cb) => on('ui:settings', () => cb())
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),

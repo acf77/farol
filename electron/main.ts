@@ -16,18 +16,25 @@ import { HeadWatcher, addWorktree, checkout, commitAll, draftCommit, info as git
 import { githubInfo } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, PipelineWatcher } from './store'
+import {
+  clearOpenRouter,
+  refreshOpenRouterCatalog,
+  saveOpenRouterKey,
+  setOpenRouterPinned
+} from './openrouter'
 import { listProjectFiles, saveChatAttachment } from './files'
+import { listAgentSkills } from './skills'
 import { AppUpdater } from './update'
 import { applyGlass, glassAvailable } from './glass'
 import { mergeMcpConfig, MCP_CONFIG_REL_PATHS, type McpServerEntry } from '../shared/mcp-config'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
+import { isAiProvider } from '../shared/ai'
 import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
 import { appendTail, plainText } from '../shared/terminal'
 import { AgentController } from './agent-controller'
 import { scopedRuntimeId } from '../shared/runtime'
 import net from 'net'
 import os from 'os'
-import { openRouterSecretStatus, saveOpenRouterKey } from './secrets'
 
 let win: BrowserWindow | null = null
 /** Renderer chrome goes translucent only when the native glass view is up. */
@@ -161,6 +168,12 @@ function buildMenu(): void {
                   click: () => void updater.check({ informNone: true })
                 },
                 { type: 'separator' },
+                {
+                  label: 'Settings…',
+                  accelerator: 'CmdOrCtrl+,',
+                  click: () => send('ui:settings', undefined)
+                },
+                { type: 'separator' },
                 { role: 'hide' },
                 { role: 'hideOthers' },
                 { role: 'unhide' },
@@ -181,6 +194,16 @@ function buildMenu(): void {
               if (p) send('project:opened', p)
             }
           },
+          ...(isMac
+            ? []
+            : ([
+                { type: 'separator' },
+                {
+                  label: 'Settings…',
+                  accelerator: 'CmdOrCtrl+,',
+                  click: () => send('ui:settings', undefined)
+                }
+              ] as Electron.MenuItemConstructorOptions[])),
           { type: 'separator' },
           // Not `role: 'close'` — that would claim ⌘W, which closes a tab here.
           isMac
@@ -516,6 +539,12 @@ function registerIpc(): void {
     listProjectFiles(projectPath, typeof query === 'string' ? query : '')
   )
 
+  ipcMain.handle('project:listSkills', (_e, projectPath: string, provider: unknown) =>
+    typeof projectPath === 'string' && isAiProvider(provider)
+      ? listAgentSkills(projectPath, provider)
+      : []
+  )
+
   ipcMain.handle(
     'project:saveAttachment',
     (_e, projectPath: string, name: string, data: ArrayBuffer) => {
@@ -553,8 +582,10 @@ function registerIpc(): void {
     savePipelines(projectPath, pipelines)
   )
 
-  ipcMain.handle('shell:open', (_e, paneId: string, cwd: string, cols?: number, rows?: number) =>
-    shells.open(paneId, cwd, cols, rows)
+  ipcMain.handle(
+    'shell:open',
+    (_e, paneId: string, cwd: string, cols?: number, rows?: number, provider?: unknown) =>
+      shells.open(paneId, cwd, cols, rows, isAiProvider(provider) ? provider : undefined)
   )
   ipcMain.handle('shell:write', (_e, paneId: string, data: string) => shells.write(paneId, data))
   ipcMain.handle('shell:resize', (_e, paneId: string, cols: number, rows: number) =>
@@ -637,8 +668,10 @@ function registerIpc(): void {
 
   ipcMain.handle('settings:load', () => loadSettings())
   ipcMain.handle('settings:save', (_e, settings: AppSettings) => saveSettings(settings))
-  ipcMain.handle('secrets:openrouterStatus', () => openRouterSecretStatus())
-  ipcMain.handle('secrets:saveOpenRouterKey', (_e, key: unknown) => saveOpenRouterKey(key))
+  ipcMain.handle('openrouter:saveKey', (_e, key: string) => saveOpenRouterKey(key))
+  ipcMain.handle('openrouter:clearKey', () => clearOpenRouter())
+  ipcMain.handle('openrouter:refresh', () => refreshOpenRouterCatalog())
+  ipcMain.handle('openrouter:setPinned', (_e, ids: string[]) => setOpenRouterPinned(ids))
 
   ipcMain.handle('update:check', () => updater.check())
   ipcMain.on('update:install', () => updater.install())

@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AiProvider, Pipeline } from '@shared/types'
+import type { AgentSkill, AiProvider, AppSettings, Pipeline } from '@shared/types'
 import { AI_LABELS, aiSelectionLabel, normalizeAi, normalizeModel } from '@shared/ai'
+import {
+  convertSkillDraft,
+  filterSkills,
+  insertSkillText,
+  retainSkillWarning,
+  skillMenuQuery,
+  skillWarningLine
+} from '@shared/skills'
 import type { AgentMessage, AgentPane, View } from '../types'
 import { C, MONO, PANE } from '../theme'
 import { MarkdownBody, stripControlMarkers } from '../markdown'
@@ -31,6 +39,7 @@ interface Props {
   defaultProvider: AiProvider
   /** Last-chosen model for `defaultProvider`. Omitted means the CLI default. */
   defaultModel?: string
+  settings?: AppSettings
   onMessage: (text: string, provider: AiProvider, model?: string) => void
   /** `answers: null` dismisses the chooser. */
   onAnswer: (requestId: string, answers: string[][] | null) => void
@@ -801,25 +810,27 @@ function AttachmentStrip({
   )
 }
 
-function MentionMenu({
+function ComposerPickerMenu({
+  label,
   menuPos,
-  mentionQuery,
-  mentionFiles,
-  mentionIndex,
+  empty,
+  items,
+  index,
   onHover,
   onPick
 }: {
+  label: string
   menuPos: { left: number; bottom: number; width: number }
-  mentionQuery: string
-  mentionFiles: string[]
-  mentionIndex: number
+  empty: string
+  items: { key: string; label: string }[]
+  index: number
   onHover: (i: number) => void
-  onPick: (file: string) => void
+  onPick: (i: number) => void
 }) {
   return (
     <div
       role="listbox"
-      aria-label="Files"
+      aria-label={label}
       style={{
         position: 'fixed',
         left: menuPos.left,
@@ -835,61 +846,35 @@ function MentionMenu({
         padding: 4
       }}
     >
-      {!mentionFiles.length ? (
-        <div style={{ padding: '10px 12px', fontSize: 12, color: C.textMuted }}>
-          {mentionQuery ? 'No matching files' : 'Type to filter project files…'}
-        </div>
+      {!items.length ? (
+        <div style={{ padding: '10px 12px', fontSize: 12, color: C.textMuted }}>{empty}</div>
       ) : (
-        mentionFiles.map((file, i) => (
+        items.map((item, i) => (
           <button
-            key={file}
+            key={item.key}
             type="button"
             role="option"
-            aria-selected={i === mentionIndex}
+            aria-selected={i === index}
             className="bf-focus bf-menu-item"
             onMouseEnter={() => onHover(i)}
-            onClick={() => onPick(file)}
+            onClick={() => onPick(i)}
             style={{
               display: 'block',
               width: '100%',
               textAlign: 'left',
               border: 'none',
-              background: i === mentionIndex ? '#2D2D2B' : 'transparent',
+              background: i === index ? '#2D2D2B' : 'transparent',
               color: C.textSoft,
               fontFamily: MONO,
               fontSize: 12,
               cursor: 'pointer'
             }}
           >
-            @{file}
+            {item.label}
           </button>
         ))
       )}
     </div>
-  )
-}
-
-function AgentMenu({
-  agentMenuPos,
-  provider,
-  model,
-  onPick,
-  onClose
-}: {
-  agentMenuPos: { left: number; bottom: number }
-  provider: AiProvider
-  model?: string
-  onPick: (p: AiProvider, model?: string) => void
-  onClose: () => void
-}) {
-  return (
-    <CliModelMenu
-      provider={provider}
-      model={model}
-      pos={{ left: agentMenuPos.left, bottom: agentMenuPos.bottom, width: 188 }}
-      onPick={onPick}
-      onClose={onClose}
-    />
   )
 }
 
@@ -899,58 +884,203 @@ function composerPlaceholder(availableCount: number, hasAttachments: boolean): s
   return 'Message the agent… (drop images here)'
 }
 
+type ComposerPicker = {
+  count: number
+  index: number
+  setIndex: React.Dispatch<React.SetStateAction<number>>
+  close: () => void
+  pick: () => void
+}
+
+function pickerHandle<T>(
+  items: readonly T[],
+  index: number,
+  setIndex: React.Dispatch<React.SetStateAction<number>>,
+  close: () => void,
+  pick: (item: T) => void
+): ComposerPicker {
+  return {
+    count: items.length,
+    index,
+    setIndex,
+    close,
+    pick: () => {
+      const item = items[index] ?? items[0]
+      if (item) pick(item)
+    }
+  }
+}
+
+function mentionFromCaret(value: string, caret: number): { query: string; start: number } | null {
+  const prefix = value.slice(0, caret)
+  const at = prefix.lastIndexOf('@')
+  if (at === -1) return null
+  const body = prefix.slice(at + 1)
+  if (/\s/.test(body)) return null
+  return { query: body, start: at }
+}
+
+function composerPickerState(
+  value: string,
+  caret: number
+): { skillQuery: string | null; mention: { query: string; start: number } | null } {
+  const skillQuery = skillMenuQuery(value, caret)
+  if (skillQuery !== null) return { skillQuery, mention: null }
+  return { skillQuery: null, mention: mentionFromCaret(value, caret) }
+}
+
+function applyMentionInsert(
+  text: string,
+  mention: { start: number } | null,
+  selectionStart: number | undefined,
+  file: string
+): { text: string; caret: number | null } {
+  if (!mention || selectionStart === undefined) {
+    const next = `${text ? `${text} ` : ''}@${file} `
+    return { text: next, caret: null }
+  }
+  const before = text.slice(0, mention.start)
+  const after = text.slice(selectionStart)
+  return { text: `${before}@${file} ${after}`, caret: before.length + file.length + 2 }
+}
+
+function applyMentionOpen(
+  text: string,
+  caret: number
+): { text: string; mention: { query: string; start: number }; caret: number | null } {
+  const active = mentionFromCaret(text, caret)
+  if (active) return { text, mention: active, caret: null }
+  return {
+    text: `${text.slice(0, caret)}@${text.slice(caret)}`,
+    mention: { query: '', start: caret },
+    caret: caret + 1
+  }
+}
+
+function focusCaret(node: HTMLTextAreaElement | null, caret: number): void {
+  window.setTimeout(() => {
+    node?.focus()
+    node?.setSelectionRange(caret, caret)
+  }, 0)
+}
+
+function navigateComposerHistory(
+  direction: 'up' | 'down',
+  textarea: HTMLTextAreaElement,
+  text: string,
+  history: string[],
+  historyIndexRef: React.MutableRefObject<number | null>,
+  draftRef: React.MutableRefObject<string>,
+  setText: (value: string) => void
+): boolean {
+  if (direction === 'up') {
+    const onFirstLine = textarea.value.slice(0, textarea.selectionStart).indexOf('\n') === -1
+    if (!onFirstLine || !history.length) return false
+    if (historyIndexRef.current === null) {
+      draftRef.current = text
+      historyIndexRef.current = history.length - 1
+    } else if (historyIndexRef.current > 0) {
+      historyIndexRef.current -= 1
+    } else {
+      return false
+    }
+    setText(history[historyIndexRef.current])
+    return true
+  }
+  const onLastLine = textarea.value.slice(textarea.selectionEnd).indexOf('\n') === -1
+  if (!onLastLine || historyIndexRef.current === null) return false
+  if (historyIndexRef.current < history.length - 1) {
+    historyIndexRef.current += 1
+    setText(history[historyIndexRef.current])
+  } else {
+    historyIndexRef.current = null
+    setText(draftRef.current)
+  }
+  return true
+}
+
+async function saveImageAttachments(
+  projectPath: string,
+  files: FileList | File[]
+): Promise<{ attachments: PendingAttachment[]; error: string | null }> {
+  const images = [...files].filter((file) => file.type.startsWith('image/'))
+  if (!images.length) return { attachments: [], error: 'Only image files can be attached.' }
+  try {
+    const attachments: PendingAttachment[] = []
+    let error: string | null = null
+    for (const file of images) {
+      const path = await window.farol.project.saveAttachment(
+        projectPath,
+        file.name,
+        await file.arrayBuffer()
+      )
+      if (!path) {
+        error = `Could not attach ${file.name}.`
+        continue
+      }
+      attachments.push({ name: file.name, path, previewUrl: URL.createObjectURL(file) })
+    }
+    return { attachments, error }
+  } catch {
+    return { attachments: [], error: 'Could not save the attachment.' }
+  }
+}
+
+function composerSurfaceStyle(dragOver: boolean): React.CSSProperties {
+  return {
+    maxWidth: 680,
+    margin: '0 auto',
+    background: dragOver ? '#2D2D2B' : '#232322',
+    border: dragOver ? `1px solid ${C.accent}` : '1px solid #3E3E3A',
+    borderRadius: 14,
+    padding: '14px 16px 11px',
+    position: 'relative',
+    boxShadow: dragOver ? '0 0 0 1px rgba(214, 242, 58,.2)' : 'none'
+  }
+}
+
+function handlePickerKeys(e: React.KeyboardEvent, picker: ComposerPicker | null): boolean {
+  if (!picker) return false
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    picker.close()
+    return true
+  }
+  if (!picker.count) return false
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    picker.setIndex((i) => Math.min(i + 1, picker.count - 1))
+    return true
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    picker.setIndex((i) => Math.max(i - 1, 0))
+    return true
+  }
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    picker.pick()
+    return true
+  }
+  return false
+}
+
 function handleComposerKeyDown(
   e: React.KeyboardEvent<HTMLTextAreaElement>,
   opts: {
-    mention: { query: string; start: number } | null
-    mentionFiles: string[]
-    mentionIndex: number
-    setMentionIndex: React.Dispatch<React.SetStateAction<number>>
-    setMention: (v: null) => void
-    insertMention: (file: string) => void
+    picker: ComposerPicker | null
     send: () => void
     navigateHistory: (direction: 'up' | 'down', textarea: HTMLTextAreaElement) => boolean
   }
 ): void {
-  const {
-    mention,
-    mentionFiles,
-    mentionIndex,
-    setMentionIndex,
-    setMention,
-    insertMention,
-    send,
-    navigateHistory
-  } = opts
-  if (mention && mentionFiles.length) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setMentionIndex((i) => Math.min(i + 1, mentionFiles.length - 1))
-      return
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setMentionIndex((i) => Math.max(i - 1, 0))
-      return
-    }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      insertMention(mentionFiles[mentionIndex] ?? mentionFiles[0])
-      return
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      setMention(null)
-      return
-    }
-  }
+  if (handlePickerKeys(e, opts.picker)) return
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
-    send()
+    opts.send()
     return
   }
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-    if (navigateHistory(e.key === 'ArrowUp' ? 'up' : 'down', e.currentTarget)) {
+    if (opts.navigateHistory(e.key === 'ArrowUp' ? 'up' : 'down', e.currentTarget)) {
       e.preventDefault()
     }
   }
@@ -962,6 +1092,202 @@ function buildMessage(body: string, paths: string[]): string {
   const lines = paths.map((p) => `- ${p}`).join('\n')
   const block = `Attached images:\n${lines}`
   return clean ? `${clean}\n\n${block}` : block
+}
+
+const COMPOSER_TEXTAREA_STYLE: React.CSSProperties = {
+  width: '100%',
+  border: 'none',
+  outline: 'none',
+  resize: 'none',
+  background: 'transparent',
+  color: C.text,
+  fontFamily: 'inherit',
+  fontSize: 13.5,
+  lineHeight: 1.5,
+  minHeight: 40,
+  maxHeight: 200,
+  overflowY: 'auto',
+  padding: 0,
+  userSelect: 'text',
+  WebkitUserSelect: 'text',
+  caretColor: C.text
+}
+
+function ComposerToolbar({
+  agentBtnRef,
+  provider,
+  model,
+  canChangeProvider,
+  isBusy,
+  canSend,
+  onNewChat,
+  onOpenAgentMenu,
+  onOpenMention,
+  onCancel,
+  onSend
+}: {
+  agentBtnRef: React.RefObject<HTMLButtonElement>
+  provider: AiProvider
+  model?: string
+  canChangeProvider: boolean
+  isBusy: boolean
+  canSend: boolean
+  onNewChat: () => void
+  onOpenAgentMenu: () => void
+  onOpenMention: () => void
+  onCancel: () => void
+  onSend: () => void
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+      <button
+        type="button"
+        className="bf-focus bf-composer-btn"
+        onClick={onNewChat}
+        title="Clear chat and start fresh"
+        aria-label="Clear chat and start fresh"
+        style={{
+          width: 26,
+          height: 26,
+          borderRadius: 8,
+          border: 'none',
+          background: '#2D2D2B',
+          display: 'grid',
+          placeItems: 'center',
+          color: '#A1A19A',
+          cursor: 'pointer',
+          padding: 0
+        }}
+      >
+        <ClearChatIcon size={14} color="#A1A19A" />
+      </button>
+      <span style={{ flex: 1 }} />
+      <button
+        ref={agentBtnRef}
+        type="button"
+        className="bf-focus"
+        onClick={onOpenAgentMenu}
+        title={`Agent: ${aiSelectionLabel(provider, model)}`}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 5,
+          border: 'none',
+          background: 'transparent',
+          color: '#A1A19A',
+          fontSize: 12,
+          cursor: canChangeProvider ? 'pointer' : 'default',
+          padding: '2px 4px',
+          opacity: canChangeProvider ? 1 : 0.55
+        }}
+      >
+        <span
+          style={{
+            maxWidth: 168,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          {aiSelectionLabel(provider, model)}
+        </span>
+        <ChevronDown size={11} />
+      </button>
+      <button
+        type="button"
+        className="bf-focus"
+        onClick={onOpenMention}
+        title="Reference a file (@)"
+        aria-label="Reference a file"
+        style={{
+          display: 'grid',
+          placeItems: 'center',
+          border: 'none',
+          background: 'transparent',
+          color: '#A1A19A',
+          cursor: 'pointer',
+          padding: 2
+        }}
+      >
+        <ClipIcon />
+      </button>
+      <SendButton isBusy={isBusy} canSend={canSend} onCancel={onCancel} onSend={onSend} />
+    </div>
+  )
+}
+
+function ComposerOverlays({
+  menuPos,
+  skill,
+  mention,
+  agent
+}: {
+  menuPos: { left: number; bottom: number; width: number } | null
+  skill: {
+    query: string
+    hits: AgentSkill[]
+    index: number
+    onHover: (i: number) => void
+    onPick: (skill: AgentSkill) => void
+  } | null
+  mention: {
+    query: string
+    files: string[]
+    index: number
+    onHover: (i: number) => void
+    onPick: (file: string) => void
+  } | null
+  agent: {
+    pos: { left: number; bottom: number }
+    provider: AiProvider
+    model?: string
+    settings?: AppSettings
+    onPick: (provider: AiProvider, model?: string) => void
+    onClose: () => void
+  } | null
+}) {
+  return (
+    <>
+      {skill && menuPos && (
+        <ComposerPickerMenu
+          label="Skills"
+          menuPos={menuPos}
+          empty={skill.query ? 'No matching skills' : 'No skills found'}
+          items={skill.hits.map((item) => ({ key: item.name, label: item.name }))}
+          index={skill.index}
+          onHover={skill.onHover}
+          onPick={(i) => {
+            const item = skill.hits[i]
+            if (item) skill.onPick(item)
+          }}
+        />
+      )}
+      {mention && menuPos && (
+        <ComposerPickerMenu
+          label="Files"
+          menuPos={menuPos}
+          empty={mention.query ? 'No matching files' : 'Type to filter project files…'}
+          items={mention.files.map((file) => ({ key: file, label: `@${file}` }))}
+          index={mention.index}
+          onHover={mention.onHover}
+          onPick={(i) => {
+            const file = mention.files[i]
+            if (file) mention.onPick(file)
+          }}
+        />
+      )}
+      {agent && (
+        <CliModelMenu
+          provider={agent.provider}
+          model={agent.model}
+          settings={agent.settings}
+          pos={{ left: agent.pos.left, bottom: agent.pos.bottom, width: 188 }}
+          onPick={agent.onPick}
+          onClose={agent.onClose}
+        />
+      )}
+    </>
+  )
 }
 
 function SendButton({
@@ -1005,6 +1331,7 @@ function ComposerBox({
   isBusy,
   provider,
   model,
+  settings,
   canChangeProvider,
   textareaRef,
   onMessage,
@@ -1019,6 +1346,7 @@ function ComposerBox({
   isBusy: boolean
   provider: AiProvider
   model?: string
+  settings?: AppSettings
   canChangeProvider: boolean
   textareaRef: React.RefObject<HTMLTextAreaElement>
   onMessage: (text: string, provider: AiProvider, model?: string) => void
@@ -1039,12 +1367,20 @@ function ComposerBox({
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null)
   const [mentionFiles, setMentionFiles] = useState<string[]>([])
   const [mentionIndex, setMentionIndex] = useState(0)
+  const [skills, setSkills] = useState<AgentSkill[]>([])
+  const [skillQuery, setSkillQuery] = useState<string | null>(null)
+  const [skillIndex, setSkillIndex] = useState(0)
+  const [skillWarning, setSkillWarning] = useState<string[]>([])
   const [menuPos, setMenuPos] = useState<{ left: number; bottom: number; width: number } | null>(null)
   const composerBoxRef = useRef<HTMLDivElement>(null)
   const agentBtnRef = useRef<HTMLButtonElement>(null)
   const historyRef = useRef<string[]>([])
   const historyIndexRef = useRef<number | null>(null)
   const draftRef = useRef('')
+  const skillsRef = useRef<AgentSkill[]>([])
+  const providerRef = useRef(provider)
+  const skillHits = skillQuery !== null ? filterSkills(skills, skillQuery) : []
+  const skillWarnText = skillWarningLine(skillWarning, provider)
 
   const canSend =
     (!!text.trim() || attachments.length > 0) && availableCount > 0 && savingAttachments === 0
@@ -1074,7 +1410,39 @@ function ComposerBox({
   }, [mention, projectPath])
 
   useEffect(() => {
-    if (!mention) {
+    let cancelled = false
+    void window.farol.project.listSkills(projectPath, provider).then((next) => {
+      if (cancelled) return
+      const from = providerRef.current
+      if (from !== provider) {
+        const prevNames = new Set(skillsRef.current.map((skill) => skill.name))
+        const nextNames = new Set(next.map((skill) => skill.name))
+        const result = convertSkillDraft(
+          textareaRef.current?.value ?? '',
+          provider,
+          nextNames,
+          prevNames
+        )
+        setText(result.text)
+        setSkillWarning(result.unavailable)
+        setSkillQuery(null)
+        providerRef.current = provider
+      }
+      skillsRef.current = next
+      setSkills(next)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [projectPath, provider])
+
+  useEffect(() => {
+    setSkillIndex(0)
+  }, [skillQuery, skills])
+
+  const pickerOpen = mention !== null || skillQuery !== null
+  useEffect(() => {
+    if (!pickerOpen) {
       setMenuPos(null)
       return
     }
@@ -1091,7 +1459,7 @@ function ComposerBox({
       window.removeEventListener('resize', place)
       window.removeEventListener('scroll', place, true)
     }
-  }, [mention])
+  }, [pickerOpen])
 
   const openAgentMenu = (): void => {
     if (!canChangeProvider) return
@@ -1105,58 +1473,35 @@ function ComposerBox({
     setModelOpen((v) => !v)
   }
 
+  const insertSkill = (skill: AgentSkill): void => {
+    const next = insertSkillText(text, skill.token)
+    setText(next.text)
+    setSkillQuery(null)
+    setSkillWarning((names) => retainSkillWarning(next.text, names))
+    focusCaret(textareaRef.current, next.caret)
+  }
+
   const insertMention = (file: string): void => {
     const node = textareaRef.current
-    if (!mention || !node) {
-      setText((t) => (t ? `${t} ` : '') + `@${file} `)
-      setMention(null)
-      return
-    }
-    const before = text.slice(0, mention.start)
-    const after = text.slice(node.selectionStart)
-    const next = `${before}@${file} ${after}`
-    setText(next)
+    const next = applyMentionInsert(text, mention, node?.selectionStart, file)
+    setText(next.text)
     setMention(null)
-    window.setTimeout(() => {
-      const pos = before.length + file.length + 2
-      node.focus()
-      node.setSelectionRange(pos, pos)
-    }, 0)
+    if (next.caret !== null) focusCaret(node, next.caret)
   }
 
   const openMentionPicker = (): void => {
     const node = textareaRef.current
-    const caret = node?.selectionStart ?? text.length
-    const prefix = text.slice(0, caret)
-    const at = prefix.lastIndexOf('@')
-    const active = at >= 0 && !/\s/.test(prefix.slice(at + 1))
-    if (active) {
-      setMention({ query: prefix.slice(at + 1), start: at })
-      node?.focus()
-      return
-    }
-    const next = `${text.slice(0, caret)}@${text.slice(caret)}`
-    setText(next)
-    setMention({ query: '', start: caret })
-    window.setTimeout(() => {
-      node?.focus()
-      node?.setSelectionRange(caret + 1, caret + 1)
-    }, 0)
+    const next = applyMentionOpen(text, node?.selectionStart ?? text.length)
+    if (next.text !== text) setText(next.text)
+    setMention(next.mention)
+    if (next.caret === null) node?.focus()
+    else focusCaret(node, next.caret)
   }
 
-  const syncMentionFromValue = (value: string, caret: number): void => {
-    const prefix = value.slice(0, caret)
-    const at = prefix.lastIndexOf('@')
-    if (at === -1) {
-      setMention(null)
-      return
-    }
-    const body = prefix.slice(at + 1)
-    if (/\s/.test(body)) {
-      setMention(null)
-      return
-    }
-    setMention({ query: body, start: at })
+  const syncComposerPickers = (value: string, caret: number): void => {
+    const next = composerPickerState(value, caret)
+    setSkillQuery(next.skillQuery)
+    setMention(next.mention)
   }
 
   const sendText = (clean: string): void => {
@@ -1171,32 +1516,18 @@ function ComposerBox({
   sendTextRef.current = sendText
 
   const addImageFiles = (files: FileList | File[]): void => {
-    const images = [...files].filter((file) => file.type.startsWith('image/'))
-    if (!images.length) {
+    if (![...files].some((file) => file.type.startsWith('image/'))) {
       setAttachmentError('Only image files can be attached.')
       return
     }
     setAttachmentError(null)
     setSavingAttachments((count) => count + 1)
-    void (async () => {
-      try {
-        const next: PendingAttachment[] = []
-        for (const file of images) {
-          const buffer = await file.arrayBuffer()
-          const path = await window.farol.project.saveAttachment(projectPath, file.name, buffer)
-          if (!path) {
-            setAttachmentError(`Could not attach ${file.name}.`)
-            continue
-          }
-          next.push({ name: file.name, path, previewUrl: URL.createObjectURL(file) })
-        }
-        if (next.length) setAttachments((prev) => [...prev, ...next])
-      } catch {
-        setAttachmentError('Could not save the attachment.')
-      } finally {
-        setSavingAttachments((count) => count - 1)
-      }
-    })()
+    void saveImageAttachments(projectPath, files)
+      .then((result) => {
+        setAttachmentError(result.error)
+        if (result.attachments.length) setAttachments((prev) => [...prev, ...result.attachments])
+      })
+      .finally(() => setSavingAttachments((count) => count - 1))
   }
 
   const removeAttachment = (path: string): void => {
@@ -1214,44 +1545,60 @@ function ComposerBox({
     sendText(clean)
     setText('')
     setMention(null)
+    setSkillQuery(null)
+    setSkillWarning([])
     for (const attachment of attachments) URL.revokeObjectURL(attachment.previewUrl)
     setAttachments([])
   }
 
-  const navigateHistory = (direction: 'up' | 'down', textarea: HTMLTextAreaElement): boolean => {
-    const history = historyRef.current
-    if (direction === 'up') {
-      const onFirstLine = textarea.value.slice(0, textarea.selectionStart).indexOf('\n') === -1
-      if (!onFirstLine || !history.length) return false
-      if (historyIndexRef.current === null) {
-        draftRef.current = text
-        historyIndexRef.current = history.length - 1
-      } else if (historyIndexRef.current > 0) {
-        historyIndexRef.current -= 1
-      } else {
-        return false
+  const picker =
+    skillQuery !== null
+      ? pickerHandle(skillHits, skillIndex, setSkillIndex, () => setSkillQuery(null), insertSkill)
+      : mention
+        ? pickerHandle(mentionFiles, mentionIndex, setMentionIndex, () => setMention(null), insertMention)
+        : null
+  const skillOverlay =
+    skillQuery !== null
+      ? {
+          query: skillQuery,
+          hits: skillHits,
+          index: skillIndex,
+          onHover: setSkillIndex,
+          onPick: insertSkill
+        }
+      : null
+  const mentionOverlay = mention
+    ? {
+        query: mention.query,
+        files: mentionFiles,
+        index: mentionIndex,
+        onHover: setMentionIndex,
+        onPick: insertMention
       }
-      setText(history[historyIndexRef.current])
-      return true
-    }
-    const onLastLine = textarea.value.slice(textarea.selectionEnd).indexOf('\n') === -1
-    if (!onLastLine || historyIndexRef.current === null) return false
-    if (historyIndexRef.current < history.length - 1) {
-      historyIndexRef.current += 1
-      setText(history[historyIndexRef.current])
-    } else {
-      historyIndexRef.current = null
-      setText(draftRef.current)
-    }
-    return true
-  }
+    : null
+  const agentOverlay =
+    modelOpen && agentMenuPos && canChangeProvider
+      ? {
+          pos: agentMenuPos,
+          provider,
+          model,
+          settings,
+          onPick: (p: AiProvider, m?: string) => {
+            onProviderLocal(p, m)
+            onProviderChange(p, m)
+            setModelOpen(false)
+            window.setTimeout(() => textareaRef.current?.focus(), 0)
+          },
+          onClose: () => setModelOpen(false)
+        }
+      : null
 
   return (
     <div style={{ flex: 'none', padding: '8px 34px 20px' }}>
       <div
         ref={composerBoxRef}
         onDragOver={(e) => {
-          if (![...e.dataTransfer.types].includes('Files')) return
+          if (!Array.from(e.dataTransfer.types).includes('Files')) return
           e.preventDefault()
           e.dataTransfer.dropEffect = 'copy'
           setDragOver(true)
@@ -1265,22 +1612,16 @@ function ComposerBox({
           setDragOver(false)
           if (e.dataTransfer.files.length) addImageFiles(e.dataTransfer.files)
         }}
-        style={{
-          maxWidth: 680,
-          margin: '0 auto',
-          background: dragOver ? '#2D2D2B' : '#232322',
-          border: dragOver ? `1px solid ${C.accent}` : '1px solid #3E3E3A',
-          borderRadius: 14,
-          padding: '14px 16px 11px',
-          position: 'relative',
-          boxShadow: dragOver ? '0 0 0 1px rgba(214, 242, 58,.2)' : 'none'
-        }}
+        style={composerSurfaceStyle(dragOver)}
       >
         {attachments.length > 0 && (
           <AttachmentStrip attachments={attachments} onRemove={removeAttachment} />
         )}
         {attachmentError && (
           <div style={{ fontSize: 12, color: '#FF625A', marginBottom: 8 }}>{attachmentError}</div>
+        )}
+        {skillWarnText && (
+          <div style={{ fontSize: 12, color: '#EF4444', marginBottom: 8 }}>{skillWarnText}</div>
         )}
         {savingAttachments > 0 && (
           <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>Saving attachment…</div>
@@ -1291,143 +1632,52 @@ function ComposerBox({
           onChange={(e) => {
             const value = e.target.value
             setText(value)
-            syncMentionFromValue(value, e.target.selectionStart)
+            setSkillWarning((names) => retainSkillWarning(value, names))
+            syncComposerPickers(value, e.target.selectionStart)
           }}
+          onSelect={(e) => syncComposerPickers(e.currentTarget.value, e.currentTarget.selectionStart)}
           onKeyDown={(e) =>
             handleComposerKeyDown(e, {
-              mention,
-              mentionFiles,
-              mentionIndex,
-              setMentionIndex,
-              setMention,
-              insertMention,
+              picker,
               send,
-              navigateHistory
+              navigateHistory: (direction, textarea) =>
+                navigateComposerHistory(
+                  direction,
+                  textarea,
+                  text,
+                  historyRef.current,
+                  historyIndexRef,
+                  draftRef,
+                  setText
+                )
             })
           }
           placeholder={composerPlaceholder(availableCount, attachments.length > 0)}
           disabled={!availableCount}
           rows={1}
-          style={{
-            width: '100%',
-            border: 'none',
-            outline: 'none',
-            resize: 'none',
-            background: 'transparent',
-            color: C.text,
-            fontFamily: 'inherit',
-            fontSize: 13.5,
-            lineHeight: 1.5,
-            minHeight: 40,
-            maxHeight: 200,
-            overflowY: 'auto',
-            padding: 0,
-            userSelect: 'text',
-            WebkitUserSelect: 'text',
-            caretColor: C.text
-          } as React.CSSProperties}
+          style={COMPOSER_TEXTAREA_STYLE}
         />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <button
-            type="button"
-            className="bf-focus bf-composer-btn"
-            onClick={onNewChat}
-            title="Clear chat and start fresh"
-            aria-label="Clear chat and start fresh"
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: 8,
-              border: 'none',
-              background: '#2D2D2B',
-              display: 'grid',
-              placeItems: 'center',
-              color: '#A1A19A',
-              cursor: 'pointer',
-              padding: 0
-            }}
-          >
-            <ClearChatIcon size={14} color="#A1A19A" />
-          </button>
-          <span style={{ flex: 1 }} />
-          <button
-            ref={agentBtnRef}
-            type="button"
-            className="bf-focus"
-            onClick={openAgentMenu}
-            title={`Agent: ${aiSelectionLabel(provider, model)}`}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 5,
-              border: 'none',
-              background: 'transparent',
-              color: '#A1A19A',
-              fontSize: 12,
-              cursor: canChangeProvider ? 'pointer' : 'default',
-              padding: '2px 4px',
-              opacity: canChangeProvider ? 1 : 0.55
-            }}
-          >
-            <span
-              style={{
-                maxWidth: 168,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap'
-              }}
-            >
-              {aiSelectionLabel(provider, model)}
-            </span>
-            <ChevronDown size={11} />
-          </button>
-          <button
-            type="button"
-            className="bf-focus"
-            onClick={openMentionPicker}
-            title="Reference a file (@)"
-            aria-label="Reference a file"
-            style={{
-              display: 'grid',
-              placeItems: 'center',
-              border: 'none',
-              background: 'transparent',
-              color: '#A1A19A',
-              cursor: 'pointer',
-              padding: 2
-            }}
-          >
-            <ClipIcon />
-          </button>
-          <SendButton isBusy={isBusy} canSend={canSend} onCancel={onCancel} onSend={send} />
-        </div>
-      </div>
-
-      {mention && menuPos && (
-        <MentionMenu
-          menuPos={menuPos}
-          mentionQuery={mention.query}
-          mentionFiles={mentionFiles}
-          mentionIndex={mentionIndex}
-          onHover={setMentionIndex}
-          onPick={insertMention}
-        />
-      )}
-
-      {modelOpen && agentMenuPos && canChangeProvider && (
-        <AgentMenu
-          agentMenuPos={agentMenuPos}
+        <ComposerToolbar
+          agentBtnRef={agentBtnRef}
           provider={provider}
           model={model}
-          onClose={() => setModelOpen(false)}
-          onPick={(p, m) => {
-            onProviderLocal(p, m)
-            onProviderChange(p, m)
-            setModelOpen(false)
-            window.setTimeout(() => textareaRef.current?.focus(), 0)
-          }}
+          canChangeProvider={canChangeProvider}
+          isBusy={isBusy}
+          canSend={canSend}
+          onNewChat={onNewChat}
+          onOpenAgentMenu={openAgentMenu}
+          onOpenMention={openMentionPicker}
+          onCancel={onCancel}
+          onSend={send}
         />
-      )}
+      </div>
+
+      <ComposerOverlays
+        menuPos={menuPos}
+        skill={skillOverlay}
+        mention={mentionOverlay}
+        agent={agentOverlay}
+      />
     </div>
   )
 }
@@ -1504,6 +1754,7 @@ export default function ChatPane({
   projectPath,
   defaultProvider,
   defaultModel,
+  settings,
   onMessage,
   onAnswer,
   onCancel,
@@ -1610,6 +1861,7 @@ export default function ChatPane({
         isBusy={isBusy}
         provider={provider}
         model={model}
+        settings={settings}
         canChangeProvider={canChangeProvider}
         textareaRef={textareaRef}
         onMessage={onMessage}

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+import type { AiProvider } from '@shared/ai'
 import { MONO } from '../theme'
 
 /**
@@ -41,6 +42,8 @@ const THEME = {
 interface Props {
   paneId: string
   cwd: string
+  /** Dedicated AI CLI for this pane; omitted means a login shell. */
+  agent?: AiProvider
   /** Tab is on screen — refit/refresh after being hidden. */
   visible: boolean
   focused: boolean
@@ -51,7 +54,7 @@ function canMeasure(host: HTMLElement): boolean {
   return host.clientWidth >= 20 && host.clientHeight >= 10
 }
 
-export default function XtermPane({ paneId, cwd, visible, focused, onFocus }: Props) {
+export default function XtermPane({ paneId, cwd, agent, visible, focused, onFocus }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -108,9 +111,9 @@ export default function XtermPane({ paneId, cwd, visible, focused, onFocus }: Pr
         /* mid-layout */
       }
       sizeRef.current = { cols: term.cols, rows: term.rows }
-      void api.shell.open(paneId, cwdRef.current, term.cols, term.rows)
+      void api.shell.open(paneId, cwdRef.current, term.cols, term.rows, agent)
     } else {
-      void api.shell.open(paneId, cwdRef.current, openCols, openRows)
+      void api.shell.open(paneId, cwdRef.current, openCols, openRows, agent)
       sizeRef.current = { cols: openCols, rows: openRows }
     }
 
@@ -135,7 +138,7 @@ export default function XtermPane({ paneId, cwd, visible, focused, onFocus }: Pr
       fitRef.current = null
       // PTY stays alive across tab switches; closeTab/closePane kill it.
     }
-  }, [paneId])
+  }, [paneId, agent])
 
   // After a tab or repository switch the host is on screen again — refit once
   // it has real dimensions, then redraw. Skipping zero-size fits avoids the

@@ -12,6 +12,8 @@ interface BasePane {
 /** A real terminal: xterm.js in the renderer, an interactive shell behind it. */
 export interface ShellPane extends BasePane {
   kind: 'shell'
+  /** Dedicated interactive AI CLI — PTY runs that binary with its env, not a login shell. */
+  agent?: AiProvider
 }
 
 /** A pipeline run's log, rendered by Farol rather than emulated. */

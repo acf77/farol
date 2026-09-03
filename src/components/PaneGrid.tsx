@@ -147,6 +147,7 @@ export default function PaneGrid({
                 <XtermPane
                   paneId={pane.id}
                   cwd={pane.cwd}
+                  agent={pane.agent}
                   visible={visible}
                   focused={visible && focused}
                   onFocus={() => onFocusPane(pane.id)}

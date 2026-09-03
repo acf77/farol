@@ -149,7 +149,7 @@ describe('aiFixCommand', () => {
     expect(aiFixCommand('cursor')).toMatch(/^cursor-agent "/)
     expect(aiFixCommand('codex')).toMatch(/^codex "/)
     expect(aiFixCommand('opencode')).toMatch(/^opencode run "/)
-    expect(aiFixCommand('openrouter')).toMatch(/^codex -c/)
+    expect(aiFixCommand('openrouter')).toMatch(/^opencode run "/)
   })
 
   it('produces nothing a shell would have to escape', () => {
@@ -174,6 +174,29 @@ describe('sanitizeSettings', () => {
     expect(sanitizeSettings({ agent: 'codex', autoFix: false })).toEqual({
       agent: 'codex',
       autoFix: false
+    })
+  })
+
+  it('keeps OpenRouter pins and catalog, never a hasKey flag', () => {
+    expect(
+      sanitizeSettings({
+        agent: 'openrouter',
+        autoFix: true,
+        openrouter: {
+          hasKey: true,
+          autoPinned: true,
+          pinned: ['openai/gpt-4o', 'openai/gpt-4o'],
+          catalog: [{ id: 'openai/gpt-4o', label: 'GPT-4o' }]
+        }
+      })
+    ).toEqual({
+      agent: 'openrouter',
+      autoFix: true,
+      openrouter: {
+        autoPinned: true,
+        pinned: ['openai/gpt-4o'],
+        catalog: [{ id: 'openai/gpt-4o', label: 'GPT-4o' }]
+      }
     })
   })
 

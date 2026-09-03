@@ -1,12 +1,13 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect } from 'react'
 import type { AppSettings, Project } from '@shared/types'
 import { C, MONO, glass as G } from '../theme'
 import type { View } from '../types'
-import { Button, Checkbox } from './controls'
+import { Checkbox } from './controls'
 import {
   BellIcon,
   ChatIcon,
   FolderPlusIcon,
+  GearIcon,
   SplitIcon,
   TerminalIcon
 } from './icons'
@@ -30,6 +31,7 @@ interface Props {
   onInstallUpdate: () => void
   settings: AppSettings
   onSettings: (next: AppSettings) => void
+  onOpenSettings: () => void
   /** Hide traffic lights when the project rail owns them. */
   showTrafficLights?: boolean
 }
@@ -93,16 +95,10 @@ export default function Toolbar({
   onInstallUpdate,
   settings,
   onSettings,
+  onOpenSettings,
   showTrafficLights = false
 }: Props) {
   const api = window.farol
-  const openRouterKeyId = useId()
-  const [openRouterKey, setOpenRouterKey] = useState('')
-  const [openRouterStatus, setOpenRouterStatus] = useState<{
-    configured: boolean
-    source: 'environment' | 'stored' | 'none'
-    error?: string
-  }>({ configured: false, source: 'none' })
 
   /** Escape dismisses the file menu and returns focus to its trigger. */
   useEffect(() => {
@@ -115,17 +111,6 @@ export default function Toolbar({
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [menuOpen, onMenuClose])
-
-  useEffect(() => {
-    if (!menuOpen) return
-    void api.secrets.openRouterStatus().then(setOpenRouterStatus)
-  }, [api, menuOpen])
-
-  const saveOpenRouterKey = async (): Promise<void> => {
-    const result = await api.secrets.saveOpenRouterKey(openRouterKey)
-    setOpenRouterStatus(result)
-    if (result.ok) setOpenRouterKey('')
-  }
 
   return (
     <div
@@ -253,6 +238,28 @@ export default function Toolbar({
           zIndex: 2
         }}
       >
+        <button
+          type="button"
+          className="bf-focus bf-icon-btn"
+          onClick={onOpenSettings}
+          title="Settings"
+          aria-label="Settings"
+          style={{
+            ...noDrag,
+            width: 28,
+            height: 28,
+            borderRadius: 7,
+            border: `1px solid ${C.border}`,
+            background: C.card,
+            color: C.text,
+            display: 'grid',
+            placeItems: 'center',
+            cursor: 'pointer'
+          }}
+        >
+          <GearIcon size={14} color="currentColor" />
+        </button>
+
         <button
           type="button"
           className="bf-focus bf-icon-btn"
@@ -404,6 +411,19 @@ export default function Toolbar({
             </>
           )}
           <div role="separator" style={{ height: 1, background: C.border, margin: '5px 6px' }} />
+          <button
+            type="button"
+            role="menuitem"
+            className="bf-focus bf-menu-item"
+            onClick={() => {
+              onMenuClose()
+              onOpenSettings()
+            }}
+            style={menuItem}
+          >
+            Settings…
+          </button>
+          <div role="separator" style={{ height: 1, background: C.border, margin: '5px 6px' }} />
           <div style={{ padding: '6px 10px 8px' }}>
             <Checkbox
               checked={settings.autoFix}
@@ -413,95 +433,6 @@ export default function Toolbar({
             >
               Send failures to the agent
             </Checkbox>
-          </div>
-          <div role="separator" style={{ height: 1, background: C.border, margin: '5px 6px' }} />
-          <div style={{ padding: '7px 10px 9px' }}>
-            <label
-              htmlFor={openRouterKeyId}
-              style={{ display: 'block', color: C.textSoft, fontSize: 11.5, fontWeight: 600 }}
-            >
-              OpenRouter API key
-            </label>
-            <div style={{ display: 'flex', gap: 6, marginTop: 7 }}>
-              <input
-                id={openRouterKeyId}
-                className="bf-focus bf-input"
-                type="password"
-                value={openRouterKey}
-                onChange={(event) => {
-                  setOpenRouterKey(event.target.value)
-                  if (openRouterStatus.error) {
-                    setOpenRouterStatus(({ configured, source }) => ({ configured, source }))
-                  }
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter') return
-                  event.preventDefault()
-                  void saveOpenRouterKey()
-                }}
-                placeholder={openRouterStatus.configured ? 'Saved securely' : 'sk-or-…'}
-                autoComplete="off"
-                spellCheck={false}
-                style={{
-                  minWidth: 0,
-                  flex: 1,
-                  height: 26,
-                  boxSizing: 'border-box',
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 6,
-                  background: C.terminal,
-                  color: C.text,
-                  padding: '0 8px',
-                  fontFamily: MONO,
-                  fontSize: 11
-                }}
-              />
-              <Button
-                type="button"
-                variant={openRouterKey.trim() ? 'primary' : 'secondary'}
-                disabled={!openRouterKey.trim()}
-                onClick={() => void saveOpenRouterKey()}
-              >
-                Save
-              </Button>
-            </div>
-            <div
-              role={openRouterStatus.error ? 'alert' : undefined}
-              style={{
-                minHeight: 15,
-                marginTop: 5,
-                color: openRouterStatus.error ? C.red : C.faint,
-                fontSize: 10.5,
-                lineHeight: '15px'
-              }}
-            >
-              {openRouterStatus.error ??
-                (openRouterStatus.source === 'environment'
-                  ? 'Using OPENROUTER_API_KEY from your shell.'
-                  : openRouterStatus.configured
-                    ? 'Stored with system credential encryption.'
-                    : 'Required only when OpenRouter is selected.')}
-            </div>
-            {openRouterStatus.source === 'stored' && (
-              <button
-                type="button"
-                className="bf-focus"
-                onClick={() => {
-                  setOpenRouterKey('')
-                  void api.secrets.saveOpenRouterKey('').then(setOpenRouterStatus)
-                }}
-                style={{
-                  border: 0,
-                  background: 'transparent',
-                  color: C.textMuted,
-                  padding: 0,
-                  fontSize: 10.5,
-                  cursor: 'pointer'
-                }}
-              >
-                Clear saved key
-              </button>
-            )}
           </div>
         </div>
       )}

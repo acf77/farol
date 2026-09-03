@@ -114,9 +114,16 @@ that tab stops watching without cancelling the run.
   real exit code while sharing the environment you'd have by hand. On a worktree
   tab, that's the worktree, not the original checkout.
 - **AI steps** shell out to the CLI chosen on the step — Claude (`claude -p`),
-  Codex (`codex exec`), Cursor (`agent -p`), or OpenCode (`opencode run`) — and
-  are handed the run's output so far as context. If that CLI isn't on PATH the
-  step fails with a note saying so.
+  Codex (`codex exec`), Cursor (`agent -p`), OpenCode (`opencode run`), or
+  OpenRouter (OpenCode plus a saved key) — and are handed the run's output so
+  far as context. If that CLI isn't on PATH the step fails with a note saying so.
+
+OpenRouter is configured in **Settings** (toolbar gear, File menu, or ⌘,):
+paste an API key, which Farol encrypts locally. Settings fetches tool-capable
+models from OpenRouter’s catalog and pins a short recommended set for Chat and
+pipeline pickers. The key is injected as `OPENROUTER_API_KEY` only into
+Farol-spawned OpenCode processes — not into regular shell panes, and not into
+OpenCode’s own auth file.
 
 The editor is a node canvas. Steps are nodes you drag into position; wires
 between them declare order, dragged from the port on one node's bottom edge to
@@ -134,7 +141,7 @@ starter pipelines from the design spec.
 
 ### Agent sessions
 
-Click **✦** beside the new-tab button to open an agent session:
+Open Chat from the toolbar, or **New agent terminal** from the command palette (⌘K):
 
 - **Chat — enforced** runs the coding CLI through Farol's managed harness.
   The agent receives the current pipeline catalog and selects relevant

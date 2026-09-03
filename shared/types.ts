@@ -3,12 +3,13 @@
 import type { AiProvider } from './ai'
 import type { AgentQuestion } from './questions'
 import type { ProjectSession } from './session'
+import type { AgentSkill } from './skills'
 import type { WorktreeRequest } from './worktree'
-import type { AppSettings } from './settings'
+import type { AppSettings, OpenRouterSettings } from './settings'
 
-export type { AgentQuestion }
+export type { AgentQuestion, AgentSkill }
 
-export type { AiProvider, AppSettings, ProjectSession, WorktreeRequest }
+export type { AiProvider, AppSettings, OpenRouterSettings, ProjectSession, WorktreeRequest }
 export { aiFixCommand } from './ai'
 export { FAILURE_REPORT_REL } from './failure'
 export { parseVerdict, VERDICT_MARKER, verdictPromptSuffix } from './verdict'
@@ -303,6 +304,8 @@ export interface FarolApi {
     openPath(path: string): Promise<Project | null>
     /** Relative paths under the project root, filtered by an optional query. */
     listFiles(projectPath: string, query?: string): Promise<string[]>
+    /** User-invocable skills for the selected agent, from its native scopes. */
+    listSkills(projectPath: string, provider: AiProvider): Promise<AgentSkill[]>
     /** Persist a dropped chat image; returns the absolute path on disk. */
     saveAttachment(
       projectPath: string,
@@ -327,8 +330,14 @@ export interface FarolApi {
     onChanged(cb: (changed: PipelinesChanged) => void): () => void
   }
   shell: {
-    /** Start an interactive shell for a pane. */
-    open(paneId: string, cwd: string, cols?: number, rows?: number): Promise<void>
+    /** Start an interactive shell — or a dedicated AI CLI when `provider` is set. */
+    open(
+      paneId: string,
+      cwd: string,
+      cols?: number,
+      rows?: number,
+      provider?: AiProvider
+    ): Promise<void>
     /** Keystrokes from xterm, straight through to the PTY. */
     write(paneId: string, data: string): Promise<void>
     resize(paneId: string, cols: number, rows: number): Promise<void>
@@ -417,17 +426,11 @@ export interface FarolApi {
     load(): Promise<AppSettings>
     save(settings: AppSettings): Promise<void>
   }
-  secrets: {
-    openRouterStatus(): Promise<{
-      configured: boolean
-      source: 'environment' | 'stored' | 'none'
-    }>
-    saveOpenRouterKey(key: string): Promise<{
-      ok: boolean
-      configured: boolean
-      source: 'environment' | 'stored' | 'none'
-      error?: string
-    }>
+  openrouter: {
+    saveKey(key: string): Promise<{ settings: AppSettings; error?: string }>
+    clearKey(): Promise<{ settings: AppSettings; error?: string }>
+    refresh(): Promise<{ settings: AppSettings; error?: string }>
+    setPinned(ids: string[]): Promise<{ settings: AppSettings; error?: string }>
   }
   update: {
     check(): Promise<UpdateStatus>
@@ -438,6 +441,7 @@ export interface FarolApi {
   ui: {
     glass(): Promise<boolean>
     onGlass(cb: (active: boolean) => void): () => void
+    onSettings(cb: () => void): () => void
   }
   window: {
     minimize(): void

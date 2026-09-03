@@ -879,17 +879,11 @@ export class AgentController {
 
   private runAgent(task: Task, prompt: string, sink: AgentSink): Promise<number> {
     const spec = managedAiCommand(task.request.provider, prompt, task.request.model)
+    const env = aiEnv(task.request.provider)
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       sink.text(`farol: ${spec.hint}\n`)
       return Promise.resolve(127)
-    }
-    let env: Record<string, string>
-    try {
-      env = aiEnv(task.request.provider)
-    } catch (error) {
-      sink.text(`farol: ${error instanceof Error ? error.message : String(error)}\n`)
-      return Promise.resolve(1)
     }
 
     // A streaming provider keeps its diagnostics out of the transcript, so

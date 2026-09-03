@@ -2,84 +2,73 @@ import { app, safeStorage } from 'electron'
 import fs from 'fs'
 import path from 'path'
 
-export interface OpenRouterSecretStatus {
-  configured: boolean
-  source: 'environment' | 'stored' | 'none'
+interface SecretsFile {
+  openrouterApiKey?: string
 }
 
-export interface SaveOpenRouterSecretResult extends OpenRouterSecretStatus {
-  ok: boolean
-  error?: string
+let cachedKey: string | null | undefined
+
+function secretsPath(): string {
+  return path.join(app.getPath('userData'), 'secrets.json')
 }
 
-const KEY_FILE = 'openrouter-key.bin'
-
-function keyFile(): string {
-  return path.join(app.getPath('userData'), KEY_FILE)
-}
-
-function environmentKey(): string | undefined {
-  return process.env.OPENROUTER_API_KEY?.trim() || undefined
-}
-
-function storedKey(): string | undefined {
+function readFile(): SecretsFile {
   try {
-    if (!safeStorage.isEncryptionAvailable()) return undefined
-    const encrypted = fs.readFileSync(keyFile())
-    return safeStorage.decryptString(encrypted).trim() || undefined
+    const raw = JSON.parse(fs.readFileSync(secretsPath(), 'utf8')) as unknown
+    return raw && typeof raw === 'object' ? (raw as SecretsFile) : {}
   } catch {
-    return undefined
+    return {}
   }
 }
 
-export function openRouterSecretStatus(): OpenRouterSecretStatus {
-  if (environmentKey()) return { configured: true, source: 'environment' }
-  if (storedKey()) return { configured: true, source: 'stored' }
-  return { configured: false, source: 'none' }
-}
-
-export function saveOpenRouterKey(raw: unknown): SaveOpenRouterSecretResult {
-  if (typeof raw !== 'string') {
-    return { ok: false, configured: false, source: 'none', error: 'API key must be text.' }
-  }
-
-  const key = raw.trim()
-  if (!key) {
+function writeFile(next: SecretsFile): void {
+  const file = secretsPath()
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  if (!next.openrouterApiKey) {
     try {
-      fs.rmSync(keyFile(), { force: true })
+      fs.unlinkSync(file)
     } catch {
-      return { ok: false, ...openRouterSecretStatus(), error: 'Could not clear the saved key.' }
+      /* gone */
     }
-    return { ok: true, ...openRouterSecretStatus() }
+    return
   }
-  if (!key.startsWith('sk-or-')) {
-    return {
-      ok: false,
-      ...openRouterSecretStatus(),
-      error: 'OpenRouter keys start with sk-or-.'
-    }
-  }
-  if (!safeStorage.isEncryptionAvailable()) {
-    return {
-      ok: false,
-      ...openRouterSecretStatus(),
-      error: 'Secure credential storage is unavailable.'
-    }
-  }
+  fs.writeFileSync(file, JSON.stringify(next) + '\n', 'utf8')
+}
 
+function decrypt(payload: string): string | null {
+  if (!safeStorage.isEncryptionAvailable()) return null
   try {
-    fs.mkdirSync(app.getPath('userData'), { recursive: true })
-    fs.writeFileSync(keyFile(), safeStorage.encryptString(key), { mode: 0o600 })
-    fs.chmodSync(keyFile(), 0o600)
-    return { ok: true, ...openRouterSecretStatus() }
+    return safeStorage.decryptString(Buffer.from(payload, 'base64'))
   } catch {
-    return { ok: false, ...openRouterSecretStatus(), error: 'Could not save the API key.' }
+    return null
   }
 }
 
-/** Inject the credential only into processes explicitly routed through OpenRouter. */
-export function openRouterEnv(): Record<string, string> {
-  const key = environmentKey() ?? storedKey()
-  if (!key) throw new Error('Add an OpenRouter API key in Farol settings before using OpenRouter.')
-  return { OPENROUTER_API_KEY: key }
+export function hasOpenRouterKey(): boolean {
+  return peekOpenRouterKey() !== null
+}
+
+export function peekOpenRouterKey(): string | null {
+  if (cachedKey !== undefined) return cachedKey
+  const stored = readFile().openrouterApiKey
+  cachedKey = stored ? decrypt(stored) : null
+  return cachedKey
+}
+
+export function setOpenRouterKey(plain: string): void {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Cannot encrypt the API key on this machine.')
+  }
+  const key = plain.trim()
+  if (!key) {
+    clearOpenRouterKey()
+    return
+  }
+  writeFile({ openrouterApiKey: safeStorage.encryptString(key).toString('base64') })
+  cachedKey = key
+}
+
+export function clearOpenRouterKey(): void {
+  writeFile({})
+  cachedKey = null
 }
