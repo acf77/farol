@@ -1,5 +1,5 @@
 import type { AiProvider } from './ai'
-import { AI_LABELS } from './ai'
+import { AI_LABELS, cliFor } from './ai'
 
 export interface AgentSkill {
   name: string
@@ -29,7 +29,7 @@ export function skillToken(provider: AiProvider, name: string): string {
 
 /** Native SKILL.md roots for each coding CLI, lowest rank first. */
 export function skillRoots(provider: AiProvider): SkillRootSpec[] {
-  switch (provider) {
+  switch (cliFor(provider)) {
     case 'claude':
       return [
         { kind: 'user', rel: '.claude/skills', rank: 1 },
