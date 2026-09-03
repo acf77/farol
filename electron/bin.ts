@@ -2,6 +2,8 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { shellEnv } from './session'
+import type { AiProvider } from '../shared/ai'
+import { openRouterEnv } from './secrets'
 
 export function extraBinDirs(): string[] {
   const home = os.homedir()
@@ -51,8 +53,8 @@ export function resolveBinFrom(names: string[], dirs: string[] = searchDirs()): 
   return null
 }
 
-export function aiEnv(): Record<string, string> {
+export function aiEnv(provider?: AiProvider): Record<string, string> {
   const env = shellEnv()
   env.PATH = pathDirs(env.PATH).join(path.delimiter)
-  return env
+  return provider === 'openrouter' ? { ...env, ...openRouterEnv() } : env
 }

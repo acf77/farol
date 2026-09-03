@@ -715,7 +715,7 @@ function handleRunStepStart(ctx: RunEventCtx, e: Extract<RunEvent, { kind: 'step
   deps.lastRunOut.current = null
   const name = byId.get(e.nodeId)?.name || e.nodeId
   stepAt(e.nodeId, 'running')
-  deps.pushLog(`Starting step: ${name}`, '#94A3B8')
+  deps.pushLog(`Starting step: ${name}`, '#A1A19A')
   term((pane) => ({
     ...pane,
     term: writeLine(ensureNewline(clearIndent(pane.term)), `[${e.index + 1}/${total}] ${name}`, seg('step'))
@@ -756,7 +756,7 @@ function handleRunStepEnd(ctx: RunEventCtx, e: Extract<RunEvent, { kind: 'step-e
   stepAt(e.nodeId, st)
   const name = byId.get(e.nodeId)?.name || e.nodeId
   const text = stepEndText(name, e)
-  const color = e.ok ? '#22C55E' : e.skipped || e.cancelled ? '#94A3B8' : '#EF4444'
+  const color = e.ok ? '#87C9AE' : e.skipped || e.cancelled ? '#A1A19A' : '#FF625A'
   deps.pushLog(text, color)
   term((pane) => ({
     ...pane,
@@ -802,7 +802,7 @@ function handleRunEnd(ctx: RunEventCtx, e: Extract<RunEvent, { kind: 'end' }>): 
   const summary = runEndSummary(branch, total, failedName, e)
   deps.pushLog(
     e.ok ? 'Pipeline finished — all steps passed' : e.cancelled ? 'Pipeline cancelled' : 'Pipeline failed',
-    e.ok ? '#22C55E' : e.cancelled ? '#94A3B8' : '#EF4444'
+    e.ok ? '#87C9AE' : e.cancelled ? '#A1A19A' : '#FF625A'
   )
   deps.patchTab(tabId, (t) => ({ ...t, status: e.ok ? 'pass' : 'fail' }))
   // Only runs a person started hand off; otherwise an agent that runs
@@ -1164,8 +1164,8 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         }}
       />
 
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 12, padding: '0 14px 12px' }}>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 12 }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 8, padding: '0 10px 10px' }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 8 }}>
           {view !== 'terminal' && (
             <ErrorBoundary compact>
               <ChatPane
@@ -1295,7 +1295,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             zIndex: 80,
             display: 'flex',
             flexDirection: 'column',
-            background: '#080D17'
+            background: '#181817'
           }}
         >
           <PipelineCanvas
@@ -2238,7 +2238,7 @@ function ProjectWorkspace({
                       ...pane,
                       cwd,
                       term: writeLine(ensureNewline(emptyTerm()), `── rerun ${clockStamp()} ──`, {
-                        color: '#94A3B8',
+                        color: '#A1A19A',
                         dim: true
                       })
                     }
@@ -2255,7 +2255,7 @@ function ProjectWorkspace({
       )
       setSelId(pipelineId)
       setEditor(null)
-      setDetailLogs([{ t: clockStamp(), text: `Queued pipeline: ${p.name}`, color: '#94A3B8' }])
+      setDetailLogs([{ t: clockStamp(), text: `Queued pipeline: ${p.name}`, color: '#A1A19A' }])
       setActiveTab(tabId)
       setView('terminal')
       const runtimeId = runtimePipelineId(pipelineId)

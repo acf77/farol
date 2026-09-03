@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   commitBlockReason,
   committableFiles,
+  conflictSignals,
+  conflictStatusItems,
   draftMatchesStatus,
   isSecretPath,
   parseAheadBehind,
@@ -148,5 +150,62 @@ describe('pushBlockReason', () => {
         })
       )
     ).toBeNull()
+  })
+})
+
+describe('conflictSignals', () => {
+  it('flags working-tree, staging, and current-branch PR conflicts', () => {
+    expect(
+      conflictSignals(
+        status({
+          conflicts: [{ path: 'both.ts', kind: 'conflict', staged: false }],
+          baseMerge: { base: 'staging', conflicts: true }
+        }),
+        {
+          available: true,
+          prs: [
+            {
+              number: 12,
+              hasConflicts: true
+            }
+          ]
+        }
+      )
+    ).toMatchObject({ workingTree: true, prConflicts: true, any: true })
+  })
+
+  it('ignores GitHub when no PR is open on this branch', () => {
+    expect(conflictSignals(status({ clean: true }), { available: true, prs: [] })).toMatchObject({
+      any: false,
+      prConflicts: false
+    })
+  })
+})
+
+describe('conflictStatusItems', () => {
+  it('reports a clean staging merge and no PR', () => {
+    expect(
+      conflictStatusItems(status({ clean: true, baseMerge: { base: 'staging', conflicts: false } }), {
+        available: true,
+        prs: []
+      })
+    ).toEqual([
+      { tone: 'ok', text: 'No conflicts with staging.' },
+      { tone: 'muted', text: 'No open pull request from this branch.' }
+    ])
+  })
+
+  it('reports an open PR conflict without listing other PRs', () => {
+    expect(
+      conflictStatusItems(status({ clean: true }), {
+        available: true,
+        prs: [
+          {
+            number: 4,
+            hasConflicts: true
+          }
+        ]
+      })
+    ).toEqual([{ tone: 'conflict', text: 'Pull request #4 has merge conflicts.' }])
   })
 })

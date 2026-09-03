@@ -1,7 +1,13 @@
 import { useEffect, useLayoutEffect, useState, type CSSProperties, type RefObject } from 'react'
 import { aiSelectionLabel } from '@shared/ai'
-import { commitBlockReason, draftMatchesStatus, pushBlockReason } from '@shared/git-status'
-import type { AiProvider, GitCommit, GitFileKind, GitHubInfo, GitStatus, PullRequest } from '@shared/types'
+import {
+  commitBlockReason,
+  conflictSignals,
+  conflictStatusItems,
+  draftMatchesStatus,
+  pushBlockReason
+} from '@shared/git-status'
+import type { AiProvider, GitCommit, GitFileKind, GitHubInfo, GitStatus } from '@shared/types'
 import { useGitPanel } from '../hooks/useGitPanel'
 import { C, MONO } from '../theme'
 import { Button } from './controls'
@@ -21,10 +27,8 @@ export function gitStatusDotColor(
   status: GitStatus | null,
   github: GitHubInfo | null
 ): string {
-  const hasConflicts = (status?.conflicts.length ?? 0) > 0
-  const prConflicts = github?.prs.some((p) => p.hasConflicts) ?? false
-  const dirty = status && !status.clean
-  return hasConflicts || prConflicts ? C.red : dirty ? C.yellow : C.green
+  if (conflictSignals(status, github).any) return C.red
+  return status && !status.clean ? C.yellow : C.green
 }
 
 const sectionLabel: CSSProperties = {
@@ -62,8 +66,8 @@ function alertBox(variant: 'error' | 'success' | 'conflict'): CSSProperties {
       marginBottom: 10,
       padding: '8px 10px',
       borderRadius: 7,
-      background: 'rgba(239,68,68,0.1)',
-      border: '1px solid rgba(239,68,68,0.35)',
+      background: 'rgba(255, 98, 90,0.1)',
+      border: '1px solid rgba(255, 98, 90,0.35)',
       fontSize: 11.5,
       color: C.red
     }
@@ -73,66 +77,13 @@ function alertBox(variant: 'error' | 'success' | 'conflict'): CSSProperties {
     marginBottom: 10,
     padding: '8px 10px',
     borderRadius: 7,
-    background: green ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
-    border: green ? '1px solid rgba(34,197,94,0.25)' : '1px solid rgba(239,68,68,0.25)',
+    background: green ? 'rgba(135, 201, 174,0.08)' : 'rgba(255, 98, 90,0.08)',
+    border: green ? '1px solid rgba(135, 201, 174,0.25)' : '1px solid rgba(255, 98, 90,0.25)',
     fontSize: 11.5,
     color: green ? C.textSoft : C.red,
     lineHeight: 1.45,
     ...(green ? { fontFamily: MONO } : {})
   }
-}
-
-function PrRow({ pr }: { pr: PullRequest }) {
-  const rollup =
-    pr.checksFailed > 0
-      ? { label: `${pr.checksFailed} failed`, color: C.red }
-      : pr.checksPending > 0
-        ? { label: `${pr.checksPending} pending`, color: C.yellow }
-        : pr.hasChecks
-          ? { label: 'Checks passed', color: C.green }
-          : { label: 'No checks', color: C.faint }
-
-  return (
-    <a
-      href={pr.url}
-      target="_blank"
-      rel="noreferrer"
-      className="bf-focus"
-      title={pr.title}
-      style={{
-        display: 'block',
-        padding: '8px 10px',
-        borderRadius: 7,
-        textDecoration: 'none',
-        color: C.textSoft,
-        background: 'rgba(255,255,255,0.02)',
-        border: `1px solid ${C.cardBorder}`
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
-        <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.accentBright }}>#{pr.number}</span>
-        <span
-          style={{
-            fontSize: 11.5,
-            fontWeight: 600,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            flex: 1
-          }}
-        >
-          {pr.title}
-        </span>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, color: C.textMuted }}>
-        <span style={{ fontFamily: MONO }}>{pr.headRef}</span>
-        {pr.hasConflicts && (
-          <span style={{ color: C.red, fontWeight: 600 }}>Conflicts</span>
-        )}
-        <span style={{ marginLeft: 'auto', color: rollup.color }}>{rollup.label}</span>
-      </div>
-    </a>
-  )
 }
 
 function FileList({ title, files, color }: { title: string; files: GitStatus['staged']; color: string }) {
@@ -249,24 +200,35 @@ function RecentCommitsBlock({ commits }: { commits: GitCommit[] }) {
   )
 }
 
-function PullRequestsBlock({ github }: { github: GitHubInfo | null }) {
+function ConflictBlock({
+  status,
+  github
+}: {
+  status: GitStatus | null
+  github: GitHubInfo | null
+}) {
+  const items = conflictStatusItems(status, github)
+  if (!items.length) return null
+  const bad = items.filter((i) => i.tone === 'conflict')
+  const rest = items.filter((i) => i.tone !== 'conflict')
   return (
     <div style={{ marginBottom: 12 }}>
-      <div style={sectionLabel}>PULL REQUESTS</div>
-      {!github && <div style={{ fontSize: 11.5, color: C.faint }}>Loading…</div>}
-      {github && !github.available && (
-        <div style={{ fontSize: 11.5, color: C.textMuted, lineHeight: 1.45 }}>{github.message}</div>
-      )}
-      {github?.available && github.prs.length === 0 && (
-        <div style={{ fontSize: 11.5, color: C.faint }}>No open pull requests</div>
-      )}
-      {github?.available && github.prs.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {github.prs.map((pr) => (
-            <PrRow key={pr.number} pr={pr} />
+      <div style={sectionLabel}>CONFLICTS</div>
+      {bad.length > 0 && (
+        <div style={alertBox('conflict')}>
+          {bad.map((i) => (
+            <div key={i.text}>{i.text}</div>
           ))}
         </div>
       )}
+      {rest.map((i) => (
+        <div
+          key={i.text}
+          style={{ fontSize: 11.5, color: i.tone === 'ok' ? C.green : C.faint, marginBottom: 4 }}
+        >
+          {i.text}
+        </div>
+      ))}
     </div>
   )
 }
@@ -309,38 +271,6 @@ function useEscapeClose(open: boolean, onClose: () => void): void {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [open, onClose])
-}
-
-function gitActionState(
-  status: GitStatus | null,
-  github: GitHubInfo | null,
-  gitAction: 'commit' | 'push' | null
-): { hasConflicts: boolean; prConflicts: boolean; canCommit: boolean; canPush: boolean } {
-  const hasConflicts = (status?.conflicts.length ?? 0) > 0
-  const prConflicts = github?.prs.some((p) => p.hasConflicts) ?? false
-  return {
-    hasConflicts,
-    prConflicts,
-    canCommit: !!status && !commitBlockReason(status) && !gitAction,
-    canPush: !!status && !pushBlockReason(status) && !gitAction
-  }
-}
-
-function ConflictAlert({
-  hasConflicts,
-  prConflicts
-}: {
-  hasConflicts: boolean
-  prConflicts: boolean
-}) {
-  if (!hasConflicts && !prConflicts) return null
-  return (
-    <div style={alertBox('conflict')}>
-      {hasConflicts
-        ? 'Merge conflicts in the working tree — resolve before committing.'
-        : 'An open pull request has merge conflicts.'}
-    </div>
-  )
 }
 
 function GitActionButtons({
@@ -563,11 +493,8 @@ export default function GitPane({
 
   if (!open || !pos) return null
 
-  const { hasConflicts, prConflicts, canCommit, canPush } = gitActionState(
-    status,
-    github,
-    gitAction
-  )
+  const canCommit = !!status && !commitBlockReason(status) && !gitAction
+  const canPush = !!status && !pushBlockReason(status) && !gitAction
   const draftStale = !!draft && !!status && !draftMatchesStatus(draft.files, status)
 
   return (
@@ -585,7 +512,7 @@ export default function GitPane({
           maxHeight: 'min(70vh, 520px)',
           display: 'flex',
           flexDirection: 'column',
-          background: '#111827',
+          background: '#232322',
           border: `1px solid ${C.cardBorder}`,
           borderRadius: 10,
           boxShadow: '0 18px 44px rgba(0,0,0,0.55)',
@@ -595,8 +522,7 @@ export default function GitPane({
         <GitPanelHeader loading={loading} onRefresh={() => void refresh()} />
 
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 10px 12px' }}>
-          <ConflictAlert hasConflicts={hasConflicts} prConflicts={prConflicts} />
-          <PullRequestsBlock github={github} />
+          <ConflictBlock status={status} github={github} />
           <RecentCommitsBlock commits={commits} />
           <ChangesBlock branch={branch} status={status} />
           {error && <div style={alertBox('error')}>{error}</div>}

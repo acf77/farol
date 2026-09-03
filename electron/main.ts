@@ -27,6 +27,7 @@ import { AgentController } from './agent-controller'
 import { scopedRuntimeId } from '../shared/runtime'
 import net from 'net'
 import os from 'os'
+import { openRouterSecretStatus, saveOpenRouterKey } from './secrets'
 
 let win: BrowserWindow | null = null
 /** Renderer chrome goes translucent only when the native glass view is up. */
@@ -83,7 +84,7 @@ function createWindow(): void {
     frame: false,
     // Liquid Glass needs a transparent window and must not use vibrancy.
     transparent: wantGlass,
-    backgroundColor: wantGlass ? '#00000000' : '#080D17',
+    backgroundColor: wantGlass ? '#00000000' : '#181817',
     ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -636,6 +637,8 @@ function registerIpc(): void {
 
   ipcMain.handle('settings:load', () => loadSettings())
   ipcMain.handle('settings:save', (_e, settings: AppSettings) => saveSettings(settings))
+  ipcMain.handle('secrets:openrouterStatus', () => openRouterSecretStatus())
+  ipcMain.handle('secrets:saveOpenRouterKey', (_e, key: unknown) => saveOpenRouterKey(key))
 
   ipcMain.handle('update:check', () => updater.check())
   ipcMain.on('update:install', () => updater.install())

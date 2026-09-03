@@ -654,7 +654,7 @@ export class PipelineRunner {
           cols: 110,
           rows: 40,
           cwd,
-          env: aiEnv()
+          env: aiEnv(normalizeAi(node.ai))
         })
       } catch (err) {
         onChunk(`farol: ${err instanceof Error ? err.message : String(err)}\r\n`)

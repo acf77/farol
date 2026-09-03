@@ -262,15 +262,33 @@ export async function addWorktree(cwd: string, req: WorktreeRequest): Promise<Wo
   return { ok: true, path: destOrReuse.dest, branch: name, message: '' }
 }
 
+/** Whether merging HEAD into `staging` would conflict. Skipped when that ref is missing. */
+export async function mergeBaseConflicts(
+  cwd: string
+): Promise<{ base: string; conflicts: boolean } | undefined> {
+  const head = await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  const branch = head.out.trim()
+  if (!branch || branch === 'HEAD' || branch === 'staging') return undefined
+
+  const from = await resolveBase(cwd, 'staging')
+  if (!from) return undefined
+
+  const tree = await git(cwd, ['merge-tree', '--write-tree', from.ref, 'HEAD'])
+  if (tree.code === 0) return { base: 'staging', conflicts: false }
+  if (tree.code === 1) return { base: 'staging', conflicts: true }
+  return undefined
+}
+
 export async function status(cwd: string): Promise<GitStatus> {
-  const [porcelain, tracking] = await Promise.all([
+  const [porcelain, tracking, baseMerge] = await Promise.all([
     git(cwd, ['status', '--porcelain=v1']),
-    git(cwd, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD'])
+    git(cwd, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']),
+    mergeBaseConflicts(cwd)
   ])
   const parsed = parseGitStatus(porcelain.out)
   const { ahead, behind } =
     tracking.code === 0 ? parseAheadBehind(tracking.out) : { ahead: 0, behind: 0 }
-  return { ...parsed, ahead, behind }
+  return { ...parsed, ahead, behind, ...(baseMerge ? { baseMerge } : {}) }
 }
 
 /** Parse `git log --format=%h\\t%s\\t%an\\t%cr` lines. */

@@ -13,8 +13,10 @@ import {
   ClipIcon,
   ClearChatIcon,
   CopyIcon,
+  SearchIcon,
   SendIcon,
   Spinner,
+  StatusMark,
   ThumbIcon,
   ToolIcon
 } from './icons'
@@ -58,10 +60,25 @@ const busy = new Set(['working', 'validating', 'repairing'])
 const STICK_SLACK = 80
 
 const SUGGESTIONS = [
-  'Run every available validation pipeline before I open a PR',
-  'Walk me through what the selected pipeline checks and why',
-  'Investigate why the last run failed and suggest a fix'
-]
+  {
+    label: 'Validate',
+    detail: 'Run every validation pipeline',
+    prompt: 'Run every available validation pipeline before I open a PR',
+    Icon: CheckIcon
+  },
+  {
+    label: 'Explain',
+    detail: 'What this pipeline checks',
+    prompt: 'Walk me through what the selected pipeline checks and why',
+    Icon: ToolIcon
+  },
+  {
+    label: 'Investigate',
+    detail: 'Why the last run failed',
+    prompt: 'Investigate why the last run failed and suggest a fix',
+    Icon: SearchIcon
+  }
+] as const
 
 function greetingFor(date: Date): string {
   const h = date.getHours()
@@ -92,13 +109,13 @@ function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool']>; ti
         padding: '7px 11px',
         // Close the transcript's 26px turn gap when cards run back to back.
         marginTop: tight ? -16 : 0,
-        background: '#111827',
-        border: '1px solid #273449',
+        background: '#232322',
+        border: '1px solid #3E3E3A',
         borderRadius: 9
       }}
     >
       <ToolIcon />
-      <span style={{ fontFamily: MONO, fontSize: 11.5, color: '#CBD5E1', flex: 'none' }}>
+      <span style={{ fontFamily: MONO, fontSize: 11.5, color: '#C4C4BE', flex: 'none' }}>
         {tool.name}
       </span>
       {tool.detail && (
@@ -107,7 +124,7 @@ function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool']>; ti
           style={{
             fontFamily: MONO,
             fontSize: 11.5,
-            color: '#94A3B8',
+            color: '#A1A19A',
             minWidth: 0,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -122,7 +139,7 @@ function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool']>; ti
       {tool.state === 'running' ? (
         <Spinner />
       ) : tool.state === 'done' ? (
-        <CheckIcon />
+        <StatusMark done size={18} />
       ) : (
         <span style={{ fontSize: 12, fontWeight: 700, color: C.red }}>✗</span>
       )}
@@ -146,10 +163,10 @@ function PipelineMsgCard({
   return (
     <div
       style={{
-        border: '1px solid #273449',
+        border: '1px solid #3E3E3A',
         borderRadius: 11,
         overflow: 'hidden',
-        background: '#111827'
+        background: '#232322'
       }}
     >
       <div
@@ -158,17 +175,17 @@ function PipelineMsgCard({
           alignItems: 'center',
           gap: 8,
           padding: '11px 14px',
-          borderBottom: '1px solid #273449'
+          borderBottom: '1px solid #3E3E3A'
         }}
       >
         <ToolIcon />
-        <span style={{ fontFamily: MONO, fontSize: 12, color: '#CBD5E1' }}>
+        <span style={{ fontFamily: MONO, fontSize: 12, color: '#C4C4BE' }}>
           pipeline: {pc.pipelineName}
         </span>
         {pc.status === 'running' ? (
           <Spinner />
         ) : pc.status === 'passed' ? (
-          <CheckIcon />
+          <StatusMark done size={18} />
         ) : (
           <span
             style={{
@@ -184,7 +201,7 @@ function PipelineMsgCard({
         <span
           className="bf-linkish"
           onClick={() => onOpenPipeline(pc.tabId)}
-          style={{ fontSize: 11.5, color: '#94A3B8', cursor: 'pointer' }}
+          style={{ fontSize: 11.5, color: '#A1A19A', cursor: 'pointer' }}
           title="Jump to this run's terminal tab"
         >
           Open in terminal
@@ -199,7 +216,7 @@ function PipelineMsgCard({
           fontFamily: MONO,
           fontSize: 12,
           lineHeight: 1.5,
-          color: '#94A3B8',
+          color: '#A1A19A',
           userSelect: 'text'
         }}
       >
@@ -219,7 +236,7 @@ function AssistantFooter({
   onNewChat: () => void
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#94A3B8' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#A1A19A' }}>
       <CircleIcon />
       <span style={{ fontSize: 12 }}>{AI_LABELS[provider]}</span>
       <span style={{ flex: 1 }} />
@@ -263,10 +280,10 @@ function QuestionOptionButton({
         gap: 2,
         width: '100%',
         padding: '8px 10px',
-        border: selected ? '1px solid #2563EB' : '1px solid #273449',
+        border: selected ? '1px solid #D6F23A' : '1px solid #3E3E3A',
         borderRadius: 8,
-        background: selected ? 'rgba(37,99,235,0.12)' : 'transparent',
-        color: '#E2E8F0',
+        background: selected ? 'rgba(214, 242, 58,0.12)' : 'transparent',
+        color: '#D8D8D3',
         cursor: locked ? 'default' : 'pointer',
         textAlign: 'left',
         fontFamily: 'inherit'
@@ -274,7 +291,7 @@ function QuestionOptionButton({
     >
       <span style={{ fontSize: 12.5, fontWeight: 600 }}>{option.label}</span>
       {option.description && (
-        <span style={{ fontSize: 12, lineHeight: 1.4, color: '#94A3B8' }}>{option.description}</span>
+        <span style={{ fontSize: 12, lineHeight: 1.4, color: '#A1A19A' }}>{option.description}</span>
       )}
     </button>
   )
@@ -319,10 +336,10 @@ function QuestionCard({
   return (
     <div
       style={{
-        border: '1px solid #273449',
+        border: '1px solid #3E3E3A',
         borderRadius: 11,
         overflow: 'hidden',
-        background: '#111827'
+        background: '#232322'
       }}
     >
       <div
@@ -331,16 +348,16 @@ function QuestionCard({
           alignItems: 'center',
           gap: 8,
           padding: '11px 14px',
-          borderBottom: '1px solid #273449'
+          borderBottom: '1px solid #3E3E3A'
         }}
       >
         <ToolIcon />
-        <span style={{ fontFamily: MONO, fontSize: 12, color: '#CBD5E1' }}>
+        <span style={{ fontFamily: MONO, fontSize: 12, color: '#C4C4BE' }}>
           {card.dismissed
             ? 'questions dismissed'
             : `question${card.questions.length === 1 ? '' : 's'}`}
         </span>
-        {locked && !card.dismissed ? <CheckIcon /> : null}
+        {locked && !card.dismissed ? <StatusMark done size={18} /> : null}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '13px 15px' }}>
         {card.questions.map((question, qi) => {
@@ -350,10 +367,10 @@ function QuestionCard({
           )
           return (
             <div key={`${card.requestId}-${qi}`} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: '#64748B', letterSpacing: '0.02em' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#777772', letterSpacing: '0.02em' }}>
                 {question.header}
               </div>
-              <div style={{ fontSize: 13.5, lineHeight: 1.45, color: '#E2E8F0' }}>{question.question}</div>
+              <div style={{ fontSize: 13.5, lineHeight: 1.45, color: '#D8D8D3' }}>{question.question}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {question.options.map((option) => (
                   <QuestionOptionButton
@@ -381,10 +398,10 @@ function QuestionCard({
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
-                    border: '1px solid #273449',
+                    border: '1px solid #3E3E3A',
                     borderRadius: 8,
-                    background: '#080D17',
-                    color: '#F8FAFC',
+                    background: '#181817',
+                    color: '#F0F0EC',
                     fontSize: 12.5,
                     padding: '7px 10px',
                     outline: 'none',
@@ -393,7 +410,7 @@ function QuestionCard({
                 />
               )}
               {locked && extras.length > 0 && (
-                <div style={{ fontSize: 12, color: '#94A3B8' }}>{extras.join(', ')}</div>
+                <div style={{ fontSize: 12, color: '#A1A19A' }}>{extras.join(', ')}</div>
               )}
             </div>
           )
@@ -405,9 +422,9 @@ function QuestionCard({
               className="bf-focus"
               onClick={() => onAnswer(card.requestId, null)}
               style={{
-                border: '1px solid #273449',
+                border: '1px solid #3E3E3A',
                 background: 'transparent',
-                color: '#94A3B8',
+                color: '#A1A19A',
                 borderRadius: 8,
                 padding: '6px 12px',
                 fontSize: 12.5,
@@ -423,8 +440,8 @@ function QuestionCard({
               onClick={() => onAnswer(card.requestId, answers)}
               style={{
                 border: 'none',
-                background: ready ? C.accent : '#1F2937',
-                color: ready ? '#fff' : '#64748B',
+                background: ready ? C.accent : '#2D2D2B',
+                color: ready ? C.accentInk : '#777772',
                 borderRadius: 8,
                 padding: '6px 12px',
                 fontSize: 12.5,
@@ -467,8 +484,8 @@ function Turn({
           style={{
             maxWidth: 430,
             padding: '11px 15px',
-            background: '#1F2937',
-            border: '1px solid #273449',
+            background: '#2D2D2B',
+            border: '1px solid #3E3E3A',
             borderRadius: 12,
             fontSize: 13.5,
             lineHeight: 1.5,
@@ -480,7 +497,7 @@ function Turn({
           {messageText(m.text)}
         </div>
         {m.at && (
-          <span style={{ fontSize: 11, color: '#64748B' }}>{fmtClock(m.at)}</span>
+          <span style={{ fontSize: 11, color: '#777772' }}>{fmtClock(m.at)}</span>
         )}
       </div>
     )
@@ -504,7 +521,7 @@ function Turn({
           style={{
             fontSize: 13.5,
             lineHeight: 1.6,
-            color: '#94A3B8',
+            color: '#A1A19A',
             textWrap: 'pretty',
             whiteSpace: 'pre-wrap',
             overflowWrap: 'anywhere',
@@ -545,8 +562,8 @@ function ClearChatBanner({
         flexWrap: 'wrap',
         gap: '10px 14px',
         padding: '12px 14px',
-        background: '#111827',
-        border: '1px solid #273449',
+        background: '#232322',
+        border: '1px solid #3E3E3A',
         borderRadius: 11
       }}
     >
@@ -565,7 +582,7 @@ function ClearChatBanner({
           className="bf-focus"
           onClick={onCancelClearChat}
           style={{
-            border: '1px solid #273449',
+            border: '1px solid #3E3E3A',
             background: 'transparent',
             color: C.textMuted,
             borderRadius: 8,
@@ -582,7 +599,7 @@ function ClearChatBanner({
           onClick={onConfirmClearChat}
           style={{
             border: 'none',
-            background: 'rgba(239,68,68,0.16)',
+            background: 'rgba(255, 98, 90,0.16)',
             color: C.red,
             borderRadius: 8,
             padding: '6px 12px',
@@ -614,8 +631,8 @@ function ChatClearedBanner({ onDismissChatCleared }: { onDismissChatCleared?: ()
         alignItems: 'center',
         gap: 10,
         padding: '10px 14px',
-        background: '#111827',
-        border: '1px solid #273449',
+        background: '#232322',
+        border: '1px solid #3E3E3A',
         borderRadius: 10
       }}
     >
@@ -647,19 +664,27 @@ function ChatClearedBanner({ onDismissChatCleared }: { onDismissChatCleared?: ()
 
 function ChatGreeting({ availableCount }: { availableCount: number }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
       <img
         src={farolMark}
         alt=""
-        width={40}
-        height={40}
+        width={36}
+        height={36}
         draggable={false}
         style={{ borderRadius: 10, display: 'block' }}
       />
-      <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: '-0.2px', marginTop: 18 }}>
+      <div
+        style={{
+          fontSize: 22,
+          fontWeight: 600,
+          letterSpacing: '-0.4px',
+          marginTop: 18,
+          color: C.textStrong
+        }}
+      >
         {greetingFor(new Date())}
       </div>
-      <div style={{ fontSize: 12, color: C.textMuted, marginTop: 8 }}>
+      <div style={{ fontSize: 13, lineHeight: 1.55, color: C.textMuted, marginTop: 8, maxWidth: 420 }}>
         {availableCount
           ? 'How can I help you build today?'
           : 'Create a validation pipeline to start a chat.'}
@@ -672,38 +697,46 @@ function SuggestionList({ onPick }: { onPick: (prompt: string) => void }) {
   return (
     <div
       style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'stretch',
-        gap: 2,
-        marginTop: 28,
-        textAlign: 'left'
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: 8,
+        marginTop: 12,
+        paddingBottom: 8
       }}
     >
-      {SUGGESTIONS.map((prompt) => (
+      {SUGGESTIONS.map(({ label, detail, prompt, Icon }) => (
         <button
-          key={prompt}
+          key={label}
           type="button"
-          className="bf-suggest bf-focus"
+          className="bf-tile bf-focus"
           onClick={() => onPick(prompt)}
+          title={prompt}
           style={{
-            display: 'block',
-            width: '100%',
-            padding: '8px 10px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-start',
+            gap: 18,
+            minHeight: 92,
+            padding: '14px 14px 12px',
             margin: 0,
-            background: 'transparent',
-            border: 'none',
-            borderRadius: 5,
+            background: '#232322',
+            border: '1px solid #3E3E3A',
+            borderRadius: 12,
             cursor: 'pointer',
             textAlign: 'left',
-            fontSize: 12.5,
-            fontWeight: 400,
-            lineHeight: 1.45,
-            color: C.textSoft,
+            color: C.textStrong,
             fontFamily: 'inherit'
           }}
         >
-          {prompt}
+          <span style={{ color: '#A1A19A', display: 'grid' }}>
+            <Icon size={16} color="#A1A19A" />
+          </span>
+          <span>
+            <span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>{label}</span>
+            <span style={{ display: 'block', fontSize: 12, lineHeight: 1.4, color: C.textMuted, marginTop: 3 }}>
+              {detail}
+            </span>
+          </span>
         </button>
       ))}
     </div>
@@ -728,8 +761,8 @@ function AttachmentStrip({
             height: 56,
             borderRadius: 8,
             overflow: 'hidden',
-            border: '1px solid #273449',
-            background: '#080D17'
+            border: '1px solid #3E3E3A',
+            background: '#181817'
           }}
         >
           <img
@@ -795,7 +828,7 @@ function MentionMenu({
         zIndex: 70,
         maxHeight: 220,
         overflow: 'auto',
-        background: '#111827',
+        background: '#232322',
         border: `1px solid ${C.cardBorder}`,
         borderRadius: 10,
         boxShadow: '0 14px 36px rgba(0,0,0,0.5)',
@@ -821,7 +854,7 @@ function MentionMenu({
               width: '100%',
               textAlign: 'left',
               border: 'none',
-              background: i === mentionIndex ? '#1F2937' : 'transparent',
+              background: i === mentionIndex ? '#2D2D2B' : 'transparent',
               color: C.textSoft,
               fontFamily: MONO,
               fontSize: 12,
@@ -950,7 +983,8 @@ function SendButton({
         width: 34,
         height: 30,
         borderRadius: 9,
-        background: isBusy ? C.red : canSend ? C.accent : '#1F2937',
+        background: isBusy ? C.red : canSend ? C.accent : '#2D2D2B',
+        color: !isBusy && canSend ? C.accentInk : C.text,
         display: 'grid',
         placeItems: 'center',
         cursor: isBusy || canSend ? 'pointer' : 'default'
@@ -1234,19 +1268,19 @@ function ComposerBox({
         style={{
           maxWidth: 680,
           margin: '0 auto',
-          background: dragOver ? '#1F2937' : '#111827',
-          border: dragOver ? `1px solid ${C.accent}` : '1px solid #273449',
+          background: dragOver ? '#2D2D2B' : '#232322',
+          border: dragOver ? `1px solid ${C.accent}` : '1px solid #3E3E3A',
           borderRadius: 14,
           padding: '14px 16px 11px',
           position: 'relative',
-          boxShadow: dragOver ? '0 0 0 1px rgba(37,99,235,.2)' : 'none'
+          boxShadow: dragOver ? '0 0 0 1px rgba(214, 242, 58,.2)' : 'none'
         }}
       >
         {attachments.length > 0 && (
           <AttachmentStrip attachments={attachments} onRemove={removeAttachment} />
         )}
         {attachmentError && (
-          <div style={{ fontSize: 12, color: '#EF4444', marginBottom: 8 }}>{attachmentError}</div>
+          <div style={{ fontSize: 12, color: '#FF625A', marginBottom: 8 }}>{attachmentError}</div>
         )}
         {savingAttachments > 0 && (
           <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>Saving attachment…</div>
@@ -1305,15 +1339,15 @@ function ComposerBox({
               height: 26,
               borderRadius: 8,
               border: 'none',
-              background: '#1F2937',
+              background: '#2D2D2B',
               display: 'grid',
               placeItems: 'center',
-              color: '#94A3B8',
+              color: '#A1A19A',
               cursor: 'pointer',
               padding: 0
             }}
           >
-            <ClearChatIcon size={14} color="#94A3B8" />
+            <ClearChatIcon size={14} color="#A1A19A" />
           </button>
           <span style={{ flex: 1 }} />
           <button
@@ -1328,7 +1362,7 @@ function ComposerBox({
               gap: 5,
               border: 'none',
               background: 'transparent',
-              color: '#94A3B8',
+              color: '#A1A19A',
               fontSize: 12,
               cursor: canChangeProvider ? 'pointer' : 'default',
               padding: '2px 4px',
@@ -1358,7 +1392,7 @@ function ComposerBox({
               placeItems: 'center',
               border: 'none',
               background: 'transparent',
-              color: '#94A3B8',
+              color: '#A1A19A',
               cursor: 'pointer',
               padding: 2
             }}
@@ -1414,7 +1448,7 @@ function MessageList({
   onAnswer: (requestId: string, answers: string[][] | null) => void
 }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 26, marginTop: 40 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
       {messages.map((m, i) => (
         <MessageErrorBoundary key={i}>
           <Turn
@@ -1498,7 +1532,7 @@ export default function ChatPane({
   const canChangeProvider = true
   const messages = pane?.messages ?? []
   const availableCount = pipelines.filter((p) => p.nodes.length).length
-  const showSuggestions = messages.length < 3 && availableCount > 0
+  const showSuggestions = availableCount > 0
 
   useEffect(() => {
     setProvider(normalizeAi(pane?.provider ?? defaultProvider))
@@ -1530,19 +1564,42 @@ export default function ChatPane({
           const node = e.currentTarget
           stickRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < STICK_SLACK
         }}
-        style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '40px 34px 8px' }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflow: 'auto',
+          padding: '36px 28px 8px',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
       >
-        <div style={{ maxWidth: 680, margin: '0 auto' }}>
-          <ChatGreeting availableCount={availableCount} />
-          {showSuggestions && <SuggestionList onPick={(p) => sendTextRef.current(p)} />}
-          <MessageList
-            messages={messages}
-            isBusy={isBusy}
-            provider={provider}
-            onOpenPipeline={onOpenPipeline}
-            onNewChat={onNewChat}
-            onAnswer={onAnswer}
-          />
+        <div
+          style={{
+            maxWidth: 680,
+            margin: '0 auto',
+            width: '100%',
+            minHeight: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            boxSizing: 'border-box'
+          }}
+        >
+          {messages.length === 0 ? (
+            <>
+              <ChatGreeting availableCount={availableCount} />
+              <div style={{ flex: 1, minHeight: 24 }} />
+              {showSuggestions && <SuggestionList onPick={(p) => sendTextRef.current(p)} />}
+            </>
+          ) : (
+            <MessageList
+              messages={messages}
+              isBusy={isBusy}
+              provider={provider}
+              onOpenPipeline={onOpenPipeline}
+              onNewChat={onNewChat}
+              onAnswer={onAnswer}
+            />
+          )}
           <div style={{ height: 12 }} />
         </div>
       </div>

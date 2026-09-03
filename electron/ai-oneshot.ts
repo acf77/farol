@@ -20,7 +20,17 @@ export function runAiOnce(
   return new Promise((resolve) => {
     let stdout = ''
     let stderr = ''
-    const proc = spawn(bin, spec.args, { cwd, env: aiEnv(), stdio: ['ignore', 'pipe', 'pipe'] })
+    let proc: ReturnType<typeof spawn>
+    try {
+      proc = spawn(bin, spec.args, {
+        cwd,
+        env: aiEnv(provider),
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+    } catch (error) {
+      resolve({ ok: false, text: '', error: error instanceof Error ? error.message : String(error) })
+      return
+    }
     const timer = setTimeout(() => {
       proc.kill('SIGTERM')
     }, timeoutMs)

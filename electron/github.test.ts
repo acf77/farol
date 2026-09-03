@@ -1,41 +1,66 @@
-import { describe, expect, it } from 'vitest'
-import { mapCheckState, rollupCounts } from './github'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-describe('mapCheckState', () => {
-  it('maps GitHub check states', () => {
-    expect(mapCheckState('SUCCESS')).toBe('pass')
-    expect(mapCheckState('FAILURE')).toBe('fail')
-    expect(mapCheckState('SKIPPED')).toBe('skip')
-    expect(mapCheckState('PENDING')).toBe('pending')
+const { execCli } = vi.hoisted(() => ({
+  execCli: vi.fn()
+}))
+vi.mock('./exec-cli', () => ({ execCli }))
+
+import { githubInfo, noPullRequestMessage } from './github'
+
+function ok(out: string) {
+  return { code: 0, out, err: '' }
+}
+
+function fail(err: string) {
+  return { code: 1, out: '', err }
+}
+
+afterEach(() => {
+  execCli.mockReset()
+})
+
+describe('noPullRequestMessage', () => {
+  it('detects gh\'s empty-branch wording', () => {
+    expect(noPullRequestMessage('no pull requests found for branch "feat/x"')).toBe(true)
+    expect(noPullRequestMessage('HTTP 401')).toBe(false)
   })
 })
 
-describe('rollupCounts', () => {
-  it('counts failed and pending contexts', () => {
-    expect(
-      rollupCounts({
-        contexts: [
-          { state: 'SUCCESS' },
-          { state: 'FAILURE' },
-          { state: 'PENDING' }
-        ]
-      })
-    ).toEqual({ hasChecks: true, checksFailed: 1, checksPending: 1 })
+describe('githubInfo', () => {
+  it('returns only the current branch PR', async () => {
+    execCli
+      .mockResolvedValueOnce(ok('gh version 2'))
+      .mockResolvedValueOnce(ok('Logged in'))
+      .mockResolvedValueOnce(
+        ok(
+          JSON.stringify({
+            number: 12,
+            mergeable: 'CONFLICTING'
+          })
+        )
+      )
+    await expect(githubInfo('/repo')).resolves.toEqual({
+      available: true,
+      prs: [
+        {
+          number: 12,
+          hasConflicts: true
+        }
+      ]
+    })
+    expect(execCli.mock.calls[2]?.[2]).toEqual([
+      'pr',
+      'view',
+      '--json',
+      'number,mergeable'
+    ])
   })
 
-  it('uses rollup state when contexts are missing', () => {
-    expect(rollupCounts({ state: 'FAILURE' })).toEqual({
-      hasChecks: true,
-      checksFailed: 1,
-      checksPending: 0
-    })
-  })
-
-  it('reports no checks when rollup is empty', () => {
-    expect(rollupCounts(undefined)).toEqual({
-      hasChecks: false,
-      checksFailed: 0,
-      checksPending: 0
-    })
+  it('treats no PR for this branch as available with an empty list', async () => {
+    execCli
+      .mockResolvedValueOnce(ok('gh version 2'))
+      .mockResolvedValueOnce(ok('Logged in'))
+      .mockResolvedValueOnce(fail('no pull requests found for branch "feat/x"'))
+    await expect(githubInfo('/repo')).resolves.toEqual({ available: true, prs: [] })
   })
 })

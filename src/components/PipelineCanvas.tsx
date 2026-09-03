@@ -202,7 +202,7 @@ export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: P
         display: 'flex',
         flexDirection: 'column',
         // Opaque full-page surface — never inherit Liquid Glass / chrome transparency.
-        background: '#080D17',
+        background: '#181817',
         fontFamily: UI,
         userSelect: 'none'
       }}
@@ -216,7 +216,7 @@ export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: P
           gap: 8,
           padding: '0 14px',
           borderBottom: '1px solid rgba(255,255,255,0.08)',
-          background: '#111827'
+          background: '#232322'
         }}
       >
         <span style={{ fontSize: 12, fontWeight: 600, color: C.dim }}>Pipeline</span>
@@ -251,8 +251,8 @@ export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: P
           style={{
             ...toolBtn,
             border: 'none',
-            background: editor.name.trim() ? C.accent : 'rgba(37,99,235,0.35)',
-            color: '#fff',
+            background: editor.name.trim() ? C.accent : 'rgba(214, 242, 58, 0.28)',
+            color: C.accentInk,
             fontWeight: 600
           }}
         >
@@ -323,7 +323,7 @@ export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: P
             position: 'relative',
             overflow: 'hidden',
             cursor: space.current ? 'grab' : 'default',
-            backgroundColor: '#111827',
+            backgroundColor: '#232322',
             backgroundImage: 'radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px)',
             backgroundSize: `${22 * cam.z}px ${22 * cam.z}px`,
             backgroundPosition: `${cam.x}px ${cam.y}px`,
@@ -369,7 +369,7 @@ export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: P
                     <path
                       d={d}
                       fill="none"
-                      stroke={on ? C.accent : 'rgba(37,99,235,0.55)'}
+                      stroke={on ? C.accent : 'rgba(214, 242, 58,0.55)'}
                       strokeWidth={(on ? 2.5 : 1.5) * cam.z}
                       style={{ pointerEvents: 'none' }}
                     />
@@ -422,7 +422,7 @@ export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: P
                     padding: 0,
                     borderRadius: '50%',
                     border: '1px solid rgba(255,255,255,0.18)',
-                    background: '#111827',
+                    background: '#232322',
                     color: C.red,
                     fontSize: 13,
                     lineHeight: '16px',
@@ -466,9 +466,9 @@ export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: P
                   boxSizing: 'border-box',
                   padding: `${8 * cam.z}px ${10 * cam.z}px`,
                   borderRadius: 8,
-                  border: on ? `1px solid ${C.accent}` : '1px solid #273449',
-                  background: ai ? 'rgba(191,90,242,0.15)' : '#111827',
-                  boxShadow: on ? '0 0 0 3px rgba(37,99,235,0.18)' : '0 8px 24px rgba(0,0,0,0.35)',
+                  border: on ? `1px solid ${C.accent}` : '1px solid #3E3E3A',
+                  background: ai ? 'rgba(184, 148, 255,0.15)' : '#232322',
+                  boxShadow: on ? '0 0 0 3px rgba(214, 242, 58,0.18)' : '0 8px 24px rgba(0,0,0,0.35)',
                   cursor: 'grab'
                 }}
               >
@@ -483,7 +483,7 @@ export default function PipelineCanvas({ editor, onChange, onCancel, onSave }: P
                     height: 10 * cam.z,
                     marginLeft: -5 * cam.z,
                     borderRadius: '50%',
-                    background: 'rgba(37,99,235,0.85)',
+                    background: 'rgba(214, 242, 58,0.85)',
                     cursor: 'crosshair',
                     zIndex: 2,
                     transform: `scale(${near ? PORT_GROW : 1})`,
@@ -561,7 +561,7 @@ const toolBtn: React.CSSProperties = {
   height: 26,
   padding: '0 10px',
   borderRadius: 6,
-  border: '1px solid #273449',
+  border: '1px solid #3E3E3A',
   background: 'rgba(255,255,255,0.05)',
   color: C.textSoft,
   fontSize: 12,
@@ -591,7 +591,7 @@ function Inspector({
         flex: 'none',
         width: 280,
         borderLeft: '1px solid rgba(255,255,255,0.08)',
-        background: '#111827',
+        background: '#232322',
         padding: 14,
         overflowY: 'auto',
         display: 'flex',
@@ -619,7 +619,7 @@ function Inspector({
       />
       {ai && (
         <CliModelDropdown
-          label="CLI and model"
+          label="Provider and model"
           provider={normalizeAi(node.ai)}
           model={node.model}
           onChange={(p, m) => onPatch({ ai: p, model: m })}

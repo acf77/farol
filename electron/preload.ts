@@ -94,6 +94,10 @@ const api: FarolApi = {
     load: () => ipcRenderer.invoke('settings:load'),
     save: (settings) => ipcRenderer.invoke('settings:save', settings)
   },
+  secrets: {
+    openRouterStatus: () => ipcRenderer.invoke('secrets:openrouterStatus'),
+    saveOpenRouterKey: (key) => ipcRenderer.invoke('secrets:saveOpenRouterKey', key)
+  },
   update: {
     check: () => ipcRenderer.invoke('update:check'),
     install: () => ipcRenderer.send('update:install'),
