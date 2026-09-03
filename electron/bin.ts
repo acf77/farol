@@ -13,6 +13,7 @@ export function extraBinDirs(): string[] {
     '/usr/local/bin',
     path.join(home, '.local', 'bin'),
     path.join(home, '.cursor', 'bin'),
+    path.join(home, '.opencode', 'bin'),
     path.join(home, '.npm-global', 'bin'),
     path.join(home, '.bun', 'bin')
   ]
