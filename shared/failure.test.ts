@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { REPORT_OUTPUT_LIMIT, failureReport, gitignoreWithEntry } from './failure'
-import { aiFixCommand, aiFixPrompt } from './ai'
+import { AI_PROVIDERS, aiFixCommand, aiFixPrompt } from './ai'
 import { sanitizeSettings } from './settings'
 
 const base = {
@@ -149,12 +149,13 @@ describe('aiFixCommand', () => {
     expect(aiFixCommand('cursor')).toMatch(/^cursor-agent "/)
     expect(aiFixCommand('codex')).toMatch(/^codex "/)
     expect(aiFixCommand('opencode')).toMatch(/^opencode run "/)
+    expect(aiFixCommand('openrouter')).toMatch(/^opencode run "/)
   })
 
   it('produces nothing a shell would have to escape', () => {
-    for (const p of ['claude', 'cursor', 'codex', 'opencode'] as const) {
+    for (const p of AI_PROVIDERS) {
       const cmd = aiFixCommand(p)
-      expect(cmd.split('"').length - 1).toBe(2)
+      expect(cmd).toContain(`"${aiFixPrompt()}"`)
       expect(cmd).not.toMatch(/[\n`$\\]/)
     }
   })

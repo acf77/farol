@@ -32,14 +32,14 @@ function variantStyle(v: BtnVariant, disabled?: boolean): React.CSSProperties {
   if (v === 'primary') {
     return {
       border: 'none',
-      background: disabled ? 'rgba(37,99,235,0.35)' : C.accent,
-      color: '#fff',
+      background: disabled ? 'rgba(214, 242, 58, 0.28)' : C.accent,
+      color: C.accentInk,
       fontWeight: 600
     }
   }
   if (v === 'secondary') {
     return {
-      border: '1px solid #273449',
+      border: '1px solid #3E3E3A',
       background: 'rgba(255,255,255,0.05)',
       color: C.textSoft
     }
@@ -70,7 +70,7 @@ export function Button({
       style={{
         height: HEIGHT[size],
         padding: size === 'sm' ? '0 11px' : '0 16px',
-        borderRadius: size === 'sm' ? 7 : 9,
+        borderRadius: size === 'sm' ? 8 : 12,
         fontSize: 12.5,
         cursor: rest.disabled ? 'default' : 'pointer',
         display: 'inline-flex',
@@ -157,7 +157,7 @@ export function ConfirmButton({
           disarm()
           onConfirm()
         }}
-        style={{ background: 'rgba(239,68,68,0.14)' }}
+        style={{ background: 'rgba(255, 98, 90,0.14)' }}
       >
         Delete
       </Button>
@@ -188,7 +188,7 @@ export function SegmentedControl<T extends string>({
   label?: string
   style?: React.CSSProperties
 }) {
-  const activeBg = tone === 'ai' ? 'rgba(191,90,242,0.22)' : 'rgba(255,255,255,0.14)'
+  const activeBg = tone === 'ai' ? 'rgba(184, 148, 255,0.22)' : 'rgba(255,255,255,0.14)'
   const activeFg = tone === 'ai' ? C.purpleSoft : '#fff'
 
   const move = (dir: 1 | -1): void => {
@@ -203,7 +203,7 @@ export function SegmentedControl<T extends string>({
       aria-label={label}
       style={{
         display: 'flex',
-        border: '1px solid #273449',
+        border: '1px solid #3E3E3A',
         borderRadius: 7,
         overflow: 'hidden',
         ...style
@@ -292,8 +292,8 @@ export function Checkbox({
 type MenuPos = { left: number; width: number } & ({ top: number } | { bottom: number })
 
 /**
- * Two-step picker: choose a CLI, then a model that CLI accepts.
- * `Default` omits `--model` so the binary uses its own setting.
+ * Two-step picker: choose a provider, then one of its supported model ids.
+ * `Default` leaves model selection to that provider.
  */
 export function CliModelMenu({
   provider,
@@ -338,7 +338,7 @@ export function CliModelMenu({
       />
       <div
         role="menu"
-        aria-label={page === 'cli' ? 'CLI' : `${AI_LABELS[page]} model`}
+        aria-label={page === 'cli' ? 'Provider' : `${AI_LABELS[page]} model`}
         onMouseDown={(e) => e.preventDefault()}
         style={{
           position: 'fixed',

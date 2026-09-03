@@ -23,6 +23,7 @@ import {
   setOpenRouterPinned
 } from './openrouter'
 import { listProjectFiles, saveChatAttachment } from './files'
+import { listAgentSkills } from './skills'
 import { AppUpdater } from './update'
 import { applyGlass, glassAvailable } from './glass'
 import { mergeMcpConfig, MCP_CONFIG_REL_PATHS, type McpServerEntry } from '../shared/mcp-config'
@@ -90,7 +91,7 @@ function createWindow(): void {
     frame: false,
     // Liquid Glass needs a transparent window and must not use vibrancy.
     transparent: wantGlass,
-    backgroundColor: wantGlass ? '#00000000' : '#080D17',
+    backgroundColor: wantGlass ? '#00000000' : '#181817',
     ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -536,6 +537,12 @@ function registerIpc(): void {
 
   ipcMain.handle('project:listFiles', (_e, projectPath: string, query?: string) =>
     listProjectFiles(projectPath, typeof query === 'string' ? query : '')
+  )
+
+  ipcMain.handle('project:listSkills', (_e, projectPath: string, provider: unknown) =>
+    typeof projectPath === 'string' && isAiProvider(provider)
+      ? listAgentSkills(projectPath, provider)
+      : []
   )
 
   ipcMain.handle(

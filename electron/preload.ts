@@ -28,6 +28,8 @@ const api: FarolApi = {
     recents: () => ipcRenderer.invoke('project:recents'),
     openPath: (p: string) => ipcRenderer.invoke('project:openPath', p),
     listFiles: (projectPath, query) => ipcRenderer.invoke('project:listFiles', projectPath, query),
+    listSkills: (projectPath, provider) =>
+      ipcRenderer.invoke('project:listSkills', projectPath, provider),
     saveAttachment: (projectPath, name, data) =>
       ipcRenderer.invoke('project:saveAttachment', projectPath, name, data),
     onOpened: (cb) => on<Project>('project:opened', cb)

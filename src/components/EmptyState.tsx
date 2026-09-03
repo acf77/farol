@@ -21,10 +21,10 @@ export default function EmptyState({ onOpenProject }: { liquid?: boolean; onOpen
           draggable={false}
           style={{ borderRadius: 16, display: 'block' }}
         />
-        <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: '-0.2px', color: C.textStrong }}>
+        <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.35px', color: C.textStrong }}>
           No Project Open
         </div>
-        <div style={{ fontSize: 13, color: C.dim }}>
+        <div style={{ fontSize: 13, lineHeight: 1.5, color: C.dim, maxWidth: 280, textAlign: 'center' }}>
           Open a folder to start a shell and run pipelines.
         </div>
         <Button variant="primary" size="md" onClick={onOpenProject} style={{ marginTop: 4 }}>

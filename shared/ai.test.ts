@@ -42,6 +42,7 @@ describe('normalizeModel', () => {
     expect(aiSelectionLabel('claude', 'sonnet')).toBe('Claude · Sonnet 5')
     expect(aiSelectionLabel('claude', 'custom-id')).toBe('Claude · custom-id')
     expect(modelsFor('claude', 'custom-id').some((m) => m.id === 'custom-id')).toBe(true)
+    expect(aiSelectionLabel('openrouter', undefined)).toBe('OpenRouter')
   })
 })
 
@@ -72,6 +73,7 @@ describe('aiCommand', () => {
       'review this'
     ])
     expect(aiCommand('opencode', 'review this').args).toEqual(['run', '--auto', 'review this'])
+    expect(aiCommand('openrouter', 'review this').args).toEqual(['run', '--auto', 'review this'])
   })
 
   it('passes --model through to each CLI', () => {
@@ -130,6 +132,11 @@ describe('managedAiCommand', () => {
       'fix this'
     ])
     expect(managedAiCommand('opencode', 'fix this').args).toEqual([
+      'run',
+      '--dangerously-skip-permissions',
+      'fix this'
+    ])
+    expect(managedAiCommand('openrouter', 'fix this').args).toEqual([
       'run',
       '--dangerously-skip-permissions',
       'fix this'

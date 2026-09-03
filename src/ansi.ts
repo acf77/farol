@@ -17,27 +17,27 @@ import type { Segment } from '@shared/types'
  * are detected and reported rather than rendered as garbage.
  */
 
-export const DEFAULT_FG = '#F8FAFC'
+export const DEFAULT_FG = '#F0F0EC'
 
 const BASIC = [
-  '#64748B', // black
-  '#EF4444', // red
-  '#22C55E', // green
-  '#F59E0B', // yellow
-  '#60A5FA', // blue (Soft Blue — AA on Deep Navy)
-  '#bf5af2', // magenta (AI violet)
-  '#38BDF8', // cyan
-  '#F8FAFC' // white
+  '#777772', // black
+  '#FF625A', // red
+  '#87C9AE', // green
+  '#FFBE2E', // yellow
+  '#E3F86C', // blue slot, rendered as reference lime
+  '#B894FF', // magenta (AI violet)
+  '#7BBBCB', // cyan
+  '#F0F0EC' // white
 ]
 
 const BRIGHT = [
-  '#94A3B8',
-  '#F87171',
-  '#4ADE80',
-  '#FBBF24',
-  '#93C5FD',
-  '#d7a5f7',
-  '#BAE6FD',
+  '#A1A19A',
+  '#FF817B',
+  '#A3DCC2',
+  '#FFD26A',
+  '#EDF99E',
+  '#CFB8FF',
+  '#B5DCE5',
   '#FFFFFF'
 ]
 
@@ -226,7 +226,7 @@ function note(w: Writer, text: string): void {
     w.cur = []
     w.rows.push(w.cur)
   }
-  for (const ch of text) w.cur.push({ ch, color: '#94A3B8' })
+  for (const ch of text) w.cur.push({ ch, color: '#A1A19A' })
   w.cur = []
   w.rows.push(w.cur)
   w.col = 0

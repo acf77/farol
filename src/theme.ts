@@ -1,49 +1,49 @@
-/** Palette and type ramp — farol.sh Color Palette. */
+/** Palette sampled from Farol's charcoal desktop references. */
 
 export const C = {
-  appBg: '#080D17',
-  chrome: 'transparent',
-  terminal: '#080D17',
-  sidebar: '#111827',
-  emptyBg: '#111827',
-  panel: '#1F2937',
+  appBg: 'oklch(0.17 0.006 95)',
+  chrome: 'oklch(0.31 0.018 285)',
+  terminal: 'oklch(0.18 0.004 95)',
+  sidebar: 'oklch(0.23 0.005 95)',
+  emptyBg: 'oklch(0.23 0.005 95)',
+  panel: 'oklch(0.28 0.006 95)',
 
   /** Cards, tool output, suggestion tiles. */
-  card: '#111827',
-  cardBorder: '#273449',
+  card: 'oklch(0.23 0.005 95)',
+  cardBorder: 'oklch(0.36 0.006 95)',
   /** Chat surface panes, the message composer. */
-  surface: '#111827',
-  surfaceBorder: '#273449',
-  border: '#273449',
+  surface: 'oklch(0.23 0.005 95)',
+  surfaceBorder: 'oklch(0.36 0.006 95)',
+  border: 'oklch(0.36 0.006 95)',
 
-  text: '#F8FAFC',
-  textStrong: '#F8FAFC',
-  textSoft: '#E2E8F0',
-  textMuted: '#94A3B8',
-  dim: '#94A3B8',
-  faint: '#64748B',
-  fainter: '#475569',
+  text: 'oklch(0.94 0.006 95)',
+  textStrong: 'oklch(0.94 0.006 95)',
+  textSoft: 'oklch(0.87 0.006 95)',
+  textMuted: 'oklch(0.7 0.006 95)',
+  dim: 'oklch(0.7 0.006 95)',
+  faint: 'oklch(0.56 0.006 95)',
+  fainter: 'oklch(0.43 0.006 95)',
 
-  textStep: '#F8FAFC',
-  textRow: '#CBD5E1',
-  glyph: '#94A3B8',
+  textStep: 'oklch(0.94 0.006 95)',
+  textRow: 'oklch(0.8 0.006 95)',
+  glyph: 'oklch(0.7 0.006 95)',
 
-  /** Beacon Blue — fills, borders, focus rings (not body text on dark grounds). */
-  accent: '#2563EB',
-  accentHover: '#60A5FA',
-  /** Soft Blue — blue *text* on dark grounds (WCAG AA). */
-  accentBright: '#60A5FA',
-  accentSoft: '#60A5FA',
-  green: '#22C55E',
-  red: '#EF4444',
-  /** AI step identity — violet, never copper. */
-  purple: '#bf5af2',
-  purpleSoft: '#d7a5f7',
-  yellow: '#F59E0B',
-  yellowDim: '#92400E',
-  grey: '#64748B',
+  /** Signal lime: selection, primary action, and keyboard focus. */
+  accent: 'oklch(0.91 0.19 115)',
+  accentHover: 'oklch(0.95 0.16 115)',
+  accentBright: 'oklch(0.91 0.19 115)',
+  accentSoft: 'oklch(0.95 0.16 115)',
+  accentInk: 'oklch(0.18 0.025 115)',
+  green: 'oklch(0.78 0.09 160)',
+  red: 'oklch(0.69 0.2 25)',
+  /** Lavender identifies agent and model work. */
+  purple: 'oklch(0.73 0.16 300)',
+  purpleSoft: 'oklch(0.84 0.1 300)',
+  yellow: 'oklch(0.84 0.17 85)',
+  yellowDim: 'oklch(0.48 0.1 85)',
+  grey: 'oklch(0.56 0.006 95)',
 
-  light: { red: '#EF4444', yellow: '#F59E0B', green: '#22C55E' }
+  light: { red: '#FF5F57', yellow: '#FFBD2E', green: '#28C840' }
 } as const
 
 /**
@@ -52,28 +52,27 @@ export const C = {
  */
 export const glass = {
   appBg: 'transparent',
-  chrome: 'rgba(8, 13, 23, 0.4)',
-  sidebar: 'rgba(17, 24, 39, 0.4)',
-  emptyBg: 'rgba(17, 24, 39, 0.4)',
+  chrome: 'rgba(54, 55, 64, 0.58)',
+  sidebar: 'rgba(35, 35, 34, 0.58)',
+  emptyBg: 'rgba(35, 35, 34, 0.58)',
   tabActive: 'rgba(255, 255, 255, 0.08)',
-  panel: 'rgba(31, 41, 55, 0.72)',
-  /** Terminal / run content — keep solid (Deep Navy). */
-  terminal: '#080D17',
-  paneWell: '#080D17'
+  panel: 'rgba(45, 45, 43, 0.82)',
+  terminal: '#181817',
+  paneWell: '#181817'
 } as const
 
 /** Colours for Farol's own run-log lines (DESIGN.md § Run Log). */
 export const LINE = {
-  def: '#F8FAFC',
-  dim: '#94A3B8',
-  cmd: '#FFFFFF',
-  head: '#60A5FA',
-  step: '#F8FAFC',
-  ok: '#22C55E',
-  err: '#EF4444',
-  ai: '#bf5af2',
-  warn: '#F59E0B',
-  echo: '#CBD5E1'
+  def: '#F0F0EC',
+  dim: '#A1A19A',
+  cmd: '#F7F7F2',
+  head: '#D6F23A',
+  step: '#F0F0EC',
+  ok: '#87C9AE',
+  err: '#FF625A',
+  ai: '#B894FF',
+  warn: '#FFBE2E',
+  echo: '#C4C4BE'
 } as const
 
 export type LineKind = keyof typeof LINE
@@ -90,9 +89,9 @@ export const PANE: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   minWidth: 0,
-  background: C.sidebar,
+  background: C.terminal,
   border: `1px solid ${C.border}`,
-  borderRadius: 8,
+  borderRadius: 12,
   overflow: 'hidden'
 }
 

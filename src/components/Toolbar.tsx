@@ -126,7 +126,7 @@ export default function Toolbar({
         columnGap: 18,
         position: 'relative',
         zIndex: 30,
-        background: liquid ? G.chrome : 'transparent'
+        background: liquid ? G.appBg : C.appBg
       }}
     >
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', gridColumn: 1, gridRow: 1 }}>
@@ -146,10 +146,6 @@ export default function Toolbar({
           ...noDrag,
           display: 'flex',
           gap: 2,
-          padding: 3,
-          background: '#111827',
-          border: '1px solid #273449',
-          borderRadius: 8,
           gridColumn: 2,
           gridRow: 1,
           justifySelf: 'center',
@@ -178,12 +174,12 @@ export default function Toolbar({
                 alignItems: 'center',
                 gap: 7,
                 padding: '6px 12px',
-                borderRadius: 8,
+                borderRadius: 10,
                 fontSize: 12.5,
                 fontWeight: 600,
                 cursor: 'pointer',
-                background: on ? '#111827' : 'transparent',
-                color: on ? '#F8FAFC' : '#94A3B8'
+                background: on ? '#232322' : 'transparent',
+                color: on ? '#F0F0EC' : '#A1A19A'
               }}
             >
               <v.Icon />
@@ -214,9 +210,9 @@ export default function Toolbar({
               height: 28,
               padding: '0 10px',
               borderRadius: 7,
-              border: '1px solid #273449',
-              background: '#1F2937',
-              color: '#F8FAFC',
+              border: '1px solid #3E3E3A',
+              background: '#2D2D2B',
+              color: '#F0F0EC',
               fontSize: 12,
               fontWeight: 600,
               cursor: 'pointer',
@@ -355,8 +351,8 @@ export default function Toolbar({
             top: 52,
             right: 16,
             zIndex: 50,
-            width: 260,
-            background: liquid ? G.panel : '#111827',
+            width: 292,
+            background: liquid ? G.panel : '#232322',
             border: `1px solid ${C.cardBorder}`,
             borderRadius: 11,
             boxShadow: '0 18px 44px rgba(0,0,0,0.55)',

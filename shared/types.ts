@@ -3,10 +3,11 @@
 import type { AiProvider } from './ai'
 import type { AgentQuestion } from './questions'
 import type { ProjectSession } from './session'
+import type { AgentSkill } from './skills'
 import type { WorktreeRequest } from './worktree'
 import type { AppSettings, OpenRouterSettings } from './settings'
 
-export type { AgentQuestion }
+export type { AgentQuestion, AgentSkill }
 
 export type { AiProvider, AppSettings, OpenRouterSettings, ProjectSession, WorktreeRequest }
 export { aiFixCommand } from './ai'
@@ -101,6 +102,8 @@ export interface GitStatus {
   conflicts: GitStatusFile[]
   ahead: number
   behind: number
+  /** Merge-tree vs the default base (`staging`). Absent when that ref does not exist. */
+  baseMerge?: { base: string; conflicts: boolean }
 }
 
 export interface GitCommit {
@@ -113,13 +116,7 @@ export interface GitCommit {
 
 export interface PullRequest {
   number: number
-  title: string
-  url: string
-  headRef: string
   hasConflicts: boolean
-  hasChecks: boolean
-  checksPending: number
-  checksFailed: number
 }
 
 export interface GitHubInfo {
@@ -307,6 +304,8 @@ export interface FarolApi {
     openPath(path: string): Promise<Project | null>
     /** Relative paths under the project root, filtered by an optional query. */
     listFiles(projectPath: string, query?: string): Promise<string[]>
+    /** User-invocable skills for the selected agent, from its native scopes. */
+    listSkills(projectPath: string, provider: AiProvider): Promise<AgentSkill[]>
     /** Persist a dropped chat image; returns the absolute path on disk. */
     saveAttachment(
       projectPath: string,

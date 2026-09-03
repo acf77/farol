@@ -70,7 +70,7 @@ export default function SettingsPage({ settings, onSettings, onClose }: Props) {
         zIndex: 90,
         display: 'flex',
         flexDirection: 'column',
-        background: '#080D17',
+        background: C.appBg,
         color: C.text,
         fontFamily: UI
       }}

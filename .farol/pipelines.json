@@ -7,7 +7,7 @@
         "id": "n2",
         "name": "TypeScript",
         "type": "shell",
-        "cmd": "npx tsc --noEmit",
+        "cmd": "tsc --noEmit",
         "after": [],
         "gate": true,
         "x": 355,
