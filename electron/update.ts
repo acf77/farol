@@ -31,11 +31,41 @@ export class AppUpdater {
     this.emit(status)
   }
 
+  private idle(): UpdateStatus {
+    this.ready = null
+    this.set({ state: 'idle' })
+    return this.status
+  }
+
+  private fail(message: string): UpdateStatus {
+    this.set({ state: 'error', message })
+    return this.status
+  }
+
+  private zipFor(file: string): string | null {
+    const zipName = path.basename(file)
+    if (!zipName || zipName !== file.replace(/^\.\/+/, '')) return null
+    const zip = path.join(feedDir(), zipName)
+    if (path.dirname(path.resolve(zip)) !== path.resolve(feedDir())) return null
+    return zip
+  }
+
+  private async offerInstall(version: string): Promise<void> {
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      message: `Farol ${version} is ready`,
+      detail: 'Restart to replace the running app.',
+      buttons: ['Restart now', 'Later'],
+      defaultId: 0,
+      cancelId: 1
+    })
+    if (response === 0) this.install()
+  }
+
   async check(opts?: { informNone?: boolean }): Promise<UpdateStatus> {
     const ymlPath = path.join(feedDir(), 'latest-mac.yml')
     if (!fs.existsSync(ymlPath)) {
-      this.ready = null
-      this.set({ state: 'idle' })
+      this.idle()
       if (opts?.informNone) {
         await dialog.showMessageBox({
           type: 'info',
@@ -47,24 +77,12 @@ export class AppUpdater {
     }
 
     const feed = parseUpdateFeed(fs.readFileSync(ymlPath, 'utf8'))
-    if (!feed) {
-      this.set({ state: 'error', message: 'Update feed is unreadable' })
-      return this.status
-    }
+    if (!feed) return this.fail('Update feed is unreadable')
 
-    const zipName = path.basename(feed.file)
-    if (!zipName || zipName !== feed.file.replace(/^\.\/+/, '')) {
-      this.set({ state: 'error', message: 'Update feed path is invalid' })
-      return this.status
-    }
-    const zip = path.join(feedDir(), zipName)
-    if (path.dirname(path.resolve(zip)) !== path.resolve(feedDir())) {
-      this.set({ state: 'error', message: 'Update feed path is invalid' })
-      return this.status
-    }
+    const zip = this.zipFor(feed.file)
+    if (!zip) return this.fail('Update feed path is invalid')
     if (!versionAhead(feed.version, app.getVersion())) {
-      this.ready = null
-      this.set({ state: 'idle' })
+      this.idle()
       if (opts?.informNone) {
         await dialog.showMessageBox({
           type: 'info',
@@ -76,26 +94,19 @@ export class AppUpdater {
     }
 
     if (!fs.existsSync(zip)) {
-      this.set({ state: 'error', message: `Update zip missing (${feed.file})` })
+      this.fail(`Update zip missing (${feed.file})`)
       if (opts?.informNone) {
-        await dialog.showMessageBox({ type: 'warning', message: this.status.state === 'error' ? this.status.message : 'Update failed' })
+        await dialog.showMessageBox({
+          type: 'warning',
+          message: this.status.state === 'error' ? this.status.message : 'Update failed'
+        })
       }
       return this.status
     }
 
     this.ready = { version: feed.version, zip }
     this.set({ state: 'ready', version: feed.version })
-    if (opts?.informNone) {
-      const { response } = await dialog.showMessageBox({
-        type: 'info',
-        message: `Farol ${feed.version} is ready`,
-        detail: 'Restart to replace the running app.',
-        buttons: ['Restart now', 'Later'],
-        defaultId: 0,
-        cancelId: 1
-      })
-      if (response === 0) this.install()
-    }
+    if (opts?.informNone) await this.offerInstall(feed.version)
     return this.status
   }
 

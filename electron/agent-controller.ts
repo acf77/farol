@@ -8,7 +8,14 @@ import type {
   Pipeline,
   PipelineRunResult
 } from '../shared/types'
-import { isAiProvider, managedAiCommand, normalizeAi, normalizeModel } from '../shared/ai'
+import {
+  cliFor,
+  isAiProvider,
+  isUnknownJsonFormatError,
+  managedAiCommand,
+  normalizeAi,
+  normalizeModel
+} from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
 import {
   QUESTIONS_MARKER,
@@ -123,6 +130,15 @@ const MAX_PROMPT_CHARS = 100_000
 /** Cap pipeline activity retained for prompt context. */
 const MAX_PIPELINE_RUNS = 40
 
+function shouldRetryPlainOpenCode(
+  plain: boolean,
+  exit: number,
+  provider: AiProvider,
+  diagnostics: string
+): boolean {
+  return !plain && exit !== 0 && cliFor(provider) === 'opencode' && isUnknownJsonFormatError(diagnostics)
+}
+
 /**
  * Give agents an explicit marker for task-ending blockers. Scanned over what
  * the agent said, never over tool output — a grep that happens to print the
@@ -216,46 +232,43 @@ function catalogShellBypassError(
   )
 }
 
-function selectedPipelines(
-  output: string,
-  available: Pipeline[]
-): { pipelines: Pipeline[]; error?: string } {
+function parsePipelineIds(output: string): { ids: string[] } | { error: string } {
   const marker = output.lastIndexOf(PIPELINES_MARKER)
   if (marker < 0) {
-    return {
-      pipelines: [],
-      error: `End your response with ${PIPELINES_MARKER} followed by a JSON array of pipeline ids.`
-    }
+    return { error: `End your response with ${PIPELINES_MARKER} followed by a JSON array of pipeline ids.` }
   }
-
   const raw = output
     .slice(marker + PIPELINES_MARKER.length)
     .split(/\r?\n/, 1)[0]
     .trim()
-  let ids: unknown
   try {
-    ids = JSON.parse(raw)
+    const ids = JSON.parse(raw) as unknown
+    if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) {
+      return { error: `The value after ${PIPELINES_MARKER} must be a JSON array of pipeline id strings.` }
+    }
+    return { ids }
   } catch {
-    return { pipelines: [], error: `The value after ${PIPELINES_MARKER} must be a JSON array.` }
+    return { error: `The value after ${PIPELINES_MARKER} must be a JSON array.` }
   }
-  if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) {
-    return { pipelines: [], error: `The value after ${PIPELINES_MARKER} must be a JSON array of pipeline id strings.` }
-  }
+}
 
+function selectedPipelines(
+  output: string,
+  available: Pipeline[]
+): { pipelines: Pipeline[]; error?: string } {
+  const parsed = parsePipelineIds(output)
+  if ('error' in parsed) return { pipelines: [], error: parsed.error }
   // An empty array means the agent made no file changes and wants to skip
   // validation — that is intentional, not a parse error.
-  if (!ids.length) return { pipelines: [] }
+  if (!parsed.ids.length) return { pipelines: [] }
 
   const byId = new Map(available.map((pipeline) => [pipeline.id, pipeline]))
   const selected: Pipeline[] = []
   const unknown: string[] = []
-  for (const id of ids) {
+  for (const id of parsed.ids) {
     const pipeline = byId.get(id)
-    if (!pipeline) {
-      unknown.push(id)
-    } else if (!selected.includes(pipeline)) {
-      selected.push(pipeline)
-    }
+    if (!pipeline) unknown.push(id)
+    else if (!selected.includes(pipeline)) selected.push(pipeline)
   }
   if (unknown.length) {
     return { pipelines: [], error: `Unknown pipeline id${unknown.length === 1 ? '' : 's'}: ${unknown.join(', ')}` }
@@ -732,32 +745,12 @@ export class AgentController {
     }
   }
 
-  private async runCycleAttempt(
+  private async cycleAfterRun(
     task: Task,
-    prompt: string,
-    attempt: number
+    attempt: number,
+    scan: CycleScan,
+    code: number
   ): Promise<CycleAttemptResult> {
-    this.status(
-      task,
-      attempt === 1 ? 'working' : 'repairing',
-      attempt,
-      attempt === 1 ? 'Agent working' : 'Agent repairing validation failures'
-    )
-    // What the agent said, which is what the markers are read from, and
-    // everything it printed, which is where provider failures show up.
-    const scan: CycleScan = {
-      assistant: '',
-      output: '',
-      blocked: null,
-      shellInvocations: [],
-      filesChanged: false
-    }
-    const sink = this.cycleSink(task, scan)
-    const epoch = task.askEpoch
-    const code = this.executor
-      ? await this.executor(task.request, prompt, sink.text, sink.tool)
-      : await this.runAgent(task, prompt, sink)
-    if (task.askEpoch !== epoch) return { kind: 'done' }
     if (task.cancelled) {
       this.settleCancel(task)
       return { kind: 'done' }
@@ -798,8 +791,36 @@ export class AgentController {
         )
       }
     }
-
     return this.finishCycleAttempt(task, attempt, scan)
+  }
+
+  private async runCycleAttempt(
+    task: Task,
+    prompt: string,
+    attempt: number
+  ): Promise<CycleAttemptResult> {
+    this.status(
+      task,
+      attempt === 1 ? 'working' : 'repairing',
+      attempt,
+      attempt === 1 ? 'Agent working' : 'Agent repairing validation failures'
+    )
+    // What the agent said, which is what the markers are read from, and
+    // everything it printed, which is where provider failures show up.
+    const scan: CycleScan = {
+      assistant: '',
+      output: '',
+      blocked: null,
+      shellInvocations: [],
+      filesChanged: false
+    }
+    const sink = this.cycleSink(task, scan)
+    const epoch = task.askEpoch
+    const code = this.executor
+      ? await this.executor(task.request, prompt, sink.text, sink.tool)
+      : await this.runAgent(task, prompt, sink)
+    if (task.askEpoch !== epoch) return { kind: 'done' }
+    return await this.cycleAfterRun(task, attempt, scan, code)
   }
 
   private async cycle(task: Task, opening: string): Promise<void> {
@@ -877,8 +898,11 @@ export class AgentController {
     return `Farol pipeline activity for this chat:\n${lines.join('\n')}`
   }
 
-  private runAgent(task: Task, prompt: string, sink: AgentSink): Promise<number> {
-    const spec = managedAiCommand(task.request.provider, prompt, task.request.model)
+  private runAgent(task: Task, prompt: string, sink: AgentSink, plain = false): Promise<number> {
+    if (task.cancelled) return Promise.resolve(1)
+    const spec = managedAiCommand(task.request.provider, prompt, task.request.model, {
+      jsonFormat: !plain
+    })
     const env = aiEnv(task.request.provider)
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
@@ -890,6 +914,7 @@ export class AgentController {
     // hold on to the tail and show it if the run turns out to have failed.
     const parser = spec.stream === 'ndjson' ? new AgentStreamParser() : null
     let diagnostics = ''
+    let stdoutScan = ''
     // Chunks split wherever the pipe fills, including mid-character.
     const stdoutText = new StringDecoder('utf8')
     const stderrText = new StringDecoder('utf8')
@@ -934,8 +959,12 @@ export class AgentController {
         // JSON carries its own escaping, and plainText's per-line trimming
         // would eat a space that straddles two chunks. Parse the bytes as-is.
         const text = stdoutText.write(chunk)
-        if (parser) consume(parser.push(text))
-        else sink.text(plainText(text))
+        if (parser) {
+          stdoutScan = (stdoutScan + text).slice(-SCAN_WINDOW)
+          consume(parser.push(text))
+        } else {
+          sink.text(plainText(text))
+        }
       })
       child.stderr?.on('data', (chunk: Buffer) => {
         const text = plainText(stderrText.write(chunk))
@@ -950,7 +979,20 @@ export class AgentController {
         sink.text(`farol: ${error.message}\n`)
         done(127)
       })
-      child.on('close', (code) => done(code ?? 127))
+      child.on('close', (code) => {
+        const exit = code ?? 127
+        if (
+          !settled &&
+          !task.cancelled &&
+          shouldRetryPlainOpenCode(plain, exit, task.request.provider, `${diagnostics}\n${stdoutScan}`)
+        ) {
+          settled = true
+          task.process = null
+          void this.runAgent(task, prompt, sink, true).then(resolve)
+          return
+        }
+        done(exit)
+      })
     })
   }
 }

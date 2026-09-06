@@ -33,23 +33,24 @@ export async function migrateUserDataFiles(
     }
     if (srcKey === destKey || tried.has(srcKey)) continue
     tried.add(srcKey)
-
-    for (const file of USER_DATA_FILES) {
-      const dest = path.join(destDir, file)
-      const src = path.join(srcDir, file)
-      try {
-        await fs.access(dest)
-        continue
-      } catch {
-        /* dest missing — try copy */
-      }
-      try {
-        await fs.access(src)
-      } catch {
-        continue
-      }
-      await fs.mkdir(destDir, { recursive: true })
-      await fs.copyFile(src, dest)
-    }
+    for (const file of USER_DATA_FILES) await copyIfAbsent(srcDir, destDir, file)
   }
+}
+
+async function copyIfAbsent(srcDir: string, destDir: string, file: string): Promise<void> {
+  const dest = path.join(destDir, file)
+  const src = path.join(srcDir, file)
+  try {
+    await fs.access(dest)
+    return
+  } catch {
+    /* dest missing — try copy */
+  }
+  try {
+    await fs.access(src)
+  } catch {
+    return
+  }
+  await fs.mkdir(destDir, { recursive: true })
+  await fs.copyFile(src, dest)
 }

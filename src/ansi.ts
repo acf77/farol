@@ -181,34 +181,37 @@ const MAX_PENDING = 512
  * How to treat `\x1b...` at the head of the buffer: consume a complete
  * sequence, wait for more bytes, or give up on a malformed one.
  */
+function pendingOrNull(rest: string): 'incomplete' | null {
+  return rest.length < MAX_PENDING ? 'incomplete' : null
+}
+
+function readCsi(rest: string): { kind: 'csi'; seq: string } | 'incomplete' | null {
+  for (let i = 2; i < rest.length; i++) {
+    if (CSI_FINAL.test(rest[i])) return { kind: 'csi', seq: rest.slice(0, i + 1) }
+  }
+  // No final byte yet — a truecolour SGR is ~20 chars, so keep waiting.
+  return pendingOrNull(rest)
+}
+
+function readOsc(rest: string): { kind: 'osc'; seq: string } | 'incomplete' | null {
+  const bel = rest.indexOf('\x07', 2)
+  const st = rest.indexOf('\x1b\\', 2)
+  const end = bel === -1 ? st : st === -1 ? bel : Math.min(bel, st)
+  if (end === -1) return pendingOrNull(rest)
+  return { kind: 'osc', seq: rest.slice(0, end + (rest[end] === '\x07' ? 1 : 2)) }
+}
+
 function readEscape(rest: string): { kind: 'csi' | 'osc' | 'esc'; seq: string } | 'incomplete' | null {
   if (rest.length === 1) return 'incomplete'
-
   const second = rest[1]
-
-  if (second === '[') {
-    for (let i = 2; i < rest.length; i++) {
-      if (CSI_FINAL.test(rest[i])) return { kind: 'csi', seq: rest.slice(0, i + 1) }
-    }
-    // No final byte yet — a truecolour SGR is ~20 chars, so keep waiting.
-    return rest.length < MAX_PENDING ? 'incomplete' : null
-  }
-
-  if (second === ']') {
-    const bel = rest.indexOf('\x07', 2)
-    const st = rest.indexOf('\x1b\\', 2)
-    const end = bel === -1 ? st : st === -1 ? bel : Math.min(bel, st)
-    if (end === -1) return rest.length < MAX_PENDING ? 'incomplete' : null
-    return { kind: 'osc', seq: rest.slice(0, end + (rest[end] === '\x07' ? 1 : 2)) }
-  }
-
+  if (second === '[') return readCsi(rest)
+  if (second === ']') return readOsc(rest)
   // Charset selection and similar two/three byte escapes.
   if ('()#%'.includes(second)) {
     if (rest.length < 3) return 'incomplete'
     return { kind: 'esc', seq: rest.slice(0, 3) }
   }
   if ('=>78MDEHc'.includes(second)) return { kind: 'esc', seq: rest.slice(0, 2) }
-
   return null
 }
 

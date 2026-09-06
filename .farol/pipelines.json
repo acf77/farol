@@ -63,7 +63,7 @@
       },
       {
         "id": "n2",
-        "name": "Cyclomatic Complexity",
+        "name": "Cyclomatic and Cognitive Complexity",
         "type": "shell",
         "cmd": "npx --yes oxlint --deny complexity",
         "after": [],

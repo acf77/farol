@@ -148,11 +148,20 @@ export function BellIcon({ size = 17, color = '#A1A19A' }: IconProps) {
   )
 }
 
-export function GearIcon({ size = 17, color = '#A1A19A' }: IconProps) {
+/** Settings — the Lucide gear, transcribed path-for-path. */
+export function SettingsIcon({ size = 14, color = 'currentColor' }: IconProps) {
   return (
-    <svg {...S(size)} viewBox="0 0 18 18" fill="none" stroke={color} strokeWidth={1.4}>
-      <path d="M7.2 1.8h3.6l.4 1.5a5.6 5.6 0 0 1 1.3.8l1.5-.5 1.8 1.8-.5 1.5c.3.4.6.8.8 1.3l1.5.4v3.6l-1.5.4a5.6 5.6 0 0 1-.8 1.3l.5 1.5-1.8 1.8-1.5-.5a5.6 5.6 0 0 1-1.3.8l-.4 1.5H7.2l-.4-1.5a5.6 5.6 0 0 1-1.3-.8l-1.5.5-1.8-1.8.5-1.5a5.6 5.6 0 0 1-.8-1.3L1.4 10.8V7.2l1.5-.4c.2-.5.5-.9.8-1.3l-.5-1.5 1.8-1.8 1.5.5c.4-.3.8-.6 1.3-.8Z" />
-      <circle cx="9" cy="9" r="2.2" />
+    <svg
+      {...S(size)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   )
 }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { GitInfo, Project } from '@shared/types'
 import { groupOpenProjects } from '@shared/project-groups'
 import { C, UI } from '../theme'
-import { RailLabel, sidePanelShellStyle, useCollapseRail } from './side-panel'
+import { CHROME_ROW, PANEL_INSET, RailLabel, sidePanelShellStyle, useCollapseRail } from './side-panel'
 import {
   BranchIcon,
   CaretLeft,
@@ -16,7 +16,7 @@ import {
 
 const api = window.farol
 
-const PANEL_WIDTH = 220
+const PANEL_WIDTH = 300
 const RAIL_WIDTH = 54
 const noDrag = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
 
@@ -68,37 +68,6 @@ function shortPath(p: string): string {
   return parts.slice(-2).join('/')
 }
 
-function TrafficLight({
-  color,
-  title,
-  onClick
-}: {
-  color: string
-  title: string
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      className="bf-focus"
-      title={title}
-      aria-label={title}
-      onClick={onClick}
-      style={{
-        ...noDrag,
-        width: 12,
-        height: 12,
-        borderRadius: '50%',
-        border: 'none',
-        padding: 0,
-        background: color,
-        cursor: 'pointer',
-        flex: 'none'
-      }}
-    />
-  )
-}
-
 export default function ProjectRail({
   projects,
   activePath,
@@ -123,9 +92,7 @@ export default function ProjectRail({
   const { showRail, onWidthTransitionEnd } = useCollapseRail(collapsed)
   const shellStyle = {
     ...sidePanelShellStyle(collapsed, { panelWidth: PANEL_WIDTH, railWidth: RAIL_WIDTH }),
-    border: undefined,
-    borderRadius: undefined,
-    borderRight: '1px solid #3E3E3A'
+    margin: `${CHROME_ROW + PANEL_INSET}px 0 ${PANEL_INSET}px ${PANEL_INSET}px`
   }
 
   useEffect(() => {
@@ -239,22 +206,6 @@ export default function ProjectRail({
           padding: '11px 0 14px'
         }}
       >
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-            width: '100%',
-            WebkitAppRegion: 'drag'
-          } as React.CSSProperties}
-        >
-          <TrafficLight color={C.light.red} title="Close" onClick={() => api.window.close()} />
-          <TrafficLight color={C.light.yellow} title="Minimise" onClick={() => api.window.minimize()} />
-          <TrafficLight color={C.light.green} title="Zoom" onClick={() => api.window.maximize()} />
-        </div>
-
         <button
           type="button"
           className="bf-focus bf-icon-btn"
@@ -346,19 +297,18 @@ export default function ProjectRail({
       >
       <div
         style={{
-          height: 52,
+          height: 44,
           flex: 'none',
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
-          padding: '0 10px 0 14px',
+          gap: 10,
+          padding: '0 7px 0 12px',
           WebkitAppRegion: 'drag'
         } as React.CSSProperties}
       >
-        <TrafficLight color={C.light.red} title="Close" onClick={() => api.window.close()} />
-        <TrafficLight color={C.light.yellow} title="Minimise" onClick={() => api.window.minimize()} />
-        <TrafficLight color={C.light.green} title="Zoom" onClick={() => api.window.maximize()} />
-        <span style={{ flex: 1 }} />
+        <span style={{ flex: 1, fontSize: 10.5, fontWeight: 600, letterSpacing: '0.09em', color: '#A1A19A' }}>
+          PROJECTS
+        </span>
         <button
           type="button"
           className="bf-focus bf-icon-btn"
@@ -380,18 +330,6 @@ export default function ProjectRail({
         >
           <CaretLeft />
         </button>
-      </div>
-
-      <div
-        style={{
-          padding: '0 12px 10px',
-          fontSize: 10.5,
-          fontWeight: 600,
-          letterSpacing: '0.09em',
-          color: '#A1A19A'
-        }}
-      >
-        PROJECTS
       </div>
 
       <div

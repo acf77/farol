@@ -18,7 +18,7 @@ function pruneOldBuilds(dir, version) {
   for (const f of fs.readdirSync(dir)) {
     if (!/^(Farol|BuildFlow)-/.test(f)) continue
     // Legacy BuildFlow packages are never current — always remove them.
-    if (/^BuildFlow-/.test(f)) {
+    if (f.startsWith('BuildFlow-')) {
       fs.unlinkSync(path.join(dir, f))
       continue
     }

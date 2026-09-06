@@ -382,6 +382,19 @@ export type CommitDraft = {
   error?: string
 }
 
+async function commitDiff(cwd: string, tracked: string[], untracked: string[]): Promise<string> {
+  const parts: string[] = []
+  if (tracked.length) {
+    const diffRes = await git(cwd, ['diff', 'HEAD', '--stat', '--patch', '--', ...tracked])
+    if (diffRes.out.trim()) parts.push(diffRes.out.trim())
+  }
+  for (const file of untracked) {
+    const extra = await git(cwd, ['diff', '--no-index', '--stat', '--patch', '--', '/dev/null', file])
+    if (extra.out.trim()) parts.push(extra.out.trim())
+  }
+  return parts.join('\n')
+}
+
 /** Generate a message from the working tree. Does not touch the index. */
 export async function draftCommit(
   cwd: string,
@@ -395,16 +408,7 @@ export async function draftCommit(
   const { files, skipped } = committableFiles(st)
   const untracked = st.untracked.map((f) => f.path).filter((p) => files.includes(p))
   const tracked = files.filter((p) => !untracked.includes(p))
-  const parts: string[] = []
-  if (tracked.length) {
-    const diffRes = await git(cwd, ['diff', 'HEAD', '--stat', '--patch', '--', ...tracked])
-    if (diffRes.out.trim()) parts.push(diffRes.out.trim())
-  }
-  for (const file of untracked) {
-    const extra = await git(cwd, ['diff', '--no-index', '--stat', '--patch', '--', '/dev/null', file])
-    if (extra.out.trim()) parts.push(extra.out.trim())
-  }
-  const diff = parts.join('\n')
+  const diff = await commitDiff(cwd, tracked, untracked)
   if (!diff && !untracked.length) {
     return { ok: false, error: 'Nothing to commit.' }
   }

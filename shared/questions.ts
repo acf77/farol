@@ -123,6 +123,33 @@ export function questionsFromToolInput(input: unknown): AgentQuestion[] | undefi
   return 'questions' in parsed ? parsed.questions : undefined
 }
 
+function pickedLabels(raw: unknown): string[] | null {
+  if (!Array.isArray(raw) || raw.some((item) => typeof item !== 'string')) return null
+  return raw.map((item) => item.trim()).filter(Boolean)
+}
+
+function unknownLabel(question: AgentQuestion, picked: string[]): string | undefined {
+  if (question.custom !== false) return undefined
+  const labels = new Set(question.options.map((option) => option.label))
+  return picked.find((label) => !labels.has(label))
+}
+
+function validateOne(
+  question: AgentQuestion,
+  raw: unknown,
+  n: number
+): string[] | { error: string } {
+  const picked = pickedLabels(raw)
+  if (!picked) return { error: `Question ${n} needs an array of selected labels.` }
+  if (!picked.length) return { error: `Question ${n} needs an answer.` }
+  if (!question.multiple && picked.length > 1) {
+    return { error: `Question ${n} allows only one choice.` }
+  }
+  const bad = unknownLabel(question, picked)
+  if (bad) return { error: `Question ${n} has no option labelled ${bad}.` }
+  return [...new Set(picked)]
+}
+
 export function validateAnswers(
   questions: AgentQuestion[],
   answers: unknown
@@ -132,24 +159,9 @@ export function validateAnswers(
   }
   const out: string[][] = []
   for (let i = 0; i < questions.length; i++) {
-    const question = questions[i]
-    const raw = answers[i]
-    if (!Array.isArray(raw) || raw.some((item) => typeof item !== 'string')) {
-      return { error: `Question ${i + 1} needs an array of selected labels.` }
-    }
-    const picked = raw.map((item) => item.trim()).filter(Boolean)
-    if (!picked.length) return { error: `Question ${i + 1} needs an answer.` }
-    if (!question.multiple && picked.length > 1) {
-      return { error: `Question ${i + 1} allows only one choice.` }
-    }
-    const labels = new Set(question.options.map((option) => option.label))
-    const allowCustom = question.custom !== false
-    for (const label of picked) {
-      if (!labels.has(label) && !allowCustom) {
-        return { error: `Question ${i + 1} has no option labelled ${label}.` }
-      }
-    }
-    out.push([...new Set(picked)])
+    const result = validateOne(questions[i], answers[i], i + 1)
+    if ('error' in result) return result
+    out.push(result)
   }
   return { answers: out }
 }

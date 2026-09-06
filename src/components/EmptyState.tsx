@@ -2,7 +2,7 @@ import { C } from '../theme'
 import { Button } from './controls'
 import farolMark from '../assets/farol-mark.png'
 
-export default function EmptyState({ onOpenProject }: { liquid?: boolean; onOpenProject: () => void }) {
+export default function EmptyState({ onOpenProject }: { onOpenProject: () => void }) {
   return (
     <div
       style={{

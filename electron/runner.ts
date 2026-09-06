@@ -299,7 +299,7 @@ export class PipelineRunner {
       failedCode: 1
     }
 
-    this.emit({ kind: 'start', runId, pipelineId, branch, origin, steps: nodes.length })
+    this.emit({ kind: 'start', runId, pipelineId, branch, origin, steps: nodes.length, cwd, startedAt: Date.now() })
 
     if (invalid) {
       this.settleInvalid(state, graph, invalid)

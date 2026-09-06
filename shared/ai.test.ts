@@ -5,6 +5,7 @@ import {
   cliFor,
   interactiveAiCommand,
   isAiProvider,
+  isUnknownJsonFormatError,
   managedAiCommand,
   modelsFor,
   normalizeAi,
@@ -133,11 +134,15 @@ describe('managedAiCommand', () => {
     ])
     expect(managedAiCommand('opencode', 'fix this').args).toEqual([
       'run',
+      '--format',
+      'json',
       '--dangerously-skip-permissions',
       'fix this'
     ])
     expect(managedAiCommand('openrouter', 'fix this').args).toEqual([
       'run',
+      '--format',
+      'json',
       '--dangerously-skip-permissions',
       'fix this'
     ])
@@ -145,11 +150,24 @@ describe('managedAiCommand', () => {
 
   it('marks the providers whose stdout has to be decoded as NDJSON', () => {
     // Claude and Cursor print nothing under `text` until the run ends, so
-    // Chat would sit blank; OpenCode narrates its progress as plain text.
+    // Chat would sit blank; OpenCode's default format is formatted prose.
     expect(managedAiCommand('claude', 'x').stream).toBe('ndjson')
     expect(managedAiCommand('cursor', 'x').stream).toBe('ndjson')
     expect(managedAiCommand('codex', 'x').stream).toBe('ndjson')
-    expect(managedAiCommand('opencode', 'x').stream).toBeUndefined()
+    expect(managedAiCommand('opencode', 'x').stream).toBe('ndjson')
+    expect(managedAiCommand('openrouter', 'x').stream).toBe('ndjson')
+    expect(managedAiCommand('opencode', 'x', undefined, { jsonFormat: false }).stream).toBeUndefined()
+    expect(managedAiCommand('opencode', 'x', undefined, { jsonFormat: false }).args).toEqual([
+      'run',
+      '--dangerously-skip-permissions',
+      'x'
+    ])
+  })
+
+  it('detects older OpenCode builds that reject --format json', () => {
+    expect(isUnknownJsonFormatError('error: unknown option --format')).toBe(true)
+    expect(isUnknownJsonFormatError('Unknown flag: --format')).toBe(true)
+    expect(isUnknownJsonFormatError('command failed')).toBe(false)
   })
 
   it('runs OpenRouter through OpenCode with a prefixed --model', () => {
@@ -166,6 +184,8 @@ describe('managedAiCommand', () => {
     ])
     expect(managedAiCommand('openrouter', 'fix this', 'openai/gpt-4o').args).toEqual([
       'run',
+      '--format',
+      'json',
       '--dangerously-skip-permissions',
       '--model',
       'openrouter/openai/gpt-4o',

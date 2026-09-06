@@ -1594,7 +1594,16 @@ function ComposerBox({
       : null
 
   return (
-    <div style={{ flex: 'none', padding: '8px 34px 20px' }}>
+    <div
+      style={{
+        flex: 'none',
+        position: 'relative',
+        zIndex: 2,
+        padding: '12px 34px 24px',
+        background: C.terminal
+      }}
+    >
+      <div className="bf-chat-fade" aria-hidden="true" />
       <div
         ref={composerBoxRef}
         onDragOver={(e) => {
@@ -1800,7 +1809,7 @@ export default function ChatPane({
   const flex = view === 'split' ? '1 1 50%' : '1 1 100%'
 
   return (
-    <div style={{ ...PANE, flex, overflow: 'visible' }}>
+    <div style={{ ...PANE, flex }}>
       <ChatBanners
         clearChatConfirm={clearChatConfirm}
         chatClearedNotice={chatClearedNotice}
@@ -1819,7 +1828,7 @@ export default function ChatPane({
           flex: 1,
           minHeight: 0,
           overflow: 'auto',
-          padding: '36px 28px 8px',
+          padding: '72px 28px calc(var(--bf-chat-fade-height) + 36px)',
           display: 'flex',
           flexDirection: 'column'
         }}
@@ -1851,7 +1860,7 @@ export default function ChatPane({
               onAnswer={onAnswer}
             />
           )}
-          <div style={{ height: 12 }} />
+          <div style={{ height: 20 }} />
         </div>
       </div>
 

@@ -16,6 +16,7 @@ export type GitCommitDraft = {
 type UseGitPanelOptions = {
   /** Fetch status and GitHub info when true (e.g. tab visible and cwd is a repo). */
   enabled?: boolean
+  open?: boolean
   /** Called when HEAD changes for this project; the hook also refreshes panel data. */
   onHeadChange?: (info: GitInfo) => void
 }
@@ -33,6 +34,9 @@ export function useGitPanel(
   const [draft, setDraft] = useState<GitCommitDraft | null>(null)
   const [lastMessage, setLastMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [refreshVersion, setRefreshVersion] = useState(0)
+  const refresh = useCallback(() => setRefreshVersion((version) => version + 1), [])
 
   useEffect(() => {
     setStatus(null)
@@ -41,36 +45,81 @@ export function useGitPanel(
     setDraft(null)
     setLastMessage(null)
     setError(null)
+    setRefreshError(null)
   }, [projectPath])
 
-  const refresh = useCallback(async () => {
-    if (!projectPath) return
-    setLoading(true)
-    try {
-      const [st, gh, log] = await Promise.all([
-        api.git.status(projectPath),
-        api.git.github(projectPath),
-        api.git.recentCommits(projectPath)
-      ])
-      setStatus(st)
-      setGithub(gh)
-      setCommits(log)
-    } finally {
+  useEffect(() => {
+    if (!opts?.enabled || !projectPath) return
+    let cancelled = false
+    const jobs = [
+      {
+        delay: opts.open ? 5000 : 30000,
+        read: async () => {
+          setLoading(true)
+          const [st, log] = await Promise.all([
+            api.git.status(projectPath),
+            api.git.recentCommits(projectPath)
+          ])
+          return () => {
+            setStatus(st)
+            setCommits(log)
+            setRefreshError(null)
+          }
+        },
+        fail: (message: string) => setRefreshError(message),
+        finish: () => setLoading(false)
+      },
+      {
+        delay: 60000,
+        read: async () => {
+          const gh = await api.git.github(projectPath)
+          return () => setGithub(gh)
+        },
+        fail: (message: string) => setGithub({ available: false, prs: [], message })
+      }
+    ]
+    const cleanups = jobs.map(({ delay, read, fail, finish }) => {
+      let timer: number
+      let busy = false
+      const update = async () => {
+        if (busy || document.hidden) return
+        window.clearTimeout(timer)
+        busy = true
+        try {
+          const apply = await read()
+          if (!cancelled) apply()
+        } catch (err) {
+          if (!cancelled) fail(err instanceof Error ? err.message : 'Could not update Git information')
+        } finally {
+          busy = false
+          if (!cancelled) {
+            finish?.()
+            timer = window.setTimeout(() => void update(), delay)
+          }
+        }
+      }
+      const onVisible = () => void update()
+      void update()
+      window.addEventListener('focus', onVisible)
+      document.addEventListener('visibilitychange', onVisible)
+      return () => {
+        window.clearTimeout(timer)
+        window.removeEventListener('focus', onVisible)
+        document.removeEventListener('visibilitychange', onVisible)
+      }
+    })
+    return () => {
+      cancelled = true
+      cleanups.forEach((cleanup) => cleanup())
       setLoading(false)
     }
-  }, [projectPath])
+  }, [opts?.enabled, opts?.open, projectPath, refreshVersion])
 
   useEffect(() => {
-    if (!opts?.enabled) return
-    void refresh()
-  }, [opts?.enabled, projectPath, refresh])
-
-  useEffect(() => {
-    if (!opts?.onHeadChange) return
     return api.git.onChanged((changed) => {
       if (!sameProject(changed.projectPath, projectPath)) return
-      opts.onHeadChange!(changed.info)
-      void refresh()
+      opts?.onHeadChange?.(changed.info)
+      refresh()
     })
   }, [opts?.onHeadChange, projectPath, refresh])
 
@@ -142,6 +191,7 @@ export function useGitPanel(
     draft,
     lastMessage,
     error,
+    refreshError,
     refresh,
     prepareCommit,
     setDraftMessage: (message: string) => setDraft((d) => (d ? { ...d, message } : d)),

@@ -1,4 +1,4 @@
-import type { AgentPane, Tab } from './types'
+import type { AgentMessage, AgentPane, Tab } from './types'
 
 /** Resolve a run tab back to the shell/worktree whose branch it belongs to. */
 export function chatOwnerFor(tabs: Tab[], activeId: string): Tab | undefined {
@@ -20,4 +20,9 @@ export function agentPaneFor(tab: Tab | undefined): AgentPane | null {
   if (!tab) return null
   const pane = tab.panes[tab.focus]
   return pane?.kind === 'agent' ? pane : null
+}
+
+/** Bound transcript memory for both agent output and pipeline activity. */
+export function trimAgentMessages(messages: AgentMessage[]): AgentMessage[] {
+  return messages.length <= 400 ? messages : messages.slice(-400)
 }

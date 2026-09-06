@@ -9,6 +9,7 @@ import type { AppSettings, OpenRouterSettings } from './settings'
 
 export type { AgentQuestion, AgentSkill }
 
+export type { AiModel } from './ai'
 export type { AiProvider, AppSettings, OpenRouterSettings, ProjectSession, WorktreeRequest }
 export { aiFixCommand } from './ai'
 export { FAILURE_REPORT_REL } from './failure'
@@ -263,7 +264,7 @@ interface RunEventBase {
 }
 
 export type RunEvent =
-  | (RunEventBase & { kind: 'start'; steps: number })
+  | (RunEventBase & { kind: 'start'; steps: number; cwd: string; startedAt: number })
   | (RunEventBase & { kind: 'step-start'; index: number; nodeId: string })
   | (RunEventBase & { kind: 'output'; index: number; nodeId: string; chunk: string })
   | (RunEventBase & {

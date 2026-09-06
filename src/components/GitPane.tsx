@@ -9,10 +9,12 @@ import {
 } from '@shared/git-status'
 import type { AiProvider, GitCommit, GitFileKind, GitHubInfo, GitStatus } from '@shared/types'
 import { useGitPanel } from '../hooks/useGitPanel'
-import { C, MONO } from '../theme'
+import { C, MONO, UI } from '../theme'
 import { Button } from './controls'
-import { SIDE_PANEL_WIDTH } from './side-panel'
-import { CheckIcon, GitIcon, RetryIcon, Spinner } from './icons'
+import { CheckIcon, GitIcon, Spinner } from './icons'
+
+const POPOVER_WIDTH = 360
+const MAX_FILES = 8
 
 interface Props extends ReturnType<typeof useGitPanel> {
   branch: string
@@ -28,36 +30,24 @@ export function gitStatusDotColor(
   github: GitHubInfo | null
 ): string {
   if (conflictSignals(status, github).any) return C.red
-  return status && !status.clean ? C.yellow : C.green
+  if (!status) return C.textMuted
+  return status.clean ? C.green : C.yellow
 }
 
 const sectionLabel: CSSProperties = {
-  fontSize: 10,
+  fontSize: 11,
   fontWeight: 600,
-  letterSpacing: '0.08em',
   color: C.textMuted,
   marginBottom: 6
 }
 
-const iconBtn: CSSProperties = {
-  width: 26,
-  height: 26,
-  borderRadius: 7,
-  border: 0,
-  background: 'transparent',
-  display: 'grid',
-  placeItems: 'center',
-  cursor: 'pointer',
-  color: C.textMuted
-}
-
 const KIND_LABEL: Record<GitFileKind, string> = {
-  modified: 'M',
-  added: 'A',
-  deleted: 'D',
-  renamed: 'R',
-  untracked: '?',
-  conflict: 'U'
+  modified: 'Modified',
+  added: 'Added',
+  deleted: 'Deleted',
+  renamed: 'Renamed',
+  untracked: 'New',
+  conflict: 'Conflict'
 }
 
 function alertBox(variant: 'error' | 'success' | 'conflict'): CSSProperties {
@@ -88,71 +78,71 @@ function alertBox(variant: 'error' | 'success' | 'conflict'): CSSProperties {
 
 function FileList({ title, files, color }: { title: string; files: GitStatus['staged']; color: string }) {
   if (!files.length) return null
+  const visible = files.slice(0, MAX_FILES)
+  const extra = files.length - visible.length
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ ...sectionLabel, marginBottom: 4 }}>{title} ({files.length})</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {files.slice(0, 8).map((f) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {visible.map((f) => (
           <div
             key={f.path}
             title={f.path}
             style={{
               fontFamily: MONO,
-              fontSize: 10.5,
-              color,
+              fontSize: 11,
+              display: 'flex',
+              gap: 8,
+              color: C.textSoft,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap'
             }}
           >
-            <span style={{ opacity: 0.65, marginRight: 6 }}>{KIND_LABEL[f.kind]}</span>
-            {f.path}
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.path}</span>
+            <span style={{ color, fontFamily: UI, flexShrink: 0 }}>{KIND_LABEL[f.kind]}</span>
           </div>
         ))}
-        {files.length > 8 && (
-          <div style={{ fontSize: 10.5, color: C.faint }}>+{files.length - 8} more</div>
+        {extra > 0 && (
+          <div style={{ fontSize: 11, color: C.textMuted }}>+{extra} more</div>
         )}
       </div>
     </div>
   )
 }
 
-function GitPanelHeader({ loading, onRefresh }: { loading: boolean; onRefresh: () => void }) {
+function GitPanelHeader({ branch, loading, stale, onClose, onRetry }: {
+  branch: string
+  loading: boolean
+  stale: boolean
+  onClose: () => void
+  onRetry: () => void
+}) {
   return (
-    <div
-      style={{
-        height: 44,
-        flex: 'none',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        padding: '0 7px 0 12px',
-        borderBottom: `1px solid ${C.cardBorder}`
-      }}
-    >
-      <GitIcon size={14} color={C.textMuted} />
-      <span style={{ ...sectionLabel, letterSpacing: '0.09em', marginBottom: 0, flex: 1 }}>GIT</span>
-      <button
-        type="button"
-        className="bf-focus bf-icon-btn"
-        onClick={onRefresh}
-        disabled={loading}
-        title="Refresh git status"
-        aria-label="Refresh git status"
-        style={{ ...iconBtn, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.5 : 1 }}
-      >
-        {loading ? <Spinner /> : <RetryIcon size={14} />}
-      </button>
+    <div style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: `1px solid ${C.cardBorder}` }}>
+      <GitIcon size={15} color={C.textMuted} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div title={branch} style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{branch}</div>
+        {(stale || loading) && (
+          <div style={{ fontSize: 11, color: stale ? C.yellow : C.textMuted, marginTop: 3 }}>
+            {stale ? 'Update failed.' : 'Updating…'}
+          </div>
+        )}
+      </div>
+      {stale && (
+        <Button variant="ghost" size="sm" disabled={loading} onClick={onRetry}>Retry</Button>
+      )}
+      <Button variant="ghost" size="sm" autoFocus onClick={onClose} aria-label="Close Git popover">Close</Button>
     </div>
   )
 }
 
 function RecentCommitsBlock({ commits }: { commits: GitCommit[] }) {
   return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={sectionLabel}>RECENT COMMITS</div>
+    <details style={{ paddingTop: 12, borderTop: `1px solid ${C.cardBorder}` }}>
+      <summary className="bf-focus" style={{ ...sectionLabel, cursor: 'pointer' }}>Recent commits</summary>
       {commits.length === 0 && (
-        <div style={{ fontSize: 11.5, color: C.faint }}>No commits yet</div>
+        <div style={{ fontSize: 11.5, color: C.textMuted }}>No commits yet</div>
       )}
       {commits.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -161,10 +151,7 @@ function RecentCommitsBlock({ commits }: { commits: GitCommit[] }) {
               key={c.hash}
               title={`${c.subject}\n${c.author} · ${c.when}`}
               style={{
-                padding: '6px 8px',
-                borderRadius: 7,
-                background: 'rgba(255,255,255,0.02)',
-                border: `1px solid ${C.cardBorder}`
+                padding: '4px 0'
               }}
             >
               <div
@@ -175,7 +162,7 @@ function RecentCommitsBlock({ commits }: { commits: GitCommit[] }) {
                   marginBottom: 2
                 }}
               >
-                <span style={{ fontFamily: MONO, fontSize: 10, color: C.accentBright }}>{c.hash}</span>
+                <span style={{ fontFamily: MONO, fontSize: 11, color: C.accentBright }}>{c.hash}</span>
                 <span
                   style={{
                     fontSize: 11,
@@ -188,7 +175,7 @@ function RecentCommitsBlock({ commits }: { commits: GitCommit[] }) {
                   {c.subject}
                 </span>
               </div>
-              <div style={{ fontSize: 10, color: C.faint }}>
+              <div style={{ fontSize: 11, color: C.textMuted }}>
                 {c.author}
                 {c.when ? ` · ${c.when}` : ''}
               </div>
@@ -196,7 +183,7 @@ function RecentCommitsBlock({ commits }: { commits: GitCommit[] }) {
           ))}
         </div>
       )}
-    </div>
+    </details>
   )
 }
 
@@ -213,7 +200,7 @@ function ConflictBlock({
   const rest = items.filter((i) => i.tone !== 'conflict')
   return (
     <div style={{ marginBottom: 12 }}>
-      <div style={sectionLabel}>CONFLICTS</div>
+      <div style={sectionLabel}>Merge status</div>
       {bad.length > 0 && (
         <div style={alertBox('conflict')}>
           {bad.map((i) => (
@@ -224,7 +211,7 @@ function ConflictBlock({
       {rest.map((i) => (
         <div
           key={i.text}
-          style={{ fontSize: 11.5, color: i.tone === 'ok' ? C.green : C.faint, marginBottom: 4 }}
+          style={{ fontSize: 11.5, color: C.textMuted, marginBottom: 4 }}
         >
           {i.text}
         </div>
@@ -233,29 +220,29 @@ function ConflictBlock({
   )
 }
 
-function ChangesBlock({ branch, status }: { branch: string; status: GitStatus | null }) {
+function ChangesBlock({ status }: { status: GitStatus }) {
   return (
     <div style={{ marginBottom: 12 }}>
-      <div style={sectionLabel}>CHANGES · {branch}</div>
-      {status && (status.ahead > 0 || status.behind > 0) && (
+      <div style={sectionLabel}>Working changes</div>
+      {(status.ahead > 0 || status.behind > 0) && (
         <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8 }}>
-          {status.ahead > 0 && <span>{status.ahead} ahead</span>}
+          {status.ahead > 0 && <span>{status.ahead} to push</span>}
           {status.ahead > 0 && status.behind > 0 && <span> · </span>}
-          {status.behind > 0 && <span>{status.behind} behind upstream</span>}
+          {status.behind > 0 && <span>{status.behind} to pull</span>}
         </div>
       )}
-      {status?.clean && (
+      {status.clean && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: C.green }}>
           <CheckIcon size={12} color={C.green} />
-          Working tree clean
+          No uncommitted changes
         </div>
       )}
-      {status && !status.clean && (
+      {!status.clean && (
         <>
-          <FileList title="STAGED" files={status.staged} color={C.green} />
-          <FileList title="UNSTAGED" files={status.unstaged} color={C.yellow} />
-          <FileList title="UNTRACKED" files={status.untracked} color={C.accentBright} />
-          <FileList title="CONFLICTS" files={status.conflicts} color={C.red} />
+          <FileList title="Staged" files={status.staged} color={C.green} />
+          <FileList title="Not staged" files={status.unstaged} color={C.yellow} />
+          <FileList title="New files" files={status.untracked} color={C.accentBright} />
+          <FileList title="Conflicts" files={status.conflicts} color={C.red} />
         </>
       )}
     </div>
@@ -273,6 +260,48 @@ function useEscapeClose(open: boolean, onClose: () => void): void {
   }, [open, onClose])
 }
 
+function PushButton({ ahead, canPush, pushReason, busy, onPush }: {
+  ahead: number
+  canPush: boolean
+  pushReason: string | null
+  busy: boolean
+  onPush: () => void
+}) {
+  const [pushArmed, setPushArmed] = useState(false)
+  const pushTitle = `Push ${ahead} unpushed commit${ahead === 1 ? '' : 's'} to the remote`
+
+  useEffect(() => {
+    if (!canPush) {
+      setPushArmed(false)
+      return
+    }
+    if (!pushArmed) return
+    const timer = window.setTimeout(() => setPushArmed(false), 6000)
+    return () => window.clearTimeout(timer)
+  }, [canPush, pushArmed])
+
+  return (
+    <Button
+      variant="secondary"
+      size="md"
+      disabled={!canPush}
+      onBlur={() => setPushArmed(false)}
+      title={pushReason ?? (pushArmed ? 'Click again to confirm push' : pushTitle)}
+      onClick={() => {
+        if (!pushArmed) {
+          setPushArmed(true)
+          return
+        }
+        setPushArmed(false)
+        onPush()
+      }}
+      style={{ flex: 1 }}
+    >
+      {busy ? <><Spinner /> Pushing…</> : pushArmed ? 'Confirm push' : `Push${ahead > 0 ? ` (${ahead})` : ''}`}
+    </Button>
+  )
+}
+
 function GitActionButtons({
   provider,
   model,
@@ -282,6 +311,8 @@ function GitActionButtons({
   ahead,
   canCommit,
   canPush,
+  commitReason,
+  pushReason,
   onPrepare,
   onDraftMessage,
   onCancelDraft,
@@ -296,28 +327,15 @@ function GitActionButtons({
   ahead: number
   canCommit: boolean
   canPush: boolean
+  commitReason: string | null
+  pushReason: string | null
   onPrepare: () => void
   onDraftMessage: (message: string) => void
   onCancelDraft: () => void
   onConfirm: () => void
   onPush: () => void
 }) {
-  const [pushArmed, setPushArmed] = useState(false)
-  const pushTitle =
-    ahead > 0
-      ? `Push ${ahead} unpushed commit${ahead === 1 ? '' : 's'} to the remote`
-      : 'Nothing to push'
   const commitBusy = gitAction === 'commit'
-
-  useEffect(() => {
-    if (!canPush) {
-      setPushArmed(false)
-      return
-    }
-    if (!pushArmed) return
-    const timer = window.setTimeout(() => setPushArmed(false), 6000)
-    return () => window.clearTimeout(timer)
-  }, [canPush, pushArmed])
 
   return (
     <div
@@ -332,14 +350,15 @@ function GitActionButtons({
     >
       {draft && (
         <>
+          <div style={sectionLabel}>Commit message</div>
           {draft.skipped.length > 0 && (
-            <div style={{ fontSize: 10.5, color: C.yellow, lineHeight: 1.4 }}>
-              Skipped {draft.skipped.join(', ')} — looks like a secret
+            <div style={{ fontSize: 11, color: C.yellow, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
+              Excluded possible secrets: {draft.skipped.join(', ')}
             </div>
           )}
           {draftStale && (
-            <div style={{ fontSize: 10.5, color: C.yellow, lineHeight: 1.4 }}>
-              Working tree changed — generate the message again.
+            <div style={{ fontSize: 11, color: C.yellow, lineHeight: 1.4 }}>
+              The file list changed. Generate a new message before committing.
             </div>
           )}
           <textarea
@@ -347,11 +366,13 @@ function GitActionButtons({
             value={draft.message}
             onChange={(e) => onDraftMessage(e.target.value)}
             rows={3}
+            disabled={!!gitAction}
             spellCheck={false}
             aria-label="Commit message"
             style={{
               width: '100%',
               resize: 'vertical',
+              maxHeight: 140,
               padding: '6px 8px',
               borderRadius: 7,
               border: `1px solid ${C.cardBorder}`,
@@ -365,15 +386,15 @@ function GitActionButtons({
           />
         </>
       )}
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {draft ? (
           <>
             <Button
               variant="primary"
               size="md"
-              disabled={commitBusy || draftStale || !draft.message.trim()}
+              disabled={!canCommit || draftStale || !draft.message.trim()}
               onClick={() => void onConfirm()}
-              title={`Commit ${draft.files.length} file${draft.files.length === 1 ? '' : 's'}`}
+              title={commitReason ?? `Commit ${draft.files.length} file${draft.files.length === 1 ? '' : 's'}`}
               style={{ flex: 1 }}
             >
               {commitBusy ? (
@@ -384,7 +405,10 @@ function GitActionButtons({
                 `Commit ${draft.files.length} file${draft.files.length === 1 ? '' : 's'}`
               )}
             </Button>
-            <Button variant="ghost" size="md" disabled={commitBusy} onClick={onCancelDraft}>
+            {draftStale && (
+              <Button variant="secondary" size="md" disabled={!canCommit} onClick={onPrepare}>Regenerate</Button>
+            )}
+            <Button variant="ghost" size="md" disabled={!!gitAction} onClick={onCancelDraft}>
               Cancel
             </Button>
           </>
@@ -394,7 +418,7 @@ function GitActionButtons({
             size="md"
             disabled={!canCommit}
             onClick={() => void onPrepare()}
-            title={`Generate a commit message with ${aiSelectionLabel(provider, model)}`}
+            title={commitReason ?? `Generate a commit message with ${aiSelectionLabel(provider, model)}`}
             style={{ flex: 1 }}
           >
             {commitBusy ? (
@@ -402,34 +426,16 @@ function GitActionButtons({
                 <Spinner /> Generating…
               </>
             ) : (
-              'Commit with AI'
+              'Draft commit message'
             )}
           </Button>
         )}
-        {gitAction === 'push' ? (
-          <Button variant="secondary" size="md" disabled style={{ flex: 1 }}>
-            <Spinner /> Pushing…
-          </Button>
-        ) : (
-          <Button
-            variant="secondary"
-            size="md"
-            disabled={!canPush}
-            title={pushArmed ? (ahead === 1 ? 'Click again to push 1 commit' : `Click again to push ${ahead} commits`) : pushTitle}
-            onClick={() => {
-              if (!pushArmed) {
-                setPushArmed(true)
-                return
-              }
-              setPushArmed(false)
-              void onPush()
-            }}
-            style={{ flex: 1 }}
-          >
-            {pushArmed ? (ahead === 1 ? 'Confirm push' : `Push ${ahead}?`) : 'Push'}
-          </Button>
-        )}
+        <PushButton ahead={ahead} canPush={canPush} pushReason={pushReason} busy={gitAction === 'push'} onPush={onPush} />
       </div>
+      <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.45 }}>
+        {draft ? 'Review the message, then commit locally.' : commitReason ?? 'Includes staged, unstaged, and new files. Review before committing.'}
+      </div>
+      {pushReason && ahead > 0 && <div style={{ fontSize: 11, color: C.yellow }}>{pushReason}</div>}
     </div>
   )
 }
@@ -450,7 +456,7 @@ function usePopoverPosition(
     const update = (): void => {
       const rect = anchor.getBoundingClientRect()
       setPos({
-        left: rect.left,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - POPOVER_WIDTH - 16)),
         bottom: window.innerHeight - rect.top + 8
       })
     }
@@ -478,6 +484,7 @@ export default function GitPane({
   draft,
   lastMessage,
   error,
+  refreshError,
   refresh,
   prepareCommit,
   setDraftMessage,
@@ -491,10 +498,18 @@ export default function GitPane({
   const pos = usePopoverPosition(anchorRef, open)
   useEscapeClose(open, onClose)
 
+  useEffect(() => {
+    if (!open) return
+    const anchor = anchorRef.current
+    return () => anchor?.focus()
+  }, [open, anchorRef])
+
   if (!open || !pos) return null
 
-  const canCommit = !!status && !commitBlockReason(status) && !gitAction
-  const canPush = !!status && !pushBlockReason(status) && !gitAction
+  const commitReason = status ? commitBlockReason(status) : 'Reading working changes…'
+  const pushReason = status ? pushBlockReason(status) : 'Reading remote status…'
+  const canCommit = !commitReason && !gitAction
+  const canPush = !pushReason && !gitAction
   const draftStale = !!draft && !!status && !draftMatchesStatus(draft.files, status)
 
   return (
@@ -508,25 +523,35 @@ export default function GitPane({
           left: pos.left,
           bottom: pos.bottom,
           zIndex: 60,
-          width: SIDE_PANEL_WIDTH,
+          width: POPOVER_WIDTH,
+          maxWidth: 'calc(100vw - 16px)',
           maxHeight: 'min(70vh, 520px)',
           display: 'flex',
           flexDirection: 'column',
-          background: '#232322',
+          background: C.panel,
+          color: C.textSoft,
           border: `1px solid ${C.cardBorder}`,
           borderRadius: 10,
-          boxShadow: '0 18px 44px rgba(0,0,0,0.55)',
+          boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
           overflow: 'hidden'
         }}
       >
-        <GitPanelHeader loading={loading} onRefresh={() => void refresh()} />
+        <GitPanelHeader
+          branch={branch}
+          loading={loading}
+          stale={!!refreshError}
+          onClose={onClose}
+          onRetry={refresh}
+        />
 
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 10px 12px' }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px' }}>
+          {refreshError && <div role="alert" style={alertBox('error')}>{refreshError}</div>}
+          {error && <div role="alert" style={alertBox('error')}>{error}</div>}
+          {lastMessage && <div role="status" style={alertBox('success')}>{lastMessage}</div>}
+          {status ? <ChangesBlock status={status} /> : <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12 }}>Reading working changes…</div>}
           <ConflictBlock status={status} github={github} />
-          <RecentCommitsBlock commits={commits} />
-          <ChangesBlock branch={branch} status={status} />
-          {error && <div style={alertBox('error')}>{error}</div>}
-          {lastMessage && <div style={alertBox('success')}>{lastMessage}</div>}
+          {github && !github.available && <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 12 }}>{github.message}</div>}
+          {status && <RecentCommitsBlock commits={commits} />}
         </div>
 
         <GitActionButtons
@@ -538,6 +563,8 @@ export default function GitPane({
           ahead={status?.ahead ?? 0}
           canCommit={canCommit}
           canPush={canPush}
+          commitReason={commitReason}
+          pushReason={pushReason}
           onPrepare={prepareCommit}
           onDraftMessage={setDraftMessage}
           onCancelDraft={cancelDraft}

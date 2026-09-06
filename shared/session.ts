@@ -140,34 +140,49 @@ function sanitizePane(raw: unknown): SavedPane | null {
   }
 }
 
+function presentString(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined
+}
+
+function panesByLeaf(leafIds: string[], raw: unknown): SavedPane[] | null {
+  const list = Array.isArray(raw) ? raw : []
+  const byId = new Map<string, SavedPane>()
+  for (const p of list) {
+    const sp = sanitizePane(p)
+    if (sp) byId.set(sp.id, sp)
+  }
+  const panes = leafIds.flatMap((id) => {
+    const pane = byId.get(id)
+    return pane ? [pane] : []
+  })
+  return panes.length === leafIds.length ? panes : null
+}
+
+function tabMeta(tab: Record<string, unknown>): Pick<SavedTab, 'kind' | 'ownerTabId' | 'branch'> {
+  const branch = presentString(tab.branch)
+  if (tab.kind !== 'agent') return branch ? { branch } : {}
+  const ownerTabId = presentString(tab.ownerTabId)
+  return {
+    kind: 'agent',
+    ...(ownerTabId ? { ownerTabId } : {}),
+    ...(branch ? { branch } : {})
+  }
+}
+
 function sanitizeTab(raw: unknown): SavedTab | null {
   if (!raw || typeof raw !== 'object') return null
   const tab = raw as Record<string, unknown>
   const root = sanitizeNode(tab.root)
   if (typeof tab.id !== 'string' || !root) return null
   const leafIds = savedLeaves(root)
-  const paneList = Array.isArray(tab.panes) ? tab.panes : []
-  const byId = new Map<string, SavedPane>()
-  for (const p of paneList) {
-    const sp = sanitizePane(p)
-    if (sp) byId.set(sp.id, sp)
-  }
-  const panes: SavedPane[] = []
-  for (const id of leafIds) {
-    const pane = byId.get(id)
-    if (!pane) continue
-    panes.push(pane)
-  }
-  if (panes.length !== leafIds.length) return null
-  const focus = typeof tab.focus === 'string' && leafIds.includes(tab.focus) ? tab.focus : leafIds[0]
+  const panes = panesByLeaf(leafIds, tab.panes)
+  if (!panes) return null
+  const focus =
+    typeof tab.focus === 'string' && leafIds.includes(tab.focus) ? tab.focus : leafIds[0]
   return {
     id: tab.id,
     title: typeof tab.title === 'string' ? tab.title : '',
-    ...(tab.kind === 'agent' ? { kind: 'agent' as const } : {}),
-    ...(tab.kind === 'agent' && typeof tab.ownerTabId === 'string' && tab.ownerTabId
-      ? { ownerTabId: tab.ownerTabId }
-      : {}),
-    ...(typeof tab.branch === 'string' && tab.branch ? { branch: tab.branch } : {}),
+    ...tabMeta(tab),
     root,
     focus,
     panes

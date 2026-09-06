@@ -25,6 +25,39 @@ function parsePath(line: string): { index: string; worktree: string; path: strin
   return { index, worktree, path }
 }
 
+function occupied(ch: string): boolean {
+  return ch !== ' ' && ch !== '?'
+}
+
+function pushOnce<T>(seen: Set<string>, key: string, list: T[], item: T): void {
+  if (seen.has(key)) return
+  seen.add(key)
+  list.push(item)
+}
+
+function bucketLine(
+  parsed: { index: string; worktree: string; path: string },
+  staged: GitStatusFile[],
+  unstaged: GitStatusFile[],
+  untracked: GitStatusFile[],
+  conflicts: GitStatusFile[],
+  seen: Set<string>
+): void {
+  const { index, worktree, path } = parsed
+  const code = `${index}${worktree}`
+  const kind = kindFrom(code)
+  if (kind === 'conflict') {
+    pushOnce(seen, path, conflicts, { path, kind, staged: occupied(index) })
+    return
+  }
+  if (code === '??') {
+    pushOnce(seen, path, untracked, { path, kind: 'untracked', staged: false })
+    return
+  }
+  if (occupied(index)) pushOnce(seen, `s:${path}`, staged, { path, kind, staged: true })
+  if (occupied(worktree)) pushOnce(seen, `u:${path}`, unstaged, { path, kind, staged: false })
+}
+
 /** Turn porcelain lines into staged / unstaged / untracked / conflict buckets. */
 export function parseGitStatus(porcelain: string): Omit<GitStatus, 'ahead' | 'behind'> {
   const staged: GitStatusFile[] = []
@@ -34,51 +67,13 @@ export function parseGitStatus(porcelain: string): Omit<GitStatus, 'ahead' | 'be
   const seen = new Set<string>()
 
   for (const raw of porcelain.split('\n')) {
-    const line = raw.trimEnd()
-    if (!line) continue
-    const parsed = parsePath(line)
+    const parsed = parsePath(raw.trimEnd())
     if (!parsed) continue
-    const { index, worktree, path } = parsed
-    const code = `${index}${worktree}`
-    const kind = kindFrom(code)
-
-    if (kind === 'conflict') {
-      if (!seen.has(path)) {
-        seen.add(path)
-        conflicts.push({ path, kind, staged: index !== ' ' && index !== '?' })
-      }
-      continue
-    }
-
-    if (code === '??') {
-      if (!seen.has(path)) {
-        seen.add(path)
-        untracked.push({ path, kind: 'untracked', staged: false })
-      }
-      continue
-    }
-
-    if (index !== ' ' && index !== '?') {
-      if (!seen.has(`s:${path}`)) {
-        seen.add(`s:${path}`)
-        staged.push({ path, kind, staged: true })
-      }
-    }
-    if (worktree !== ' ' && worktree !== '?') {
-      if (!seen.has(`u:${path}`)) {
-        seen.add(`u:${path}`)
-        unstaged.push({ path, kind, staged: false })
-      }
-    }
+    bucketLine(parsed, staged, unstaged, untracked, conflicts, seen)
   }
 
-  const clean =
-    staged.length === 0 &&
-    unstaged.length === 0 &&
-    untracked.length === 0 &&
-    conflicts.length === 0
-
-  return { clean, staged, unstaged, untracked, conflicts }
+  const dirty = staged.length + unstaged.length + untracked.length + conflicts.length
+  return { clean: dirty === 0, staged, unstaged, untracked, conflicts }
 }
 
 /** Parse `git rev-list --left-right --count @{u}...HEAD` output. */

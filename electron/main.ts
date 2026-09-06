@@ -521,9 +521,8 @@ function installMcpConfig(dir: string, socketFor = dir): void {
   }
 }
 
-function registerIpc(): void {
+function registerProjectIpc(): void {
   ipcMain.handle('project:open', () => openProjectDialog())
-
   ipcMain.handle('project:openPath', async (_e, dir: string) => {
     if (typeof dir !== 'string' || !fs.existsSync(dir)) return null
     const project = toProject(dir)
@@ -532,19 +531,15 @@ function registerIpc(): void {
     startBridge(project.path)
     return project
   })
-
   ipcMain.handle('project:recents', () => readRecents())
-
   ipcMain.handle('project:listFiles', (_e, projectPath: string, query?: string) =>
     listProjectFiles(projectPath, typeof query === 'string' ? query : '')
   )
-
   ipcMain.handle('project:listSkills', (_e, projectPath: string, provider: unknown) =>
     typeof projectPath === 'string' && isAiProvider(provider)
       ? listAgentSkills(projectPath, provider)
       : []
   )
-
   ipcMain.handle(
     'project:saveAttachment',
     (_e, projectPath: string, name: string, data: ArrayBuffer) => {
@@ -552,7 +547,9 @@ function registerIpc(): void {
       return saveChatAttachment(projectPath, name, Buffer.from(data))
     }
   )
+}
 
+function registerSessionIpc(): void {
   ipcMain.handle('session:last', () => lastProjectPath())
   ipcMain.handle('session:openProjects', () => loadOpenProjects())
   ipcMain.handle(
@@ -572,16 +569,16 @@ function registerIpc(): void {
     )
   })
   ipcMain.handle('session:clearLast', () => clearLastProject())
-
   ipcMain.handle('pipelines:load', async (_e, projectPath: string) => {
     void pipelineFiles.watch(projectPath)
     return loadPipelines(projectPath)
   })
-
   ipcMain.handle('pipelines:save', (_e, projectPath: string, pipelines: Pipeline[]) =>
     savePipelines(projectPath, pipelines)
   )
+}
 
+function registerShellIpc(): void {
   ipcMain.handle(
     'shell:open',
     (_e, paneId: string, cwd: string, cols?: number, rows?: number, provider?: unknown) =>
@@ -593,7 +590,9 @@ function registerIpc(): void {
   )
   ipcMain.handle('shell:dispose', (_e, paneId: string) => shells.dispose(paneId))
   ipcMain.handle('shell:send', (_e, paneId: string, data: string) => shells.send(paneId, data))
+}
 
+function registerGitIpc(): void {
   ipcMain.handle('git:info', async (_e, projectPath: string) => {
     void head.watch(projectPath)
     return gitInfo(projectPath)
@@ -603,7 +602,6 @@ function registerIpc(): void {
   )
   ipcMain.handle('git:worktree', async (_e, projectPath: string, req: WorktreeRequest) => {
     const res = await addWorktree(projectPath, req)
-    // Agents working in the worktree reach the same app instance.
     if (res.ok && res.path && res.path !== projectPath) installMcpConfig(res.path, projectPath)
     return res
   })
@@ -635,12 +633,13 @@ function registerIpc(): void {
     return gitPush(cwd.path)
   })
   ipcMain.handle('git:github', (_e, projectPath: string) => githubInfo(projectPath))
+}
 
+function registerTaskIpc(): void {
   ipcMain.handle('run:start', (_e, pipeline: Pipeline, cwd: string, branch: string) =>
     runner.start(pipeline, cwd, branch)
   )
   ipcMain.handle('run:cancel', (_e, pipelineId: string) => runner.cancelAndWait(pipelineId))
-
   ipcMain.handle('agent:start', (_e, request: AgentTaskRequest) => agents.start(request))
   ipcMain.handle(
     'agent:message',
@@ -665,21 +664,30 @@ function registerIpc(): void {
     (_e, taskId: string, requestId: string, answers: string[][] | null) =>
       agents.answer(taskId, requestId, answers)
   )
+}
 
+function registerAppIpc(): void {
   ipcMain.handle('settings:load', () => loadSettings())
   ipcMain.handle('settings:save', (_e, settings: AppSettings) => saveSettings(settings))
   ipcMain.handle('openrouter:saveKey', (_e, key: string) => saveOpenRouterKey(key))
   ipcMain.handle('openrouter:clearKey', () => clearOpenRouter())
   ipcMain.handle('openrouter:refresh', () => refreshOpenRouterCatalog())
   ipcMain.handle('openrouter:setPinned', (_e, ids: string[]) => setOpenRouterPinned(ids))
-
   ipcMain.handle('update:check', () => updater.check())
   ipcMain.on('update:install', () => updater.install())
-
   ipcMain.handle('ui:glass', () => glassActive)
   ipcMain.on('window:minimize', () => win?.minimize())
   ipcMain.on('window:maximize', () => (win?.isMaximized() ? win.unmaximize() : win?.maximize()))
   ipcMain.on('window:close', () => win?.close())
+}
+
+function registerIpc(): void {
+  registerProjectIpc()
+  registerSessionIpc()
+  registerShellIpc()
+  registerGitIpc()
+  registerTaskIpc()
+  registerAppIpc()
 }
 
 function applyBrandIcon(): void {

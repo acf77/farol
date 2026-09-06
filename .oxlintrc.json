@@ -1,0 +1,17 @@
+{
+  "jsPlugins": ["oxlint-plugin-complexity"],
+  "ignorePatterns": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.tsx"
+  ],
+  "rules": {
+    "complexity/complexity": [
+      "error",
+      {
+        "cyclomatic": 20,
+        "cognitive": 15
+      }
+    ]
+  }
+}

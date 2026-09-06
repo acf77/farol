@@ -153,6 +153,12 @@ export interface AiCommand {
   stream?: 'ndjson'
 }
 
+/** Older OpenCode builds reject `--format json` with an unknown-option error. */
+export function isUnknownJsonFormatError(text: string): boolean {
+  const lower = text.toLowerCase()
+  return lower.includes('format') && /unknown (option|flag|argument)/.test(lower)
+}
+
 /**
  * Non-interactive argv for each CLI. Cursor runs in ask mode with plain
  * text so a review step returns a string instead of Agent "ACT" chrome.
@@ -206,11 +212,17 @@ export function aiCommand(provider: AiProvider, prompt: string, model?: string):
  * both run in `stream-json` and are decoded by `shared/agent-stream.ts`.
  * Codex also emits NDJSON when passed `--json`; decoding it lets managed Chat
  * render command, file, MCP, and web-search activity as tool cards.
- * OpenCode already narrates its progress on stdout as it goes.
+ * OpenCode (and OpenRouter, which rides it) do the same with `--format json`.
  */
-export function managedAiCommand(provider: AiProvider, prompt: string, model?: string): AiCommand {
+export function managedAiCommand(
+  provider: AiProvider,
+  prompt: string,
+  model?: string,
+  opts?: { jsonFormat?: boolean }
+): AiCommand {
   const cli = cliFor(provider)
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
+  const jsonFormat = opts?.jsonFormat !== false
   switch (cli) {
     case 'codex':
       return {
@@ -248,8 +260,14 @@ export function managedAiCommand(provider: AiProvider, prompt: string, model?: s
     case 'opencode':
       return {
         bins: ['opencode'],
-        args: withModel(['run', '--dangerously-skip-permissions', prompt], passed),
-        hint: 'Install OpenCode (https://opencode.ai) to use managed Chat.'
+        args: withModel(
+          jsonFormat
+            ? ['run', '--format', 'json', '--dangerously-skip-permissions', prompt]
+            : ['run', '--dangerously-skip-permissions', prompt],
+          passed
+        ),
+        hint: 'Install OpenCode (https://opencode.ai) to use managed Chat. Farol needs a build that accepts `opencode run --format json`.',
+        ...(jsonFormat ? { stream: 'ndjson' as const } : {})
       }
     case 'claude':
       return {

@@ -11,7 +11,8 @@ import { isQuestionToolName, questionsFromToolInput, type AgentQuestion } from '
  * Claude and Cursor share the Anthropic-style `assistant`/`user` envelope;
  * Cursor adds its own `tool_call` events. Codex uses `item.started`,
  * `item.updated`, and `item.completed` lifecycle events around agent messages
- * and tool items.
+ * and tool items. OpenCode (`--format json`, including OpenRouter) emits
+ * `text` / `tool_use` / `error` envelopes with a `part` payload.
  */
 
 /** One complete assistant turn. */
@@ -138,6 +139,23 @@ function jsonDetail(value: unknown): string | undefined {
   }
 }
 
+/** OpenCode JSONL only emits finished tools — completed vs error. */
+function finishedToolState(
+  status: string,
+  extra?: { exit?: unknown; error?: unknown }
+): AgentStreamTool['state'] {
+  const normalized = status.toLowerCase()
+  if (
+    normalized === 'error' ||
+    normalized === 'failed' ||
+    Boolean(extra?.error) ||
+    (typeof extra?.exit === 'number' && extra.exit !== 0)
+  ) {
+    return 'error'
+  }
+  return 'done'
+}
+
 function changedPaths(changes: unknown): string | undefined {
   if (!Array.isArray(changes)) return undefined
   const paths = changes
@@ -245,11 +263,42 @@ function recoverCodexItem(text: string): AgentStreamEvent[] {
   ]
 }
 
+/**
+ * OpenCode packs `part.state.output` onto the same JSONL line as the tool
+ * envelope. Recover name / command from the prefix when that line is truncated.
+ */
+function recoverOpenCodeTool(text: string): AgentStreamEvent[] {
+  const head = text.slice(0, RECOVER_PREFIX)
+  if (!/"type"\s*:\s*"tool_use"/.test(head)) return []
+  const partAt = head.search(/"part"\s*:\s*\{/)
+  const partHead = partAt >= 0 ? head.slice(partAt) : head
+  const name = peekJsonString(partHead, 'tool') ?? 'tool'
+  const detail =
+    peekJsonString(partHead, 'command') ??
+    peekJsonString(partHead, 'path') ??
+    peekJsonString(partHead, 'title')
+  const exitRaw = /"exit"\s*:\s*(-?\d+)/.exec(partHead)?.[1]
+  return [
+    {
+      kind: 'tool',
+      toolId: normalizeId(
+        peekJsonString(partHead, 'callID') ?? peekJsonString(partHead, 'id'),
+        `opencode-${name}`
+      ),
+      name,
+      ...(detail ? { detail: truncate(detail) } : {}),
+      state: finishedToolState(peekJsonString(partHead, 'status') ?? '', {
+        exit: exitRaw !== undefined ? Number(exitRaw) : undefined
+      })
+    }
+  ]
+}
+
 /** Protocol JSON must not land in the transcript — recover a card or drop it. */
 function handleBrokenStreamJson(text: string): AgentStreamEvent[] {
   const recovered = recoverCodexItem(text)
   if (recovered.length) return recovered
-  return []
+  return recoverOpenCodeTool(text)
 }
 
 export class AgentStreamParser {
@@ -298,34 +347,25 @@ export class AgentStreamParser {
   private event(event: Record<string, unknown>): AgentStreamEvent[] {
     switch (event.type) {
       case 'assistant':
-        return this.content(event, 'assistant')
       case 'user':
-        return this.content(event, 'user')
+        return this.content(event, event.type === 'user' ? 'user' : 'assistant')
       case 'tool_call':
         return this.cursorTool(event)
+      case 'text': {
+        const part = event.part
+        const text = isRecord(part) ? stringField(part, 'text') : undefined
+        return text?.trim() ? [{ kind: 'text', text }] : []
+      }
+      case 'tool_use':
+        return this.openCodeTool(event)
       case 'item.started':
-        return this.codexItem(event, false)
       case 'item.updated':
-        // Mid-turn progress (todo ticks, partial tool detail) — keep the card live.
         return this.codexItem(event, false)
       case 'item.completed':
         return this.codexItem(event, true)
       case 'turn.failed':
       case 'error':
-        // Top-level `error` is a documented Codex JSONL type (auth/quota/etc.);
-        // without this, Chat stays blank aside from a non-zero exit.
-        return this.codexError(event)
-      // Session banners, rate-limit notices, reasoning, and the closing
-      // `result` (a replay of text already emitted) are not chat content.
-      case 'system':
-      case 'result':
-      case 'thinking':
-      case 'rate_limit_event':
-      case 'stream_event':
-      case 'thread.started':
-      case 'turn.started':
-      case 'turn.completed':
-        return []
+        return this.streamError(event)
       default:
         return []
     }
@@ -347,18 +387,26 @@ export class AgentStreamParser {
     item: Record<string, unknown>,
     role: 'assistant' | 'user'
   ): AgentStreamEvent | undefined {
-    if (role === 'assistant' && item.type === 'text' && typeof item.text === 'string') {
-      return item.text.trim() ? { kind: 'text', text: item.text } : undefined
+    if (role === 'assistant') return this.assistantItem(item)
+    return this.userToolResult(item)
+  }
+
+  private assistantItem(item: Record<string, unknown>): AgentStreamEvent | undefined {
+    if (item.type === 'text') {
+      const text = typeof item.text === 'string' ? item.text : ''
+      return text.trim() ? { kind: 'text', text } : undefined
     }
-    if (role === 'assistant' && item.type === 'tool_use') {
-      const toolId = normalizeId(item.id, `tool-${this.names.size}`)
-      const name = typeof item.name === 'string' && item.name ? item.name : 'tool'
-      this.names.set(toolId, name)
-      const asked = isQuestionToolName(name) ? questionsFromToolInput(item.input) : undefined
-      if (asked) return { kind: 'question', toolId, questions: asked }
-      return { kind: 'tool', toolId, name, detail: toolDetail(item.input), state: 'running' }
-    }
-    if (role !== 'user' || item.type !== 'tool_result') return undefined
+    if (item.type !== 'tool_use') return undefined
+    const toolId = normalizeId(item.id, `tool-${this.names.size}`)
+    const name = stringField(item, 'name') ?? 'tool'
+    this.names.set(toolId, name)
+    const asked = isQuestionToolName(name) ? questionsFromToolInput(item.input) : undefined
+    if (asked) return { kind: 'question', toolId, questions: asked }
+    return { kind: 'tool', toolId, name, detail: toolDetail(item.input), state: 'running' }
+  }
+
+  private userToolResult(item: Record<string, unknown>): AgentStreamEvent | undefined {
+    if (item.type !== 'tool_result') return undefined
     const toolId = normalizeId(item.tool_use_id, '')
     if (!toolId) return undefined
     const name = this.names.get(toolId) ?? 'tool'
@@ -393,7 +441,7 @@ export class AgentStreamParser {
       const text = stringField(item, 'text')
       return completed && text?.trim() ? [{ kind: 'text', text }] : []
     }
-    if (type === 'error') return completed ? this.codexError(item) : []
+    if (type === 'error') return completed ? this.streamError(item) : []
 
     const meta = codexToolMeta(type, item)
     if (!meta) return []
@@ -414,9 +462,36 @@ export class AgentStreamParser {
     ]
   }
 
-  private codexError(event: Record<string, unknown>): AgentStreamEvent[] {
+  /**
+   * OpenCode: `{ type: 'tool_use', part: { callID, tool, state } }`.
+   * JSON format only emits completed/error — there is no running spin-up.
+   */
+  private openCodeTool(event: Record<string, unknown>): AgentStreamEvent[] {
+    const part = event.part
+    if (!isRecord(part)) return []
+    const name = stringField(part, 'tool') ?? 'tool'
+    const toolId = normalizeId(part.callID ?? part.id, `opencode-${name}`)
+    const body = isRecord(part.state) ? part.state : {}
+    const asked = isQuestionToolName(name) ? questionsFromToolInput(body.input) : undefined
+    if (asked) return [{ kind: 'question', toolId, questions: asked }]
+    const title = stringField(body, 'title')
+    const detail = toolDetail(body.input) ?? (title ? truncate(title) : undefined)
+    const meta = isRecord(body.metadata) ? body.metadata : {}
+    return [
+      {
+        kind: 'tool',
+        toolId,
+        name,
+        ...(detail ? { detail } : {}),
+        state: finishedToolState(String(body.status ?? ''), { exit: meta.exit, error: body.error })
+      }
+    ]
+  }
+
+  private streamError(event: Record<string, unknown>): AgentStreamEvent[] {
     const nested = isRecord(event.error) ? event.error : event
-    const message = stringField(nested, 'message')
+    const data = isRecord(nested.data) ? nested.data : undefined
+    const message = stringField(nested, 'message') ?? (data ? stringField(data, 'message') : undefined)
     if (!message) return []
     // Transport chatter (e.g. "Reconnecting…") is not a user-facing failure;
     // real auth/quota/turn failures still land as raw transcript text.

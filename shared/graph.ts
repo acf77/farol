@@ -44,8 +44,7 @@ export function newNodePos(nodes: PipelineNode[]): { x: number; y: number } {
   return { x: 72, y: maxY + 112 }
 }
 
-export function topoSort(nodes: PipelineNode[]): PipelineNode[] | null {
-  const byId = new Map(nodes.map((n) => [n.id, n]))
+function incomingCount(nodes: PipelineNode[], byId: Map<string, PipelineNode>): Map<string, number> {
   const indeg = new Map<string, number>()
   for (const n of nodes) indeg.set(n.id, 0)
   for (const n of nodes) {
@@ -54,18 +53,33 @@ export function topoSort(nodes: PipelineNode[]): PipelineNode[] | null {
       indeg.set(n.id, (indeg.get(n.id) ?? 0) + 1)
     }
   }
+  return indeg
+}
+
+function releaseDependents(
+  nodes: PipelineNode[],
+  id: string,
+  indeg: Map<string, number>,
+  queue: string[]
+): void {
+  for (const c of nodes) {
+    if (!c.after.includes(id)) continue
+    const d = (indeg.get(c.id) ?? 1) - 1
+    indeg.set(c.id, d)
+    if (d === 0) queue.push(c.id)
+  }
+}
+
+export function topoSort(nodes: PipelineNode[]): PipelineNode[] | null {
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const indeg = incomingCount(nodes, byId)
   const queue = nodes.filter((n) => (indeg.get(n.id) ?? 0) === 0).map((n) => n.id)
   const out: PipelineNode[] = []
   while (queue.length) {
     const id = queue.shift() as string
     const n = byId.get(id)
     if (n) out.push(n)
-    for (const c of nodes) {
-      if (!c.after.includes(id)) continue
-      const d = (indeg.get(c.id) ?? 1) - 1
-      indeg.set(c.id, d)
-      if (d === 0) queue.push(c.id)
-    }
+    releaseDependents(nodes, id, indeg, queue)
   }
   return out.length === nodes.length ? out : null
 }
@@ -138,6 +152,29 @@ export interface ChainLevel {
   steps: ChainStep[]
 }
 
+function parentDepth(n: PipelineNode, ids: Set<string>, depth: Map<string, number>): number {
+  let d = 0
+  for (const p of n.after) {
+    if (!ids.has(p)) continue
+    d = Math.max(d, (depth.get(p) ?? 0) + 1)
+  }
+  return d
+}
+
+function nodeDepths(nodes: PipelineNode[]): Map<string, number> {
+  const order = topoSort(nodes)
+  if (!order) return new Map(nodes.map((n, i) => [n.id, i]))
+  const ids = new Set(nodes.map((n) => n.id))
+  const depth = new Map<string, number>()
+  for (const n of order) depth.set(n.id, parentDepth(n, ids, depth))
+  return depth
+}
+
+function chainJoin(level: number, step: number): ChainStep['join'] {
+  if (!level && !step) return null
+  return step ? 'and' : 'then'
+}
+
 /**
  * Group nodes into the levels the graph actually has: a node sits one step
  * below its deepest parent, so nodes that genuinely run at the same time land
@@ -146,22 +183,7 @@ export interface ChainLevel {
  * back to one node per level in declaration order.
  */
 export function chainLevels(nodes: PipelineNode[]): ChainLevel[] {
-  const order = topoSort(nodes)
-  const depth = new Map<string, number>()
-  if (order) {
-    const ids = new Set(nodes.map((n) => n.id))
-    for (const n of order) {
-      let d = 0
-      for (const p of n.after) {
-        if (!ids.has(p)) continue
-        d = Math.max(d, (depth.get(p) ?? 0) + 1)
-      }
-      depth.set(n.id, d)
-    }
-  } else {
-    nodes.forEach((n, i) => depth.set(n.id, i))
-  }
-
+  const depth = nodeDepths(nodes)
   // Declaration order inside a level, so the rows stay stable across renders.
   const rows = new Map<number, PipelineNode[]>()
   for (const n of nodes) {
@@ -179,7 +201,7 @@ export function chainLevels(nodes: PipelineNode[]): ChainLevel[] {
         (node, si): ChainStep => ({
           node,
           index: ++index,
-          join: li === 0 && si === 0 ? null : si === 0 ? 'then' : 'and'
+          join: chainJoin(li, si)
         })
       )
     }))
@@ -221,42 +243,49 @@ function sanitizeStep(raw: unknown): Step | null {
   }
 }
 
-export function sanitizePipeline(raw: unknown): Pipeline | null {
-  if (!raw || typeof raw !== 'object') return null
-  const p = raw as Record<string, unknown>
-  if (typeof p.id !== 'string' || typeof p.name !== 'string') return null
-  let nodes: PipelineNode[] = []
+function nodesFromPersisted(p: Record<string, unknown>): PipelineNode[] {
   if (Array.isArray(p.nodes) && p.nodes.length) {
-    nodes = p.nodes.flatMap((n, i) => {
+    return p.nodes.flatMap((n, i) => {
       const node = sanitizeNode(n, `n${i + 1}`)
       return node ? [node] : []
     })
-  } else if (Array.isArray(p.steps) && p.steps.length) {
-    const steps = p.steps.flatMap((s) => {
-      const step = sanitizeStep(s)
-      return step ? [step] : []
-    })
-    nodes = chainToNodes(steps)
   }
+  if (Array.isArray(p.steps) && p.steps.length) {
+    return chainToNodes(
+      p.steps.flatMap((s) => {
+        const step = sanitizeStep(s)
+        return step ? [step] : []
+      })
+    )
+  }
+  return []
+}
+
+function normalizeGraph(nodes: PipelineNode[]): PipelineNode[] {
   // Drop duplicate ids — maps keyed by id would otherwise overwrite mid-run.
   const seen = new Set<string>()
-  nodes = nodes.filter((n) => {
+  const unique = nodes.filter((n) => {
     if (seen.has(n.id)) return false
     seen.add(n.id)
     return true
   })
-  const ids = new Set(nodes.map((n) => n.id))
-  nodes = nodes.map((n) => ({ ...n, after: n.after.filter((a) => ids.has(a)) }))
-  if (!topoSort(nodes)) {
-    nodes = nodes.map((n, i) => ({
-      ...n,
-      after: i === 0 ? [] : [nodes[i - 1].id]
-    }))
-  }
+  const ids = new Set(unique.map((n) => n.id))
+  const linked = unique.map((n) => ({ ...n, after: n.after.filter((a) => ids.has(a)) }))
+  if (topoSort(linked)) return linked
+  return linked.map((n, i) => ({
+    ...n,
+    after: i === 0 ? [] : [linked[i - 1].id]
+  }))
+}
+
+export function sanitizePipeline(raw: unknown): Pipeline | null {
+  if (!raw || typeof raw !== 'object') return null
+  const p = raw as Record<string, unknown>
+  if (typeof p.id !== 'string' || typeof p.name !== 'string') return null
   return {
     id: p.id,
     name: p.name,
-    nodes,
+    nodes: normalizeGraph(nodesFromPersisted(p)),
     ...(p.mandatory === true ? { mandatory: true } : {})
   }
 }

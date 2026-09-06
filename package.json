@@ -1,6 +1,6 @@
 {
   "name": "farol",
-  "version": "1.5.41",
+  "version": "1.5.50",
   "private": true,
   "author": "Farol",
   "description": "A terminal workspace with runnable shell + AI pipelines.",
@@ -75,6 +75,7 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^2.3.0",
     "eslint": "^10.9.1",
+    "oxlint-plugin-complexity": "^2.1.8",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.7.2",

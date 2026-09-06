@@ -327,6 +327,128 @@ describe('AgentStreamParser', () => {
     const parser = new AgentStreamParser()
     expect(parse(parser, `${JSON.stringify({ type: 'something_new', data: 1 })}\n`)).toEqual([])
   })
+
+  it('reads OpenCode --format json text and tool_use events', () => {
+    const parser = new AgentStreamParser()
+    const tool = JSON.stringify({
+      type: 'tool_use',
+      part: {
+        id: 'prt_1',
+        callID: 'call_bash',
+        tool: 'bash',
+        state: {
+          status: 'completed',
+          input: { command: 'echo hello', description: 'Print hello' },
+          title: 'Print hello',
+          metadata: { exit: 0 }
+        }
+      }
+    })
+    const write = JSON.stringify({
+      type: 'tool_use',
+      part: {
+        callID: 'call_write',
+        tool: 'write',
+        state: { status: 'completed', input: { path: 'src/app.ts' } }
+      }
+    })
+    const text = JSON.stringify({
+      type: 'text',
+      part: { type: 'text', text: 'Contains just: "hello".' }
+    })
+    const noise = [
+      JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }),
+      JSON.stringify({ type: 'step_finish', part: { type: 'step-finish', reason: 'stop' } }),
+      JSON.stringify({ type: 'reasoning', part: { type: 'reasoning', text: 'thinking' } })
+    ].join('\n')
+    expect(parse(parser, `${noise}\n`)).toEqual([])
+    expect(parse(parser, `${tool}\n${write}\n${text}\n`)).toEqual([
+      { kind: 'tool', toolId: 'call_bash', name: 'bash', detail: 'echo hello', state: 'done' },
+      { kind: 'tool', toolId: 'call_write', name: 'write', detail: 'src/app.ts', state: 'done' },
+      { kind: 'text', text: 'Contains just: "hello".' }
+    ])
+  })
+
+  it('marks a failed OpenCode tool and nested session error', () => {
+    const parser = new AgentStreamParser()
+    const failed = JSON.stringify({
+      type: 'tool_use',
+      part: {
+        callID: 'call_err',
+        tool: 'bash',
+        state: { status: 'completed', input: { command: 'false' }, metadata: { exit: 1 } }
+      }
+    })
+    const errored = JSON.stringify({
+      type: 'tool_use',
+      part: {
+        callID: 'call_fail',
+        tool: 'read',
+        state: { status: 'error', input: { path: 'missing.ts' }, error: 'ENOENT' }
+      }
+    })
+    const session = JSON.stringify({
+      type: 'error',
+      error: { name: 'APIError', data: { message: 'Rate limit exceeded' } }
+    })
+    expect(parse(parser, `${failed}\n${errored}\n${session}\n`)).toEqual([
+      { kind: 'tool', toolId: 'call_err', name: 'bash', detail: 'false', state: 'error' },
+      { kind: 'tool', toolId: 'call_fail', name: 'read', detail: 'missing.ts', state: 'error' },
+      { kind: 'raw', text: 'Rate limit exceeded\n' }
+    ])
+  })
+
+  it('turns an OpenCode question tool_use into a question event', () => {
+    const parser = new AgentStreamParser()
+    const asked = JSON.stringify({
+      type: 'tool_use',
+      part: {
+        callID: 'call_q',
+        tool: 'question',
+        state: {
+          status: 'completed',
+          input: {
+            questions: [
+              {
+                question: 'Which database should we use?',
+                header: 'Database',
+                options: [
+                  { label: 'Postgres', description: 'Existing stack' },
+                  { label: 'SQLite', description: 'Local file' }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    })
+    expect(parse(parser, `${asked}\n`)).toEqual([
+      {
+        kind: 'question',
+        toolId: 'call_q',
+        questions: [
+          {
+            question: 'Which database should we use?',
+            header: 'Database',
+            options: [
+              { label: 'Postgres', description: 'Existing stack' },
+              { label: 'SQLite', description: 'Local file' }
+            ]
+          }
+        ]
+      }
+    ])
+  })
+
+  it('recovers an OpenCode tool card from truncated tool_use JSON', () => {
+    const parser = new AgentStreamParser()
+    const truncated =
+      '{"type":"tool_use","part":{"id":"prt_9","callID":"call_big","tool":"bash",' +
+      '"state":{"status":"completed","input":{"command":"npm test"},"output":"FAIL'
+    expect(parse(parser, `${truncated}\n`)).toEqual([
+      { kind: 'tool', toolId: 'call_big', name: 'bash', detail: 'npm test', state: 'done' }
+    ])
+  })
 })
 
 describe('toolDetail', () => {

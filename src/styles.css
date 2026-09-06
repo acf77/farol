@@ -266,12 +266,44 @@ button:disabled {
   background: rgba(255, 255, 255, 0.08) !important;
 }
 
-.bf-linkish:hover {
-  color: #D8D8D3 !important;
+/*
+ * Transcript fade into the composer. Same pitch as the chat pane
+ * (`C.terminal`). Solid at the input, clear further up.
+ */
+:root {
+  --bf-chat-fade-height: 120px;
+  --bf-chat-fade-color: oklch(0.18 0.004 95);
 }
 
-.bf-status-item:hover {
-  color: #F0F0EC !important;
+.bf-chat-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: var(--bf-chat-fade-height);
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    oklch(0.18 0.004 95 / 0) 0%,
+    oklch(0.18 0.004 95 / 0.16) 24%,
+    oklch(0.18 0.004 95 / 0.48) 52%,
+    oklch(0.18 0.004 95 / 0.82) 76%,
+    oklch(0.18 0.004 95 / 0.96) 90%,
+    var(--bf-chat-fade-color) 100%
+  );
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --bf-chat-fade-height: 36px;
+  }
+  .bf-chat-fade {
+    background: linear-gradient(to bottom, oklch(0.18 0.004 95 / 0), var(--bf-chat-fade-color));
+  }
+}
+
+.bf-linkish:hover {
+  color: #D8D8D3 !important;
 }
 
 /* The run button fills in on hover, so an idle pipeline shows how to start it. */

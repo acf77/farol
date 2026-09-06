@@ -8,7 +8,7 @@ import {
   useCollapseRail
 } from './side-panel'
 import type { DetailLog, RunState } from '../types'
-import { CaretLeft, CaretRight, CheckIcon, ChevronRight, ChevronUp, PlayIcon, Spinner, StatusMark, StopIcon } from './icons'
+import { CaretLeft, CaretRight, CheckIcon, ChevronDown, ChevronRight, ChevronUp, PlayIcon, Spinner, StatusMark, StopIcon } from './icons'
 
 interface Props {
   pipelines: Pipeline[]
@@ -37,6 +37,7 @@ interface Status {
 function statusOf(run: RunState | undefined): Status {
   if (!run) return { label: 'Not run', color: '#A1A19A' }
   if (run.status === 'running') return { label: 'Running', color: C.accentBright }
+  if (run.status === 'cancelled') return { label: 'Cancelled', color: C.textMuted }
   if (run.status === 'pass') return { label: 'Passed', color: C.green }
   return { label: 'Failed', color: C.red }
 }
@@ -409,10 +410,11 @@ function SelectedPanel({
   onStop: (id: string) => void
   onOpenTerminal: () => void
 }) {
+  const [logsOpen, setLogsOpen] = useState(true)
   return (
     <div
       style={{
-        flex: 1,
+        flex: logsOpen ? 1 : 'none',
         minHeight: 0,
         display: 'flex',
         flexDirection: 'column',
@@ -438,7 +440,7 @@ function SelectedPanel({
 
       <div
         style={{
-          flex: 1,
+          flex: logsOpen ? 1 : 'none',
           minHeight: 0,
           marginTop: 13,
           display: 'flex',
@@ -465,27 +467,54 @@ function SelectedPanel({
         >
           {current?.cmd ?? ''}
         </div>
-        <div
+        <button
+          type="button"
+          className="bf-focus"
+          aria-expanded={logsOpen}
+          onClick={() => setLogsOpen((v) => !v)}
+          title={logsOpen ? 'Collapse logs' : 'Expand logs'}
           style={{
-            flex: 1,
-            minHeight: 0,
-            marginTop: 13,
-            background: '#181817',
-            borderRadius: 8,
-            padding: '12px 13px',
+            flex: 'none',
             display: 'flex',
-            flexDirection: 'column',
-            gap: 7,
-            overflowY: 'auto'
+            alignItems: 'center',
+            gap: 6,
+            marginTop: 10,
+            fontSize: 11.5,
+            fontWeight: 600,
+            color: '#A1A19A',
+            padding: 0,
+            border: 0,
+            background: 'transparent',
+            fontFamily: 'inherit',
+            cursor: 'pointer'
           }}
         >
-          {logs.slice(-4).map((l, i) => (
-            <div key={i} style={{ display: 'flex', gap: 14, fontFamily: MONO, fontSize: 11.5 }}>
-              <span style={{ color: '#777772', flex: 'none' }}>{l.t}</span>
-              <span style={{ color: l.color, minWidth: 0, overflowWrap: 'anywhere' }}>{l.text}</span>
-            </div>
-          ))}
-        </div>
+          <span>Logs</span>
+          {logsOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+        </button>
+        {logsOpen && (
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              marginTop: 13,
+              background: '#181817',
+              borderRadius: 8,
+              padding: '12px 13px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 7,
+              overflowY: 'auto'
+            }}
+          >
+            {logs.slice(-4).map((l, i) => (
+              <div key={i} style={{ display: 'flex', gap: 14, fontFamily: MONO, fontSize: 11.5 }}>
+                <span style={{ color: '#777772', flex: 'none' }}>{l.t}</span>
+                <span style={{ color: l.color, minWidth: 0, overflowWrap: 'anywhere' }}>{l.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <SelectedPanelFooter
           selected={selected}
           selRun={selRun}

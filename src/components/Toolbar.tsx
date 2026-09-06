@@ -3,14 +3,8 @@ import type { AppSettings, Project } from '@shared/types'
 import { C, MONO, glass as G } from '../theme'
 import type { View } from '../types'
 import { Checkbox } from './controls'
-import {
-  BellIcon,
-  ChatIcon,
-  FolderPlusIcon,
-  GearIcon,
-  SplitIcon,
-  TerminalIcon
-} from './icons'
+import { CHROME_ROW } from './side-panel'
+import { BellIcon, ChatIcon, FolderPlusIcon, SettingsIcon, SplitIcon, TerminalIcon } from './icons'
 
 interface Props {
   liquid?: boolean
@@ -32,8 +26,6 @@ interface Props {
   settings: AppSettings
   onSettings: (next: AppSettings) => void
   onOpenSettings: () => void
-  /** Hide traffic lights when the project rail owns them. */
-  showTrafficLights?: boolean
 }
 
 const drag = { WebkitAppRegion: 'drag' } as React.CSSProperties
@@ -56,28 +48,6 @@ const VIEWS: { key: View; label: string; Icon: (p: { size?: number }) => JSX.Ele
   { key: 'split', label: 'Split 50/50', Icon: SplitIcon }
 ]
 
-function Light({ color, title, onClick }: { color: string; title: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      className="bf-focus"
-      title={title}
-      aria-label={title}
-      onClick={onClick}
-      style={{
-        ...noDrag,
-        width: 12,
-        height: 12,
-        borderRadius: '50%',
-        border: 'none',
-        padding: 0,
-        background: color,
-        cursor: 'pointer'
-      }}
-    />
-  )
-}
-
 export default function Toolbar({
   liquid,
   project,
@@ -95,11 +65,8 @@ export default function Toolbar({
   onInstallUpdate,
   settings,
   onSettings,
-  onOpenSettings,
-  showTrafficLights = false
+  onOpenSettings
 }: Props) {
-  const api = window.farol
-
   /** Escape dismisses the file menu and returns focus to its trigger. */
   useEffect(() => {
     if (!menuOpen) return
@@ -116,11 +83,11 @@ export default function Toolbar({
     <div
       style={{
         ...drag,
-        height: 52,
+        height: CHROME_ROW,
         flex: 'none',
         display: 'grid',
-        gridTemplateColumns: 'auto minmax(0, 1fr) auto',
-        gridTemplateRows: '52px',
+        gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+        gridTemplateRows: `${CHROME_ROW}px`,
         alignItems: 'center',
         padding: '0 16px',
         columnGap: 18,
@@ -129,16 +96,6 @@ export default function Toolbar({
         background: liquid ? G.appBg : C.appBg
       }}
     >
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', gridColumn: 1, gridRow: 1 }}>
-        {showTrafficLights && (
-          <>
-            <Light color={C.light.red} title="Close" onClick={() => api.window.close()} />
-            <Light color={C.light.yellow} title="Minimise" onClick={() => api.window.minimize()} />
-            <Light color={C.light.green} title="Zoom" onClick={() => api.window.maximize()} />
-          </>
-        )}
-      </div>
-
       <div
         role="radiogroup"
         aria-label="View"
@@ -148,8 +105,7 @@ export default function Toolbar({
           gap: 2,
           gridColumn: 2,
           gridRow: 1,
-          justifySelf: 'center',
-          zIndex: 1
+          justifySelf: 'center'
         }}
       >
         {VIEWS.map((v) => {
@@ -195,7 +151,7 @@ export default function Toolbar({
           justifyContent: 'flex-start',
           gap: 8,
           minWidth: 0,
-          gridColumn: 2,
+          gridColumn: 1,
           gridRow: 1
         }}
       >
@@ -234,6 +190,7 @@ export default function Toolbar({
           gap: 12,
           gridColumn: 3,
           gridRow: 1,
+          justifySelf: 'end',
           position: 'relative',
           zIndex: 2
         }}
@@ -257,7 +214,7 @@ export default function Toolbar({
             cursor: 'pointer'
           }}
         >
-          <GearIcon size={14} color="currentColor" />
+          <SettingsIcon size={14} />
         </button>
 
         <button
@@ -348,7 +305,7 @@ export default function Toolbar({
           style={{
             ...noDrag,
             position: 'absolute',
-            top: 52,
+            top: CHROME_ROW,
             right: 16,
             zIndex: 50,
             width: 292,

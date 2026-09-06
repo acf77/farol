@@ -24,6 +24,7 @@ export interface RunPane extends BasePane {
 
 /** A pipeline-run system message renders as a tool card instead of plain text. */
 export interface AgentPipelineCard {
+  runId?: string
   pipelineId: string
   pipelineName: string
   status: 'running' | 'passed' | 'failed' | 'cancelled'
@@ -81,7 +82,7 @@ export interface Tab {
   id: string
   kind: 'shell' | 'run' | 'agent'
   title: string
-  status: null | 'running' | 'pass' | 'fail'
+  status: null | 'running' | 'pass' | 'fail' | 'cancelled'
   /** Agent tabs are hidden conversations owned by one shell/worktree tab. */
   ownerTabId?: string
   /** Run tabs: the branch the run started on. Shell tabs: a worktree's branch. */
@@ -95,7 +96,7 @@ export interface Tab {
 
 export interface RunState {
   runId: string
-  status: 'running' | 'pass' | 'fail'
+  status: 'running' | 'pass' | 'fail' | 'cancelled'
   label: string
   /** Epoch ms when the run started. */
   startedAt: number

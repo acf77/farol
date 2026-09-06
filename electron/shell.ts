@@ -36,7 +36,7 @@ export class ShellManager {
     const existing = this.sessions.get(paneId)
     if (existing) return
 
-    const agent = provider && isAiProvider(provider) ? provider : undefined
+    const agent = isAiProvider(provider) ? provider : undefined
     const command = agent ? interactiveAiCommand(agent) : defaultShell()
     const args = agent || process.platform === 'win32' ? [] : ['-il']
     let proc: pty.IPty

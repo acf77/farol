@@ -38,27 +38,28 @@ export function listProjectFiles(root: string, query = ''): string[] {
   const needle = query.trim().toLowerCase()
   const out: string[] = []
 
-  const walk = (dir: string): void => {
-    if (out.length >= MAX_FILES) return
-    let entries: fs.Dirent[]
+  const skipDir = (name: string): boolean => SKIP.has(name) || name.startsWith('.')
+  const dirEntries = (dir: string): fs.Dirent[] => {
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true })
+      return fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
     } catch {
-      return
+      return []
     }
-    entries.sort((a, b) => a.name.localeCompare(b.name))
-    for (const entry of entries) {
+  }
+  const addFile = (full: string): void => {
+    const rel = path.relative(root, full).split(path.sep).join('/')
+    if (needle && !rel.toLowerCase().includes(needle)) return
+    out.push(rel)
+  }
+  const walk = (dir: string): void => {
+    for (const entry of dirEntries(dir)) {
       if (out.length >= MAX_FILES) return
       const full = path.join(dir, entry.name)
       if (entry.isDirectory()) {
-        if (SKIP.has(entry.name) || entry.name.startsWith('.')) continue
-        walk(full)
-        continue
+        if (!skipDir(entry.name)) walk(full)
+      } else if (entry.isFile()) {
+        addFile(full)
       }
-      if (!entry.isFile()) continue
-      const rel = path.relative(root, full).split(path.sep).join('/')
-      if (needle && !rel.toLowerCase().includes(needle)) continue
-      out.push(rel)
     }
   }
 
