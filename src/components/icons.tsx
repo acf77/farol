@@ -208,24 +208,6 @@ export function CircleIcon({ size = 13, color = 'currentColor' }: IconProps) {
   )
 }
 
-export function ErrorIcon({ size = 13, color = 'currentColor' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.3}>
-      <circle cx="7" cy="7" r="5.3" />
-      <path d="M7 4v3.4M7 9.6v.1" />
-    </svg>
-  )
-}
-
-export function WarnIcon({ size = 13, color = 'currentColor' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.3}>
-      <path d="M7 2 12.5 12H1.5Z" />
-      <path d="M7 6v2.4" />
-    </svg>
-  )
-}
-
 export function PlayIcon({ size = 9 }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 10 10" fill="currentColor">
@@ -269,17 +251,6 @@ export function StatusMark({ done = false, size = 22 }: { done?: boolean; size?:
   )
 }
 
-/** Composer: the model indicator — an aperture ring. */
-export function ModelIcon({ size = 17, color = '#A1A19A' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 18 18" fill="none" stroke={color} strokeWidth={1.3}>
-      <circle cx="9" cy="9" r="7.2" />
-      <path d="M11.8 6.4v4.2a2 2 0 0 0 2.4 1.9" />
-      <circle cx="9" cy="9" r="2.4" />
-    </svg>
-  )
-}
-
 export function ClipIcon({ size = 17, color = '#A1A19A' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 18 18" fill="none" stroke={color} strokeWidth={1.3}>
@@ -288,30 +259,12 @@ export function ClipIcon({ size = 17, color = '#A1A19A' }: IconProps) {
   )
 }
 
-/** The three message-footer actions: copy, useful, retry. */
+/** Copy a message from the assistant footer. */
 export function CopyIcon({ size = 15, color = '#A1A19A' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.3} style={{ cursor: 'pointer' }}>
       <rect x="2.5" y="2.5" width="8" height="8" rx="1.5" />
       <path d="M5.5 13.5h6a2 2 0 0 0 2-2v-6" />
-    </svg>
-  )
-}
-
-export function ThumbIcon({ size = 15, color = '#A1A19A' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.3} style={{ cursor: 'pointer' }}>
-      <path d="M5 14V7l3-5 1 .6c.6.4.8 1.1.6 1.8L9 7h3.6c.9 0 1.6.9 1.3 1.8l-1.2 4A2 2 0 0 1 10.8 14Z" />
-      <path d="M2 7h3v7H2Z" />
-    </svg>
-  )
-}
-
-export function RetryIcon({ size = 15, color = '#A1A19A' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.3} style={{ cursor: 'pointer' }}>
-      <path d="M13.5 8a5.5 5.5 0 1 1-2-4.2" />
-      <path d="M13.8 1.8v3h-3" />
     </svg>
   )
 }
@@ -322,6 +275,15 @@ export function ClearChatIcon({ size = 14, color = '#A1A19A' }: IconProps) {
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.4}>
       <path d="M2.5 4.2A1.7 1.7 0 0 1 4.2 2.5h7.6A1.7 1.7 0 0 1 13.5 4.2v4.6a1.7 1.7 0 0 1-1.7 1.7H7l-3.2 2.6v-2.6a1.3 1.3 0 0 1-1.3-1.3Z" />
       <path d="M5.5 8h5" />
+    </svg>
+  )
+}
+
+export function PinIcon({ size = 14, color = 'currentColor' }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.4}>
+      <path d="M9.8 2.4 13.6 6.2c.35.35.28 1-.16 1.24L11 8.6 8.7 13.2 2.8 7.3 7.4 5l1.16-2.44c.24-.44.89-.51 1.24-.16Z" />
+      <path d="m6.6 9.4-3.4 3.4" />
     </svg>
   )
 }

@@ -13,7 +13,7 @@ import type { AgentMessage, AgentPane, View } from '../types'
 import { C, MONO, PANE } from '../theme'
 import { MarkdownBody, stripControlMarkers } from '../markdown'
 import { MessageErrorBoundary } from '../ErrorBoundary'
-import { CliModelMenu } from './controls'
+import { Button, CliModelMenu } from './controls'
 import {
   CheckIcon,
   ChevronDown,
@@ -25,7 +25,6 @@ import {
   SendIcon,
   Spinner,
   StatusMark,
-  ThumbIcon,
   ToolIcon
 } from './icons'
 import farolMark from '../assets/farol-mark.png'
@@ -102,6 +101,98 @@ function fmtClock(epoch: number): string {
   return `${h}:${String(d.getMinutes()).padStart(2, '0')} ${d.getHours() < 12 ? 'AM' : 'PM'}`
 }
 
+function ChatCard({
+  title,
+  extra,
+  children,
+  compact,
+  style
+}: {
+  title: React.ReactNode
+  extra?: React.ReactNode
+  children?: React.ReactNode
+  compact?: boolean
+  style?: React.CSSProperties
+}) {
+  return (
+    <div
+      style={{
+        border: `1px solid ${C.cardBorder}`,
+        borderRadius: 11,
+        overflow: 'hidden',
+        background: C.card,
+        ...style
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: compact ? 9 : 8,
+          minWidth: 0,
+          padding: compact ? '7px 11px' : '11px 14px',
+          borderBottom: children ? `1px solid ${C.cardBorder}` : undefined
+        }}
+      >
+        <ToolIcon />
+        <span
+          style={{
+            fontFamily: MONO,
+            fontSize: compact ? 11.5 : 12,
+            color: '#C4C4BE',
+            flex: compact ? 'none' : undefined
+          }}
+        >
+          {title}
+        </span>
+        {extra}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function ChatBanner({
+  children,
+  role,
+  labelledBy,
+  describedBy,
+  style
+}: {
+  children: React.ReactNode
+  role?: 'alertdialog' | 'status'
+  labelledBy?: string
+  describedBy?: string
+  style?: React.CSSProperties
+}) {
+  return (
+    <div
+      role={role}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      style={{
+        flex: 'none',
+        margin: '12px 34px 0',
+        maxWidth: 680,
+        marginLeft: 'auto',
+        marginRight: 'auto',
+        width: '100%',
+        boxSizing: 'border-box',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '12px 14px',
+        background: C.card,
+        border: `1px solid ${C.cardBorder}`,
+        borderRadius: 11,
+        ...style
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 /**
  * One tool call, live. These arrive in bursts while the agent works, so the
  * card is a single quiet line — the point is to show that something is
@@ -109,55 +200,41 @@ function fmtClock(epoch: number): string {
  */
 function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool']>; tight: boolean }) {
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 9,
-        minWidth: 0,
-        padding: '7px 11px',
-        // Close the transcript's 26px turn gap when cards run back to back.
-        marginTop: tight ? -16 : 0,
-        background: '#232322',
-        border: '1px solid #3E3E3A',
-        borderRadius: 9
-      }}
-    >
-      <ToolIcon />
-      <span style={{ fontFamily: MONO, fontSize: 11.5, color: '#C4C4BE', flex: 'none' }}>
-        {tool.name}
-      </span>
-      {tool.detail && (
-        <span
-          title={tool.detail}
-          style={{
-            fontFamily: MONO,
-            fontSize: 11.5,
-            color: '#A1A19A',
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            userSelect: 'text'
-          }}
-        >
-          {tool.detail}
-        </span>
-      )}
-      <span style={{ flex: 1 }} />
-      {tool.state === 'running' ? (
-        <Spinner />
-      ) : tool.state === 'done' ? (
-        <StatusMark done size={18} />
-      ) : (
-        <span style={{ fontSize: 12, fontWeight: 700, color: C.red }}>✗</span>
-      )}
-    </div>
+    <ChatCard
+      compact
+      style={{ marginTop: tight ? -16 : 0 }}
+      title={tool.name}
+      extra={
+        <>
+          {tool.detail && (
+            <span
+              title={tool.detail}
+              style={{
+                fontFamily: MONO,
+                fontSize: 11.5,
+                color: '#A1A19A',
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                userSelect: 'text'
+              }}
+            >
+              {tool.detail}
+            </span>
+          )}
+          <span style={{ flex: 1 }} />
+          {tool.state === 'running' ? (
+            <Spinner />
+          ) : tool.state === 'done' ? (
+            <StatusMark done size={18} />
+          ) : (
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.red }}>✗</span>
+          )}
+        </>
+      }
+    />
   )
-}
-
-function messageText(text: unknown): string {
-  return typeof text === 'string' ? text : String(text ?? '')
 }
 
 function PipelineMsgCard({
@@ -170,52 +247,37 @@ function PipelineMsgCard({
   onOpenPipeline: (tabId: string) => void
 }) {
   return (
-    <div
-      style={{
-        border: '1px solid #3E3E3A',
-        borderRadius: 11,
-        overflow: 'hidden',
-        background: '#232322'
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '11px 14px',
-          borderBottom: '1px solid #3E3E3A'
-        }}
-      >
-        <ToolIcon />
-        <span style={{ fontFamily: MONO, fontSize: 12, color: '#C4C4BE' }}>
-          pipeline: {pc.pipelineName}
-        </span>
-        {pc.status === 'running' ? (
-          <Spinner />
-        ) : pc.status === 'passed' ? (
-          <StatusMark done size={18} />
-        ) : (
+    <ChatCard
+      title={`pipeline: ${pc.pipelineName}`}
+      extra={
+        <>
+          {pc.status === 'running' ? (
+            <Spinner />
+          ) : pc.status === 'passed' ? (
+            <StatusMark done size={18} />
+          ) : (
+            <span
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: pc.status === 'failed' ? C.red : C.faint
+              }}
+            >
+              {pc.status === 'failed' ? '✗' : '–'}
+            </span>
+          )}
+          <span style={{ flex: 1 }} />
           <span
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              color: pc.status === 'failed' ? C.red : C.faint
-            }}
+            className="bf-linkish"
+            onClick={() => onOpenPipeline(pc.tabId)}
+            style={{ fontSize: 11.5, color: '#A1A19A', cursor: 'pointer' }}
+            title="Jump to this run's terminal tab"
           >
-            {pc.status === 'failed' ? '✗' : '–'}
+            Open in terminal
           </span>
-        )}
-        <span style={{ flex: 1 }} />
-        <span
-          className="bf-linkish"
-          onClick={() => onOpenPipeline(pc.tabId)}
-          style={{ fontSize: 11.5, color: '#A1A19A', cursor: 'pointer' }}
-          title="Jump to this run's terminal tab"
-        >
-          Open in terminal
-        </span>
-      </div>
+        </>
+      }
+    >
       <div
         style={{
           padding: '13px 15px',
@@ -231,7 +293,7 @@ function PipelineMsgCard({
       >
         {text}
       </div>
-    </div>
+    </ChatCard>
   )
 }
 
@@ -252,9 +314,6 @@ function AssistantFooter({
       <div style={{ display: 'flex', gap: 16 }}>
         <span title="Copy" onClick={() => void navigator.clipboard?.writeText(stripControlMarkers(text))}>
           <CopyIcon />
-        </span>
-        <span title="Good response">
-          <ThumbIcon />
         </span>
         <span title="Clear chat and start fresh" onClick={onNewChat}>
           <ClearChatIcon size={15} />
@@ -289,7 +348,7 @@ function QuestionOptionButton({
         gap: 2,
         width: '100%',
         padding: '8px 10px',
-        border: selected ? '1px solid #D6F23A' : '1px solid #3E3E3A',
+        border: selected ? `1px solid ${C.accent}` : `1px solid ${C.cardBorder}`,
         borderRadius: 8,
         background: selected ? 'rgba(214, 242, 58,0.12)' : 'transparent',
         color: '#D8D8D3',
@@ -343,31 +402,14 @@ function QuestionCard({
   const ready = answers.every((row) => row.length > 0)
 
   return (
-    <div
-      style={{
-        border: '1px solid #3E3E3A',
-        borderRadius: 11,
-        overflow: 'hidden',
-        background: '#232322'
-      }}
+    <ChatCard
+      title={
+        card.dismissed
+          ? 'questions dismissed'
+          : `question${card.questions.length === 1 ? '' : 's'}`
+      }
+      extra={locked && !card.dismissed ? <StatusMark done size={18} /> : null}
     >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '11px 14px',
-          borderBottom: '1px solid #3E3E3A'
-        }}
-      >
-        <ToolIcon />
-        <span style={{ fontFamily: MONO, fontSize: 12, color: '#C4C4BE' }}>
-          {card.dismissed
-            ? 'questions dismissed'
-            : `question${card.questions.length === 1 ? '' : 's'}`}
-        </span>
-        {locked && !card.dismissed ? <StatusMark done size={18} /> : null}
-      </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '13px 15px' }}>
         {card.questions.map((question, qi) => {
           const selected = new Set(card.answers?.[qi] ?? picks[qi])
@@ -407,7 +449,7 @@ function QuestionCard({
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
-                    border: '1px solid #3E3E3A',
+                    border: `1px solid ${C.cardBorder}`,
                     borderRadius: 8,
                     background: '#181817',
                     color: '#F0F0EC',
@@ -426,44 +468,18 @@ function QuestionCard({
         })}
         {!locked && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <button
-              type="button"
-              className="bf-focus"
-              onClick={() => onAnswer(card.requestId, null)}
-              style={{
-                border: '1px solid #3E3E3A',
-                background: 'transparent',
-                color: '#A1A19A',
-                borderRadius: 8,
-                padding: '6px 12px',
-                fontSize: 12.5,
-                cursor: 'pointer'
-              }}
-            >
-              Skip
-            </button>
-            <button
-              type="button"
-              className="bf-focus"
+            <Button onClick={() => onAnswer(card.requestId, null)}>Skip</Button>
+            <Button
+              variant="primary"
               disabled={!ready}
               onClick={() => onAnswer(card.requestId, answers)}
-              style={{
-                border: 'none',
-                background: ready ? C.accent : '#2D2D2B',
-                color: ready ? C.accentInk : '#777772',
-                borderRadius: 8,
-                padding: '6px 12px',
-                fontSize: 12.5,
-                fontWeight: 600,
-                cursor: ready ? 'pointer' : 'default'
-              }}
             >
               Continue
-            </button>
+            </Button>
           </div>
         )}
       </div>
-    </div>
+    </ChatCard>
   )
 }
 
@@ -493,8 +509,8 @@ function Turn({
           style={{
             maxWidth: 430,
             padding: '11px 15px',
-            background: '#2D2D2B',
-            border: '1px solid #3E3E3A',
+            background: C.panel,
+            border: `1px solid ${C.cardBorder}`,
             borderRadius: 12,
             fontSize: 13.5,
             lineHeight: 1.5,
@@ -503,7 +519,7 @@ function Turn({
             userSelect: 'text'
           }}
         >
-          {messageText(m.text)}
+          {m.text}
         </div>
         {m.at && (
           <span style={{ fontSize: 11, color: '#777772' }}>{fmtClock(m.at)}</span>
@@ -516,15 +532,14 @@ function Turn({
   if (m.tool) return <ToolCard tool={m.tool} tight={!!messages[i - 1]?.tool} />
 
   const pc = m.pipeline
-  const text = messageText(m.text)
   const showFooter = m.role === 'assistant' && i === messages.length - 1 && !isBusy
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 15, minWidth: 0 }}>
       {pc ? (
-        <PipelineMsgCard pc={pc} text={text} onOpenPipeline={onOpenPipeline} />
+        <PipelineMsgCard pc={pc} text={m.text} onOpenPipeline={onOpenPipeline} />
       ) : m.role === 'assistant' ? (
-        <MarkdownBody text={text} />
+        <MarkdownBody text={m.text} />
       ) : (
         <div
           style={{
@@ -537,11 +552,11 @@ function Turn({
             userSelect: 'text'
           }}
         >
-          {text}
+          {m.text}
         </div>
       )}
 
-      {showFooter && <AssistantFooter text={text} provider={provider} onNewChat={onNewChat} />}
+      {showFooter && <AssistantFooter text={m.text} provider={provider} onNewChat={onNewChat} />}
     </div>
   )
 }
@@ -554,27 +569,11 @@ function ClearChatBanner({
   onConfirmClearChat?: () => void
 }) {
   return (
-    <div
+    <ChatBanner
       role="alertdialog"
-      aria-labelledby="clear-chat-title"
-      aria-describedby="clear-chat-desc"
-      style={{
-        flex: 'none',
-        margin: '12px 34px 0',
-        maxWidth: 680,
-        marginLeft: 'auto',
-        marginRight: 'auto',
-        width: '100%',
-        boxSizing: 'border-box',
-        display: 'flex',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: '10px 14px',
-        padding: '12px 14px',
-        background: '#232322',
-        border: '1px solid #3E3E3A',
-        borderRadius: 11
-      }}
+      labelledBy="clear-chat-title"
+      describedBy="clear-chat-desc"
+      style={{ flexWrap: 'wrap', gap: '10px 14px' }}
     >
       <div style={{ flex: '1 1 220px', minWidth: 0 }}>
         <div id="clear-chat-title" style={{ fontSize: 13.5, fontWeight: 600, color: C.textSoft }}>
@@ -586,65 +585,22 @@ function ClearChatBanner({
         </div>
       </div>
       <div style={{ display: 'flex', gap: 8, flex: 'none' }}>
-        <button
-          type="button"
-          className="bf-focus"
-          onClick={onCancelClearChat}
-          style={{
-            border: '1px solid #3E3E3A',
-            background: 'transparent',
-            color: C.textMuted,
-            borderRadius: 8,
-            padding: '6px 12px',
-            fontSize: 12.5,
-            cursor: 'pointer'
-          }}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          className="bf-focus"
+        <Button onClick={onCancelClearChat}>Cancel</Button>
+        <Button
+          variant="danger"
           onClick={onConfirmClearChat}
-          style={{
-            border: 'none',
-            background: 'rgba(255, 98, 90,0.16)',
-            color: C.red,
-            borderRadius: 8,
-            padding: '6px 12px',
-            fontSize: 12.5,
-            fontWeight: 600,
-            cursor: 'pointer'
-          }}
+          style={{ background: 'rgba(255, 98, 90,0.16)' }}
         >
           Clear chat
-        </button>
+        </Button>
       </div>
-    </div>
+    </ChatBanner>
   )
 }
 
 function ChatClearedBanner({ onDismissChatCleared }: { onDismissChatCleared?: () => void }) {
   return (
-    <div
-      role="status"
-      style={{
-        flex: 'none',
-        margin: '12px 34px 0',
-        maxWidth: 680,
-        marginLeft: 'auto',
-        marginRight: 'auto',
-        width: '100%',
-        boxSizing: 'border-box',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '10px 14px',
-        background: '#232322',
-        border: '1px solid #3E3E3A',
-        borderRadius: 10
-      }}
-    >
+    <ChatBanner role="status">
       <span style={{ flex: 1, fontSize: 12.5, lineHeight: 1.45, color: C.textMuted }}>
         Conversation cleared. Previous messages were removed from this branch — switch to another
         branch in the sidebar to see its chat.
@@ -667,7 +623,7 @@ function ChatClearedBanner({ onDismissChatCleared }: { onDismissChatCleared?: ()
       >
         ×
       </button>
-    </div>
+    </ChatBanner>
   )
 }
 
@@ -728,8 +684,8 @@ function SuggestionList({ onPick }: { onPick: (prompt: string) => void }) {
             minHeight: 92,
             padding: '14px 14px 12px',
             margin: 0,
-            background: '#232322',
-            border: '1px solid #3E3E3A',
+            background: C.card,
+            border: `1px solid ${C.cardBorder}`,
             borderRadius: 12,
             cursor: 'pointer',
             textAlign: 'left',
@@ -770,7 +726,7 @@ function AttachmentStrip({
             height: 56,
             borderRadius: 8,
             overflow: 'hidden',
-            border: '1px solid #3E3E3A',
+            border: `1px solid ${C.cardBorder}`,
             background: '#181817'
           }}
         >
@@ -839,7 +795,7 @@ function ComposerPickerMenu({
         zIndex: 70,
         maxHeight: 220,
         overflow: 'auto',
-        background: '#232322',
+        background: C.card,
         border: `1px solid ${C.cardBorder}`,
         borderRadius: 10,
         boxShadow: '0 14px 36px rgba(0,0,0,0.5)',
@@ -863,7 +819,7 @@ function ComposerPickerMenu({
               width: '100%',
               textAlign: 'left',
               border: 'none',
-              background: i === index ? '#2D2D2B' : 'transparent',
+              background: i === index ? C.panel : 'transparent',
               color: C.textSoft,
               fontFamily: MONO,
               fontSize: 12,
@@ -1030,8 +986,8 @@ function composerSurfaceStyle(dragOver: boolean): React.CSSProperties {
   return {
     maxWidth: 680,
     margin: '0 auto',
-    background: dragOver ? '#2D2D2B' : '#232322',
-    border: dragOver ? `1px solid ${C.accent}` : '1px solid #3E3E3A',
+    background: dragOver ? C.panel : C.card,
+    border: dragOver ? `1px solid ${C.accent}` : `1px solid ${C.cardBorder}`,
     borderRadius: 14,
     padding: '14px 16px 11px',
     position: 'relative',
@@ -1117,7 +1073,6 @@ function ComposerToolbar({
   agentBtnRef,
   provider,
   model,
-  canChangeProvider,
   isBusy,
   canSend,
   onNewChat,
@@ -1129,7 +1084,6 @@ function ComposerToolbar({
   agentBtnRef: React.RefObject<HTMLButtonElement>
   provider: AiProvider
   model?: string
-  canChangeProvider: boolean
   isBusy: boolean
   canSend: boolean
   onNewChat: () => void
@@ -1151,7 +1105,7 @@ function ComposerToolbar({
           height: 26,
           borderRadius: 8,
           border: 'none',
-          background: '#2D2D2B',
+          background: C.panel,
           display: 'grid',
           placeItems: 'center',
           color: '#A1A19A',
@@ -1176,9 +1130,8 @@ function ComposerToolbar({
           background: 'transparent',
           color: '#A1A19A',
           fontSize: 12,
-          cursor: canChangeProvider ? 'pointer' : 'default',
-          padding: '2px 4px',
-          opacity: canChangeProvider ? 1 : 0.55
+          cursor: 'pointer',
+          padding: '2px 4px'
         }}
       >
         <span
@@ -1216,80 +1169,6 @@ function ComposerToolbar({
   )
 }
 
-function ComposerOverlays({
-  menuPos,
-  skill,
-  mention,
-  agent
-}: {
-  menuPos: { left: number; bottom: number; width: number } | null
-  skill: {
-    query: string
-    hits: AgentSkill[]
-    index: number
-    onHover: (i: number) => void
-    onPick: (skill: AgentSkill) => void
-  } | null
-  mention: {
-    query: string
-    files: string[]
-    index: number
-    onHover: (i: number) => void
-    onPick: (file: string) => void
-  } | null
-  agent: {
-    pos: { left: number; bottom: number }
-    provider: AiProvider
-    model?: string
-    settings?: AppSettings
-    onPick: (provider: AiProvider, model?: string) => void
-    onClose: () => void
-  } | null
-}) {
-  return (
-    <>
-      {skill && menuPos && (
-        <ComposerPickerMenu
-          label="Skills"
-          menuPos={menuPos}
-          empty={skill.query ? 'No matching skills' : 'No skills found'}
-          items={skill.hits.map((item) => ({ key: item.name, label: item.name }))}
-          index={skill.index}
-          onHover={skill.onHover}
-          onPick={(i) => {
-            const item = skill.hits[i]
-            if (item) skill.onPick(item)
-          }}
-        />
-      )}
-      {mention && menuPos && (
-        <ComposerPickerMenu
-          label="Files"
-          menuPos={menuPos}
-          empty={mention.query ? 'No matching files' : 'Type to filter project files…'}
-          items={mention.files.map((file) => ({ key: file, label: `@${file}` }))}
-          index={mention.index}
-          onHover={mention.onHover}
-          onPick={(i) => {
-            const file = mention.files[i]
-            if (file) mention.onPick(file)
-          }}
-        />
-      )}
-      {agent && (
-        <CliModelMenu
-          provider={agent.provider}
-          model={agent.model}
-          settings={agent.settings}
-          pos={{ left: agent.pos.left, bottom: agent.pos.bottom, width: 188 }}
-          onPick={agent.onPick}
-          onClose={agent.onClose}
-        />
-      )}
-    </>
-  )
-}
-
 function SendButton({
   isBusy,
   canSend,
@@ -1309,7 +1188,7 @@ function SendButton({
         width: 34,
         height: 30,
         borderRadius: 9,
-        background: isBusy ? C.red : canSend ? C.accent : '#2D2D2B',
+        background: isBusy ? C.red : canSend ? C.accent : C.panel,
         color: !isBusy && canSend ? C.accentInk : C.text,
         display: 'grid',
         placeItems: 'center',
@@ -1332,14 +1211,14 @@ function ComposerBox({
   provider,
   model,
   settings,
-  canChangeProvider,
   textareaRef,
   onMessage,
   onCancel,
   onProviderChange,
   onNewChat,
   onProviderLocal,
-  sendTextRef
+  sendTextRef,
+  showFade
 }: {
   projectPath: string
   availableCount: number
@@ -1347,7 +1226,6 @@ function ComposerBox({
   provider: AiProvider
   model?: string
   settings?: AppSettings
-  canChangeProvider: boolean
   textareaRef: React.RefObject<HTMLTextAreaElement>
   onMessage: (text: string, provider: AiProvider, model?: string) => void
   onCancel: () => void
@@ -1356,6 +1234,7 @@ function ComposerBox({
   onProviderLocal: (provider: AiProvider, model?: string) => void
   /** Lets the parent fire the same send path suggestions used before (incl. history). */
   sendTextRef: React.MutableRefObject<(clean: string) => void>
+  showFade: boolean
 }) {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
@@ -1462,7 +1341,8 @@ function ComposerBox({
   }, [pickerOpen])
 
   const openAgentMenu = (): void => {
-    if (!canChangeProvider) return
+    // Allow switching while busy so a usage/session limit can be escaped without
+    // waiting for the dying CLI to exit — the next message uses the new provider.
     const r = agentBtnRef.current?.getBoundingClientRect()
     if (r) {
       setAgentMenuPos({
@@ -1557,41 +1437,6 @@ function ComposerBox({
       : mention
         ? pickerHandle(mentionFiles, mentionIndex, setMentionIndex, () => setMention(null), insertMention)
         : null
-  const skillOverlay =
-    skillQuery !== null
-      ? {
-          query: skillQuery,
-          hits: skillHits,
-          index: skillIndex,
-          onHover: setSkillIndex,
-          onPick: insertSkill
-        }
-      : null
-  const mentionOverlay = mention
-    ? {
-        query: mention.query,
-        files: mentionFiles,
-        index: mentionIndex,
-        onHover: setMentionIndex,
-        onPick: insertMention
-      }
-    : null
-  const agentOverlay =
-    modelOpen && agentMenuPos && canChangeProvider
-      ? {
-          pos: agentMenuPos,
-          provider,
-          model,
-          settings,
-          onPick: (p: AiProvider, m?: string) => {
-            onProviderLocal(p, m)
-            onProviderChange(p, m)
-            setModelOpen(false)
-            window.setTimeout(() => textareaRef.current?.focus(), 0)
-          },
-          onClose: () => setModelOpen(false)
-        }
-      : null
 
   return (
     <div
@@ -1599,11 +1444,11 @@ function ComposerBox({
         flex: 'none',
         position: 'relative',
         zIndex: 2,
-        padding: '12px 34px 24px',
+        padding: '32px 34px 24px',
         background: C.terminal
       }}
     >
-      <div className="bf-chat-fade" aria-hidden="true" />
+      <div className={showFade ? 'bf-chat-fade is-on' : 'bf-chat-fade'} aria-hidden="true" />
       <div
         ref={composerBoxRef}
         onDragOver={(e) => {
@@ -1670,7 +1515,6 @@ function ComposerBox({
           agentBtnRef={agentBtnRef}
           provider={provider}
           model={model}
-          canChangeProvider={canChangeProvider}
           isBusy={isBusy}
           canSend={canSend}
           onNewChat={onNewChat}
@@ -1681,78 +1525,50 @@ function ComposerBox({
         />
       </div>
 
-      <ComposerOverlays
-        menuPos={menuPos}
-        skill={skillOverlay}
-        mention={mentionOverlay}
-        agent={agentOverlay}
-      />
-    </div>
-  )
-}
-
-function MessageList({
-  messages,
-  isBusy,
-  provider,
-  onOpenPipeline,
-  onNewChat,
-  onAnswer
-}: {
-  messages: AgentMessage[]
-  isBusy: boolean
-  provider: AiProvider
-  onOpenPipeline: (tabId: string) => void
-  onNewChat: () => void
-  onAnswer: (requestId: string, answers: string[][] | null) => void
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
-      {messages.map((m, i) => (
-        <MessageErrorBoundary key={i}>
-          <Turn
-            m={m}
-            i={i}
-            messages={messages}
-            isBusy={isBusy}
-            provider={provider}
-            onOpenPipeline={onOpenPipeline}
-            onNewChat={onNewChat}
-            onAnswer={onAnswer}
-          />
-        </MessageErrorBoundary>
-      ))}
-    </div>
-  )
-}
-
-function ChatBanners({
-  clearChatConfirm,
-  chatClearedNotice,
-  hasMessages,
-  onCancelClearChat,
-  onConfirmClearChat,
-  onDismissChatCleared
-}: {
-  clearChatConfirm?: boolean
-  chatClearedNotice?: boolean
-  hasMessages: boolean
-  onCancelClearChat?: () => void
-  onConfirmClearChat?: () => void
-  onDismissChatCleared?: () => void
-}) {
-  return (
-    <>
-      {clearChatConfirm && (
-        <ClearChatBanner
-          onCancelClearChat={onCancelClearChat}
-          onConfirmClearChat={onConfirmClearChat}
+      {skillQuery !== null && menuPos && (
+        <ComposerPickerMenu
+          label="Skills"
+          menuPos={menuPos}
+          empty={skillQuery ? 'No matching skills' : 'No skills found'}
+          items={skillHits.map((item) => ({ key: item.name, label: item.name }))}
+          index={skillIndex}
+          onHover={setSkillIndex}
+          onPick={(i) => {
+            const item = skillHits[i]
+            if (item) insertSkill(item)
+          }}
         />
       )}
-      {chatClearedNotice && !hasMessages && (
-        <ChatClearedBanner onDismissChatCleared={onDismissChatCleared} />
+      {mention && menuPos && (
+        <ComposerPickerMenu
+          label="Files"
+          menuPos={menuPos}
+          empty={mention.query ? 'No matching files' : 'Type to filter project files…'}
+          items={mentionFiles.map((file) => ({ key: file, label: `@${file}` }))}
+          index={mentionIndex}
+          onHover={setMentionIndex}
+          onPick={(i) => {
+            const file = mentionFiles[i]
+            if (file) insertMention(file)
+          }}
+        />
       )}
-    </>
+      {modelOpen && agentMenuPos && (
+        <CliModelMenu
+          provider={provider}
+          model={model}
+          settings={settings}
+          pos={{ left: agentMenuPos.left, bottom: agentMenuPos.bottom, width: 188 }}
+          onPick={(p, m) => {
+            onProviderLocal(p, m)
+            onProviderChange(p, m)
+            setModelOpen(false)
+            window.setTimeout(() => textareaRef.current?.focus(), 0)
+          }}
+          onClose={() => setModelOpen(false)}
+        />
+      )}
+    </div>
   )
 }
 
@@ -1779,17 +1595,22 @@ export default function ChatPane({
 }: Props) {
   const [provider, setProvider] = useState<AiProvider>(normalizeAi(pane?.provider ?? defaultProvider))
   const [model, setModel] = useState<string | undefined>(normalizeModel(pane?.model ?? defaultModel))
+  const [showFade, setShowFade] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
+
+  const syncScrollChrome = (node: HTMLDivElement): void => {
+    const room = node.scrollHeight - node.clientHeight
+    const fromBottom = room - node.scrollTop
+    stickRef.current = fromBottom < STICK_SLACK
+    setShowFade(room > 8 && fromBottom > 24)
+  }
   const localRef = useRef<HTMLTextAreaElement>(null)
   const textareaRef = composerRef ?? localRef
   const sendTextRef = useRef<(clean: string) => void>(() => {})
 
   const status = pane?.status ?? 'idle'
   const isBusy = busy.has(status)
-  // Allow switching while busy so a usage/session limit can be escaped without
-  // waiting for the dying CLI to exit — the next message uses the new provider.
-  const canChangeProvider = true
   const messages = pane?.messages ?? []
   const availableCount = pipelines.filter((p) => p.nodes.length).length
   const showSuggestions = availableCount > 0
@@ -1803,32 +1624,36 @@ export default function ChatPane({
   // scrolling up to read something does not get yanked back by the next event.
   useEffect(() => {
     const node = scrollRef.current
-    if (node && stickRef.current) node.scrollTop = node.scrollHeight
+    if (!node) return
+    if (stickRef.current) node.scrollTop = node.scrollHeight
+    syncScrollChrome(node)
+    const ro = new ResizeObserver(() => syncScrollChrome(node))
+    ro.observe(node)
+    if (node.firstElementChild) ro.observe(node.firstElementChild)
+    return () => ro.disconnect()
   }, [messages])
 
   const flex = view === 'split' ? '1 1 50%' : '1 1 100%'
 
   return (
     <div style={{ ...PANE, flex }}>
-      <ChatBanners
-        clearChatConfirm={clearChatConfirm}
-        chatClearedNotice={chatClearedNotice}
-        hasMessages={messages.length > 0}
-        onCancelClearChat={onCancelClearChat}
-        onConfirmClearChat={onConfirmClearChat}
-        onDismissChatCleared={onDismissChatCleared}
-      />
+      {clearChatConfirm && (
+        <ClearChatBanner
+          onCancelClearChat={onCancelClearChat}
+          onConfirmClearChat={onConfirmClearChat}
+        />
+      )}
+      {chatClearedNotice && messages.length === 0 && (
+        <ChatClearedBanner onDismissChatCleared={onDismissChatCleared} />
+      )}
       <div
         ref={scrollRef}
-        onScroll={(e) => {
-          const node = e.currentTarget
-          stickRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < STICK_SLACK
-        }}
+        className="bf-chat-scroll"
+        onScroll={(e) => syncScrollChrome(e.currentTarget)}
         style={{
           flex: 1,
           minHeight: 0,
           overflow: 'auto',
-          padding: '72px 28px calc(var(--bf-chat-fade-height) + 36px)',
           display: 'flex',
           flexDirection: 'column'
         }}
@@ -1838,10 +1663,8 @@ export default function ChatPane({
             maxWidth: 680,
             margin: '0 auto',
             width: '100%',
-            minHeight: '100%',
             display: 'flex',
-            flexDirection: 'column',
-            boxSizing: 'border-box'
+            flexDirection: 'column'
           }}
         >
           {messages.length === 0 ? (
@@ -1851,16 +1674,23 @@ export default function ChatPane({
               {showSuggestions && <SuggestionList onPick={(p) => sendTextRef.current(p)} />}
             </>
           ) : (
-            <MessageList
-              messages={messages}
-              isBusy={isBusy}
-              provider={provider}
-              onOpenPipeline={onOpenPipeline}
-              onNewChat={onNewChat}
-              onAnswer={onAnswer}
-            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
+              {messages.map((m, i) => (
+                <MessageErrorBoundary key={i}>
+                  <Turn
+                    m={m}
+                    i={i}
+                    messages={messages}
+                    isBusy={isBusy}
+                    provider={provider}
+                    onOpenPipeline={onOpenPipeline}
+                    onNewChat={onNewChat}
+                    onAnswer={onAnswer}
+                  />
+                </MessageErrorBoundary>
+              ))}
+            </div>
           )}
-          <div style={{ height: 20 }} />
         </div>
       </div>
 
@@ -1871,7 +1701,6 @@ export default function ChatPane({
         provider={provider}
         model={model}
         settings={settings}
-        canChangeProvider={canChangeProvider}
         textareaRef={textareaRef}
         onMessage={onMessage}
         onCancel={onCancel}
@@ -1882,6 +1711,7 @@ export default function ChatPane({
           setModel(m)
         }}
         sendTextRef={sendTextRef}
+        showFade={showFade}
       />
     </div>
   )

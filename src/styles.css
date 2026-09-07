@@ -275,6 +275,16 @@ button:disabled {
   --bf-chat-fade-color: oklch(0.18 0.004 95);
 }
 
+.bf-chat-scroll {
+  box-sizing: border-box;
+  padding: 72px 28px 80px;
+}
+
+.bf-chat-scroll > * {
+  box-sizing: border-box;
+  flex: 1 0 auto;
+}
+
 .bf-chat-fade {
   position: absolute;
   left: 0;
@@ -282,6 +292,8 @@ button:disabled {
   bottom: 100%;
   height: var(--bf-chat-fade-height);
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 160ms cubic-bezier(0.32, 0.72, 0, 1);
   background: linear-gradient(
     to bottom,
     oklch(0.18 0.004 95 / 0) 0%,
@@ -291,6 +303,10 @@ button:disabled {
     oklch(0.18 0.004 95 / 0.96) 90%,
     var(--bf-chat-fade-color) 100%
   );
+}
+
+.bf-chat-fade.is-on {
+  opacity: 1;
 }
 
 @media (prefers-reduced-transparency: reduce) {

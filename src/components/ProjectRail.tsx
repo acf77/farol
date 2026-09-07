@@ -1,8 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { GitInfo, Project } from '@shared/types'
 import { groupOpenProjects } from '@shared/project-groups'
 import { C, UI } from '../theme'
-import { CHROME_ROW, PANEL_INSET, RailLabel, sidePanelShellStyle, useCollapseRail } from './side-panel'
+import {
+  CHROME_ROW,
+  PANEL_INSET,
+  RailLabel,
+  SIDE_RAIL_WIDTH,
+  sidePanelShellStyle,
+  useCollapseRail
+} from './side-panel'
 import {
   BranchIcon,
   CaretLeft,
@@ -11,14 +18,26 @@ import {
   ChevronRight,
   ClearChatIcon,
   GitIcon,
+  PinIcon,
   ProjectIcon
 } from './icons'
 
 const api = window.farol
 
-const PANEL_WIDTH = 300
-const RAIL_WIDTH = 54
+const PANEL_WIDTH = 225
 const noDrag = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
+const iconBtn: React.CSSProperties = {
+  ...noDrag,
+  width: 26,
+  height: 26,
+  borderRadius: 7,
+  border: 0,
+  background: 'transparent',
+  display: 'grid',
+  placeItems: 'center',
+  cursor: 'pointer',
+  color: '#A1A19A'
+}
 
 interface Props {
   projects: Project[]
@@ -41,6 +60,27 @@ interface Props {
   gitOpen?: boolean
   gitDotColor?: string
   onGitToggle?: () => void
+}
+
+function PinButton({ pinned, onClick }: { pinned: boolean; onClick: () => void }) {
+  const label = pinned ? 'Keep projects open' : 'Keep collapsed, reveal on hover'
+  return (
+    <button
+      type="button"
+      className="bf-focus bf-icon-btn"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-pressed={pinned}
+      style={{
+        ...iconBtn,
+        background: pinned ? 'rgba(214, 242, 58, 0.12)' : 'transparent',
+        color: pinned ? C.accent : '#A1A19A'
+      }}
+    >
+      <PinIcon size={13} />
+    </button>
+  )
 }
 
 /** Status dot — green pulse while busy, lime until the chat is opened, then off. */
@@ -68,6 +108,12 @@ function shortPath(p: string): string {
   return parts.slice(-2).join('/')
 }
 
+function activityTip(display: string, busy: boolean, unread: boolean): string {
+  if (busy) return `${display} — work in progress`
+  if (unread) return `${display} — unread chat updates`
+  return display
+}
+
 export default function ProjectRail({
   projects,
   activePath,
@@ -89,11 +135,64 @@ export default function ProjectRail({
   const agentUnread = (path: string): boolean => !!unreadPaths?.has(path)
   const [gitByPath, setGitByPath] = useState<Record<string, GitInfo>>({})
   const [groupCollapsed, setGroupCollapsed] = useState<Record<string, boolean>>({})
-  const { showRail, onWidthTransitionEnd } = useCollapseRail(collapsed)
+  const [pinned, setPinned] = useState(false)
+  const [hover, setHover] = useState(false)
+  const peek = pinned && (hover || !!gitOpen)
+  const slim = (collapsed || pinned) && !peek
+  const { showRail, onWidthTransitionEnd } = useCollapseRail(collapsed || pinned)
+  const rail = slim && (pinned || showRail)
+  const chrome = `${CHROME_ROW + PANEL_INSET}px`
   const shellStyle = {
-    ...sidePanelShellStyle(collapsed, { panelWidth: PANEL_WIDTH, railWidth: RAIL_WIDTH }),
-    margin: `${CHROME_ROW + PANEL_INSET}px 0 ${PANEL_INSET}px ${PANEL_INSET}px`
+    ...sidePanelShellStyle(slim, { panelWidth: PANEL_WIDTH, railWidth: SIDE_RAIL_WIDTH }),
+    margin: pinned && peek ? 0 : `${chrome} 0 ${PANEL_INSET}px ${PANEL_INSET}px`,
+    ...(pinned && peek
+      ? {
+          position: 'absolute' as const,
+          inset: `${chrome} auto ${PANEL_INSET}px ${PANEL_INSET}px`,
+          width: PANEL_WIDTH,
+          zIndex: 50
+        }
+      : pinned
+        ? { flex: 1, minHeight: 0 }
+        : {})
   }
+
+  const releasePin = (nextCollapsed: boolean): void => {
+    setPinned(false)
+    setHover(false)
+    onSetCollapsed(nextCollapsed)
+  }
+
+  const togglePin = (): void => {
+    if (pinned) {
+      releasePin(false)
+      return
+    }
+    setPinned(true)
+    setHover(!rail)
+    onSetCollapsed(true)
+  }
+
+  const host = (node: ReactNode): ReactNode =>
+    pinned ? (
+      <div
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        style={{
+          position: 'relative',
+          flex: 'none',
+          alignSelf: 'stretch',
+          display: 'flex',
+          flexDirection: 'column',
+          width: SIDE_RAIL_WIDTH + PANEL_INSET,
+          zIndex: peek ? 50 : undefined
+        }}
+      >
+        {node}
+      </div>
+    ) : (
+      node
+    )
 
   useEffect(() => {
     let cancelled = false
@@ -124,16 +223,6 @@ export default function ProjectRail({
     [projects, gitByPath]
   )
 
-  useEffect(() => {
-    setGroupCollapsed((prev) => {
-      const next = { ...prev }
-      for (const g of groups) {
-        if (next[g.id] === undefined) next[g.id] = false
-      }
-      return next
-    })
-  }, [groups])
-
   const activeGroup = groups.find((g) => g.projects.some((p) => p.project.path === activePath))
   const activeBranch =
     activeGroup?.projects.find((p) => p.project.path === activePath)?.branch ?? ''
@@ -142,7 +231,7 @@ export default function ProjectRail({
     <div
       style={{
         flex: 'none',
-        padding: collapsed ? '0 0 12px' : '0 8px 12px',
+        padding: rail ? '0 0 12px' : '0 8px 12px',
         display: 'flex',
         justifyContent: 'center',
         WebkitAppRegion: 'no-drag'
@@ -158,7 +247,7 @@ export default function ProjectRail({
         aria-expanded={gitOpen}
         style={{
           ...noDrag,
-          width: collapsed ? 34 : '100%',
+          width: rail ? 34 : '100%',
           height: 34,
           borderRadius: 8,
           border: `1px solid ${gitOpen ? C.accent : C.cardBorder}`,
@@ -173,7 +262,7 @@ export default function ProjectRail({
         }}
       >
         <GitIcon size={14} color={C.textMuted} />
-        {!collapsed && (
+        {!rail && (
           <span style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: '0.04em' }}>Git</span>
         )}
         {gitDotColor && (
@@ -184,7 +273,7 @@ export default function ProjectRail({
               borderRadius: '50%',
               background: gitDotColor,
               flex: 'none',
-              ...(collapsed
+              ...(rail
                 ? { position: 'absolute', top: 6, right: 6 }
                 : { marginLeft: 'auto', marginRight: 2 })
             }}
@@ -194,8 +283,8 @@ export default function ProjectRail({
     </div>
   )
 
-  if (showRail) {
-    return (
+  if (rail) {
+    return host(
       <aside
         aria-label="Projects"
         className="bf-side-panel"
@@ -209,24 +298,14 @@ export default function ProjectRail({
         <button
           type="button"
           className="bf-focus bf-icon-btn"
-          onClick={() => onSetCollapsed(false)}
-          title="Show projects"
-          aria-label="Show projects"
-          style={{
-            ...noDrag,
-            width: 30,
-            height: 30,
-            borderRadius: 8,
-            border: 0,
-            background: 'transparent',
-            display: 'grid',
-            placeItems: 'center',
-            cursor: 'pointer',
-            color: '#A1A19A'
-          }}
+          onClick={() => releasePin(false)}
+          title={pinned ? 'Keep projects open' : 'Show projects'}
+          aria-label={pinned ? 'Keep projects open' : 'Show projects'}
+          style={{ ...iconBtn, width: 30, height: 30, borderRadius: 8 }}
         >
           <CaretRight />
         </button>
+        <PinButton pinned={pinned} onClick={togglePin} />
         <div style={{ width: 22, height: 1, background: '#3E3E3A' }} />
 
         {activeGroup && (
@@ -244,33 +323,18 @@ export default function ProjectRail({
           {projects.map((project) => {
             const busy = agentBusy(project.path)
             const unread = agentUnread(project.path)
-            const tip = busy
-              ? `${project.display} — work in progress`
-              : unread
-                ? `${project.display} — unread chat updates`
-                : project.display
             return (
               <div
                 key={project.path}
                 onClick={() => {
                   onSelect(project.path)
-                  onSetCollapsed(false)
+                  if (!pinned) onSetCollapsed(false)
                 }}
-                title={tip}
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  cursor: 'pointer',
-                  background: busy ? C.green : unread ? C.accent : C.fainter,
-                  boxShadow: busy
-                    ? `0 0 6px ${C.green}`
-                    : unread
-                      ? `0 0 6px ${C.accent}`
-                      : undefined,
-                  animation: busy ? 'bfpulse 1.1s ease-in-out infinite' : 'none'
-                }}
-              />
+                title={activityTip(project.display, busy, unread)}
+                style={{ cursor: 'pointer' }}
+              >
+                <ChatActivityDot busy={busy} unread={unread} />
+              </div>
             )
           })}
         </div>
@@ -279,7 +343,7 @@ export default function ProjectRail({
     )
   }
 
-  return (
+  return host(
     <aside
       aria-label="Projects"
       className="bf-side-panel"
@@ -309,24 +373,14 @@ export default function ProjectRail({
         <span style={{ flex: 1, fontSize: 10.5, fontWeight: 600, letterSpacing: '0.09em', color: '#A1A19A' }}>
           PROJECTS
         </span>
+        <PinButton pinned={pinned} onClick={togglePin} />
         <button
           type="button"
           className="bf-focus bf-icon-btn"
-          onClick={() => onSetCollapsed(true)}
+          onClick={() => releasePin(true)}
           title="Collapse panel"
           aria-label="Collapse projects panel"
-          style={{
-            ...noDrag,
-            width: 26,
-            height: 26,
-            borderRadius: 7,
-            border: 0,
-            background: 'transparent',
-            display: 'grid',
-            placeItems: 'center',
-            cursor: 'pointer',
-            color: '#A1A19A'
-          }}
+          style={iconBtn}
         >
           <CaretLeft />
         </button>
@@ -429,18 +483,13 @@ export default function ProjectRail({
                   const active = project.path === activePath
                   const busy = agentBusy(project.path)
                   const unread = agentUnread(project.path)
-                  const tip = busy
-                    ? `${project.display} — work in progress`
-                    : unread
-                      ? `${project.display} — unread chat updates`
-                      : project.display
                   return (
                     <div
                       key={project.path}
                       role="button"
                       tabIndex={0}
                       className="bf-focus"
-                      title={tip}
+                      title={activityTip(project.display, busy, unread)}
                       onClick={() => onSelect(project.path)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
