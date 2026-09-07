@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AI_PROVIDERS,
   aiCommand,
+  aiFixCommand,
   aiSelectionLabel,
   cliFor,
   interactiveAiCommand,
@@ -75,6 +77,14 @@ describe('aiCommand', () => {
     ])
     expect(aiCommand('opencode', 'review this').args).toEqual(['run', '--auto', 'review this'])
     expect(aiCommand('openrouter', 'review this').args).toEqual(['run', '--auto', 'review this'])
+    // omp has no read-only sandbox flag, so the tool set enforces it.
+    expect(aiCommand('omp', 'review this').args).toEqual([
+      '-p',
+      '--auto-approve',
+      '--tools',
+      'read,glob,grep,lsp',
+      'review this'
+    ])
   })
 
   it('passes --model through to each CLI', () => {
@@ -146,6 +156,12 @@ describe('managedAiCommand', () => {
       '--dangerously-skip-permissions',
       'fix this'
     ])
+    expect(managedAiCommand('omp', 'fix this').args).toEqual([
+      '--mode',
+      'json',
+      '--auto-approve',
+      'fix this'
+    ])
   })
 
   it('marks the providers whose stdout has to be decoded as NDJSON', () => {
@@ -156,6 +172,7 @@ describe('managedAiCommand', () => {
     expect(managedAiCommand('codex', 'x').stream).toBe('ndjson')
     expect(managedAiCommand('opencode', 'x').stream).toBe('ndjson')
     expect(managedAiCommand('openrouter', 'x').stream).toBe('ndjson')
+    expect(managedAiCommand('omp', 'x').stream).toBe('ndjson')
     expect(managedAiCommand('opencode', 'x', undefined, { jsonFormat: false }).stream).toBeUndefined()
     expect(managedAiCommand('opencode', 'x', undefined, { jsonFormat: false }).args).toEqual([
       'run',
@@ -212,6 +229,28 @@ describe('managedAiCommand', () => {
       'bypassPermissions',
       '--model',
       'opus',
+      'fix this'
+    ])
+  })
+})
+
+describe('omp', () => {
+  it('is its own CLI, offered in the picker without any extra setup', () => {
+    expect(cliFor('omp')).toBe('omp')
+    expect(usesOpenRouterEnv('omp')).toBe(false)
+    expect(pickerProviders()).toContain('omp')
+    expect(AI_PROVIDERS).toContain('omp')
+  })
+
+  it('takes the prompt directly, interactively and headless', () => {
+    expect(interactiveAiCommand('omp')).toBe('omp')
+    expect(aiFixCommand('omp', 'REPORT.md')).toContain('omp "')
+    expect(managedAiCommand('omp', 'fix this', 'gpt-5.6-terra').args).toEqual([
+      '--mode',
+      'json',
+      '--auto-approve',
+      '--model',
+      'gpt-5.6-terra',
       'fix this'
     ])
   })

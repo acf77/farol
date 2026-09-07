@@ -449,6 +449,92 @@ describe('AgentStreamParser', () => {
       { kind: 'tool', toolId: 'call_big', name: 'bash', detail: 'npm test', state: 'done' }
     ])
   })
+
+  it('reads OMP --mode json tool execution and message_end events', () => {
+    const parser = new AgentStreamParser()
+    const header = JSON.stringify({ type: 'session', version: 3, id: 'sess_1' })
+    // OMP concatenates the provider's ids, newline and all, into toolCallId.
+    const started = JSON.stringify({
+      type: 'tool_execution_start',
+      toolCallId: 'call_1\nfc_2',
+      toolName: 'bash',
+      args: { command: 'ls -a', cwd: '/repo', timeout: 30000 }
+    })
+    const ended = JSON.stringify({
+      type: 'tool_execution_end',
+      toolCallId: 'call_1\nfc_2',
+      toolName: 'bash',
+      result: { content: [{ type: 'text', text: 'a.txt' }] },
+      isError: false
+    })
+    const said = JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        stopReason: 'stop',
+        content: [
+          { type: 'thinking', thinking: 'checking' },
+          { type: 'toolCall', id: 'call_1\nfc_2', name: 'bash' },
+          { type: 'text', text: '1 file.' }
+        ]
+      }
+    })
+    expect(parse(parser, `${header}\n${started}\n${ended}\n${said}\n`)).toEqual([
+      { kind: 'tool', toolId: 'call_1 fc_2', name: 'bash', detail: 'ls -a', state: 'running' },
+      { kind: 'tool', toolId: 'call_1 fc_2', name: 'bash', state: 'done' },
+      { kind: 'text', text: '1 file.' }
+    ])
+  })
+
+  it('ignores OMP echoes of the prompt and of a settled tool result', () => {
+    const parser = new AgentStreamParser()
+    const prompt = JSON.stringify({
+      type: 'message_end',
+      message: { role: 'user', content: [{ type: 'text', text: 'do the thing' }] }
+    })
+    const result = JSON.stringify({
+      type: 'message_end',
+      message: { role: 'toolResult', content: [{ type: 'text', text: 'a.txt' }] }
+    })
+    // `message_update` is per-token; `turn_end` repeats the assistant message.
+    const delta = JSON.stringify({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '1 f' }
+    })
+    expect(parse(parser, `${prompt}\n${result}\n${delta}\n`)).toEqual([])
+  })
+
+  it('surfaces an OMP failed tool and a settled turn error', () => {
+    const parser = new AgentStreamParser()
+    const failed = JSON.stringify({
+      type: 'tool_execution_end',
+      toolCallId: 'call_3',
+      toolName: 'read',
+      result: { content: [{ type: 'text', text: 'ENOENT' }] },
+      isError: true
+    })
+    const errored = JSON.stringify({
+      type: 'message_end',
+      message: { role: 'assistant', stopReason: 'error', content: [], errorMessage: 'quota exceeded' }
+    })
+    const notice = JSON.stringify({ type: 'notice', level: 'error', message: 'auth expired' })
+    const chatter = JSON.stringify({ type: 'notice', level: 'info', message: 'session saved' })
+    expect(parse(parser, `${failed}\n${errored}\n${notice}\n${chatter}\n`)).toEqual([
+      { kind: 'tool', toolId: 'call_3', name: 'read', state: 'error' },
+      { kind: 'raw', text: 'quota exceeded\n' },
+      { kind: 'raw', text: 'auth expired\n' }
+    ])
+  })
+
+  it('recovers an OMP tool card when the result outgrows the line cap', () => {
+    const parser = new AgentStreamParser()
+    const truncated =
+      '{"type":"tool_execution_end","toolCallId":"call_big","toolName":"bash",' +
+      '"result":{"content":[{"type":"text","text":"FAIL'
+    expect(parse(parser, `${truncated}\n`)).toEqual([
+      { kind: 'tool', toolId: 'call_big', name: 'bash', state: 'done' }
+    ])
+  })
 })
 
 describe('toolDetail', () => {

@@ -14,7 +14,7 @@ The primary task on any given screen is either typing into a shell or watching a
 
 ## Product Purpose
 
-Farol is a desktop terminal workspace with runnable pipelines. It opens a project folder, gives it tabs and splits backed by the machine's own default shell, and runs named pipelines whose steps are either real commands or prompts handed to Claude, Codex, Cursor, or OpenCode, streaming into their own tab.
+Farol is a desktop terminal workspace with runnable pipelines. It opens a project folder, gives it tabs and splits backed by the machine's own default shell, and runs named pipelines whose steps are either real commands or prompts handed to Claude, Codex, Cursor, OpenCode, or OMP, streaming into their own tab.
 
 It exists because the two halves of that workflow normally live apart: a terminal that is faithful but has no memory of your sequences, and a task runner that remembers but replaces your shell with a worse one. Farol refuses the trade. Pipelines are stored in the project at `.farol/pipelines.json` so they can be committed and shared, and runs are tracked per branch so a green result on `main` never masquerades as a green result on the branch you just checked out.
 

@@ -12,7 +12,8 @@ import { isQuestionToolName, questionsFromToolInput, type AgentQuestion } from '
  * Cursor adds its own `tool_call` events. Codex uses `item.started`,
  * `item.updated`, and `item.completed` lifecycle events around agent messages
  * and tool items. OpenCode (`--format json`, including OpenRouter) emits
- * `text` / `tool_use` / `error` envelopes with a `part` payload.
+ * `text` / `tool_use` / `error` envelopes with a `part` payload. OMP
+ * (`--mode json`) emits `message_end` envelopes plus `tool_execution_*` events.
  */
 
 /** One complete assistant turn. */
@@ -156,6 +157,12 @@ function finishedToolState(
   return 'done'
 }
 
+/** OMP brackets every tool with a start/end pair; `isError` only rides the end. */
+function ompToolState(event: Record<string, unknown>): AgentStreamTool['state'] {
+  if (event.type !== 'tool_execution_end') return 'running'
+  return event.isError === true ? 'error' : 'done'
+}
+
 function changedPaths(changes: unknown): string | undefined {
   if (!Array.isArray(changes)) return undefined
   const paths = changes
@@ -294,11 +301,31 @@ function recoverOpenCodeTool(text: string): AgentStreamEvent[] {
   ]
 }
 
+/**
+ * OMP writes the whole tool result onto its `tool_execution_end` line, so a
+ * noisy `bash` can outgrow MAX_LINE. Name and id precede that payload.
+ */
+function recoverOmpTool(text: string): AgentStreamEvent[] {
+  const head = text.slice(0, RECOVER_PREFIX)
+  const lifecycle = /"type"\s*:\s*"tool_execution_(start|end)"/.exec(head)
+  if (!lifecycle) return []
+  const name = peekJsonString(head, 'toolName') ?? 'tool'
+  return [
+    {
+      kind: 'tool',
+      toolId: normalizeId(peekJsonString(head, 'toolCallId'), `omp-${name}`),
+      name,
+      state: lifecycle[1] === 'end' ? 'done' : 'running'
+    }
+  ]
+}
+
 /** Protocol JSON must not land in the transcript — recover a card or drop it. */
 function handleBrokenStreamJson(text: string): AgentStreamEvent[] {
   const recovered = recoverCodexItem(text)
   if (recovered.length) return recovered
-  return recoverOpenCodeTool(text)
+  const openCode = recoverOpenCodeTool(text)
+  return openCode.length ? openCode : recoverOmpTool(text)
 }
 
 export class AgentStreamParser {
@@ -358,6 +385,13 @@ export class AgentStreamParser {
       }
       case 'tool_use':
         return this.openCodeTool(event)
+      case 'message_end':
+        return this.ompMessage(event)
+      case 'tool_execution_start':
+      case 'tool_execution_end':
+        return this.ompTool(event)
+      case 'notice':
+        return this.ompNotice(event)
       case 'item.started':
       case 'item.updated':
         return this.codexItem(event, false)
@@ -486,6 +520,42 @@ export class AgentStreamParser {
         state: finishedToolState(String(body.status ?? ''), { exit: meta.exit, error: body.error })
       }
     ]
+  }
+
+  /**
+   * OMP: `{ type: 'message_end', message }`. Only the settled assistant message
+   * is read — `turn_end` repeats it, and `message_update` carries token deltas.
+   */
+  private ompMessage(event: Record<string, unknown>): AgentStreamEvent[] {
+    const message = event.message
+    if (!isRecord(message) || message.role !== 'assistant') return []
+    const content = Array.isArray(message.content) ? message.content : []
+    const out: AgentStreamEvent[] = []
+    for (const item of content) {
+      if (!isRecord(item) || item.type !== 'text') continue
+      const text = stringField(item, 'text')
+      if (text) out.push({ kind: 'text', text })
+    }
+    const failure = stringField(message, 'errorMessage')
+    if (failure) out.push({ kind: 'raw', text: `${failure}\n` })
+    return out
+  }
+
+  /** OMP: `{ type: 'tool_execution_start|end', toolCallId, toolName, args }`. */
+  private ompTool(event: Record<string, unknown>): AgentStreamEvent[] {
+    const name = stringField(event, 'toolName') ?? 'tool'
+    const toolId = normalizeId(event.toolCallId, `omp-${name}`)
+    const asked = isQuestionToolName(name) ? questionsFromToolInput(event.args) : undefined
+    if (asked) return [{ kind: 'question', toolId, questions: asked }]
+    // The end event repeats no input; the card keeps the detail it opened with.
+    const detail = toolDetail(event.args)
+    const state = ompToolState(event)
+    return [{ kind: 'tool', toolId, name, ...(detail ? { detail } : {}), state }]
+  }
+
+  /** OMP status chatter is routine; only a real failure belongs in Chat. */
+  private ompNotice(event: Record<string, unknown>): AgentStreamEvent[] {
+    return event.level === 'error' ? this.streamError(event) : []
   }
 
   private streamError(event: Record<string, unknown>): AgentStreamEvent[] {

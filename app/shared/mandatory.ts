@@ -23,6 +23,7 @@ export function isWriteToolName(name: string): boolean {
     n === 'strreplace' ||
     n === 'searchreplace' ||
     n === 'applypatch' ||
+    n === 'astedit' ||
     n === 'delete' ||
     n === 'deletefile' ||
     n === 'editnotebook' ||

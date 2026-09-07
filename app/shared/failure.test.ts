@@ -150,6 +150,7 @@ describe('aiFixCommand', () => {
     expect(aiFixCommand('codex')).toMatch(/^codex "/)
     expect(aiFixCommand('opencode')).toMatch(/^opencode run "/)
     expect(aiFixCommand('openrouter')).toMatch(/^opencode run "/)
+    expect(aiFixCommand('omp')).toMatch(/^omp "/)
   })
 
   it('produces nothing a shell would have to escape', () => {

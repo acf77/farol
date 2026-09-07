@@ -62,6 +62,15 @@ export function skillRoots(provider: AiProvider): SkillRootSpec[] {
         { kind: 'project', rel: '.claude/skills', rank: 11 },
         { kind: 'project', rel: '.opencode/skills', rank: 12 }
       ]
+    case 'omp':
+      // omp reads `~/.claude/skills` only behind an opt-in, so it is left out.
+      return [
+        { kind: 'user', rel: '.omp/agent/skills', rank: 1 },
+        { kind: 'user', rel: '.agents/skills', rank: 2 },
+        { kind: 'project', rel: '.agents/skills', rank: 10 },
+        { kind: 'project', rel: '.claude/skills', rank: 11 },
+        { kind: 'project', rel: '.omp/skills', rank: 12 }
+      ]
   }
 }
 

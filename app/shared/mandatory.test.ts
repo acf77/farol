@@ -49,6 +49,8 @@ describe('isWriteToolName', () => {
     expect(isWriteToolName('EditNotebook')).toBe(true)
     expect(isWriteToolName('StrReplace')).toBe(true)
     expect(isWriteToolName('Write')).toBe(true)
+    // OMP rewrites files through ast_edit as well as write/edit.
+    expect(isWriteToolName('ast_edit')).toBe(true)
   })
 
   it('does not persist shell or Cursor goal tools as writes', () => {

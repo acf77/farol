@@ -2,8 +2,8 @@
 
 A desktop terminal workspace with runnable pipelines. Open a project folder, get
 shell tabs backed by your machine's own default shell, and run named pipelines
-whose steps are real commands — or prompts handed to Claude, Codex, Cursor, or
-OpenCode — streaming into their own tab.
+whose steps are real commands — or prompts handed to Claude, Codex, Cursor,
+OpenCode, or OMP — streaming into their own tab.
 
 Implemented from the `Farol.dc.html` design spec in the
 [Farol App Design Spec](https://claude.ai/design/p/e5f280c0-b106-4b8d-b38c-a92c4f18a3bb)
@@ -114,9 +114,10 @@ that tab stops watching without cancelling the run.
   real exit code while sharing the environment you'd have by hand. On a worktree
   tab, that's the worktree, not the original checkout.
 - **AI steps** shell out to the CLI chosen on the step — Claude (`claude -p`),
-  Codex (`codex exec`), Cursor (`agent -p`), OpenCode (`opencode run`), or
-  OpenRouter (OpenCode plus a saved key) — and are handed the run's output so
-  far as context. If that CLI isn't on PATH the step fails with a note saying so.
+  Codex (`codex exec`), Cursor (`agent -p`), OpenCode (`opencode run`), OMP
+  (`omp -p`), or OpenRouter (OpenCode plus a saved key) — and are handed the
+  run's output so far as context. If that CLI isn't on PATH the step fails with
+  a note saying so.
 
 OpenRouter is configured in **Settings** (toolbar gear, File menu, or ⌘,):
 paste an API key, which Farol encrypts locally. Settings fetches tool-capable
@@ -150,7 +151,7 @@ Open Chat from the toolbar, or **New agent terminal** from the command palette (
   turn, and the task is only marked complete after all selected pipelines pass
   — or immediately when none were selected. This does not depend on the
   provider granting its CLI permission to call Farol's MCP tools.
-- **Terminal — MCP** opens Claude, Codex, Cursor, or OpenCode interactively in a
+- **Terminal — MCP** opens Claude, Codex, Cursor, OpenCode, or OMP interactively in a
   real terminal. The Farol MCP server is available to list and run
   pipelines, but tool use is controlled by that external CLI and is therefore
   not enforced. Open Terminal from a Chat tab to place both side by side.

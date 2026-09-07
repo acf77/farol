@@ -3,7 +3,7 @@
 import { FAILURE_REPORT_REL } from './failure'
 import { openCodeModel } from './openrouter'
 
-export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'openrouter'] as const
+export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'omp', 'openrouter'] as const
 export type AiProvider = (typeof AI_PROVIDERS)[number]
 /** The binary Farol actually spawns — OpenRouter rides OpenCode. */
 export type AiCli = Exclude<AiProvider, 'openrouter'>
@@ -13,6 +13,7 @@ export const AI_LABELS: Record<AiProvider, string> = {
   codex: 'Codex',
   cursor: 'Cursor',
   opencode: 'OpenCode',
+  omp: 'OMP',
   openrouter: 'OpenRouter'
 }
 
@@ -47,6 +48,14 @@ export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
     { id: 'anthropic/claude-opus-5', label: 'Claude Opus 5' },
     { id: 'openai/gpt-5.6', label: 'GPT-5.6' },
     { id: 'google/gemini-3-flash', label: 'Gemini 3 Flash' }
+  ],
+  /** `--model` fuzzy-matches, but exact catalog ids avoid an ambiguous pick. */
+  omp: [
+    { id: 'claude-opus-5-medium', label: 'Claude Opus 5' },
+    { id: 'claude-sonnet-5-medium', label: 'Claude Sonnet 5' },
+    { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+    { id: 'gemini-3-pro', label: 'Gemini 3 Pro' },
+    { id: 'composer-2.5', label: 'Composer 2.5' }
   ],
   /** Filled from Settings pins — see `modelsFor(..., listed)`. */
   openrouter: []
@@ -191,6 +200,15 @@ export function aiCommand(provider: AiProvider, prompt: string, model?: string):
         args: withModel(['run', '--auto', prompt], passed),
         hint: 'Install the OpenCode CLI (https://opencode.ai) to run OpenCode steps.'
       }
+    case 'omp':
+      return {
+        bins: ['omp'],
+        // omp has no read-only sandbox, so the tool set is the gate: reading and
+        // searching only, no `bash`/`edit`/`write`. --auto-approve keeps it from
+        // waiting on an approval it can never receive.
+        args: withModel(['-p', '--auto-approve', '--tools', 'read,glob,grep,lsp', prompt], passed),
+        hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to run OMP steps.'
+      }
     case 'claude':
       return {
         bins: ['claude'],
@@ -212,7 +230,8 @@ export function aiCommand(provider: AiProvider, prompt: string, model?: string):
  * both run in `stream-json` and are decoded by `shared/agent-stream.ts`.
  * Codex also emits NDJSON when passed `--json`; decoding it lets managed Chat
  * render command, file, MCP, and web-search activity as tool cards.
- * OpenCode (and OpenRouter, which rides it) do the same with `--format json`.
+ * OpenCode (and OpenRouter, which rides it) do the same with `--format json`,
+ * and OMP with `--mode json`.
  */
 export function managedAiCommand(
   provider: AiProvider,
@@ -269,6 +288,15 @@ export function managedAiCommand(
         hint: 'Install OpenCode (https://opencode.ai) to use managed Chat. Farol needs a build that accepts `opencode run --format json`.',
         ...(jsonFormat ? { stream: 'ndjson' as const } : {})
       }
+    case 'omp':
+      return {
+        bins: ['omp'],
+        // `--mode json` is already non-interactive, so `-p` is redundant; it also
+        // routes omp's own banners to stderr, leaving stdout pure NDJSON.
+        args: withModel(['--mode', 'json', '--auto-approve', prompt], passed),
+        hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to use managed Chat.',
+        stream: 'ndjson'
+      }
     case 'claude':
       return {
         bins: ['claude'],
@@ -316,6 +344,8 @@ export function aiFixCommand(provider: AiProvider, reportPath = FAILURE_REPORT_R
     case 'opencode':
       // opencode's TUI takes no opening prompt, so this one runs headless.
       return `opencode run "${ask}"`
+    case 'omp':
+      return `omp "${ask}"`
     case 'claude':
       return `claude "${ask}"`
   }
@@ -330,6 +360,8 @@ export function interactiveAiCommand(provider: AiProvider): string {
       return 'cursor-agent'
     case 'opencode':
       return 'opencode'
+    case 'omp':
+      return 'omp'
     case 'claude':
       return 'claude'
   }

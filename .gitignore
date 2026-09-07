@@ -8,3 +8,7 @@ dist/
 # Pre-rename paths — keep ignoring if an old BuildFlow build still writes here.
 .buildflow/last-failure.md
 .buildflow/attachments/
+
+# Written into the project by Farol at runtime: absolute app path + per-launch socket.
+.mcp.json
+**/.cursor/mcp.json
