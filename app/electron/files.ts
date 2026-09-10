@@ -5,6 +5,7 @@
 
 import fs from 'fs'
 import path from 'path'
+import { randomUUID } from 'crypto'
 
 const SKIP = new Set([
   '.git',
@@ -27,8 +28,7 @@ const SKIP = new Set([
 ])
 
 const MAX_FILES = 400
-const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
-/** Reject oversized drops before they cross IPC. */
+/** Maximum size of a saved chat attachment. */
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 const ATTACHMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const ATTACHMENTS_IGNORE = '.farol/attachments/'
@@ -99,19 +99,17 @@ function pruneOldAttachments(dir: string): void {
   }
 }
 
-/** Save a dropped chat image under `.farol/attachments/` and return its absolute path. */
+/** Save a chat file under `.farol/attachments/` and return its absolute path. */
 export function saveChatAttachment(root: string, name: string, data: Buffer): string | null {
   if (typeof root !== 'string' || !root || !fs.existsSync(root)) return null
   if (data.length > MAX_ATTACHMENT_BYTES) return null
-  const ext = path.extname(name).toLowerCase()
-  if (!IMAGE_EXT.has(ext)) return null
-  const safe = path.basename(name).replace(/[^a-zA-Z0-9._-]/g, '_') || `image${ext || '.png'}`
+  const safe = path.basename(name).replace(/[^a-zA-Z0-9._-]/g, '_') || 'attachment'
   const dir = path.join(root, '.farol', 'attachments')
   try {
     fs.mkdirSync(dir, { recursive: true })
     ensureAttachmentsIgnored(root)
     pruneOldAttachments(dir)
-    const file = path.join(dir, `${Date.now()}-${safe}`)
+    const file = path.join(dir, `${randomUUID()}-${safe}`)
     fs.writeFileSync(file, data)
     return file
   } catch {

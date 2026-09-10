@@ -1,5 +1,10 @@
 {
-  "jsPlugins": ["oxlint-plugin-complexity"],
+  "jsPlugins": [
+    {
+      "name": "complexity",
+      "specifier": "./app/node_modules/oxlint-plugin-complexity/dist/index.js"
+    }
+  ],
   "ignorePatterns": [
     "**/*.test.ts",
     "**/*.test.tsx",

@@ -15,6 +15,7 @@ import { MarkdownBody, stripControlMarkers } from '../markdown'
 import { MessageErrorBoundary } from '../ErrorBoundary'
 import { Button, CliModelMenu } from './controls'
 import {
+  AttachmentIcon,
   CheckIcon,
   ChevronDown,
   CircleIcon,
@@ -59,7 +60,7 @@ interface Props {
 interface PendingAttachment {
   name: string
   path: string
-  previewUrl: string
+  type: string
 }
 
 const busy = new Set(['working', 'validating', 'repairing'])
@@ -708,6 +709,16 @@ function SuggestionList({ onPick }: { onPick: (prompt: string) => void }) {
   )
 }
 
+function attachmentKind({ name, type }: PendingAttachment): string {
+  if (
+    type.startsWith('image/') ||
+    /\.(png|jpe?g|gif|webp|bmp|svg|avif|heic|heif|tiff?|ico)$/i.test(name)
+  ) return 'Image'
+  if (type === 'application/pdf' || /\.pdf$/i.test(name)) return 'PDF'
+  if (type === 'text/html' || /\.html?$/i.test(name)) return 'HTML'
+  return name.match(/\.([a-z0-9]+)$/i)?.[1].toUpperCase() ?? 'File'
+}
+
 function AttachmentStrip({
   attachments,
   onRemove
@@ -717,51 +728,69 @@ function AttachmentStrip({
 }) {
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-      {attachments.map((attachment) => (
-        <div
-          key={attachment.path}
-          style={{
-            position: 'relative',
-            width: 56,
-            height: 56,
-            borderRadius: 8,
-            overflow: 'hidden',
-            border: `1px solid ${C.cardBorder}`,
-            background: '#181817'
-          }}
-        >
-          <img
-            src={attachment.previewUrl}
-            alt={attachment.name}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-          />
-          <button
-            type="button"
-            className="bf-focus"
-            onClick={() => onRemove(attachment.path)}
-            title={`Remove ${attachment.name}`}
-            aria-label={`Remove ${attachment.name}`}
+      {attachments.map((attachment) => {
+        const kind = attachmentKind(attachment)
+        return (
+          <div
+            key={attachment.path}
+            title={attachment.name}
             style={{
-              position: 'absolute',
-              top: 3,
-              right: 3,
-              width: 18,
-              height: 18,
-              borderRadius: '50%',
-              border: 'none',
-              background: 'rgba(0,0,0,0.65)',
-              color: '#fff',
-              fontSize: 12,
-              lineHeight: 1,
-              cursor: 'pointer',
-              display: 'grid',
-              placeItems: 'center'
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              width: 220,
+              maxWidth: '100%',
+              minWidth: 0,
+              boxSizing: 'border-box',
+              padding: '10px',
+              borderRadius: 8,
+              border: `1px solid ${C.cardBorder}`,
+              background: C.terminal,
+              color: C.textMuted
             }}
           >
-            ×
-          </button>
-        </div>
-      ))}
+            <AttachmentIcon kind={kind} size={24} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  color: C.textSoft
+                }}
+              >
+                {attachment.name}
+              </div>
+              <div style={{ fontSize: 11, marginTop: 3 }}>{kind}</div>
+            </div>
+            <button
+              type="button"
+              className="bf-focus bf-composer-btn"
+              onClick={() => onRemove(attachment.path)}
+              title={`Remove ${attachment.name}`}
+              aria-label={`Remove ${attachment.name}`}
+              style={{
+                flex: 'none',
+                width: 26,
+                height: 26,
+                borderRadius: 6,
+                border: 'none',
+                background: 'transparent',
+                color: C.textMuted,
+                fontSize: 16,
+                lineHeight: 1,
+                cursor: 'pointer',
+                display: 'grid',
+                placeItems: 'center'
+              }}
+            >
+              ×
+            </button>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -836,8 +865,8 @@ function ComposerPickerMenu({
 
 function composerPlaceholder(availableCount: number, hasAttachments: boolean): string {
   if (!availableCount) return 'Create a validation pipeline to start'
-  if (hasAttachments) return 'Add a message or send the attached images…'
-  return 'Message the agent… (drop images here)'
+  if (hasAttachments) return 'Add a message or send the attached files…'
+  return 'Message the agent… (drop files here)'
 }
 
 type ComposerPicker = {
@@ -955,31 +984,29 @@ function navigateComposerHistory(
   return true
 }
 
-async function saveImageAttachments(
+async function saveAttachments(
   projectPath: string,
   files: FileList | File[]
 ): Promise<{ attachments: PendingAttachment[]; error: string | null }> {
-  const images = [...files].filter((file) => file.type.startsWith('image/'))
-  if (!images.length) return { attachments: [], error: 'Only image files can be attached.' }
-  try {
-    const attachments: PendingAttachment[] = []
-    let error: string | null = null
-    for (const file of images) {
+  const attachments: PendingAttachment[] = []
+  const failed: string[] = []
+  for (const file of Array.from(files)) {
+    try {
       const path = await window.farol.project.saveAttachment(
         projectPath,
         file.name,
         await file.arrayBuffer()
       )
       if (!path) {
-        error = `Could not attach ${file.name}.`
+        failed.push(file.name)
         continue
       }
-      attachments.push({ name: file.name, path, previewUrl: URL.createObjectURL(file) })
+      attachments.push({ name: file.name, path, type: file.type })
+    } catch {
+      failed.push(file.name)
     }
-    return { attachments, error }
-  } catch {
-    return { attachments: [], error: 'Could not save the attachment.' }
   }
+  return { attachments, error: failed.length ? `Could not attach: ${failed.join(', ')}.` : null }
 }
 
 function composerSurfaceStyle(dragOver: boolean): React.CSSProperties {
@@ -1046,7 +1073,7 @@ function buildMessage(body: string, paths: string[]): string {
   const clean = body.trim()
   if (!paths.length) return clean
   const lines = paths.map((p) => `- ${p}`).join('\n')
-  const block = `Attached images:\n${lines}`
+  const block = `Attached files:\n${lines}`
   return clean ? `${clean}\n\n${block}` : block
 }
 
@@ -1078,6 +1105,7 @@ function ComposerToolbar({
   onNewChat,
   onOpenAgentMenu,
   onOpenMention,
+  onAttach,
   onCancel,
   onSend
 }: {
@@ -1089,6 +1117,7 @@ function ComposerToolbar({
   onNewChat: () => void
   onOpenAgentMenu: () => void
   onOpenMention: () => void
+  onAttach: () => void
   onCancel: () => void
   onSend: () => void
 }) {
@@ -1158,6 +1187,27 @@ function ComposerToolbar({
           border: 'none',
           background: 'transparent',
           color: '#A1A19A',
+          cursor: 'pointer',
+          padding: 2
+        }}
+      >
+        @
+      </button>
+      <button
+        type="button"
+        className="bf-focus bf-composer-btn"
+        onClick={onAttach}
+        title="Attach files"
+        aria-label="Attach files"
+        style={{
+          display: 'grid',
+          placeItems: 'center',
+          width: 26,
+          height: 26,
+          border: 'none',
+          borderRadius: 6,
+          background: 'transparent',
+          color: C.textMuted,
           cursor: 'pointer',
           padding: 2
         }}
@@ -1252,6 +1302,7 @@ function ComposerBox({
   const [skillWarning, setSkillWarning] = useState<string[]>([])
   const [menuPos, setMenuPos] = useState<{ left: number; bottom: number; width: number } | null>(null)
   const composerBoxRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const agentBtnRef = useRef<HTMLButtonElement>(null)
   const historyRef = useRef<string[]>([])
   const historyIndexRef = useRef<number | null>(null)
@@ -1395,14 +1446,11 @@ function ComposerBox({
   }
   sendTextRef.current = sendText
 
-  const addImageFiles = (files: FileList | File[]): void => {
-    if (![...files].some((file) => file.type.startsWith('image/'))) {
-      setAttachmentError('Only image files can be attached.')
-      return
-    }
+  const addFiles = (files: FileList | File[]): void => {
+    if (!files.length) return
     setAttachmentError(null)
     setSavingAttachments((count) => count + 1)
-    void saveImageAttachments(projectPath, files)
+    void saveAttachments(projectPath, files)
       .then((result) => {
         setAttachmentError(result.error)
         if (result.attachments.length) setAttachments((prev) => [...prev, ...result.attachments])
@@ -1411,14 +1459,11 @@ function ComposerBox({
   }
 
   const removeAttachment = (path: string): void => {
-    setAttachments((prev) => {
-      const item = prev.find((attachment) => attachment.path === path)
-      if (item) URL.revokeObjectURL(item.previewUrl)
-      return prev.filter((attachment) => attachment.path !== path)
-    })
+    setAttachments((prev) => prev.filter((attachment) => attachment.path !== path))
   }
 
   const send = (): void => {
+    if (!canSend) return
     const paths = attachments.map((attachment) => attachment.path)
     const clean = buildMessage(text, paths)
     if (!clean) return
@@ -1427,7 +1472,6 @@ function ComposerBox({
     setMention(null)
     setSkillQuery(null)
     setSkillWarning([])
-    for (const attachment of attachments) URL.revokeObjectURL(attachment.previewUrl)
     setAttachments([])
   }
 
@@ -1464,15 +1508,27 @@ function ComposerBox({
         onDrop={(e) => {
           e.preventDefault()
           setDragOver(false)
-          if (e.dataTransfer.files.length) addImageFiles(e.dataTransfer.files)
+          addFiles(e.dataTransfer.files)
         }}
         style={composerSurfaceStyle(dragOver)}
       >
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.currentTarget.files) addFiles(e.currentTarget.files)
+            e.currentTarget.value = ''
+          }}
+        />
         {attachments.length > 0 && (
           <AttachmentStrip attachments={attachments} onRemove={removeAttachment} />
         )}
         {attachmentError && (
-          <div style={{ fontSize: 12, color: '#FF625A', marginBottom: 8 }}>{attachmentError}</div>
+          <div role="alert" style={{ fontSize: 12, color: C.red, marginBottom: 8, overflowWrap: 'anywhere' }}>
+            {attachmentError}
+          </div>
         )}
         {skillWarnText && (
           <div style={{ fontSize: 12, color: '#EF4444', marginBottom: 8 }}>{skillWarnText}</div>
@@ -1483,6 +1539,11 @@ function ComposerBox({
         <textarea
           ref={textareaRef}
           value={text}
+          onPaste={(e) => {
+            if (!e.clipboardData.files.length) return
+            e.preventDefault()
+            addFiles(e.clipboardData.files)
+          }}
           onChange={(e) => {
             const value = e.target.value
             setText(value)
@@ -1520,6 +1581,7 @@ function ComposerBox({
           onNewChat={onNewChat}
           onOpenAgentMenu={openAgentMenu}
           onOpenMention={openMentionPicker}
+          onAttach={() => fileInputRef.current?.click()}
           onCancel={onCancel}
           onSend={send}
         />

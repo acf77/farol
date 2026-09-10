@@ -47,12 +47,27 @@ describe('saveChatAttachment', () => {
     expect(saved!).toContain(`${path.sep}.farol${path.sep}attachments${path.sep}`)
   })
 
-  it('rejects non-image extensions', () => {
+  it.each(['document.PDF', 'page.html', 'page.htm', 'notes.txt', 'README'])(
+    'saves %s without changing its contents',
+    (name) => {
+      const root = tmp()
+      const data = Buffer.from([0, 127, 128, 255])
+      const saved = saveChatAttachment(root, name, data)
+      expect(saved).toBeTruthy()
+      expect(fs.readFileSync(saved!)).toEqual(data)
+    }
+  )
+
+  it('keeps files with the same name separate', () => {
     const root = tmp()
-    expect(saveChatAttachment(root, 'notes.txt', Buffer.from('nope'))).toBeNull()
+    const first = saveChatAttachment(root, 'document.pdf', Buffer.from('first'))
+    const second = saveChatAttachment(root, 'document.pdf', Buffer.from('second'))
+    expect(first).not.toBe(second)
+    expect(fs.readFileSync(first!, 'utf8')).toBe('first')
+    expect(fs.readFileSync(second!, 'utf8')).toBe('second')
   })
 
-  it('rejects oversized images', () => {
+  it('rejects oversized files', () => {
     const root = tmp()
     expect(
       saveChatAttachment(root, 'big.png', Buffer.alloc(MAX_ATTACHMENT_BYTES + 1))

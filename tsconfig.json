@@ -1,0 +1,8 @@
+{
+  "extends": "./app/tsconfig.json",
+  "compilerOptions": {
+    "typeRoots": ["./app/node_modules/@types", "./app/node_modules"],
+    "types": ["vite/client", "node", "electron-vite/node"]
+  },
+  "include": ["app/src", "app/shared", "app/electron", "app/electron.vite.config.ts"]
+}
