@@ -13,7 +13,7 @@ import type {
 } from '../shared/types'
 import { ShellManager } from './shell'
 import { HeadWatcher, addWorktree, checkout, commitAll, draftCommit, info as gitInfo, push as gitPush, recentCommits, status as gitStatus } from './git'
-import { githubInfo } from './github'
+import { createPullRequest, githubInfo } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, PipelineWatcher } from './store'
 import {
@@ -633,6 +633,11 @@ function registerGitIpc(): void {
     return gitPush(cwd.path)
   })
   ipcMain.handle('git:github', (_e, projectPath: string) => githubInfo(projectPath))
+  ipcMain.handle('git:createPr', async (_e, projectPath: string) => {
+    const cwd = await openProjectCwd(projectPath)
+    if ('error' in cwd) return { ok: false, message: cwd.error }
+    return createPullRequest(cwd.path)
+  })
 }
 
 function registerTaskIpc(): void {

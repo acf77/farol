@@ -5,10 +5,11 @@ import {
   conflictSignals,
   conflictStatusItems,
   draftMatchesStatus,
+  pullRequestBlockReason,
   pushBlockReason
 } from '@shared/git-status'
 import type { AiProvider, GitCommit, GitFileKind, GitHubInfo, GitStatus } from '@shared/types'
-import { useGitPanel } from '../hooks/useGitPanel'
+import { useGitPanel, type GitAction } from '../hooks/useGitPanel'
 import { C, MONO, UI } from '../theme'
 import { Button } from './controls'
 import { CheckIcon, GitIcon, Spinner } from './icons'
@@ -260,44 +261,46 @@ function useEscapeClose(open: boolean, onClose: () => void): void {
   }, [open, onClose])
 }
 
-function PushButton({ ahead, canPush, pushReason, busy, onPush }: {
-  ahead: number
-  canPush: boolean
-  pushReason: string | null
+/** A button whose action reaches the remote, so it asks for a second click first. */
+function ConfirmButton({ label, confirmLabel, busyLabel, busy, disabled, title, onConfirm }: {
+  label: string
+  confirmLabel: string
+  busyLabel: string
   busy: boolean
-  onPush: () => void
+  disabled: boolean
+  title: string
+  onConfirm: () => void
 }) {
-  const [pushArmed, setPushArmed] = useState(false)
-  const pushTitle = `Push ${ahead} unpushed commit${ahead === 1 ? '' : 's'} to the remote`
+  const [armed, setArmed] = useState(false)
 
   useEffect(() => {
-    if (!canPush) {
-      setPushArmed(false)
+    if (disabled) {
+      setArmed(false)
       return
     }
-    if (!pushArmed) return
-    const timer = window.setTimeout(() => setPushArmed(false), 6000)
+    if (!armed) return
+    const timer = window.setTimeout(() => setArmed(false), 6000)
     return () => window.clearTimeout(timer)
-  }, [canPush, pushArmed])
+  }, [armed, disabled])
 
   return (
     <Button
       variant="secondary"
       size="md"
-      disabled={!canPush}
-      onBlur={() => setPushArmed(false)}
-      title={pushReason ?? (pushArmed ? 'Click again to confirm push' : pushTitle)}
+      disabled={disabled}
+      onBlur={() => setArmed(false)}
+      title={armed ? 'Click again to confirm' : title}
       onClick={() => {
-        if (!pushArmed) {
-          setPushArmed(true)
+        if (!armed) {
+          setArmed(true)
           return
         }
-        setPushArmed(false)
-        onPush()
+        setArmed(false)
+        onConfirm()
       }}
       style={{ flex: 1 }}
     >
-      {busy ? <><Spinner /> Pushing…</> : pushArmed ? 'Confirm push' : `Push${ahead > 0 ? ` (${ahead})` : ''}`}
+      {busy ? <><Spinner /> {busyLabel}</> : armed ? confirmLabel : label}
     </Button>
   )
 }
@@ -311,29 +314,37 @@ function GitActionButtons({
   ahead,
   canCommit,
   canPush,
+  showCreatePr,
+  canCreatePr,
   commitReason,
   pushReason,
+  prReason,
   onPrepare,
   onDraftMessage,
   onCancelDraft,
   onConfirm,
-  onPush
+  onPush,
+  onCreatePr
 }: {
   provider: AiProvider
   model?: string
-  gitAction: 'commit' | 'push' | null
+  gitAction: GitAction | null
   draft: ReturnType<typeof useGitPanel>['draft']
   draftStale: boolean
   ahead: number
   canCommit: boolean
   canPush: boolean
+  showCreatePr: boolean
+  canCreatePr: boolean
   commitReason: string | null
   pushReason: string | null
+  prReason: string | null
   onPrepare: () => void
   onDraftMessage: (message: string) => void
   onCancelDraft: () => void
   onConfirm: () => void
   onPush: () => void
+  onCreatePr: () => void
 }) {
   const commitBusy = gitAction === 'commit'
 
@@ -430,12 +441,34 @@ function GitActionButtons({
             )}
           </Button>
         )}
-        <PushButton ahead={ahead} canPush={canPush} pushReason={pushReason} busy={gitAction === 'push'} onPush={onPush} />
+        <ConfirmButton
+          label={`Push${ahead > 0 ? ` (${ahead})` : ''}`}
+          confirmLabel="Confirm push"
+          busyLabel="Pushing…"
+          busy={gitAction === 'push'}
+          disabled={!canPush}
+          title={pushReason ?? `Push ${ahead} unpushed commit${ahead === 1 ? '' : 's'} to the remote`}
+          onConfirm={onPush}
+        />
       </div>
+      {showCreatePr && (
+        <div style={{ display: 'flex' }}>
+          <ConfirmButton
+            label="Create pull request"
+            confirmLabel="Confirm pull request"
+            busyLabel="Creating pull request…"
+            busy={gitAction === 'pr'}
+            disabled={!canCreatePr}
+            title={prReason ?? 'Open a pull request for this branch on GitHub'}
+            onConfirm={onCreatePr}
+          />
+        </div>
+      )}
       <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.45 }}>
         {draft ? 'Review the message, then commit locally.' : commitReason ?? 'Includes staged, unstaged, and new files. Review before committing.'}
       </div>
       {pushReason && ahead > 0 && <div style={{ fontSize: 11, color: C.yellow }}>{pushReason}</div>}
+      {showCreatePr && prReason && <div style={{ fontSize: 11, color: C.textMuted }}>{prReason}</div>}
     </div>
   )
 }
@@ -491,6 +524,7 @@ export default function GitPane({
   cancelDraft,
   confirmCommit,
   push,
+  createPr,
   open,
   onClose,
   anchorRef
@@ -508,8 +542,10 @@ export default function GitPane({
 
   const commitReason = status ? commitBlockReason(status) : 'Reading working changes…'
   const pushReason = status ? pushBlockReason(status) : 'Reading remote status…'
+  const prReason = pullRequestBlockReason(status)
   const canCommit = !commitReason && !gitAction
   const canPush = !pushReason && !gitAction
+  const canCreatePr = !prReason && !gitAction
   const draftStale = !!draft && !!status && !draftMatchesStatus(draft.files, status)
 
   return (
@@ -563,13 +599,17 @@ export default function GitPane({
           ahead={status?.ahead ?? 0}
           canCommit={canCommit}
           canPush={canPush}
+          showCreatePr={!!github?.available && github.prs.length === 0}
+          canCreatePr={canCreatePr}
           commitReason={commitReason}
           pushReason={pushReason}
+          prReason={prReason}
           onPrepare={prepareCommit}
           onDraftMessage={setDraftMessage}
           onCancelDraft={cancelDraft}
           onConfirm={confirmCommit}
           onPush={push}
+          onCreatePr={createPr}
         />
       </div>
     </>

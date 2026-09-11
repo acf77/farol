@@ -5,7 +5,7 @@ const { execCli } = vi.hoisted(() => ({
 }))
 vi.mock('./exec-cli', () => ({ execCli }))
 
-import { githubInfo, noPullRequestMessage } from './github'
+import { createPullRequest, githubInfo, noPullRequestMessage } from './github'
 
 function ok(out: string) {
   return { code: 0, out, err: '' }
@@ -62,5 +62,39 @@ describe('githubInfo', () => {
       .mockResolvedValueOnce(ok('Logged in'))
       .mockResolvedValueOnce(fail('no pull requests found for branch "feat/x"'))
     await expect(githubInfo('/repo')).resolves.toEqual({ available: true, prs: [] })
+  })
+})
+
+describe('createPullRequest', () => {
+  it('fills the PR from commits and reports the new URL', async () => {
+    execCli
+      .mockResolvedValueOnce(ok('gh version 2'))
+      .mockResolvedValueOnce(ok('Logged in'))
+      .mockResolvedValueOnce(ok('https://github.com/acme/repo/pull/7\n'))
+    await expect(createPullRequest('/repo')).resolves.toEqual({
+      ok: true,
+      message: 'Pull request created: https://github.com/acme/repo/pull/7'
+    })
+    expect(execCli.mock.calls[2]?.[2]).toEqual(['pr', 'create', '--fill'])
+  })
+
+  it('surfaces the first line of a gh failure', async () => {
+    execCli
+      .mockResolvedValueOnce(ok('gh version 2'))
+      .mockResolvedValueOnce(ok('Logged in'))
+      .mockResolvedValueOnce(fail('pull request create failed: no commits between main and feat/x'))
+    await expect(createPullRequest('/repo')).resolves.toEqual({
+      ok: false,
+      message: 'pull request create failed: no commits between main and feat/x'
+    })
+  })
+
+  it('stops before gh runs when the CLI is missing', async () => {
+    execCli.mockResolvedValueOnce(fail('command not found'))
+    await expect(createPullRequest('/repo')).resolves.toEqual({
+      ok: false,
+      message: 'Install the GitHub CLI (gh) to open pull requests.'
+    })
+    expect(execCli).toHaveBeenCalledTimes(1)
   })
 })

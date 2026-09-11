@@ -103,6 +103,8 @@ export interface GitStatus {
   conflicts: GitStatusFile[]
   ahead: number
   behind: number
+  /** Whether the branch tracks a remote branch that exists. */
+  upstream: boolean
   /** Merge-tree vs the default base (`staging`). Absent when that ref does not exist. */
   baseMerge?: { base: string; conflicts: boolean }
 }
@@ -390,6 +392,7 @@ export interface FarolApi {
     ): Promise<{ ok: boolean; message?: string; error?: string }>
     push(projectPath: string): Promise<{ ok: boolean; message: string }>
     github(projectPath: string): Promise<GitHubInfo>
+    createPr(projectPath: string): Promise<{ ok: boolean; message: string }>
     /** Fires when HEAD changes, including from outside the app. */
     onChanged(cb: (changed: GitChanged) => void): () => void
   }

@@ -59,7 +59,7 @@ function bucketLine(
 }
 
 /** Turn porcelain lines into staged / unstaged / untracked / conflict buckets. */
-export function parseGitStatus(porcelain: string): Omit<GitStatus, 'ahead' | 'behind'> {
+export function parseGitStatus(porcelain: string): Omit<GitStatus, 'ahead' | 'behind' | 'upstream'> {
   const staged: GitStatusFile[] = []
   const unstaged: GitStatusFile[] = []
   const untracked: GitStatusFile[] = []
@@ -140,6 +140,15 @@ export function pushBlockReason(st: GitStatus): string | null {
   if (st.conflicts.length) return 'Resolve merge conflicts before pushing.'
   if (st.behind > 0) return 'Branch is behind upstream — pull before pushing.'
   if (st.ahead === 0) return 'Nothing to push — branch is even with upstream.'
+  return null
+}
+
+/** Why this branch cannot open a pull request yet, or null when it can. */
+export function pullRequestBlockReason(st: GitStatus | null): string | null {
+  if (!st) return 'Reading branch status…'
+  if (st.conflicts.length) return 'Resolve merge conflicts before opening a pull request.'
+  if (!st.upstream) return 'Push this branch to the remote before opening a pull request.'
+  if (st.ahead > 0) return 'Push your latest commits before opening a pull request.'
   return null
 }
 

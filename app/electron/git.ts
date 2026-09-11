@@ -288,7 +288,7 @@ export async function status(cwd: string): Promise<GitStatus> {
   const parsed = parseGitStatus(porcelain.out)
   const { ahead, behind } =
     tracking.code === 0 ? parseAheadBehind(tracking.out) : { ahead: 0, behind: 0 }
-  return { ...parsed, ahead, behind, ...(baseMerge ? { baseMerge } : {}) }
+  return { ...parsed, ahead, behind, upstream: tracking.code === 0, ...(baseMerge ? { baseMerge } : {}) }
 }
 
 /** Parse `git log --format=%h\\t%s\\t%an\\t%cr` lines. */

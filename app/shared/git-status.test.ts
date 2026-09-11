@@ -8,6 +8,7 @@ import {
   isSecretPath,
   parseAheadBehind,
   parseGitStatus,
+  pullRequestBlockReason,
   pushBlockReason
 } from './git-status'
 import type { GitStatus } from './types'
@@ -21,6 +22,7 @@ function status(partial: Partial<GitStatus>): GitStatus {
     conflicts: [],
     ahead: 0,
     behind: 0,
+    upstream: true,
     ...partial
   }
 }
@@ -148,6 +150,27 @@ describe('pushBlockReason', () => {
           ahead: 2,
           unstaged: [{ path: 'src/a.ts', kind: 'modified', staged: false }]
         })
+      )
+    ).toBeNull()
+  })
+})
+
+describe('pullRequestBlockReason', () => {
+  it('blocks conflicts, an unpushed branch, and unpushed commits', () => {
+    expect(
+      pullRequestBlockReason(
+        status({ conflicts: [{ path: 'both.ts', kind: 'conflict', staged: false }] })
+      )
+    ).toMatch(/conflicts/)
+    expect(pullRequestBlockReason(status({ upstream: false }))).toMatch(/Push this branch/)
+    expect(pullRequestBlockReason(status({ ahead: 2 }))).toMatch(/latest commits/)
+    expect(pullRequestBlockReason(null)).toMatch(/Reading/)
+  })
+
+  it('allows a pushed branch, even with local edits', () => {
+    expect(
+      pullRequestBlockReason(
+        status({ unstaged: [{ path: 'src/a.ts', kind: 'modified', staged: false }] })
       )
     ).toBeNull()
   })

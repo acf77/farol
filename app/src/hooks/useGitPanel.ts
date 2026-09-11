@@ -7,6 +7,8 @@ function sameProject(a: string, b: string): boolean {
   return a.replace(/[/\\]+$/, '') === b.replace(/[/\\]+$/, '')
 }
 
+export type GitAction = 'commit' | 'push' | 'pr'
+
 export type GitCommitDraft = {
   message: string
   files: string[]
@@ -30,7 +32,7 @@ export function useGitPanel(
   const [commits, setCommits] = useState<GitCommit[]>([])
   const [github, setGithub] = useState<GitHubInfo | null>(null)
   const [loading, setLoading] = useState(false)
-  const [gitAction, setGitAction] = useState<'commit' | 'push' | null>(null)
+  const [gitAction, setGitAction] = useState<GitAction | null>(null)
   const [draft, setDraft] = useState<GitCommitDraft | null>(null)
   const [lastMessage, setLastMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -164,23 +166,37 @@ export function useGitPanel(
     }
   }, [draft, gitAction, projectPath, refresh])
 
-  const push = useCallback(async () => {
-    if (gitAction) return
-    setGitAction('push')
-    setError(null)
-    setLastMessage(null)
-    try {
-      const res = await api.git.push(projectPath)
-      if (res.ok && res.message) {
-        setLastMessage(res.message)
-        void refresh()
-      } else {
-        setError(res.message || 'Push failed')
+  /** Run a remote action that reports its outcome as a single message either way. */
+  const runRemote = useCallback(
+    async (kind: GitAction, op: () => Promise<{ ok: boolean; message: string }>, failed: string) => {
+      if (gitAction) return
+      setGitAction(kind)
+      setError(null)
+      setLastMessage(null)
+      try {
+        const res = await op()
+        if (res.ok && res.message) {
+          setLastMessage(res.message)
+          void refresh()
+        } else {
+          setError(res.message || failed)
+        }
+      } finally {
+        setGitAction(null)
       }
-    } finally {
-      setGitAction(null)
-    }
-  }, [gitAction, projectPath, refresh])
+    },
+    [gitAction, refresh]
+  )
+
+  const push = useCallback(
+    () => runRemote('push', () => api.git.push(projectPath), 'Push failed'),
+    [projectPath, runRemote]
+  )
+
+  const createPr = useCallback(
+    () => runRemote('pr', () => api.git.createPr(projectPath), 'Could not create the pull request'),
+    [projectPath, runRemote]
+  )
 
   return {
     status,
@@ -197,6 +213,7 @@ export function useGitPanel(
     setDraftMessage: (message: string) => setDraft((d) => (d ? { ...d, message } : d)),
     cancelDraft: () => setDraft(null),
     confirmCommit,
-    push
+    push,
+    createPr
   }
 }
