@@ -120,12 +120,16 @@ export interface GitCommit {
 export interface PullRequest {
   number: number
   hasConflicts: boolean
+  /** PR base branch, when GitHub reported it. */
+  base?: string
 }
 
 export interface GitHubInfo {
   available: boolean
   message?: string
   prs: PullRequest[]
+  /** Paths that would conflict if the open PR's base were merged into HEAD. */
+  conflictFiles?: string[]
 }
 
 /** Fired when `.farol/pipelines.json` changes on disk (including outside the app). */
@@ -393,6 +397,7 @@ export interface FarolApi {
     push(projectPath: string): Promise<{ ok: boolean; message: string }>
     github(projectPath: string): Promise<GitHubInfo>
     createPr(projectPath: string): Promise<{ ok: boolean; message: string }>
+    bringConflicts(projectPath: string): Promise<{ ok: boolean; message: string; prompt?: string }>
     /** Fires when HEAD changes, including from outside the app. */
     onChanged(cb: (changed: GitChanged) => void): () => void
   }

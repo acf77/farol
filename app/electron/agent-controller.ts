@@ -18,6 +18,8 @@ import {
 } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
 import {
+  BLOCK_MARKER,
+  PIPELINES_MARKER,
   QUESTIONS_MARKER,
   formatAnswers,
   parseQuestionsMarker,
@@ -121,10 +123,8 @@ type CycleScan = {
 type CycleAttemptResult = { kind: 'done' } | { kind: 'retry'; prompt: string; rewindAttempt?: boolean }
 
 const DEFAULT_MAX_ATTEMPTS = 5
-const BLOCK_MARKER = 'FAROL_BLOCKED:'
 /** How much trailing output the marker and failure scans keep in memory. */
 const SCAN_WINDOW = 16_384
-const PIPELINES_MARKER = 'FAROL_PIPELINES:'
 /** Cap stored prompt history so long chats cannot retain unbounded text. */
 const MAX_PROMPT_CHARS = 100_000
 /** Cap pipeline activity retained for prompt context. */
@@ -873,7 +873,7 @@ export class AgentController {
       `When the requested file change is complete, select every relevant validation pipeline from the catalog below. If you made no file changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
       mandatoryNote,
       `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
-      `Do not call the Farol MCP tools in this managed Chat session. They require approval in some providers; the managed harness executes your selected pipelines directly.`,
+      `Do not call the Farol MCP tools in this managed Chat session. They are not available here — they require approval in some providers, and the managed harness executes your selected pipelines directly.`,
       `End every response with exactly one line: either ${QUESTIONS_MARKER} [...] when you need a user decision, or ${PIPELINES_MARKER} ["pipeline-id"] when the file-change work for this turn is done — ${PIPELINES_MARKER} [] if no validation is needed. Use a JSON array and only catalog ids for pipelines.`,
       '',
       `Available Farol pipelines:\n${pipelineCatalog(task.request.pipelines)}`,

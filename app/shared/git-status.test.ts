@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   commitBlockReason,
   committableFiles,
+  conflictMergeBase,
+  conflictResolvePrompt,
   conflictSignals,
   conflictStatusItems,
   draftMatchesStatus,
   isSecretPath,
   parseAheadBehind,
   parseGitStatus,
+  parseMergeTreeConflictPaths,
   pullRequestBlockReason,
   pushBlockReason
 } from './git-status'
@@ -205,6 +208,26 @@ describe('conflictSignals', () => {
   })
 })
 
+describe('conflictMergeBase', () => {
+  it('uses the pull request base when GitHub reported conflicts', () => {
+    expect(
+      conflictMergeBase(status({ clean: true, baseMerge: { base: 'staging', conflicts: true } }), {
+        available: true,
+        prs: [{ number: 4, hasConflicts: true, base: 'main' }]
+      })
+    ).toBe('main')
+  })
+
+  it('uses staging when the pull request itself is clean', () => {
+    expect(
+      conflictMergeBase(status({ clean: true, baseMerge: { base: 'staging', conflicts: true } }), {
+        available: true,
+        prs: [{ number: 4, hasConflicts: false, base: 'main' }]
+      })
+    ).toBe('staging')
+  })
+})
+
 describe('conflictStatusItems', () => {
   it('reports a clean staging merge and no PR', () => {
     expect(
@@ -230,5 +253,51 @@ describe('conflictStatusItems', () => {
         ]
       })
     ).toEqual([{ tone: 'conflict', text: 'Pull request #4 has merge conflicts.' }])
+  })
+
+  it('names the PR base when GitHub reported it', () => {
+    expect(
+      conflictStatusItems(status({ clean: true }), {
+        available: true,
+        prs: [{ number: 4, hasConflicts: true, base: 'main' }]
+      })
+    ).toEqual([{ tone: 'conflict', text: 'Pull request #4 has merge conflicts with main.' }])
+  })
+})
+
+describe('parseMergeTreeConflictPaths', () => {
+  it('reads CONFLICT lines from merge-tree output', () => {
+    expect(
+      parseMergeTreeConflictPaths(
+        'CONFLICT (content): Merge conflict in src/a.ts\nchanged in both src/b.ts\n'
+      )
+    ).toEqual(['src/a.ts', 'src/b.ts'])
+  })
+
+  it('skips the tree oid and stage lines from --write-tree', () => {
+    expect(
+      parseMergeTreeConflictPaths(`84443a905c2e513c03e76dd19f09f0946b3c9202
+100644 df967b96a579e45a18b8251732d16804b2e56a55 1	file.txt
+100644 dcd5906e303dd0cffa818f7cebc4de7135496d7e 2	file.txt
+100644 a7453f07505c42ea8d6fdda75fa91710c81c53d6 3	file.txt
+
+Auto-merging file.txt
+CONFLICT (content): Merge conflict in file.txt
+`)
+    ).toEqual(['file.txt'])
+  })
+})
+
+describe('conflictResolvePrompt', () => {
+  it('asks the agent to edit markers already in the tree', () => {
+    const text = conflictResolvePrompt({
+      pr: 7,
+      base: 'staging',
+      files: ['src/a.ts']
+    })
+    expect(text).toMatch(/Pull request #7/)
+    expect(text).toMatch(/staging/)
+    expect(text).toMatch(/src\/a\.ts/)
+    expect(text).toMatch(/working tree/)
   })
 })

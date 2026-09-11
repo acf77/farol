@@ -8,6 +8,13 @@
  */
 
 export const QUESTIONS_MARKER = 'FAROL_QUESTIONS:'
+export const PIPELINES_MARKER = 'FAROL_PIPELINES:'
+export const BLOCK_MARKER = 'FAROL_BLOCKED:'
+export const CONTROL_MARKERS = [PIPELINES_MARKER, QUESTIONS_MARKER, BLOCK_MARKER] as const
+
+export function hasControlMarker(text: string): boolean {
+  return CONTROL_MARKERS.some((marker) => text.includes(marker))
+}
 
 export interface QuestionOption {
   /** 1–5 words, shown as the choice. */

@@ -112,6 +112,37 @@ describe('AgentStreamParser', () => {
     ])
   })
 
+  it('recovers Farol markers from Claude result when assistant turns omitted them', () => {
+    const parser = new AgentStreamParser()
+    const result = JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      result: 'Done.\nFAROL_PIPELINES: ["lint"]\n'
+    })
+    expect(parse(parser, `${result}\n`)).toEqual([
+      { kind: 'text', text: 'FAROL_PIPELINES: ["lint"]' }
+    ])
+  })
+
+  it('does not duplicate a Farol marker already streamed as assistant text', () => {
+    const parser = new AgentStreamParser()
+    const assistant = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Done.\nFAROL_PIPELINES: ["lint"]\n' }]
+      }
+    })
+    const result = JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      result: 'Done.\nFAROL_PIPELINES: ["lint"]\n'
+    })
+    expect(parse(parser, `${assistant}\n${result}\n`)).toEqual([
+      { kind: 'text', text: 'Done.\nFAROL_PIPELINES: ["lint"]\n' }
+    ])
+  })
+
   it('holds back a line split across chunks', () => {
     const parser = new AgentStreamParser()
     const half = Math.floor(claudeText.length / 2)

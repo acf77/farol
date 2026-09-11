@@ -302,6 +302,11 @@ export function managedAiCommand(
         bins: ['claude'],
         // `--verbose` is what makes stream-json emit each turn as it happens;
         // without it the CLI still waits and prints one final event.
+        // `--strict-mcp-config` with no `--mcp-config` loads zero MCP servers.
+        // Claude Code otherwise picks up project `.mcp.json` (Farol's
+        // list_pipelines / run_pipeline) and calls those instead of emitting
+        // FAROL_PIPELINES — so the managed harness never runs validation, and
+        // MCP runs use origin `agent`, which does not hand failures back.
         args: withModel(
           [
             '-p',
@@ -310,6 +315,7 @@ export function managedAiCommand(
             '--verbose',
             '--permission-mode',
             'bypassPermissions',
+            '--strict-mcp-config',
             prompt
           ],
           passed

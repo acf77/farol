@@ -2,14 +2,16 @@ import { execFileSync } from 'child_process'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { runAiOnce } = vi.hoisted(() => ({
-  runAiOnce: vi.fn()
+const { runAiOnce, githubInfo } = vi.hoisted(() => ({
+  runAiOnce: vi.fn(),
+  githubInfo: vi.fn()
 }))
 vi.mock('./ai-oneshot', () => ({ runAiOnce }))
+vi.mock('./github', () => ({ githubInfo }))
 
-import { commitAll, draftCommit, mergeBaseConflicts, parseCommitLog, sanitizeCommitMessage } from './git'
+import { bringPrConflicts, commitAll, draftCommit, githubStatus, mergeBaseConflicts, mergeForConflicts, parseCommitLog, sanitizeCommitMessage } from './git'
 
 const dirs: string[] = []
 
@@ -27,10 +29,33 @@ function tmpRepo(): string {
   return dir
 }
 
+beforeEach(() => {
+  githubInfo.mockResolvedValue({ available: true, prs: [] })
+})
+
 afterEach(() => {
   runAiOnce.mockReset()
+  githubInfo.mockReset()
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
 })
+
+/** Two branches that both edit `file.txt` so a merge with `staging` conflicts. */
+function conflictRepo(): string {
+  const cwd = tmpRepo()
+  fs.writeFileSync(path.join(cwd, 'file.txt'), 'base\n')
+  git(cwd, ['add', 'file.txt'])
+  git(cwd, ['commit', '-m', 'init'])
+  git(cwd, ['branch', '-M', 'main'])
+  git(cwd, ['checkout', '-b', 'staging'])
+  fs.writeFileSync(path.join(cwd, 'file.txt'), 'staging\n')
+  git(cwd, ['add', 'file.txt'])
+  git(cwd, ['commit', '-m', 'staging'])
+  git(cwd, ['checkout', '-b', 'feat', 'main'])
+  fs.writeFileSync(path.join(cwd, 'file.txt'), 'feature\n')
+  git(cwd, ['add', 'file.txt'])
+  git(cwd, ['commit', '-m', 'feat'])
+  return cwd
+}
 
 describe('sanitizeCommitMessage', () => {
   it('strips markdown fences and blank lines', () => {
@@ -121,20 +146,7 @@ describe('commitAll', () => {
 
 describe('mergeBaseConflicts', () => {
   it('detects a conflict with staging', async () => {
-    const cwd = tmpRepo()
-    fs.writeFileSync(path.join(cwd, 'file.txt'), 'base\n')
-    git(cwd, ['add', 'file.txt'])
-    git(cwd, ['commit', '-m', 'init'])
-    git(cwd, ['branch', '-M', 'main'])
-    git(cwd, ['checkout', '-b', 'staging'])
-    fs.writeFileSync(path.join(cwd, 'file.txt'), 'staging\n')
-    git(cwd, ['add', 'file.txt'])
-    git(cwd, ['commit', '-m', 'staging'])
-    git(cwd, ['checkout', '-b', 'feat', 'main'])
-    fs.writeFileSync(path.join(cwd, 'file.txt'), 'feature\n')
-    git(cwd, ['add', 'file.txt'])
-    git(cwd, ['commit', '-m', 'feat'])
-    await expect(mergeBaseConflicts(cwd)).resolves.toEqual({ base: 'staging', conflicts: true })
+    await expect(mergeBaseConflicts(conflictRepo())).resolves.toEqual({ base: 'staging', conflicts: true })
   })
 
   it('reports a clean merge with staging', async () => {
@@ -161,5 +173,126 @@ describe('mergeBaseConflicts', () => {
     git(cwd, ['commit', '-m', 'init'])
     git(cwd, ['checkout', '-b', 'staging'])
     await expect(mergeBaseConflicts(cwd)).resolves.toBeUndefined()
+  })
+})
+
+describe('mergeForConflicts', () => {
+  it('writes conflict markers so the agent can edit them', async () => {
+    const cwd = conflictRepo()
+    const merged = await mergeForConflicts(cwd, 'staging')
+    expect(merged).toMatchObject({ ok: true, files: ['file.txt'] })
+    expect(fs.readFileSync(path.join(cwd, 'file.txt'), 'utf8')).toMatch(/<<<<<<</)
+  })
+
+  it('refuses to merge on a dirty tree', async () => {
+    const cwd = conflictRepo()
+    fs.writeFileSync(path.join(cwd, 'dirty.txt'), 'nope\n')
+    await expect(mergeForConflicts(cwd, 'staging')).resolves.toMatchObject({ ok: false })
+  })
+
+  it('merges origin/staging even when the local staging branch would not conflict', async () => {
+    const origin = tmpRepo()
+    fs.writeFileSync(path.join(origin, 'file.txt'), 'base\n')
+    git(origin, ['add', 'file.txt'])
+    git(origin, ['commit', '-m', 'init'])
+    git(origin, ['branch', '-M', 'main'])
+    git(origin, ['checkout', '-b', 'staging'])
+    fs.writeFileSync(path.join(origin, 'file.txt'), 'origin-staging\n')
+    git(origin, ['add', 'file.txt'])
+    git(origin, ['commit', '-m', 'staging'])
+    git(origin, ['checkout', 'main'])
+
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'bf-git-'))
+    dirs.push(cwd)
+    execFileSync('git', ['clone', origin, cwd], { encoding: 'utf8' })
+    git(cwd, ['config', 'user.email', 'test@example.com'])
+    git(cwd, ['config', 'user.name', 'Test'])
+    git(cwd, ['config', 'commit.gpgsign', 'false'])
+    git(cwd, ['checkout', '-b', 'feat'])
+    fs.writeFileSync(path.join(cwd, 'file.txt'), 'feature\n')
+    git(cwd, ['add', 'file.txt'])
+    git(cwd, ['commit', '-m', 'feat'])
+    git(cwd, ['branch', 'staging', 'main'])
+
+    const merged = await mergeForConflicts(cwd, 'staging')
+    expect(merged).toMatchObject({ ok: true, files: ['file.txt'] })
+    expect(fs.readFileSync(path.join(cwd, 'file.txt'), 'utf8')).toMatch(/origin-staging/)
+  })
+})
+
+describe('githubStatus', () => {
+  it('attaches predicted conflict paths for a conflicting pull request', async () => {
+    const cwd = conflictRepo()
+    githubInfo.mockResolvedValue({
+      available: true,
+      prs: [{ number: 7, hasConflicts: true, base: 'staging' }]
+    })
+    await expect(githubStatus(cwd)).resolves.toMatchObject({
+      conflictFiles: ['file.txt']
+    })
+  })
+})
+
+describe('bringPrConflicts', () => {
+  it('merges a conflicting pull request on a clean tree and returns a prompt', async () => {
+    const cwd = conflictRepo()
+    githubInfo.mockResolvedValue({
+      available: true,
+      prs: [{ number: 7, hasConflicts: true, base: 'staging' }]
+    })
+    const res = await bringPrConflicts(cwd)
+    expect(res).toMatchObject({ ok: true, message: 'Merged staging with conflicts.' })
+    expect(res.prompt).toMatch(/Pull request #7/)
+    expect(res.prompt).toMatch(/file\.txt/)
+    expect(fs.readFileSync(path.join(cwd, 'file.txt'), 'utf8')).toMatch(/<<<<<<</)
+  })
+
+  it('merges staging when the open pull request itself is clean', async () => {
+    const cwd = conflictRepo()
+    githubInfo.mockResolvedValue({
+      available: true,
+      prs: [{ number: 7, hasConflicts: false, base: 'main' }]
+    })
+    const res = await bringPrConflicts(cwd)
+    expect(res.ok).toBe(true)
+    expect(res.prompt).toMatch(/staging/)
+    expect(fs.readFileSync(path.join(cwd, 'file.txt'), 'utf8')).toMatch(/<<<<<<</)
+  })
+
+  it('reuses markers already in the working tree', async () => {
+    const cwd = conflictRepo()
+    await mergeForConflicts(cwd, 'staging')
+    githubInfo.mockResolvedValue({
+      available: true,
+      prs: [{ number: 7, hasConflicts: true, base: 'staging' }]
+    })
+    const res = await bringPrConflicts(cwd)
+    expect(res).toMatchObject({ ok: true, message: 'Conflicts are already in the working tree.' })
+    expect(res.prompt).toMatch(/Pull request #7/)
+    expect(res.prompt).toMatch(/file\.txt/)
+  })
+
+  it('refuses a dirty tree when the pull request still needs a merge', async () => {
+    const cwd = conflictRepo()
+    fs.writeFileSync(path.join(cwd, 'dirty.txt'), 'nope\n')
+    githubInfo.mockResolvedValue({
+      available: true,
+      prs: [{ number: 7, hasConflicts: true, base: 'staging' }]
+    })
+    await expect(bringPrConflicts(cwd)).resolves.toMatchObject({
+      ok: false,
+      message: 'Commit or stash local changes before merging the pull request base.'
+    })
+  })
+
+  it('does nothing when there is no pull request conflict', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'file.txt'), 'base\n')
+    git(cwd, ['add', 'file.txt'])
+    git(cwd, ['commit', '-m', 'init'])
+    await expect(bringPrConflicts(cwd)).resolves.toEqual({
+      ok: false,
+      message: 'No pull request conflicts to resolve.'
+    })
   })
 })

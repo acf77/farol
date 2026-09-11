@@ -1,4 +1,9 @@
-import { isQuestionToolName, questionsFromToolInput, type AgentQuestion } from './questions'
+import {
+  hasControlMarker,
+  isQuestionToolName,
+  questionsFromToolInput,
+  type AgentQuestion
+} from './questions'
 
 /**
  * Turning a coding CLI's realtime NDJSON stream into chat events.
@@ -332,6 +337,8 @@ export class AgentStreamParser {
   private buffer = ''
   /** tool_use id -> name, so a later tool_result can name the card it closes. */
   private names = new Map<string, string>()
+  /** Claude's final `result` event duplicates assistant text; only used for missed markers. */
+  private sawControlMarker = false
 
   /** Feed raw stdout. Chunks split lines anywhere, so partials are held back. */
   push(chunk: string): AgentStreamEvent[] {
@@ -400,6 +407,8 @@ export class AgentStreamParser {
       case 'turn.failed':
       case 'error':
         return this.streamError(event)
+      case 'result':
+        return this.claudeResult(event)
       default:
         return []
     }
@@ -428,7 +437,9 @@ export class AgentStreamParser {
   private assistantItem(item: Record<string, unknown>): AgentStreamEvent | undefined {
     if (item.type === 'text') {
       const text = typeof item.text === 'string' ? item.text : ''
-      return text.trim() ? { kind: 'text', text } : undefined
+      if (!text.trim()) return undefined
+      if (hasControlMarker(text)) this.sawControlMarker = true
+      return { kind: 'text', text }
     }
     if (item.type !== 'tool_use') return undefined
     const toolId = normalizeId(item.id, `tool-${this.names.size}`)
@@ -556,6 +567,15 @@ export class AgentStreamParser {
   /** OMP status chatter is routine; only a real failure belongs in Chat. */
   private ompNotice(event: Record<string, unknown>): AgentStreamEvent[] {
     return event.level === 'error' ? this.streamError(event) : []
+  }
+
+  /** Claude's `result` duplicates assistant text; emit it only for a missed Farol marker. */
+  private claudeResult(event: Record<string, unknown>): AgentStreamEvent[] {
+    const text = stringField(event, 'result')
+    if (!text?.trim() || this.sawControlMarker || !hasControlMarker(text)) return []
+    this.sawControlMarker = true
+    const lines = text.split(/\r?\n/).filter((line) => hasControlMarker(line))
+    return lines.length ? [{ kind: 'text', text: lines.join('\n') }] : []
   }
 
   private streamError(event: Record<string, unknown>): AgentStreamEvent[] {

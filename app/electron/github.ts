@@ -7,6 +7,7 @@ const PR_CREATE_TIMEOUT = 120_000
 type GhPr = {
   number: number
   mergeable?: string
+  baseRefName?: string
 }
 
 export function noPullRequestMessage(text: string): boolean {
@@ -14,9 +15,11 @@ export function noPullRequestMessage(text: string): boolean {
 }
 
 function parsePr(raw: GhPr): PullRequest {
+  const base = raw.baseRefName?.trim()
   return {
     number: raw.number,
-    hasConflicts: raw.mergeable === 'CONFLICTING'
+    hasConflicts: raw.mergeable === 'CONFLICTING',
+    ...(base ? { base } : {})
   }
 }
 
@@ -37,7 +40,7 @@ export async function githubInfo(cwd: string): Promise<GitHubInfo> {
   const view = await execCli(
     'gh',
     cwd,
-    ['pr', 'view', '--json', 'number,mergeable'],
+    ['pr', 'view', '--json', 'number,mergeable,baseRefName'],
     GH_TIMEOUT
   )
   if (view.code !== 0) {

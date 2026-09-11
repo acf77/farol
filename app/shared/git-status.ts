@@ -166,6 +166,17 @@ export function conflictSignals(status: GitStatus | null, github: GitHubInfo | n
   }
 }
 
+/** Branch whose conflicts the Resolve action should materialize. */
+export function conflictMergeBase(
+  status: GitStatus | null,
+  github: GitHubInfo | null
+): string | undefined {
+  const pr = github?.prs[0]
+  if (pr?.hasConflicts && pr.base) return pr.base
+  if (status?.baseMerge?.conflicts) return status.baseMerge.base
+  return pr?.base || status?.baseMerge?.base
+}
+
 export function conflictStatusItems(
   status: GitStatus | null,
   github: GitHubInfo | null
@@ -190,11 +201,43 @@ export function conflictStatusItems(
     items.push({
       tone: prConflicts ? 'conflict' : 'ok',
       text: prConflicts
-        ? `Pull request #${pr.number} has merge conflicts.`
+        ? `Pull request #${pr.number} has merge conflicts${pr.base ? ` with ${pr.base}` : ''}.`
         : `Pull request #${pr.number} has no merge conflicts.`
     })
   } else if (github?.available) {
     items.push({ tone: 'muted', text: 'No open pull request from this branch.' })
   }
   return items
+}
+
+const MERGE_TREE_CONFLICT = /(?:^|\n)(?:CONFLICT(?: \([^)]+\))?: Merge conflict in |changed in both )(.+)$/gim
+
+/** Paths named in `git merge-tree --write-tree` conflict output. */
+export function parseMergeTreeConflictPaths(out: string): string[] {
+  const files: string[] = []
+  const seen = new Set<string>()
+  for (const match of out.matchAll(MERGE_TREE_CONFLICT)) {
+    const path = match[1]?.trim()
+    if (!path || seen.has(path)) continue
+    seen.add(path)
+    files.push(path)
+  }
+  return files
+}
+
+/** Ask the chat agent to finish a merge that already has conflict markers. */
+export function conflictResolvePrompt(opts: {
+  pr?: number
+  base: string
+  files: string[]
+}): string {
+  const where = opts.pr ? `Pull request #${opts.pr}` : 'This branch'
+  const listed = opts.files.length
+    ? opts.files.map((file) => `- ${file}`).join('\n')
+    : '- (inspect the working tree for conflict markers)'
+  return [
+    `${where} has merge conflicts with ${opts.base}. Conflict markers are in the working tree.`,
+    `Resolve every conflict, keep this branch's intended behavior, and leave the files ready to commit.`,
+    `Conflicted files:\n${listed}`
+  ].join('\n\n')
 }

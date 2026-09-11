@@ -35,7 +35,8 @@ describe('githubInfo', () => {
         ok(
           JSON.stringify({
             number: 12,
-            mergeable: 'CONFLICTING'
+            mergeable: 'CONFLICTING',
+            baseRefName: 'staging'
           })
         )
       )
@@ -44,7 +45,8 @@ describe('githubInfo', () => {
       prs: [
         {
           number: 12,
-          hasConflicts: true
+          hasConflicts: true,
+          base: 'staging'
         }
       ]
     })
@@ -52,7 +54,7 @@ describe('githubInfo', () => {
       'pr',
       'view',
       '--json',
-      'number,mergeable'
+      'number,mergeable,baseRefName'
     ])
   })
 

@@ -1,8 +1,6 @@
 import type { ReactNode } from 'react'
+import { CONTROL_MARKERS } from '@shared/questions'
 import { C, MONO } from './theme'
-
-/** Control lines the managed harness reads — hide them from the transcript. */
-const CONTROL_LINE = /^\s*FAROL_(?:PIPELINES|BLOCKED|QUESTIONS):.*$/
 
 /**
  * Drop Farol harness markers so they do not clutter the chat once the
@@ -11,7 +9,7 @@ const CONTROL_LINE = /^\s*FAROL_(?:PIPELINES|BLOCKED|QUESTIONS):.*$/
 export function stripControlMarkers(text: string): string {
   return text
     .split(/\r?\n/)
-    .filter((line) => !CONTROL_LINE.test(line))
+    .filter((line) => !CONTROL_MARKERS.some((marker) => line.trimStart().startsWith(marker)))
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trimEnd()

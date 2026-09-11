@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState, type CSSProperties, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { aiSelectionLabel } from '@shared/ai'
 import {
   commitBlockReason,
@@ -77,7 +77,15 @@ function alertBox(variant: 'error' | 'success' | 'conflict'): CSSProperties {
   }
 }
 
-function FileList({ title, files, color }: { title: string; files: GitStatus['staged']; color: string }) {
+function FileList({
+  title,
+  files,
+  color
+}: {
+  title: string
+  files: readonly string[] | readonly { path: string; kind: GitFileKind }[]
+  color: string
+}) {
   if (!files.length) return null
   const visible = files.slice(0, MAX_FILES)
   const extra = files.length - visible.length
@@ -85,25 +93,29 @@ function FileList({ title, files, color }: { title: string; files: GitStatus['st
     <div style={{ marginBottom: 10 }}>
       <div style={{ ...sectionLabel, marginBottom: 4 }}>{title} ({files.length})</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-        {visible.map((f) => (
-          <div
-            key={f.path}
-            title={f.path}
-            style={{
-              fontFamily: MONO,
-              fontSize: 11,
-              display: 'flex',
-              gap: 8,
-              color: C.textSoft,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap'
-            }}
-          >
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.path}</span>
-            <span style={{ color, fontFamily: UI, flexShrink: 0 }}>{KIND_LABEL[f.kind]}</span>
-          </div>
-        ))}
+        {visible.map((f) => {
+          const path = typeof f === 'string' ? f : f.path
+          const kind = typeof f === 'string' ? undefined : KIND_LABEL[f.kind]
+          return (
+            <div
+              key={path}
+              title={path}
+              style={{
+                fontFamily: MONO,
+                fontSize: 11,
+                display: 'flex',
+                gap: 8,
+                color: C.textSoft,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{path}</span>
+              {kind && <span style={{ color, fontFamily: UI, flexShrink: 0 }}>{kind}</span>}
+            </div>
+          )
+        })}
         {extra > 0 && (
           <div style={{ fontSize: 11, color: C.textMuted }}>+{extra} more</div>
         )}
@@ -190,15 +202,29 @@ function RecentCommitsBlock({ commits }: { commits: GitCommit[] }) {
 
 function ConflictBlock({
   status,
-  github
+  github,
+  gitAction,
+  onResolve
 }: {
   status: GitStatus | null
   github: GitHubInfo | null
+  gitAction: GitAction | null
+  onResolve: () => void
 }) {
   const items = conflictStatusItems(status, github)
   if (!items.length) return null
   const bad = items.filter((i) => i.tone === 'conflict')
   const rest = items.filter((i) => i.tone !== 'conflict')
+  const working = new Set((status?.conflicts ?? []).map((file) => file.path))
+  const predicted = (github?.conflictFiles ?? []).filter((file) => !working.has(file))
+  const canAsk = !gitAction && !!status && (status.clean || status.conflicts.length > 0)
+  const askTitle = !status
+    ? 'Reading working changes…'
+    : gitAction
+      ? 'Wait for the current git action to finish'
+      : canAsk
+        ? 'Merge the pull request base if needed, then send the conflicted files to Chat'
+        : 'Commit or stash local changes before merging the pull request base'
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={sectionLabel}>Merge status</div>
@@ -209,6 +235,9 @@ function ConflictBlock({
           ))}
         </div>
       )}
+      {predicted.length > 0 && (
+        <FileList title="Predicted conflicts" files={predicted} color={C.red} />
+      )}
       {rest.map((i) => (
         <div
           key={i.text}
@@ -217,6 +246,18 @@ function ConflictBlock({
           {i.text}
         </div>
       ))}
+      {bad.length > 0 && (
+        <ConfirmButton
+          label="Resolve with AI"
+          confirmLabel="Confirm resolve"
+          busyLabel="Preparing conflicts…"
+          busy={gitAction === 'conflicts'}
+          disabled={!canAsk}
+          title={askTitle}
+          onConfirm={onResolve}
+          style={{ marginTop: 8, width: '100%', flex: 'none' }}
+        />
+      )}
     </div>
   )
 }
@@ -261,8 +302,115 @@ function useEscapeClose(open: boolean, onClose: () => void): void {
   }, [open, onClose])
 }
 
+const PUSH_HOLD_MS = 2500
+
+/** Push reaches the remote, so it only fires after a 2.5s press. Release early cancels. */
+function HoldButton({
+  label,
+  busyLabel,
+  busy,
+  disabled,
+  title,
+  onConfirm,
+  style
+}: {
+  label: string
+  busyLabel: string
+  busy: boolean
+  disabled: boolean
+  title: string
+  onConfirm: () => void
+  style?: CSSProperties
+}) {
+  const [holding, setHolding] = useState(false)
+  const timer = useRef<number | null>(null)
+  const unbind = useRef<(() => void) | null>(null)
+
+  const cancel = useCallback(() => {
+    if (timer.current !== null) {
+      window.clearTimeout(timer.current)
+      timer.current = null
+    }
+    unbind.current?.()
+    unbind.current = null
+    setHolding(false)
+  }, [])
+
+  useEffect(() => {
+    if (disabled || busy) cancel()
+  }, [busy, cancel, disabled])
+
+  useEffect(() => () => cancel(), [cancel])
+
+  const begin = (): void => {
+    if (disabled || busy || timer.current !== null) return
+    setHolding(true)
+    const stop = (): void => cancel()
+    window.addEventListener('pointerup', stop)
+    window.addEventListener('pointercancel', stop)
+    unbind.current = () => {
+      window.removeEventListener('pointerup', stop)
+      window.removeEventListener('pointercancel', stop)
+    }
+    timer.current = window.setTimeout(() => {
+      timer.current = null
+      unbind.current?.()
+      unbind.current = null
+      setHolding(false)
+      onConfirm()
+    }, PUSH_HOLD_MS)
+  }
+
+  return (
+    <Button
+      variant="secondary"
+      size="md"
+      disabled={disabled}
+      title={holding ? 'Keep holding to push' : title}
+      aria-label={`${label}. Hold until the button fills to confirm`}
+      className={`bf-hold-btn${holding ? ' is-holding' : ''}`}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return
+        e.preventDefault()
+        e.currentTarget.focus()
+        begin()
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== ' ' && e.key !== 'Enter') return
+        if (e.repeat) return
+        e.preventDefault()
+        begin()
+      }}
+      onKeyUp={(e) => {
+        if (e.key !== ' ' && e.key !== 'Enter') return
+        e.preventDefault()
+        cancel()
+      }}
+      onBlur={cancel}
+      onContextMenu={(e) => e.preventDefault()}
+      style={{
+        flex: 1,
+        color: holding ? C.accentInk : undefined,
+        ['--bf-hold-ms' as string]: `${PUSH_HOLD_MS}ms`,
+        ...style
+      }}
+    >
+      <span className="bf-hold-fill" aria-hidden />
+      <span className="bf-hold-label">
+        {busy ? (
+          <>
+            <Spinner /> {busyLabel}
+          </>
+        ) : (
+          label
+        )}
+      </span>
+    </Button>
+  )
+}
+
 /** A button whose action reaches the remote, so it asks for a second click first. */
-function ConfirmButton({ label, confirmLabel, busyLabel, busy, disabled, title, onConfirm }: {
+function ConfirmButton({ label, confirmLabel, busyLabel, busy, disabled, title, onConfirm, style }: {
   label: string
   confirmLabel: string
   busyLabel: string
@@ -270,6 +418,7 @@ function ConfirmButton({ label, confirmLabel, busyLabel, busy, disabled, title, 
   disabled: boolean
   title: string
   onConfirm: () => void
+  style?: CSSProperties
 }) {
   const [armed, setArmed] = useState(false)
 
@@ -298,7 +447,7 @@ function ConfirmButton({ label, confirmLabel, busyLabel, busy, disabled, title, 
         setArmed(false)
         onConfirm()
       }}
-      style={{ flex: 1 }}
+      style={{ flex: 1, ...style }}
     >
       {busy ? <><Spinner /> {busyLabel}</> : armed ? confirmLabel : label}
     </Button>
@@ -441,13 +590,12 @@ function GitActionButtons({
             )}
           </Button>
         )}
-        <ConfirmButton
+        <HoldButton
           label={`Push${ahead > 0 ? ` (${ahead})` : ''}`}
-          confirmLabel="Confirm push"
           busyLabel="Pushing…"
           busy={gitAction === 'push'}
           disabled={!canPush}
-          title={pushReason ?? `Push ${ahead} unpushed commit${ahead === 1 ? '' : 's'} to the remote`}
+          title={pushReason ?? `Hold until the button fills to push ${ahead} unpushed commit${ahead === 1 ? '' : 's'}`}
           onConfirm={onPush}
         />
       </div>
@@ -467,6 +615,9 @@ function GitActionButtons({
       <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.45 }}>
         {draft ? 'Review the message, then commit locally.' : commitReason ?? 'Includes staged, unstaged, and new files. Review before committing.'}
       </div>
+      {!pushReason && ahead > 0 && (
+        <div style={{ fontSize: 11, color: C.textMuted }}>Hold Push until it fills to send commits.</div>
+      )}
       {pushReason && ahead > 0 && <div style={{ fontSize: 11, color: C.yellow }}>{pushReason}</div>}
       {showCreatePr && prReason && <div style={{ fontSize: 11, color: C.textMuted }}>{prReason}</div>}
     </div>
@@ -525,6 +676,7 @@ export default function GitPane({
   confirmCommit,
   push,
   createPr,
+  resolveConflicts,
   open,
   onClose,
   anchorRef
@@ -585,7 +737,7 @@ export default function GitPane({
           {error && <div role="alert" style={alertBox('error')}>{error}</div>}
           {lastMessage && <div role="status" style={alertBox('success')}>{lastMessage}</div>}
           {status ? <ChangesBlock status={status} /> : <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12 }}>Reading working changes…</div>}
-          <ConflictBlock status={status} github={github} />
+          <ConflictBlock status={status} github={github} gitAction={gitAction} onResolve={resolveConflicts} />
           {github && !github.available && <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 12 }}>{github.message}</div>}
           {status && <RecentCommitsBlock commits={commits} />}
         </div>

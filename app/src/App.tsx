@@ -1308,10 +1308,12 @@ function ProjectWorkspace({
   const seq = useRef({ shell: 1, pane: 0, split: 0 })
   const pipelinesRef = useRef<Pipeline[]>([])
   const settingsRef = useRef<AppSettings>(settings)
+  const askAiRef = useRef<((prompt: string) => void) | undefined>(undefined)
   const gitPanel = useGitPanel(project.path, () => settingsRef.current, {
     enabled: visible && git.isRepo,
     open: gitOpen,
-    onHeadChange: setGit
+    onHeadChange: setGit,
+    onAskAi: (prompt) => askAiRef.current?.(prompt)
   })
 
   useEffect(() => {
@@ -1973,12 +1975,6 @@ function ProjectWorkspace({
       const provider = providerOverride ?? pane.provider
       const model = modelOverride === null ? undefined : (modelOverride ?? pane.model)
 
-      const availablePipelines = pipelinesRef.current
-        .filter((pipeline) => pipeline.nodes.length)
-        .map((pipeline) => ({ ...pipeline, id: managedRuntimePipelineId(pipeline.id) }))
-      if (!availablePipelines.length) return
-
-      const branch = branchForTab(owner, project.path, git)
       const failStart = (message?: string): void => {
         patchPane(pane.id, (current) =>
           current.kind === 'agent'
@@ -1993,6 +1989,15 @@ function ProjectWorkspace({
             : current
         )
       }
+      const availablePipelines = pipelinesRef.current
+        .filter((pipeline) => pipeline.nodes.length)
+        .map((pipeline) => ({ ...pipeline, id: managedRuntimePipelineId(pipeline.id) }))
+      if (!availablePipelines.length) {
+        failStart('No validation pipelines are configured — Chat cannot start until this project has at least one.')
+        return
+      }
+
+      const branch = branchForTab(owner, project.path, git)
       const startRequest = {
         id: pane.taskId,
         prompt: clean,
@@ -2055,6 +2060,11 @@ function ProjectWorkspace({
     },
     [ensureChat, project, git, patchPane]
   )
+  askAiRef.current = (prompt) => {
+    onGitOpenChange(false)
+    setView('chat')
+    sendAgentMessage(prompt)
+  }
 
   /**
    * Hand a failed manual run to the UI chat so the user can keep talking there.

@@ -5,12 +5,16 @@ import { runAiOnce } from './ai-oneshot'
 import {
   commitBlockReason,
   committableFiles,
+  conflictMergeBase,
+  conflictResolvePrompt,
   draftMatchesStatus,
   parseAheadBehind,
   parseGitStatus,
+  parseMergeTreeConflictPaths,
   pushBlockReason
 } from '../shared/git-status'
-import type { AiProvider, GitCommit, GitInfo, GitStatus } from '../shared/types'
+import type { AiProvider, GitCommit, GitHubInfo, GitInfo, GitStatus } from '../shared/types'
+import { githubInfo } from './github'
 import type { WorktreeRequest } from '../shared/worktree'
 import { parseAlreadyOpenPath, parseWorktreeList, pipelineStoreRoot, worktreeFolderName } from '../shared/worktree'
 
@@ -130,6 +134,18 @@ async function resolveBase(
   if (await refExists(cwd, `refs/remotes/${b}`)) return { ref: b, remote: true }
   if (await refExists(cwd, `refs/remotes/origin/${b}`)) return { ref: `origin/${b}`, remote: true }
   return null
+}
+
+/**
+ * Ref to merge when reproducing a PR/base conflict. Prefer `origin/<base>` so a
+ * stale local branch of the same name cannot hide the conflicts GitHub reported.
+ */
+async function resolveConflictSource(cwd: string, base: string): Promise<string | null> {
+  const b = base.trim()
+  if (!b) return null
+  if (await refExists(cwd, `refs/remotes/origin/${b}`)) return `origin/${b}`
+  const from = await resolveBase(cwd, b)
+  return from?.ref ?? null
 }
 
 type WorktreeResult = {
@@ -262,6 +278,23 @@ export async function addWorktree(cwd: string, req: WorktreeRequest): Promise<Wo
   return { ok: true, path: destOrReuse.dest, branch: name, message: '' }
 }
 
+async function mergeTree(
+  cwd: string,
+  ref: string
+): Promise<{ code: number; out: string }> {
+  const tree = await git(cwd, ['merge-tree', '--write-tree', ref, 'HEAD'])
+  return { code: tree.code, out: `${tree.out}\n${tree.err}` }
+}
+
+/** Paths that would conflict if `base` were merged into HEAD. */
+async function mergeConflictPaths(cwd: string, base: string): Promise<string[]> {
+  const ref = await resolveConflictSource(cwd, base)
+  if (!ref) return []
+  const tree = await mergeTree(cwd, ref)
+  if (tree.code !== 1) return []
+  return parseMergeTreeConflictPaths(tree.out)
+}
+
 /** Whether merging HEAD into `staging` would conflict. Skipped when that ref is missing. */
 export async function mergeBaseConflicts(
   cwd: string
@@ -272,11 +305,88 @@ export async function mergeBaseConflicts(
 
   const from = await resolveBase(cwd, 'staging')
   if (!from) return undefined
-
-  const tree = await git(cwd, ['merge-tree', '--write-tree', from.ref, 'HEAD'])
+  const tree = await mergeTree(cwd, from.ref)
   if (tree.code === 0) return { base: 'staging', conflicts: false }
   if (tree.code === 1) return { base: 'staging', conflicts: true }
   return undefined
+}
+
+/** GitHub PR plus conflicted paths from a local merge-tree against the PR base. */
+export async function githubStatus(cwd: string): Promise<GitHubInfo> {
+  const info = await githubInfo(cwd)
+  const pr = info.prs[0]
+  if (!pr?.hasConflicts || !pr.base) return info
+  const files = await mergeConflictPaths(cwd, pr.base)
+  return files.length ? { ...info, conflictFiles: files } : info
+}
+
+const CONFLICTS_IN_TREE = 'Conflicts are already in the working tree.'
+
+/** Merge `base` into HEAD so conflict markers exist for the agent to edit. */
+export async function mergeForConflicts(
+  cwd: string,
+  base?: string
+): Promise<{ ok: boolean; message: string; files: string[] }> {
+  const st = await status(cwd)
+  if (st.conflicts.length) {
+    return {
+      ok: true,
+      message: CONFLICTS_IN_TREE,
+      files: st.conflicts.map((file) => file.path)
+    }
+  }
+  if (!st.clean) {
+    return {
+      ok: false,
+      message: 'Commit or stash local changes before merging the pull request base.',
+      files: []
+    }
+  }
+  if (!base) {
+    return { ok: false, message: 'Could not determine the branch to merge.', files: [] }
+  }
+  await git(cwd, ['fetch', 'origin', base], 120_000)
+  const from = await resolveConflictSource(cwd, base)
+  if (!from) {
+    return { ok: false, message: `Could not find ${base} to merge.`, files: [] }
+  }
+  const res = await git(cwd, ['merge', '--no-commit', '--no-ff', from], 120_000)
+  const next = await status(cwd)
+  if (next.conflicts.length) {
+    return {
+      ok: true,
+      message: `Merged ${base} with conflicts.`,
+      files: next.conflicts.map((file) => file.path)
+    }
+  }
+  await git(cwd, ['merge', '--abort'])
+  if (res.code === 0) {
+    return { ok: false, message: `Merge of ${base} completed without conflicts.`, files: [] }
+  }
+  return { ok: false, message: cliFirstLine(res) || `Could not merge ${base}.`, files: [] }
+}
+
+/** Materialize PR/base conflicts and return the prompt to send to Chat. */
+export async function bringPrConflicts(
+  cwd: string
+): Promise<{ ok: boolean; message: string; prompt?: string }> {
+  const [gh, st] = await Promise.all([githubInfo(cwd), status(cwd)])
+  const pr = gh.prs[0]
+  const base = conflictMergeBase(st, gh)
+  if (!st.conflicts.length && !pr?.hasConflicts && !st.baseMerge?.conflicts) {
+    return { ok: false, message: 'No pull request conflicts to resolve.' }
+  }
+  const merged = await mergeForConflicts(cwd, base)
+  if (!merged.ok) return { ok: false, message: merged.message }
+  return {
+    ok: true,
+    message: merged.message,
+    prompt: conflictResolvePrompt({
+      pr: pr?.number,
+      base: base || 'the other branch',
+      files: merged.files
+    })
+  }
 }
 
 export async function status(cwd: string): Promise<GitStatus> {

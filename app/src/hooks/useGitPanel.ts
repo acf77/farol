@@ -7,7 +7,7 @@ function sameProject(a: string, b: string): boolean {
   return a.replace(/[/\\]+$/, '') === b.replace(/[/\\]+$/, '')
 }
 
-export type GitAction = 'commit' | 'push' | 'pr'
+export type GitAction = 'commit' | 'push' | 'pr' | 'conflicts'
 
 export type GitCommitDraft = {
   message: string
@@ -21,6 +21,8 @@ type UseGitPanelOptions = {
   open?: boolean
   /** Called when HEAD changes for this project; the hook also refreshes panel data. */
   onHeadChange?: (info: GitInfo) => void
+  /** Hand a conflict-resolution prompt to Chat. */
+  onAskAi?: (prompt: string) => void
 }
 
 export function useGitPanel(
@@ -168,7 +170,11 @@ export function useGitPanel(
 
   /** Run a remote action that reports its outcome as a single message either way. */
   const runRemote = useCallback(
-    async (kind: GitAction, op: () => Promise<{ ok: boolean; message: string }>, failed: string) => {
+    async (
+      kind: GitAction,
+      op: () => Promise<{ ok: boolean; message: string; prompt?: string }>,
+      failed: string
+    ) => {
       if (gitAction) return
       setGitAction(kind)
       setError(null)
@@ -178,9 +184,9 @@ export function useGitPanel(
         if (res.ok && res.message) {
           setLastMessage(res.message)
           void refresh()
-        } else {
-          setError(res.message || failed)
+          return res
         }
+        setError(res.message || failed)
       } finally {
         setGitAction(null)
       }
@@ -198,6 +204,15 @@ export function useGitPanel(
     [projectPath, runRemote]
   )
 
+  const resolveConflicts = useCallback(async () => {
+    const res = await runRemote(
+      'conflicts',
+      () => api.git.bringConflicts(projectPath),
+      'Could not bring pull request conflicts into the working tree'
+    )
+    if (res?.prompt) opts?.onAskAi?.(res.prompt)
+  }, [opts?.onAskAi, projectPath, runRemote])
+
   return {
     status,
     commits,
@@ -214,6 +229,7 @@ export function useGitPanel(
     cancelDraft: () => setDraft(null),
     confirmCommit,
     push,
-    createPr
+    createPr,
+    resolveConflicts
   }
 }

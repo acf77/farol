@@ -121,6 +121,7 @@ describe('managedAiCommand', () => {
       '--verbose',
       '--permission-mode',
       'bypassPermissions',
+      '--strict-mcp-config',
       'fix this'
     ])
     expect(managedAiCommand('codex', 'fix this').args).toEqual([

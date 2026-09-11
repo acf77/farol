@@ -75,6 +75,7 @@ const api: FarolApi = {
     push: (projectPath: string) => ipcRenderer.invoke('git:push', projectPath),
     github: (projectPath: string) => ipcRenderer.invoke('git:github', projectPath),
     createPr: (projectPath: string) => ipcRenderer.invoke('git:createPr', projectPath),
+    bringConflicts: (projectPath: string) => ipcRenderer.invoke('git:bringConflicts', projectPath),
     onChanged: (cb) => on<GitChanged>('git:changed', cb)
   },
   run: {

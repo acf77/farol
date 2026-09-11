@@ -190,6 +190,40 @@ button:disabled {
   filter: none;
 }
 
+/*
+ * Hold-to-confirm: a Signal Lime fill grows across the button. Width, not
+ * transform — DESIGN.md forbids scale on controls. The duration lives on
+ * --bf-hold-ms so the JS timeout and the slide stay in lockstep.
+ */
+.bf-hold-btn {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.bf-hold-btn:active:not(:disabled) {
+  filter: none;
+}
+.bf-hold-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: #D6F23A;
+  pointer-events: none;
+}
+.bf-hold-btn.is-holding .bf-hold-fill {
+  width: 100%;
+  transition: width var(--bf-hold-ms, 2.5s) linear;
+}
+.bf-hold-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .bf-tab:hover {
   background: rgba(255, 255, 255, 0.05) !important;
 }
