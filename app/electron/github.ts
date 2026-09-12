@@ -8,6 +8,7 @@ type GhPr = {
   number: number
   mergeable?: string
   baseRefName?: string
+  url?: string
 }
 
 export function noPullRequestMessage(text: string): boolean {
@@ -16,10 +17,12 @@ export function noPullRequestMessage(text: string): boolean {
 
 function parsePr(raw: GhPr): PullRequest {
   const base = raw.baseRefName?.trim()
+  const url = raw.url?.trim()
   return {
     number: raw.number,
     hasConflicts: raw.mergeable === 'CONFLICTING',
-    ...(base ? { base } : {})
+    ...(base ? { base } : {}),
+    ...(url && /^https?:\/\//i.test(url) ? { url } : {})
   }
 }
 
@@ -32,7 +35,7 @@ async function ghBlockReason(cwd: string, purpose: string): Promise<string | nul
   return null
 }
 
-/** Open PR for the current branch, if any — used only for merge-conflict status. */
+/** Open PR for the current branch, if any. */
 export async function githubInfo(cwd: string): Promise<GitHubInfo> {
   const blocked = await ghBlockReason(cwd, 'check pull request conflicts')
   if (blocked) return { available: false, message: blocked, prs: [] }
@@ -40,7 +43,7 @@ export async function githubInfo(cwd: string): Promise<GitHubInfo> {
   const view = await execCli(
     'gh',
     cwd,
-    ['pr', 'view', '--json', 'number,mergeable,baseRefName'],
+    ['pr', 'view', '--json', 'number,mergeable,baseRefName,url'],
     GH_TIMEOUT
   )
   if (view.code !== 0) {

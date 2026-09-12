@@ -36,7 +36,8 @@ describe('githubInfo', () => {
           JSON.stringify({
             number: 12,
             mergeable: 'CONFLICTING',
-            baseRefName: 'staging'
+            baseRefName: 'staging',
+            url: 'https://github.com/acme/repo/pull/12'
           })
         )
       )
@@ -46,7 +47,8 @@ describe('githubInfo', () => {
         {
           number: 12,
           hasConflicts: true,
-          base: 'staging'
+          base: 'staging',
+          url: 'https://github.com/acme/repo/pull/12'
         }
       ]
     })
@@ -54,7 +56,7 @@ describe('githubInfo', () => {
       'pr',
       'view',
       '--json',
-      'number,mergeable,baseRefName'
+      'number,mergeable,baseRefName,url'
     ])
   })
 
@@ -64,6 +66,19 @@ describe('githubInfo', () => {
       .mockResolvedValueOnce(ok('Logged in'))
       .mockResolvedValueOnce(fail('no pull requests found for branch "feat/x"'))
     await expect(githubInfo('/repo')).resolves.toEqual({ available: true, prs: [] })
+  })
+
+  it('omits a non-http url from gh', async () => {
+    execCli
+      .mockResolvedValueOnce(ok('gh version 2'))
+      .mockResolvedValueOnce(ok('Logged in'))
+      .mockResolvedValueOnce(
+        ok(JSON.stringify({ number: 3, mergeable: 'MERGEABLE', url: 'javascript:alert(1)' }))
+      )
+    await expect(githubInfo('/repo')).resolves.toEqual({
+      available: true,
+      prs: [{ number: 3, hasConflicts: false }]
+    })
   })
 })
 

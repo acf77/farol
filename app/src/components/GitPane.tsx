@@ -465,6 +465,7 @@ function GitActionButtons({
   canPush,
   showCreatePr,
   canCreatePr,
+  openPr,
   commitReason,
   pushReason,
   prReason,
@@ -485,6 +486,7 @@ function GitActionButtons({
   canPush: boolean
   showCreatePr: boolean
   canCreatePr: boolean
+  openPr: { number: number; url: string } | null
   commitReason: string | null
   pushReason: string | null
   prReason: string | null
@@ -611,6 +613,19 @@ function GitActionButtons({
           />
         </div>
       )}
+      {openPr && (
+        <div style={{ display: 'flex' }}>
+          <Button
+            variant="secondary"
+            size="md"
+            title={`Open pull request #${openPr.number} on GitHub`}
+            onClick={() => window.open(openPr.url, '_blank', 'noopener,noreferrer')}
+            style={{ flex: 1 }}
+          >
+            {`Open PR #${openPr.number}`}
+          </Button>
+        </div>
+      )}
       <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.45 }}>
         {draft ? 'Review the message, then commit locally.' : commitReason ?? 'Includes staged, unstaged, and new files. Review before committing.'}
       </div>
@@ -703,6 +718,8 @@ export default function GitPane({
   const canPush = !pushReason && !gitAction
   const canCreatePr = !prReason && !gitAction
   const draftStale = !!draft && !!status && !draftMatchesStatus(draft.files, status)
+  const attached = github?.available ? github.prs[0] : undefined
+  const openPr = attached?.url ? { number: attached.number, url: attached.url } : null
 
   return (
     <>
@@ -755,8 +772,9 @@ export default function GitPane({
           ahead={status?.ahead ?? 0}
           canCommit={canCommit}
           canPush={canPush}
-          showCreatePr={!!github?.available && github.prs.length === 0}
+          showCreatePr={!!github?.available && !attached}
           canCreatePr={canCreatePr}
+          openPr={openPr}
           commitReason={commitReason}
           pushReason={pushReason}
           prReason={prReason}

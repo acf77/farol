@@ -124,6 +124,8 @@ export interface PullRequest {
   hasConflicts: boolean
   /** PR base branch, when GitHub reported it. */
   base?: string
+  /** GitHub HTML URL for this PR, when `gh` reported it. */
+  url?: string
 }
 
 export interface GitHubInfo {
