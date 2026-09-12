@@ -11,6 +11,7 @@ import {
   parseAheadBehind,
   parseGitStatus,
   parseMergeTreeConflictPaths,
+  pickPushRemote,
   pullRequestBlockReason,
   pushBlockReason
 } from './git-status'
@@ -51,6 +52,14 @@ UU both.txt`)
 describe('parseAheadBehind', () => {
   it('parses left-right counts', () => {
     expect(parseAheadBehind('2\t3')).toEqual({ behind: 2, ahead: 3 })
+  })
+})
+
+describe('pickPushRemote', () => {
+  it('prefers origin, else the first remote', () => {
+    expect(pickPushRemote('upstream\norigin\nfork')).toBe('origin')
+    expect(pickPushRemote('upstream\nfork')).toBe('upstream')
+    expect(pickPushRemote('')).toBeUndefined()
   })
 })
 
@@ -155,6 +164,17 @@ describe('pushBlockReason', () => {
         })
       )
     ).toBeNull()
+  })
+
+  it('allows publishing a branch that has no upstream yet', () => {
+    expect(pushBlockReason(status({ upstream: false, ahead: 2, remote: 'origin' }))).toBeNull()
+  })
+
+  it('blocks a branch with no remote, and an unpublished branch with nothing new', () => {
+    expect(pushBlockReason(status({ upstream: false, ahead: 2 }))).toMatch(/remote/)
+    expect(pushBlockReason(status({ upstream: false, ahead: 0, remote: 'origin' }))).toMatch(
+      /unpublished/
+    )
   })
 })
 

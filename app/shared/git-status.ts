@@ -58,8 +58,14 @@ function bucketLine(
   if (occupied(worktree)) pushOnce(seen, `u:${path}`, unstaged, { path, kind, staged: false })
 }
 
+/** Prefer `origin`, otherwise the first name from `git remote`. */
+export function pickPushRemote(raw: string): string | undefined {
+  const remotes = raw.split('\n').map((r) => r.trim()).filter(Boolean)
+  return remotes.includes('origin') ? 'origin' : remotes[0]
+}
+
 /** Turn porcelain lines into staged / unstaged / untracked / conflict buckets. */
-export function parseGitStatus(porcelain: string): Omit<GitStatus, 'ahead' | 'behind' | 'upstream'> {
+export function parseGitStatus(porcelain: string): Omit<GitStatus, 'ahead' | 'behind' | 'upstream' | 'remote'> {
   const staged: GitStatusFile[] = []
   const unstaged: GitStatusFile[] = []
   const untracked: GitStatusFile[] = []
@@ -139,6 +145,11 @@ export function commitBlockReason(st: GitStatus): string | null {
 export function pushBlockReason(st: GitStatus): string | null {
   if (st.conflicts.length) return 'Resolve merge conflicts before pushing.'
   if (st.behind > 0) return 'Branch is behind upstream — pull before pushing.'
+  if (!st.upstream) {
+    if (!st.remote) return 'Add a git remote before pushing this branch.'
+    if (st.ahead === 0) return 'Nothing to push — this branch has no unpublished commits.'
+    return null
+  }
   if (st.ahead === 0) return 'Nothing to push — branch is even with upstream.'
   return null
 }

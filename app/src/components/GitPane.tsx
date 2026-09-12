@@ -302,9 +302,9 @@ function useEscapeClose(open: boolean, onClose: () => void): void {
   }, [open, onClose])
 }
 
-const PUSH_HOLD_MS = 2500
+const HOLD_MS = 2500
 
-/** Push reaches the remote, so it only fires after a 2.5s press. Release early cancels. */
+/** Remote-reaching action: only fires after a 2.5s press. Release early cancels. */
 function HoldButton({
   label,
   busyLabel,
@@ -358,7 +358,7 @@ function HoldButton({
       unbind.current = null
       setHolding(false)
       onConfirm()
-    }, PUSH_HOLD_MS)
+    }, HOLD_MS)
   }
 
   return (
@@ -366,7 +366,7 @@ function HoldButton({
       variant="secondary"
       size="md"
       disabled={disabled}
-      title={holding ? 'Keep holding to push' : title}
+      title={holding ? 'Keep holding to confirm' : title}
       aria-label={`${label}. Hold until the button fills to confirm`}
       className={`bf-hold-btn${holding ? ' is-holding' : ''}`}
       onPointerDown={(e) => {
@@ -391,7 +391,7 @@ function HoldButton({
       style={{
         flex: 1,
         color: holding ? C.accentInk : undefined,
-        ['--bf-hold-ms' as string]: `${PUSH_HOLD_MS}ms`,
+        ['--bf-hold-ms' as string]: `${HOLD_MS}ms`,
         ...style
       }}
     >
@@ -601,13 +601,12 @@ function GitActionButtons({
       </div>
       {showCreatePr && (
         <div style={{ display: 'flex' }}>
-          <ConfirmButton
+          <HoldButton
             label="Create pull request"
-            confirmLabel="Confirm pull request"
             busyLabel="Creating pull request…"
             busy={gitAction === 'pr'}
             disabled={!canCreatePr}
-            title={prReason ?? 'Open a pull request for this branch on GitHub'}
+            title={prReason ?? 'Hold until the button fills to open a pull request on GitHub'}
             onConfirm={onCreatePr}
           />
         </div>
@@ -615,11 +614,16 @@ function GitActionButtons({
       <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.45 }}>
         {draft ? 'Review the message, then commit locally.' : commitReason ?? 'Includes staged, unstaged, and new files. Review before committing.'}
       </div>
-      {!pushReason && ahead > 0 && (
-        <div style={{ fontSize: 11, color: C.textMuted }}>Hold Push until it fills to send commits.</div>
+      {ahead > 0 && (
+        <div style={{ fontSize: 11, color: pushReason ? C.yellow : C.textMuted }}>
+          {pushReason ?? 'Hold Push until it fills to send commits.'}
+        </div>
       )}
-      {pushReason && ahead > 0 && <div style={{ fontSize: 11, color: C.yellow }}>{pushReason}</div>}
-      {showCreatePr && prReason && <div style={{ fontSize: 11, color: C.textMuted }}>{prReason}</div>}
+      {showCreatePr && (
+        <div style={{ fontSize: 11, color: C.textMuted }}>
+          {prReason ?? 'Hold Create pull request until it fills to open it on GitHub.'}
+        </div>
+      )}
     </div>
   )
 }

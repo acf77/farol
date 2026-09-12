@@ -11,7 +11,7 @@ const { runAiOnce, githubInfo } = vi.hoisted(() => ({
 vi.mock('./ai-oneshot', () => ({ runAiOnce }))
 vi.mock('./github', () => ({ githubInfo }))
 
-import { bringPrConflicts, commitAll, draftCommit, githubStatus, mergeBaseConflicts, mergeForConflicts, parseCommitLog, sanitizeCommitMessage } from './git'
+import { bringPrConflicts, commitAll, draftCommit, githubStatus, mergeBaseConflicts, mergeForConflicts, parseCommitLog, push, sanitizeCommitMessage, status } from './git'
 
 const dirs: string[] = []
 
@@ -217,6 +217,50 @@ describe('mergeForConflicts', () => {
     const merged = await mergeForConflicts(cwd, 'staging')
     expect(merged).toMatchObject({ ok: true, files: ['file.txt'] })
     expect(fs.readFileSync(path.join(cwd, 'file.txt'), 'utf8')).toMatch(/origin-staging/)
+  })
+})
+
+describe('status and push without upstream', () => {
+  function cloneRepo(): string {
+    const origin = tmpRepo()
+    fs.writeFileSync(path.join(origin, 'file.txt'), 'base\n')
+    git(origin, ['add', 'file.txt'])
+    git(origin, ['commit', '-m', 'init'])
+    git(origin, ['branch', '-M', 'main'])
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'bf-git-'))
+    dirs.push(cwd)
+    execFileSync('git', ['clone', origin, cwd], { encoding: 'utf8' })
+    git(cwd, ['config', 'user.email', 'test@example.com'])
+    git(cwd, ['config', 'user.name', 'Test'])
+    git(cwd, ['config', 'commit.gpgsign', 'false'])
+    return cwd
+  }
+
+  it('counts unpublished commits and publishes the branch with -u', async () => {
+    const cwd = cloneRepo()
+    git(cwd, ['checkout', '-b', 'feat'])
+    fs.writeFileSync(path.join(cwd, 'feat.txt'), 'new\n')
+    git(cwd, ['add', 'feat.txt'])
+    git(cwd, ['commit', '-m', 'feat'])
+
+    await expect(status(cwd)).resolves.toMatchObject({
+      upstream: false,
+      ahead: 1,
+      remote: 'origin'
+    })
+    await expect(push(cwd)).resolves.toMatchObject({ ok: true })
+    await expect(status(cwd)).resolves.toMatchObject({ upstream: true, ahead: 0 })
+  })
+
+  it('refuses push when the repo has no remotes', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'file.txt'), 'base\n')
+    git(cwd, ['add', 'file.txt'])
+    git(cwd, ['commit', '-m', 'init'])
+    const st = await status(cwd)
+    expect(st).toMatchObject({ upstream: false, ahead: 1 })
+    expect(st.remote).toBeUndefined()
+    await expect(push(cwd)).resolves.toMatchObject({ ok: false, message: expect.stringMatching(/remote/) })
   })
 })
 

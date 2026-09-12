@@ -11,6 +11,7 @@ import {
   parseAheadBehind,
   parseGitStatus,
   parseMergeTreeConflictPaths,
+  pickPushRemote,
   pushBlockReason
 } from '../shared/git-status'
 import type { AiProvider, GitCommit, GitHubInfo, GitInfo, GitStatus } from '../shared/types'
@@ -390,15 +391,27 @@ export async function bringPrConflicts(
 }
 
 export async function status(cwd: string): Promise<GitStatus> {
-  const [porcelain, tracking, baseMerge] = await Promise.all([
+  const [porcelain, tracking, baseMerge, remotes, unpublished] = await Promise.all([
     git(cwd, ['status', '--porcelain=v1']),
     git(cwd, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']),
-    mergeBaseConflicts(cwd)
+    mergeBaseConflicts(cwd),
+    git(cwd, ['remote']),
+    git(cwd, ['rev-list', '--count', 'HEAD', '--not', '--remotes'])
   ])
   const parsed = parseGitStatus(porcelain.out)
-  const { ahead, behind } =
-    tracking.code === 0 ? parseAheadBehind(tracking.out) : { ahead: 0, behind: 0 }
-  return { ...parsed, ahead, behind, upstream: tracking.code === 0, ...(baseMerge ? { baseMerge } : {}) }
+  const remote = pickPushRemote(remotes.out)
+  const upstream = tracking.code === 0
+  const { ahead, behind } = upstream
+    ? parseAheadBehind(tracking.out)
+    : { ahead: unpublished.code === 0 ? Number(unpublished.out.trim()) || 0 : 0, behind: 0 }
+  return {
+    ...parsed,
+    ahead,
+    behind,
+    upstream,
+    ...(remote ? { remote } : {}),
+    ...(baseMerge ? { baseMerge } : {})
+  }
 }
 
 /** Parse `git log --format=%h\\t%s\\t%an\\t%cr` lines. */
@@ -440,9 +453,11 @@ async function unstageFiles(cwd: string, files: string[]): Promise<void> {
 }
 
 export async function push(cwd: string): Promise<{ ok: boolean; message: string }> {
-  const blocked = pushBlockReason(await status(cwd))
+  const st = await status(cwd)
+  const blocked = pushBlockReason(st)
   if (blocked) return { ok: false, message: blocked }
-  const res = await git(cwd, ['push'], 120_000)
+  const args = !st.upstream && st.remote ? ['push', '-u', st.remote, 'HEAD'] : ['push']
+  const res = await git(cwd, args, 120_000)
   const line = cliFirstLine(res)
   return { ok: res.code === 0, message: line || (res.code === 0 ? 'Pushed' : 'Push failed') }
 }

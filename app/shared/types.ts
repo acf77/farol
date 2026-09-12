@@ -105,6 +105,8 @@ export interface GitStatus {
   behind: number
   /** Whether the branch tracks a remote branch that exists. */
   upstream: boolean
+  /** Remote to publish this branch to when it has no upstream. */
+  remote?: string
   /** Merge-tree vs the default base (`staging`). Absent when that ref does not exist. */
   baseMerge?: { base: string; conflicts: boolean }
 }
