@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { committableFiles } from '@shared/git-status'
 import type { AiProvider, GitCommit, GitHubInfo, GitInfo, GitStatus } from '@shared/types'
 
 const api = window.farol
@@ -7,12 +8,27 @@ function sameProject(a: string, b: string): boolean {
   return a.replace(/[/\\]+$/, '') === b.replace(/[/\\]+$/, '')
 }
 
-export type GitAction = 'commit' | 'push' | 'pr' | 'conflicts'
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
+}
+
+function sameFiles(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((file) => b.includes(file))
+}
+
+export type GitAction = 'generate' | 'commit' | 'push' | 'pr' | 'conflicts'
 
 export type GitCommitDraft = {
   message: string
-  files: string[]
   skipped: string[]
+}
+
+export type GitLogEntry = {
+  id: number
+  time: string
+  action: string
+  message: string
+  ok: boolean
 }
 
 type UseGitPanelOptions = {
@@ -25,6 +41,8 @@ type UseGitPanelOptions = {
   onAskAi?: (prompt: string) => void
 }
 
+const EMPTY_DRAFT: GitCommitDraft = { message: '', skipped: [] }
+
 export function useGitPanel(
   projectPath: string,
   ai: () => { agent: AiProvider; model?: string },
@@ -35,21 +53,38 @@ export function useGitPanel(
   const [github, setGithub] = useState<GitHubInfo | null>(null)
   const [loading, setLoading] = useState(false)
   const [gitAction, setGitAction] = useState<GitAction | null>(null)
-  const [draft, setDraft] = useState<GitCommitDraft | null>(null)
-  const [lastMessage, setLastMessage] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [draft, setDraft] = useState<GitCommitDraft>(EMPTY_DRAFT)
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([])
+  const [log, setLog] = useState<GitLogEntry[]>([])
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const [refreshVersion, setRefreshVersion] = useState(0)
+  const knownFiles = useRef<Set<string> | null>(null)
+  const selectedFilesRef = useRef<string[]>([])
+  const refreshFailing = useRef(false)
+  const logId = useRef(0)
   const refresh = useCallback(() => setRefreshVersion((version) => version + 1), [])
+  const appendLog = useCallback((action: string, message: string, ok: boolean) => {
+    const time = new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    })
+    setLog((entries) => [...entries, { id: ++logId.current, time, action, message, ok }])
+  }, [])
 
   useEffect(() => {
     setStatus(null)
     setCommits([])
     setGithub(null)
-    setDraft(null)
-    setLastMessage(null)
-    setError(null)
+    setDraft(EMPTY_DRAFT)
+    setSelectedFiles([])
+    selectedFilesRef.current = []
+    setLog([])
     setRefreshError(null)
+    knownFiles.current = null
+    refreshFailing.current = false
+    logId.current = 0
   }, [projectPath])
 
   useEffect(() => {
@@ -60,17 +95,33 @@ export function useGitPanel(
         delay: opts.open ? 5000 : 30000,
         read: async () => {
           setLoading(true)
-          const [st, log] = await Promise.all([
+          const [st, recent] = await Promise.all([
             api.git.status(projectPath),
             api.git.recentCommits(projectPath)
           ])
           return () => {
+            const live = committableFiles(st).files
             setStatus(st)
-            setCommits(log)
+            setCommits(recent)
+            setSelectedFiles((selected) => {
+              const known = knownFiles.current
+              const checked = new Set(selected)
+              const next = known
+                ? live.filter((file) => checked.has(file) || !known.has(file))
+                : live
+              selectedFilesRef.current = next
+              return next
+            })
+            knownFiles.current = new Set(live)
+            refreshFailing.current = false
             setRefreshError(null)
           }
         },
-        fail: (message: string) => setRefreshError(message),
+        fail: (message: string) => {
+          setRefreshError(message)
+          if (!refreshFailing.current) appendLog('Refresh', message, false)
+          refreshFailing.current = true
+        },
         finish: () => setLoading(false)
       },
       {
@@ -117,7 +168,7 @@ export function useGitPanel(
       cleanups.forEach((cleanup) => cleanup())
       setLoading(false)
     }
-  }, [opts?.enabled, opts?.open, projectPath, refreshVersion])
+  }, [appendLog, opts?.enabled, opts?.open, projectPath, refreshVersion])
 
   useEffect(() => {
     return api.git.onChanged((changed) => {
@@ -128,85 +179,92 @@ export function useGitPanel(
   }, [opts?.onHeadChange, projectPath, refresh])
 
   const prepareCommit = useCallback(async () => {
-    if (gitAction) return
-    setGitAction('commit')
-    setError(null)
-    setLastMessage(null)
+    if (gitAction || !selectedFiles.length) return
+    const files = selectedFiles
+    setGitAction('generate')
     try {
       const { agent, model } = ai()
-      const res = await api.git.draftCommit(projectPath, agent, model)
+      const res = await api.git.draftCommit(projectPath, agent, model, files)
       if (res.ok && res.message) {
-        setDraft({
-          message: res.message,
-          files: res.files ?? [],
-          skipped: res.skipped ?? []
-        })
+        // A selection changed while AI was running needs a new request. Later
+        // selection changes remain valid: Commit always uses the current selection.
+        if (!sameFiles(selectedFilesRef.current, files)) return
+        setDraft({ message: res.message, skipped: res.skipped ?? [] })
       } else {
-        setError(res.error || 'Could not generate commit message')
+        appendLog('Generate with AI', res.error || 'Could not generate commit message', false)
       }
+    } catch (error) {
+      appendLog('Generate with AI', errorMessage(error, 'Could not generate commit message'), false)
     } finally {
       setGitAction(null)
     }
-  }, [ai, gitAction, projectPath])
+  }, [ai, appendLog, gitAction, projectPath, selectedFiles])
 
   const confirmCommit = useCallback(async () => {
-    if (!draft || gitAction) return
+    if (!draft.message.trim() || !selectedFiles.length || gitAction) return
     setGitAction('commit')
-    setError(null)
-    setLastMessage(null)
     try {
-      const res = await api.git.commit(projectPath, draft.message, draft.files)
+      const res = await api.git.commit(projectPath, draft.message, selectedFiles)
       if (res.ok && res.message) {
-        setDraft(null)
-        setLastMessage(res.message)
+        appendLog('Commit', res.message, true)
+        setDraft(EMPTY_DRAFT)
         void refresh()
       } else {
-        setError(res.error || 'Commit failed')
+        appendLog('Commit', res.error || 'Commit failed', false)
       }
+    } catch (error) {
+      appendLog('Commit', errorMessage(error, 'Commit failed'), false)
     } finally {
       setGitAction(null)
     }
-  }, [draft, gitAction, projectPath, refresh])
+  }, [appendLog, draft.message, gitAction, projectPath, refresh, selectedFiles])
 
-  /** Run a remote action that reports its outcome as a single message either way. */
+  /** Run a remote action and append its outcome to the session transcript. */
   const runRemote = useCallback(
     async (
       kind: GitAction,
+      action: string,
       op: () => Promise<{ ok: boolean; message: string; prompt?: string }>,
       failed: string
     ) => {
       if (gitAction) return
       setGitAction(kind)
-      setError(null)
-      setLastMessage(null)
       try {
         const res = await op()
-        if (res.ok && res.message) {
-          setLastMessage(res.message)
+        appendLog(action, res.message || failed, res.ok)
+        if (res.ok) {
           void refresh()
           return res
         }
-        setError(res.message || failed)
+      } catch (error) {
+        appendLog(action, errorMessage(error, failed), false)
       } finally {
         setGitAction(null)
       }
     },
-    [gitAction, refresh]
+    [appendLog, gitAction, refresh]
   )
 
   const push = useCallback(
-    () => runRemote('push', () => api.git.push(projectPath), 'Push failed'),
+    () => runRemote('push', 'Push', () => api.git.push(projectPath), 'Push failed'),
     [projectPath, runRemote]
   )
 
   const createPr = useCallback(
-    () => runRemote('pr', () => api.git.createPr(projectPath), 'Could not create the pull request'),
+    () =>
+      runRemote(
+        'pr',
+        'Create pull request',
+        () => api.git.createPr(projectPath),
+        'Could not create the pull request'
+      ),
     [projectPath, runRemote]
   )
 
   const resolveConflicts = useCallback(async () => {
     const res = await runRemote(
       'conflicts',
+      'Check conflicts',
       () => api.git.bringConflicts(projectPath),
       'Could not bring pull request conflicts into the working tree'
     )
@@ -220,13 +278,26 @@ export function useGitPanel(
     loading,
     gitAction,
     draft,
-    lastMessage,
-    error,
+    selectedFiles,
+    log,
     refreshError,
     refresh,
     prepareCommit,
-    setDraftMessage: (message: string) => setDraft((d) => (d ? { ...d, message } : d)),
-    cancelDraft: () => setDraft(null),
+    setDraftMessage: (message: string) => setDraft((current) => ({ ...current, message })),
+    setFileSelected: (file: string, selected: boolean) =>
+      setSelectedFiles((files) => {
+        const next = selected
+          ? files.includes(file)
+            ? files
+            : [...files, file]
+          : files.filter((path) => path !== file)
+        selectedFilesRef.current = next
+        return next
+      }),
+    selectAllFiles: (files: string[]) => {
+      selectedFilesRef.current = files
+      setSelectedFiles(files)
+    },
     confirmCommit,
     push,
     createPr,

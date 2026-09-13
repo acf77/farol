@@ -1,21 +1,19 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { aiSelectionLabel } from '@shared/ai'
 import {
+  committableChanges,
   commitBlockReason,
+  conflictMergeBase,
   conflictSignals,
   conflictStatusItems,
-  draftMatchesStatus,
   pullRequestBlockReason,
   pushBlockReason
 } from '@shared/git-status'
-import type { AiProvider, GitCommit, GitFileKind, GitHubInfo, GitStatus } from '@shared/types'
-import { useGitPanel, type GitAction } from '../hooks/useGitPanel'
+import type { AiProvider, GitFileKind, GitHubInfo, GitStatus } from '@shared/types'
+import { useGitPanel, type GitAction, type GitLogEntry } from '../hooks/useGitPanel'
 import { C, MONO, UI } from '../theme'
-import { Button } from './controls'
+import { Button, Checkbox } from './controls'
 import { CheckIcon, GitIcon, Spinner } from './icons'
-
-const POPOVER_WIDTH = 360
-const MAX_FILES = 8
 
 interface Props extends ReturnType<typeof useGitPanel> {
   branch: string
@@ -26,285 +24,94 @@ interface Props extends ReturnType<typeof useGitPanel> {
   anchorRef: RefObject<HTMLElement | null>
 }
 
-export function gitStatusDotColor(
-  status: GitStatus | null,
-  github: GitHubInfo | null
-): string {
+export function gitStatusDotColor(status: GitStatus | null, github: GitHubInfo | null): string {
   if (conflictSignals(status, github).any) return C.red
   if (!status) return C.textMuted
   return status.clean ? C.green : C.yellow
 }
 
+const card: CSSProperties = {
+  border: `1px solid ${C.cardBorder}`,
+  borderRadius: 12,
+  background: C.card,
+  padding: 16,
+  minWidth: 0
+}
+
 const sectionLabel: CSSProperties = {
-  fontSize: 11,
-  fontWeight: 600,
   color: C.textMuted,
-  marginBottom: 6
+  fontSize: 10.5,
+  fontWeight: 700,
+  letterSpacing: '0.1em',
+  textTransform: 'uppercase'
 }
 
-const KIND_LABEL: Record<GitFileKind, string> = {
-  modified: 'Modified',
-  added: 'Added',
-  deleted: 'Deleted',
-  renamed: 'Renamed',
-  untracked: 'New',
-  conflict: 'Conflict'
+const input: CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  border: `1px solid ${C.cardBorder}`,
+  borderRadius: 8,
+  background: C.terminal,
+  color: C.textSoft,
+  fontSize: 12,
+  padding: '0 10px'
 }
 
-function alertBox(variant: 'error' | 'success' | 'conflict'): CSSProperties {
-  if (variant === 'conflict') {
-    return {
-      marginBottom: 10,
-      padding: '8px 10px',
-      borderRadius: 7,
-      background: 'rgba(255, 98, 90,0.1)',
-      border: '1px solid rgba(255, 98, 90,0.35)',
-      fontSize: 11.5,
-      color: C.red
-    }
-  }
-  const green = variant === 'success'
-  return {
-    marginBottom: 10,
-    padding: '8px 10px',
-    borderRadius: 7,
-    background: green ? 'rgba(135, 201, 174,0.08)' : 'rgba(255, 98, 90,0.08)',
-    border: green ? '1px solid rgba(135, 201, 174,0.25)' : '1px solid rgba(255, 98, 90,0.25)',
-    fontSize: 11.5,
-    color: green ? C.textSoft : C.red,
-    lineHeight: 1.45,
-    ...(green ? { fontFamily: MONO } : {})
-  }
-}
-
-function FileList({
-  title,
-  files,
-  color
-}: {
-  title: string
-  files: readonly string[] | readonly { path: string; kind: GitFileKind }[]
-  color: string
-}) {
-  if (!files.length) return null
-  const visible = files.slice(0, MAX_FILES)
-  const extra = files.length - visible.length
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ ...sectionLabel, marginBottom: 4 }}>{title} ({files.length})</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-        {visible.map((f) => {
-          const path = typeof f === 'string' ? f : f.path
-          const kind = typeof f === 'string' ? undefined : KIND_LABEL[f.kind]
-          return (
-            <div
-              key={path}
-              title={path}
-              style={{
-                fontFamily: MONO,
-                fontSize: 11,
-                display: 'flex',
-                gap: 8,
-                color: C.textSoft,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap'
-              }}
-            >
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{path}</span>
-              {kind && <span style={{ color, fontFamily: UI, flexShrink: 0 }}>{kind}</span>}
-            </div>
-          )
-        })}
-        {extra > 0 && (
-          <div style={{ fontSize: 11, color: C.textMuted }}>+{extra} more</div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function GitPanelHeader({ branch, loading, stale, onClose, onRetry }: {
-  branch: string
-  loading: boolean
-  stale: boolean
-  onClose: () => void
-  onRetry: () => void
-}) {
-  return (
-    <div style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: `1px solid ${C.cardBorder}` }}>
-      <GitIcon size={15} color={C.textMuted} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div title={branch} style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{branch}</div>
-        {(stale || loading) && (
-          <div style={{ fontSize: 11, color: stale ? C.yellow : C.textMuted, marginTop: 3 }}>
-            {stale ? 'Update failed.' : 'Updating…'}
-          </div>
-        )}
-      </div>
-      {stale && (
-        <Button variant="ghost" size="sm" disabled={loading} onClick={onRetry}>Retry</Button>
-      )}
-      <Button variant="ghost" size="sm" autoFocus onClick={onClose} aria-label="Close Git popover">Close</Button>
-    </div>
-  )
-}
-
-function RecentCommitsBlock({ commits }: { commits: GitCommit[] }) {
-  return (
-    <details style={{ paddingTop: 12, borderTop: `1px solid ${C.cardBorder}` }}>
-      <summary className="bf-focus" style={{ ...sectionLabel, cursor: 'pointer' }}>Recent commits</summary>
-      {commits.length === 0 && (
-        <div style={{ fontSize: 11.5, color: C.textMuted }}>No commits yet</div>
-      )}
-      {commits.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {commits.map((c) => (
-            <div
-              key={c.hash}
-              title={`${c.subject}\n${c.author} · ${c.when}`}
-              style={{
-                padding: '4px 0'
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'baseline',
-                  gap: 6,
-                  marginBottom: 2
-                }}
-              >
-                <span style={{ fontFamily: MONO, fontSize: 11, color: C.accentBright }}>{c.hash}</span>
-                <span
-                  style={{
-                    fontSize: 11,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    flex: 1
-                  }}
-                >
-                  {c.subject}
-                </span>
-              </div>
-              <div style={{ fontSize: 11, color: C.textMuted }}>
-                {c.author}
-                {c.when ? ` · ${c.when}` : ''}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </details>
-  )
-}
-
-function ConflictBlock({
-  status,
-  github,
-  gitAction,
-  onResolve
-}: {
-  status: GitStatus | null
-  github: GitHubInfo | null
-  gitAction: GitAction | null
-  onResolve: () => void
-}) {
-  const items = conflictStatusItems(status, github)
-  if (!items.length) return null
-  const bad = items.filter((i) => i.tone === 'conflict')
-  const rest = items.filter((i) => i.tone !== 'conflict')
-  const working = new Set((status?.conflicts ?? []).map((file) => file.path))
-  const predicted = (github?.conflictFiles ?? []).filter((file) => !working.has(file))
-  const canAsk = !gitAction && !!status && (status.clean || status.conflicts.length > 0)
-  const askTitle = !status
-    ? 'Reading working changes…'
-    : gitAction
-      ? 'Wait for the current git action to finish'
-      : canAsk
-        ? 'Merge the pull request base if needed, then send the conflicted files to Chat'
-        : 'Commit or stash local changes before merging the pull request base'
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={sectionLabel}>Merge status</div>
-      {bad.length > 0 && (
-        <div style={alertBox('conflict')}>
-          {bad.map((i) => (
-            <div key={i.text}>{i.text}</div>
-          ))}
-        </div>
-      )}
-      {predicted.length > 0 && (
-        <FileList title="Predicted conflicts" files={predicted} color={C.red} />
-      )}
-      {rest.map((i) => (
-        <div
-          key={i.text}
-          style={{ fontSize: 11.5, color: C.textMuted, marginBottom: 4 }}
-        >
-          {i.text}
-        </div>
-      ))}
-      {bad.length > 0 && (
-        <ConfirmButton
-          label="Resolve with AI"
-          confirmLabel="Confirm resolve"
-          busyLabel="Preparing conflicts…"
-          busy={gitAction === 'conflicts'}
-          disabled={!canAsk}
-          title={askTitle}
-          onConfirm={onResolve}
-          style={{ marginTop: 8, width: '100%', flex: 'none' }}
-        />
-      )}
-    </div>
-  )
-}
-
-function ChangesBlock({ status }: { status: GitStatus }) {
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={sectionLabel}>Working changes</div>
-      {(status.ahead > 0 || status.behind > 0) && (
-        <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8 }}>
-          {status.ahead > 0 && <span>{status.ahead} to push</span>}
-          {status.ahead > 0 && status.behind > 0 && <span> · </span>}
-          {status.behind > 0 && <span>{status.behind} to pull</span>}
-        </div>
-      )}
-      {status.clean && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: C.green }}>
-          <CheckIcon size={12} color={C.green} />
-          No uncommitted changes
-        </div>
-      )}
-      {!status.clean && (
-        <>
-          <FileList title="Staged" files={status.staged} color={C.green} />
-          <FileList title="Not staged" files={status.unstaged} color={C.yellow} />
-          <FileList title="New files" files={status.untracked} color={C.accentBright} />
-          <FileList title="Conflicts" files={status.conflicts} color={C.red} />
-        </>
-      )}
-    </div>
-  )
+const KIND: Record<GitFileKind, { letter: string; color: string }> = {
+  modified: { letter: 'M', color: C.yellow },
+  added: { letter: 'A', color: C.green },
+  deleted: { letter: 'D', color: C.red },
+  renamed: { letter: 'R', color: C.purpleSoft },
+  untracked: { letter: 'U', color: C.accentBright },
+  conflict: { letter: '!', color: C.red }
 }
 
 function useEscapeClose(open: boolean, onClose: () => void): void {
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      onClose()
     }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
+}
+
+const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])'
+
+function useFocusTrap(open: boolean, dialogRef: RefObject<HTMLDivElement | null>): void {
+  useEffect(() => {
+    if (!open) return
+    const dialog = dialogRef.current
+    if (!dialog) return
+    const focusable = (): HTMLElement[] => [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)]
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Tab') return
+      const items = focusable()
+      const first = items[0]
+      const last = items.at(-1)
+      if (!first || !last) {
+        event.preventDefault()
+        dialog.focus()
+        return
+      }
+      const inside = dialog.contains(document.activeElement)
+      if ((!event.shiftKey && (!inside || document.activeElement === last)) || (event.shiftKey && (!inside || document.activeElement === first))) {
+        event.preventDefault()
+        const target = event.shiftKey ? last : first
+        target.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [dialogRef, open])
 }
 
 const HOLD_MS = 2500
 
-/** Remote-reaching action: only fires after a 2.5s press. Release early cancels. */
+/** Remote-reaching action: only fires after a 2.5 second press. */
 function HoldButton({
   label,
   busyLabel,
@@ -327,10 +134,8 @@ function HoldButton({
   const unbind = useRef<(() => void) | null>(null)
 
   const cancel = useCallback(() => {
-    if (timer.current !== null) {
-      window.clearTimeout(timer.current)
-      timer.current = null
-    }
+    if (timer.current !== null) window.clearTimeout(timer.current)
+    timer.current = null
     unbind.current?.()
     unbind.current = null
     setHolding(false)
@@ -365,29 +170,28 @@ function HoldButton({
     <Button
       variant="secondary"
       size="md"
-      disabled={disabled}
+      disabled={disabled || busy}
       title={holding ? 'Keep holding to confirm' : title}
       aria-label={`${label}. Hold until the button fills to confirm`}
       className={`bf-hold-btn${holding ? ' is-holding' : ''}`}
-      onPointerDown={(e) => {
-        if (e.button !== 0) return
-        e.preventDefault()
-        e.currentTarget.focus()
+      onPointerDown={(event) => {
+        if (event.button !== 0) return
+        event.preventDefault()
+        event.currentTarget.focus()
         begin()
       }}
-      onKeyDown={(e) => {
-        if (e.key !== ' ' && e.key !== 'Enter') return
-        if (e.repeat) return
-        e.preventDefault()
+      onKeyDown={(event) => {
+        if ((event.key !== ' ' && event.key !== 'Enter') || event.repeat) return
+        event.preventDefault()
         begin()
       }}
-      onKeyUp={(e) => {
-        if (e.key !== ' ' && e.key !== 'Enter') return
-        e.preventDefault()
+      onKeyUp={(event) => {
+        if (event.key !== ' ' && event.key !== 'Enter') return
+        event.preventDefault()
         cancel()
       }}
       onBlur={cancel}
-      onContextMenu={(e) => e.preventDefault()}
+      onContextMenu={(event) => event.preventDefault()}
       style={{
         flex: 1,
         color: holding ? C.accentInk : undefined,
@@ -397,20 +201,22 @@ function HoldButton({
     >
       <span className="bf-hold-fill" aria-hidden />
       <span className="bf-hold-label">
-        {busy ? (
-          <>
-            <Spinner /> {busyLabel}
-          </>
-        ) : (
-          label
-        )}
+        {busy ? <><Spinner /> {busyLabel}</> : label}
       </span>
     </Button>
   )
 }
 
-/** A button whose action reaches the remote, so it asks for a second click first. */
-function ConfirmButton({ label, confirmLabel, busyLabel, busy, disabled, title, onConfirm, style }: {
+/** A remote action that asks for a second click before it runs. */
+function ConfirmButton({
+  label,
+  confirmLabel,
+  busyLabel,
+  busy,
+  disabled,
+  title,
+  onConfirm
+}: {
   label: string
   confirmLabel: string
   busyLabel: string
@@ -418,7 +224,6 @@ function ConfirmButton({ label, confirmLabel, busyLabel, busy, disabled, title, 
   disabled: boolean
   title: string
   onConfirm: () => void
-  style?: CSSProperties
 }) {
   const [armed, setArmed] = useState(false)
 
@@ -434,9 +239,9 @@ function ConfirmButton({ label, confirmLabel, busyLabel, busy, disabled, title, 
 
   return (
     <Button
-      variant="secondary"
-      size="md"
-      disabled={disabled}
+      variant="ghost"
+      size="sm"
+      disabled={disabled || busy}
       onBlur={() => setArmed(false)}
       title={armed ? 'Click again to confirm' : title}
       onClick={() => {
@@ -447,232 +252,338 @@ function ConfirmButton({ label, confirmLabel, busyLabel, busy, disabled, title, 
         setArmed(false)
         onConfirm()
       }}
-      style={{ flex: 1, ...style }}
     >
       {busy ? <><Spinner /> {busyLabel}</> : armed ? confirmLabel : label}
     </Button>
   )
 }
 
-function GitActionButtons({
+function ChangesCard({
+  status,
+  selectedFiles,
+  onSelected,
+  onSelectAll
+}: {
+  status: GitStatus | null
+  selectedFiles: string[]
+  onSelected: (file: string, selected: boolean) => void
+  onSelectAll: (files: string[]) => void
+}) {
+  const files = status ? committableChanges(status) : []
+  const selected = new Set(selectedFiles)
+  const allSelected = files.length > 0 && files.every((file) => selected.has(file.path))
+
+  return (
+    <section style={card}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={sectionLabel}>Changes · {files.length} {files.length === 1 ? 'file' : 'files'}</div>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!files.length || allSelected}
+          onClick={() => onSelectAll(files.map((file) => file.path))}
+        >
+          Stage all
+        </Button>
+      </div>
+
+      {!status && <div style={{ marginTop: 18, color: C.textMuted, fontSize: 12 }}>Reading working changes…</div>}
+      {status && !files.length && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 18, color: C.green, fontSize: 12 }}>
+          <CheckIcon size={12} color={C.green} />
+          {status.clean ? 'No uncommitted changes' : 'No committable files'}
+        </div>
+      )}
+      {files.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
+          {files.map((file) => {
+            const kind = KIND[file.kind]
+            return (
+              <Checkbox
+                key={file.path}
+                checked={selected.has(file.path)}
+                onChange={(checked) => onSelected(file.path, checked)}
+                title={file.path}
+                style={{ minWidth: 0 }}
+              >
+                <span style={{ width: 13, flex: 'none', color: kind.color, fontFamily: MONO, fontWeight: 700 }}>
+                  {kind.letter}
+                </span>
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: MONO }}>
+                  {file.path}
+                </span>
+              </Checkbox>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function CommitCard({
   provider,
   model,
-  gitAction,
   draft,
-  draftStale,
-  ahead,
-  canCommit,
-  canPush,
-  showCreatePr,
-  canCreatePr,
-  openPr,
+  selectedCount,
+  gitAction,
   commitReason,
   pushReason,
-  prReason,
-  onPrepare,
+  ahead,
   onDraftMessage,
-  onCancelDraft,
-  onConfirm,
-  onPush,
-  onCreatePr
+  onPrepare,
+  onCommit,
+  onPush
 }: {
   provider: AiProvider
   model?: string
-  gitAction: GitAction | null
   draft: ReturnType<typeof useGitPanel>['draft']
-  draftStale: boolean
-  ahead: number
-  canCommit: boolean
-  canPush: boolean
-  showCreatePr: boolean
-  canCreatePr: boolean
-  openPr: { number: number; url: string } | null
+  selectedCount: number
+  gitAction: GitAction | null
   commitReason: string | null
   pushReason: string | null
-  prReason: string | null
-  onPrepare: () => void
+  ahead: number
   onDraftMessage: (message: string) => void
-  onCancelDraft: () => void
-  onConfirm: () => void
+  onPrepare: () => void
+  onCommit: () => void
   onPush: () => void
-  onCreatePr: () => void
 }) {
-  const commitBusy = gitAction === 'commit'
+  const selectedReason = selectedCount ? null : 'Select at least one file to commit.'
+  const blocked = commitReason ?? selectedReason
+  const canGenerate = !blocked && !gitAction
+  const canCommit = canGenerate && !!draft.message.trim()
+  const canPush = !pushReason && !gitAction
 
   return (
-    <div
-      style={{
-        flex: 'none',
-        padding: '10px 12px 12px',
-        borderTop: `1px solid ${C.cardBorder}`,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8
-      }}
-    >
-      {draft && (
-        <>
-          <div style={sectionLabel}>Commit message</div>
-          {draft.skipped.length > 0 && (
-            <div style={{ fontSize: 11, color: C.yellow, lineHeight: 1.4, overflowWrap: 'anywhere' }}>
-              Excluded possible secrets: {draft.skipped.join(', ')}
-            </div>
-          )}
-          {draftStale && (
-            <div style={{ fontSize: 11, color: C.yellow, lineHeight: 1.4 }}>
-              The file list changed. Generate a new message before committing.
-            </div>
-          )}
-          <textarea
-            className="bf-input bf-focus"
-            value={draft.message}
-            onChange={(e) => onDraftMessage(e.target.value)}
-            rows={3}
-            disabled={!!gitAction}
-            spellCheck={false}
-            aria-label="Commit message"
-            style={{
-              width: '100%',
-              resize: 'vertical',
-              maxHeight: 140,
-              padding: '6px 8px',
-              borderRadius: 7,
-              border: `1px solid ${C.cardBorder}`,
-              background: 'rgba(255,255,255,0.03)',
-              color: C.textSoft,
-              fontFamily: MONO,
-              fontSize: 11,
-              lineHeight: 1.45,
-              boxSizing: 'border-box'
-            }}
-          />
-        </>
+    <section style={card}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+        <div style={sectionLabel}>Commit message</div>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={!canGenerate}
+          title={blocked ?? `Generate with ${aiSelectionLabel(provider, model)}`}
+          onClick={onPrepare}
+        >
+          {gitAction === 'generate' ? <><Spinner /> Generating…</> : 'Generate with AI'}
+        </Button>
+      </div>
+      {draft.skipped.length > 0 && (
+        <div style={{ marginBottom: 8, color: C.yellow, fontSize: 11, overflowWrap: 'anywhere' }}>
+          Excluded possible secrets: {draft.skipped.join(', ')}
+        </div>
       )}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {draft ? (
-          <>
-            <Button
-              variant="primary"
-              size="md"
-              disabled={!canCommit || draftStale || !draft.message.trim()}
-              onClick={() => void onConfirm()}
-              title={commitReason ?? `Commit ${draft.files.length} file${draft.files.length === 1 ? '' : 's'}`}
-              style={{ flex: 1 }}
-            >
-              {commitBusy ? (
-                <>
-                  <Spinner /> Committing…
-                </>
-              ) : (
-                `Commit ${draft.files.length} file${draft.files.length === 1 ? '' : 's'}`
-              )}
-            </Button>
-            {draftStale && (
-              <Button variant="secondary" size="md" disabled={!canCommit} onClick={onPrepare}>Regenerate</Button>
-            )}
-            <Button variant="ghost" size="md" disabled={!!gitAction} onClick={onCancelDraft}>
-              Cancel
-            </Button>
-          </>
-        ) : (
-          <Button
-            variant="primary"
-            size="md"
-            disabled={!canCommit}
-            onClick={() => void onPrepare()}
-            title={commitReason ?? `Generate a commit message with ${aiSelectionLabel(provider, model)}`}
-            style={{ flex: 1 }}
-          >
-            {commitBusy ? (
-              <>
-                <Spinner /> Generating…
-              </>
-            ) : (
-              'Draft commit message'
-            )}
-          </Button>
-        )}
+      <textarea
+        className="bf-input bf-focus"
+        value={draft.message}
+        onChange={(event) => onDraftMessage(event.target.value)}
+        rows={5}
+        disabled={gitAction === 'commit'}
+        placeholder="Summarize your changes…"
+        spellCheck={false}
+        aria-label="Commit message"
+        style={{
+          ...input,
+          minHeight: 96,
+          maxHeight: 180,
+          resize: 'vertical',
+          padding: '10px 12px',
+          fontFamily: MONO,
+          lineHeight: 1.5
+        }}
+      />
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <Button
+          variant="primary"
+          size="md"
+          disabled={!canCommit}
+          title={blocked ?? (!draft.message.trim() ? 'Enter a commit message.' : undefined)}
+          onClick={onCommit}
+          style={{ flex: 1, height: 34, borderRadius: 8 }}
+        >
+          {gitAction === 'commit' ? <><Spinner /> Committing…</> : `Commit (${selectedCount})`}
+        </Button>
         <HoldButton
           label={`Push${ahead > 0 ? ` (${ahead})` : ''}`}
           busyLabel="Pushing…"
           busy={gitAction === 'push'}
           disabled={!canPush}
-          title={pushReason ?? `Hold until the button fills to push ${ahead} unpushed commit${ahead === 1 ? '' : 's'}`}
+          title={pushReason ?? `Hold to push ${ahead} commit${ahead === 1 ? '' : 's'}`}
           onConfirm={onPush}
+          style={{ height: 34, borderRadius: 8 }}
         />
       </div>
-      {showCreatePr && (
-        <div style={{ display: 'flex' }}>
-          <HoldButton
-            label="Create pull request"
-            busyLabel="Creating pull request…"
-            busy={gitAction === 'pr'}
-            disabled={!canCreatePr}
-            title={prReason ?? 'Hold until the button fills to open a pull request on GitHub'}
-            onConfirm={onCreatePr}
-          />
+    </section>
+  )
+}
+
+function RecentCommitsCard({ commits }: { commits: ReturnType<typeof useGitPanel>['commits'] }) {
+  return (
+    <section style={{ ...card, flex: 1 }}>
+      <div style={{ ...sectionLabel, marginBottom: 14 }}>Latest commits</div>
+      {!commits.length && <div style={{ color: C.textMuted, fontSize: 12 }}>No commits yet</div>}
+      {commits.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {commits.map((commit, index) => (
+            <div key={commit.hash} style={{ position: 'relative', display: 'grid', gridTemplateColumns: '14px minmax(0, 1fr) auto', columnGap: 10, paddingBottom: index === commits.length - 1 ? 0 : 16 }}>
+              {index < commits.length - 1 && (
+                <span style={{ position: 'absolute', top: 9, bottom: -2, left: 4, width: 1, background: C.cardBorder }} />
+              )}
+              <span style={{ width: 7, height: 7, marginTop: 5, borderRadius: '50%', background: index === 0 ? C.green : C.card, border: `1px solid ${index === 0 ? C.green : C.faint}`, zIndex: 1 }} />
+              <div style={{ minWidth: 0 }}>
+                <div title={commit.subject} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.textSoft, fontSize: 12, fontWeight: 600 }}>
+                  {commit.subject}
+                </div>
+                <div style={{ marginTop: 3, color: C.textMuted, fontSize: 11 }}>
+                  {commit.author}{commit.when ? ` · ${commit.when}` : ''}
+                </div>
+              </div>
+              <span style={{ color: C.textMuted, fontFamily: MONO, fontSize: 10.5 }}>{commit.hash}</span>
+            </div>
+          ))}
         </div>
       )}
-      {openPr && (
-        <div style={{ display: 'flex' }}>
-          <Button
-            variant="secondary"
-            size="md"
-            title={`Open pull request #${openPr.number} on GitHub`}
-            onClick={() => window.open(openPr.url, '_blank', 'noopener,noreferrer')}
-            style={{ flex: 1 }}
-          >
-            {`Open PR #${openPr.number}`}
-          </Button>
+    </section>
+  )
+}
+
+function ConflictPaths({ title, files }: { title: string; files: string[] }) {
+  if (!files.length) return null
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ color: C.red, fontSize: 11, marginBottom: 5 }}>{title}</div>
+      {files.map((file) => (
+        <div key={file} title={file} style={{ color: C.textMuted, fontFamily: MONO, fontSize: 10.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {file}
         </div>
-      )}
-      <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.45 }}>
-        {draft ? 'Review the message, then commit locally.' : commitReason ?? 'Includes staged, unstaged, and new files. Review before committing.'}
-      </div>
-      {ahead > 0 && (
-        <div style={{ fontSize: 11, color: pushReason ? C.yellow : C.textMuted }}>
-          {pushReason ?? 'Hold Push until it fills to send commits.'}
-        </div>
-      )}
-      {showCreatePr && (
-        <div style={{ fontSize: 11, color: C.textMuted }}>
-          {prReason ?? 'Hold Create pull request until it fills to open it on GitHub.'}
-        </div>
-      )}
+      ))}
     </div>
   )
 }
 
-function usePopoverPosition(
-  anchorRef: RefObject<HTMLElement | null>,
-  open: boolean
-): { left: number; bottom: number } | null {
-  const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null)
+function PullRequestCard({
+  branch,
+  status,
+  github,
+  gitAction,
+  onCheckConflicts,
+  onCreatePr
+}: {
+  branch: string
+  status: GitStatus | null
+  github: GitHubInfo | null
+  gitAction: GitAction | null
+  onCheckConflicts: () => void
+  onCreatePr: () => void
+}) {
+  const attached = github?.available ? github.prs[0] : undefined
+  const base = attached?.base ?? status?.baseMerge?.base ?? ''
+  const mergeLoaded = !!status?.conflicts.length || !!github || !!status?.baseMerge
+  const mergeItems = mergeLoaded ? conflictStatusItems(status, github) : []
+  const working = (status?.conflicts ?? []).map((file) => file.path)
+  const workingSet = new Set(working)
+  const predicted = (github?.conflictFiles ?? []).filter((file) => !workingSet.has(file))
+  const canCheck =
+    !gitAction &&
+    !!status &&
+    (status.clean || status.conflicts.length > 0) &&
+    (working.length > 0 || !!conflictMergeBase(status, github))
+  const checkTitle = !status
+    ? 'Reading working changes…'
+    : gitAction
+      ? 'Wait for the current Git action to finish'
+      : canCheck
+        ? 'Merge the pull request base if needed, then send conflicted files to Chat'
+        : !working.length && !conflictMergeBase(status, github)
+          ? 'No pull request or base branch to check.'
+        : 'Commit or stash local changes before merging the pull request base'
+  const prReason = github === null
+    ? 'Reading GitHub status…'
+    : !github.available
+      ? github.message || 'GitHub is unavailable.'
+      : pullRequestBlockReason(status)
+  const canCreatePr = !attached && !prReason && !gitAction
 
-  useLayoutEffect(() => {
-    if (!open) {
-      setPos(null)
-      return
-    }
-    const anchor = anchorRef.current
-    if (!anchor) return
-    const update = (): void => {
-      const rect = anchor.getBoundingClientRect()
-      setPos({
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - POPOVER_WIDTH - 16)),
-        bottom: window.innerHeight - rect.top + 8
-      })
-    }
-    update()
-    window.addEventListener('resize', update)
-    window.addEventListener('scroll', update, true)
-    return () => {
-      window.removeEventListener('resize', update)
-      window.removeEventListener('scroll', update, true)
-    }
-  }, [anchorRef, open])
+  return (
+    <section style={card}>
+      <div style={{ ...sectionLabel, marginBottom: 14 }}>Pull request</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <label style={{ minWidth: 0, color: C.textMuted, fontSize: 11 }}>
+          Compare
+          <input className="bf-input" value={branch} readOnly aria-label="Compare branch" style={{ ...input, height: 34, marginTop: 6, fontFamily: MONO }} />
+        </label>
+        <label style={{ minWidth: 0, color: C.textMuted, fontSize: 11 }}>
+          Base
+          <input className="bf-input" value={base} readOnly placeholder="Unknown" aria-label="Base branch" style={{ ...input, height: 34, marginTop: 6, fontFamily: MONO }} />
+        </label>
+      </div>
 
-  return pos
+      <div style={{ marginTop: 12, padding: '5px 6px 5px 11px', minHeight: 32, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${C.cardBorder}`, borderRadius: 8, background: C.terminal }}>
+        <span style={{ width: 8, height: 8, flex: 'none', borderRadius: '50%', background: mergeItems.some((item) => item.tone === 'conflict') ? C.red : mergeItems.some((item) => item.tone === 'ok') ? C.green : C.faint }} />
+        <span style={{ flex: 1, minWidth: 0, color: C.textMuted, fontSize: 11.5 }}>
+          {mergeItems[0]?.text ?? 'Merge status unknown'}
+        </span>
+        <ConfirmButton
+          label="Check conflicts"
+          confirmLabel="Confirm check"
+          busyLabel="Checking…"
+          busy={gitAction === 'conflicts'}
+          disabled={!canCheck}
+          title={checkTitle}
+          onConfirm={onCheckConflicts}
+        />
+      </div>
+
+      {mergeItems.slice(1).map((item) => (
+        <div key={item.text} style={{ marginTop: 7, color: item.tone === 'conflict' ? C.red : C.textMuted, fontSize: 11 }}>
+          {item.text}
+        </div>
+      ))}
+      <ConflictPaths title="Working tree conflicts" files={working} />
+      <ConflictPaths title="Predicted conflicts" files={predicted} />
+
+      <input className="bf-input" value="" readOnly placeholder="Pull request title" aria-label="Pull request title" style={{ ...input, height: 36, marginTop: 12 }} />
+      {attached?.url ? (
+        <Button
+          variant="secondary"
+          size="md"
+          title={`Open pull request #${attached.number} on GitHub`}
+          onClick={() => window.open(attached.url, '_blank', 'noopener,noreferrer')}
+          style={{ width: '100%', height: 38, marginTop: 10, borderRadius: 8 }}
+        >
+          Open pull request #{attached.number}
+        </Button>
+      ) : (
+        <HoldButton
+          label="Create pull request"
+          busyLabel="Creating pull request…"
+          busy={gitAction === 'pr'}
+          disabled={!canCreatePr}
+          title={prReason ?? 'Hold to create a pull request on GitHub'}
+          onConfirm={onCreatePr}
+          style={{ width: '100%', height: 38, marginTop: 10, borderRadius: 8 }}
+        />
+      )}
+    </section>
+  )
+}
+
+function GitLogCard({ log }: { log: GitLogEntry[] }) {
+  return (
+    <section style={{ ...card, flex: 1, minHeight: 144 }}>
+      <div style={{ ...sectionLabel, marginBottom: 14 }}>Git log</div>
+      <div role="log" aria-live="polite" style={{ minHeight: 84, maxHeight: 220, overflow: 'auto', borderRadius: 8, background: C.terminal, padding: '11px 12px', boxSizing: 'border-box', fontFamily: MONO, fontSize: 10.5, lineHeight: 1.6 }}>
+        {!log.length && <span style={{ color: C.faint }}>No Git actions this session.</span>}
+        {log.map((entry) => (
+          <div key={entry.id} style={{ display: 'grid', gridTemplateColumns: '58px max-content minmax(0, 1fr)', gap: 8, color: entry.ok ? C.textMuted : C.red }}>
+            <span style={{ color: C.faint }}>{entry.time}</span>
+            <span style={{ color: entry.ok ? C.green : C.red }}>{entry.action}</span>
+            <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{entry.message}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
 }
 
 export default function GitPane({
@@ -685,13 +596,14 @@ export default function GitPane({
   loading,
   gitAction,
   draft,
-  lastMessage,
-  error,
+  selectedFiles,
+  log,
   refreshError,
   refresh,
   prepareCommit,
   setDraftMessage,
-  cancelDraft,
+  setFileSelected,
+  selectAllFiles,
   confirmCommit,
   push,
   createPr,
@@ -700,92 +612,77 @@ export default function GitPane({
   onClose,
   anchorRef
 }: Props) {
-  const pos = usePopoverPosition(anchorRef, open)
+  const dialogRef = useRef<HTMLDivElement>(null)
   useEscapeClose(open, onClose)
+  useFocusTrap(open, dialogRef)
 
   useEffect(() => {
     if (!open) return
-    const anchor = anchorRef.current
-    return () => anchor?.focus()
-  }, [open, anchorRef])
+    return () => anchorRef.current?.focus()
+  }, [anchorRef, open])
 
-  if (!open || !pos) return null
+  if (!open) return null
 
   const commitReason = status ? commitBlockReason(status) : 'Reading working changes…'
   const pushReason = status ? pushBlockReason(status) : 'Reading remote status…'
-  const prReason = pullRequestBlockReason(status)
-  const canCommit = !commitReason && !gitAction
-  const canPush = !pushReason && !gitAction
-  const canCreatePr = !prReason && !gitAction
-  const draftStale = !!draft && !!status && !draftMatchesStatus(draft.files, status)
-  const attached = github?.available ? github.prs[0] : undefined
-  const openPr = attached?.url ? { number: attached.number, url: attached.url } : null
+  const base = github?.prs[0]?.base ?? status?.baseMerge?.base
 
   return (
-    <>
-      <div aria-hidden onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 55 }} />
-      <div
-        role="dialog"
-        aria-label="Git"
-        style={{
-          position: 'fixed',
-          left: pos.left,
-          bottom: pos.bottom,
-          zIndex: 60,
-          width: POPOVER_WIDTH,
-          maxWidth: 'calc(100vw - 16px)',
-          maxHeight: 'min(70vh, 520px)',
-          display: 'flex',
-          flexDirection: 'column',
-          background: C.panel,
-          color: C.textSoft,
-          border: `1px solid ${C.cardBorder}`,
-          borderRadius: 10,
-          boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
-          overflow: 'hidden'
-        }}
-      >
-        <GitPanelHeader
-          branch={branch}
-          loading={loading}
-          stale={!!refreshError}
-          onClose={onClose}
-          onRetry={refresh}
-        />
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Source Control"
+      tabIndex={-1}
+      style={{ position: 'fixed', inset: 0, zIndex: 90, display: 'flex', flexDirection: 'column', background: C.appBg, color: C.text, fontFamily: UI }}
+    >
+      <header style={{ height: 52, flex: 'none', display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', borderBottom: `1px solid ${C.border}` }}>
+        <GitIcon size={14} color={C.textMuted} />
+        <span style={{ fontSize: 13, fontWeight: 650 }}>Source Control</span>
+        <span style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '5px 9px', border: `1px solid ${C.cardBorder}`, borderRadius: 7, background: C.card, color: C.textSoft, fontFamily: MONO, fontSize: 11 }}>
+          {branch}{base ? ` → ${base}` : ''}
+        </span>
+        <span style={{ flex: 1 }} />
+        {loading && <span style={{ color: C.textMuted, fontSize: 11 }}>Updating…</span>}
+        {refreshError && (
+          <Button variant="ghost" size="sm" disabled={loading} onClick={refresh} title={refreshError}>
+            Retry
+          </Button>
+        )}
+        {status && status.ahead > 0 && (
+          <span style={{ color: C.textMuted, fontSize: 11 }}>
+            {status.ahead} {status.ahead === 1 ? 'commit' : 'commits'} ahead
+          </span>
+        )}
+        <Button variant="ghost" size="sm" autoFocus onClick={onClose}>Done</Button>
+      </header>
 
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px' }}>
-          {refreshError && <div role="alert" style={alertBox('error')}>{refreshError}</div>}
-          {error && <div role="alert" style={alertBox('error')}>{error}</div>}
-          {lastMessage && <div role="status" style={alertBox('success')}>{lastMessage}</div>}
-          {status ? <ChangesBlock status={status} /> : <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12 }}>Reading working changes…</div>}
-          <ConflictBlock status={status} github={github} gitAction={gitAction} onResolve={resolveConflicts} />
-          {github && !github.available && <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 12 }}>{github.message}</div>}
-          {status && <RecentCommitsBlock commits={commits} />}
+      <main style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 20 }}>
+        <div className="bf-source-control-grid" style={{ maxWidth: 1380, margin: '0 auto' }}>
+          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <ChangesCard status={status} selectedFiles={selectedFiles} onSelected={setFileSelected} onSelectAll={selectAllFiles} />
+            <CommitCard
+              provider={provider}
+              model={model}
+              draft={draft}
+              selectedCount={selectedFiles.length}
+              gitAction={gitAction}
+              commitReason={commitReason}
+              pushReason={pushReason}
+              ahead={status?.ahead ?? 0}
+              onDraftMessage={setDraftMessage}
+              onPrepare={prepareCommit}
+              onCommit={confirmCommit}
+              onPush={push}
+            />
+            <RecentCommitsCard commits={commits} />
+          </div>
+          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <PullRequestCard branch={branch} status={status} github={github} gitAction={gitAction} onCheckConflicts={resolveConflicts} onCreatePr={createPr} />
+            <GitLogCard log={log} />
+          </div>
         </div>
-
-        <GitActionButtons
-          provider={provider}
-          model={model}
-          gitAction={gitAction}
-          draft={draft}
-          draftStale={draftStale}
-          ahead={status?.ahead ?? 0}
-          canCommit={canCommit}
-          canPush={canPush}
-          showCreatePr={!!github?.available && !attached}
-          canCreatePr={canCreatePr}
-          openPr={openPr}
-          commitReason={commitReason}
-          pushReason={pushReason}
-          prReason={prReason}
-          onPrepare={prepareCommit}
-          onDraftMessage={setDraftMessage}
-          onCancelDraft={cancelDraft}
-          onConfirm={confirmCommit}
-          onPush={push}
-          onCreatePr={createPr}
-        />
-      </div>
-    </>
+      </main>
+    </div>
   )
 }

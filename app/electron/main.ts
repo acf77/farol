@@ -609,10 +609,21 @@ function registerGitIpc(): void {
   ipcMain.handle('git:recentCommits', (_e, projectPath: string) => recentCommits(projectPath))
   ipcMain.handle(
     'git:draftCommit',
-    async (_e, projectPath: string, provider: AgentTaskRequest['provider'], model?: string) => {
+    async (
+      _e,
+      projectPath: string,
+      provider: AgentTaskRequest['provider'],
+      model?: string,
+      files?: string[]
+    ) => {
       const cwd = await openProjectCwd(projectPath)
       if ('error' in cwd) return cwd
-      return draftCommit(cwd.path, provider, typeof model === 'string' ? model : undefined)
+      return draftCommit(
+        cwd.path,
+        provider,
+        typeof model === 'string' ? model : undefined,
+        Array.isArray(files) ? files.filter((file) => typeof file === 'string') : undefined
+      )
     }
   )
   ipcMain.handle(

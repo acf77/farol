@@ -385,7 +385,8 @@ export interface FarolApi {
     draftCommit(
       projectPath: string,
       provider: AiProvider,
-      model?: string
+      model?: string,
+      files?: string[]
     ): Promise<{
       ok: boolean
       message?: string

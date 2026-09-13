@@ -7,7 +7,6 @@ import {
   committableFiles,
   conflictMergeBase,
   conflictResolvePrompt,
-  draftMatchesStatus,
   parseAheadBehind,
   parseGitStatus,
   parseMergeTreeConflictPaths,
@@ -428,28 +427,63 @@ export function parseCommitLog(out: string): GitCommit[] {
 }
 
 /** Latest commits on the current branch, newest first. */
-export async function recentCommits(cwd: string, limit = 3): Promise<GitCommit[]> {
+export async function recentCommits(cwd: string, limit = 5): Promise<GitCommit[]> {
   const res = await git(cwd, ['log', `-n${limit}`, '--format=%h\t%s\t%an\t%cr'])
   return res.code === 0 ? parseCommitLog(res.out) : []
 }
 
-async function stageFiles(
-  cwd: string,
-  files: string[],
-  skipped: string[]
-): Promise<{ ok: boolean; message: string }> {
-  if (skipped.length) {
-    const reset = await git(cwd, ['reset', '-q', 'HEAD', '--', ...skipped])
-    if (reset.code !== 0) return { ok: false, message: cliFirstLine(reset) || 'Could not unstage secret files' }
-  }
+async function stageFiles(cwd: string, files: string[]): Promise<{ ok: boolean; message: string }> {
   if (!files.length) return { ok: false, message: 'Nothing safe to commit' }
   const res = await git(cwd, ['add', '--', ...files])
   return { ok: res.code === 0, message: cliFirstLine(res) }
 }
 
-async function unstageFiles(cwd: string, files: string[]): Promise<void> {
-  if (!files.length) return
-  await git(cwd, ['reset', '-q', 'HEAD', '--', ...files])
+async function unstageFiles(cwd: string, files: string[]): Promise<{ ok: boolean; message: string }> {
+  if (!files.length) return { ok: true, message: '' }
+  const res = await git(cwd, ['reset', '-q', 'HEAD', '--', ...files])
+  return { ok: res.code === 0, message: cliFirstLine(res) }
+}
+
+/** Restore the whole-file staged state after a failed selected-file commit. */
+async function restoreStagedFiles(
+  cwd: string,
+  added: string[],
+  removed: string[]
+): Promise<{ ok: boolean; message: string }> {
+  const unstaged = await unstageFiles(cwd, added)
+  if (!unstaged.ok) return unstaged
+  return removed.length ? stageFiles(cwd, removed) : unstaged
+}
+
+function selectedCommittableFiles(st: GitStatus, requested?: string[]): string[] {
+  const { files } = committableFiles(st)
+  if (!requested) return files
+  const selected = new Set(requested)
+  return files.filter((file) => selected.has(file))
+}
+
+function indexChanges(st: GitStatus, selected: string[]): { added: string[]; removed: string[] } {
+  const staged = new Set(st.staged.map((file) => file.path))
+  const selectedSet = new Set(selected)
+  return {
+    added: selected.filter((file) => !staged.has(file)),
+    removed: st.staged.map((file) => file.path).filter((file) => !selectedSet.has(file))
+  }
+}
+
+async function failedCommit(
+  cwd: string,
+  added: string[],
+  removed: string[],
+  failure: string,
+  fallback: string
+): Promise<{ ok: false; error: string }> {
+  const restored = await restoreStagedFiles(cwd, added, removed)
+  const message = failure || fallback
+  return {
+    ok: false,
+    error: restored.ok ? message : `${message}; ${restored.message || 'Could not restore staged files'}`
+  }
 }
 
 export async function push(cwd: string): Promise<{ ok: boolean; message: string }> {
@@ -524,13 +558,17 @@ async function commitDiff(cwd: string, tracked: string[], untracked: string[]): 
 export async function draftCommit(
   cwd: string,
   provider: AiProvider,
-  model?: string
+  model?: string,
+  selectedFiles?: string[]
 ): Promise<CommitDraft> {
   const st = await status(cwd)
   const blocked = commitBlockReason(st)
   if (blocked) return { ok: false, error: blocked }
 
-  const { files, skipped } = committableFiles(st)
+  const { files: available, skipped } = committableFiles(st)
+  const selected = selectedFiles ? new Set(selectedFiles) : null
+  const files = selected ? available.filter((file) => selected.has(file)) : available
+  if (!files.length) return { ok: false, error: 'Select at least one file to generate a commit message.' }
   const untracked = st.untracked.map((f) => f.path).filter((p) => files.includes(p))
   const tracked = files.filter((p) => !untracked.includes(p))
   const diff = await commitDiff(cwd, tracked, untracked)
@@ -545,7 +583,7 @@ export async function draftCommit(
   return { ok: true, message, files, skipped }
 }
 
-/** Stage only committable files and commit `message`. Restores newly staged paths on failure. */
+/** Make the index match `files`, commit, and restore its prior state on failure. */
 export async function commitAll(
   cwd: string,
   message: string,
@@ -555,26 +593,23 @@ export async function commitAll(
   const blocked = commitBlockReason(st)
   if (blocked) return { ok: false, error: blocked }
 
-  const { files: live, skipped } = committableFiles(st)
-  if (files && !draftMatchesStatus(files, st)) {
-    return { ok: false, error: 'Working tree changed since the draft — generate the message again.' }
-  }
+  const selected = selectedCommittableFiles(st, files)
+  if (!selected.length) return { ok: false, error: 'Select at least one file to commit.' }
   const text = sanitizeCommitMessage(message)
   if (!text) return { ok: false, error: 'Commit message is empty' }
 
-  const previouslyStaged = new Set(st.staged.map((f) => f.path).filter((p) => !skipped.includes(p)))
-  const added = live.filter((p) => !previouslyStaged.has(p))
-  const unstageSecrets = skipped.filter((p) => st.staged.some((f) => f.path === p))
+  const { added, removed } = indexChanges(st, selected)
 
-  const staged = await stageFiles(cwd, live, unstageSecrets)
+  const unstaged = await unstageFiles(cwd, removed)
+  if (!unstaged.ok) return { ok: false, error: unstaged.message || 'Could not update staged files' }
+
+  const staged = await stageFiles(cwd, selected)
   if (!staged.ok) {
-    await unstageFiles(cwd, added)
-    return { ok: false, error: staged.message || 'Could not stage changes' }
+    return failedCommit(cwd, added, removed, staged.message, 'Could not stage changes')
   }
   const done = await commit(cwd, text)
   if (!done.ok) {
-    await unstageFiles(cwd, added)
-    return { ok: false, error: done.message || 'Commit failed' }
+    return failedCommit(cwd, added, removed, done.message, 'Commit failed')
   }
   return { ok: true, message: text }
 }

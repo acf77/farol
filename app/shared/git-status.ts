@@ -113,24 +113,20 @@ export function isSecretPath(filePath: string): boolean {
   return SECRET_KEYS.has(name) || SECRET_EXT.test(name)
 }
 
-/** Files an AI commit may include, minus secret-looking paths. */
-export function committableFiles(st: GitStatus): { files: string[]; skipped: string[] } {
-  const paths = [...new Set([...st.staged, ...st.unstaged, ...st.untracked].map((f) => f.path))]
-  const files: string[] = []
-  const skipped: string[] = []
-  for (const p of paths) {
-    if (isSecretPath(p)) skipped.push(p)
-    else files.push(p)
-  }
-  return { files, skipped }
+/** One row per file that may be sent to AI and committed, minus likely secrets. */
+export function committableChanges(st: GitStatus): GitStatusFile[] {
+  const seen = new Set<string>()
+  return [...st.staged, ...st.unstaged, ...st.untracked].filter((file) => {
+    if (seen.has(file.path) || isSecretPath(file.path)) return false
+    seen.add(file.path)
+    return true
+  })
 }
 
-/** True when `files` is exactly the current committable set (order-insensitive). */
-export function draftMatchesStatus(files: string[], st: GitStatus): boolean {
-  const live = committableFiles(st).files
-  if (files.length !== live.length) return false
-  const set = new Set(files)
-  return live.every((p) => set.has(p))
+/** The same paths as `committableChanges`, plus the ones withheld as likely secrets. */
+export function committableFiles(st: GitStatus): { files: string[]; skipped: string[] } {
+  const paths = [...new Set([...st.staged, ...st.unstaged, ...st.untracked].map((f) => f.path))]
+  return { files: paths.filter((p) => !isSecretPath(p)), skipped: paths.filter(isSecretPath) }
 }
 
 export function commitBlockReason(st: GitStatus): string | null {
@@ -188,6 +184,7 @@ export function conflictMergeBase(
   return pr?.base || status?.baseMerge?.base
 }
 
+/** Merge state against the base branch and the open pull request. */
 export function conflictStatusItems(
   status: GitStatus | null,
   github: GitHubInfo | null
