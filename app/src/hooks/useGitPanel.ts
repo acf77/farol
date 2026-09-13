@@ -12,10 +12,6 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
-function sameFiles(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((file) => b.includes(file))
-}
-
 export type GitAction = 'generate' | 'commit' | 'push' | 'pr' | 'conflicts'
 
 export type GitCommitDraft = {
@@ -59,7 +55,6 @@ export function useGitPanel(
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const [refreshVersion, setRefreshVersion] = useState(0)
   const knownFiles = useRef<Set<string> | null>(null)
-  const selectedFilesRef = useRef<string[]>([])
   const refreshFailing = useRef(false)
   const logId = useRef(0)
   const refresh = useCallback(() => setRefreshVersion((version) => version + 1), [])
@@ -70,7 +65,9 @@ export function useGitPanel(
       second: '2-digit',
       hour12: false
     })
-    setLog((entries) => [...entries, { id: ++logId.current, time, action, message, ok }])
+    logId.current += 1
+    const entry = { id: logId.current, time, action, message, ok }
+    setLog((entries) => [...entries, entry])
   }, [])
 
   useEffect(() => {
@@ -79,7 +76,6 @@ export function useGitPanel(
     setGithub(null)
     setDraft(EMPTY_DRAFT)
     setSelectedFiles([])
-    selectedFilesRef.current = []
     setLog([])
     setRefreshError(null)
     knownFiles.current = null
@@ -101,16 +97,12 @@ export function useGitPanel(
           ])
           return () => {
             const live = committableFiles(st).files
+            const known = knownFiles.current
             setStatus(st)
             setCommits(recent)
             setSelectedFiles((selected) => {
-              const known = knownFiles.current
               const checked = new Set(selected)
-              const next = known
-                ? live.filter((file) => checked.has(file) || !known.has(file))
-                : live
-              selectedFilesRef.current = next
-              return next
+              return known ? live.filter((file) => checked.has(file) || !known.has(file)) : live
             })
             knownFiles.current = new Set(live)
             refreshFailing.current = false
@@ -186,9 +178,6 @@ export function useGitPanel(
       const { agent, model } = ai()
       const res = await api.git.draftCommit(projectPath, agent, model, files)
       if (res.ok && res.message) {
-        // A selection changed while AI was running needs a new request. Later
-        // selection changes remain valid: Commit always uses the current selection.
-        if (!sameFiles(selectedFilesRef.current, files)) return
         setDraft({ message: res.message, skipped: res.skipped ?? [] })
       } else {
         appendLog('Generate with AI', res.error || 'Could not generate commit message', false)
@@ -251,11 +240,11 @@ export function useGitPanel(
   )
 
   const createPr = useCallback(
-    () =>
+    (base?: string, title?: string) =>
       runRemote(
         'pr',
         'Create pull request',
-        () => api.git.createPr(projectPath),
+        () => api.git.createPr(projectPath, base, title),
         'Could not create the pull request'
       ),
     [projectPath, runRemote]
@@ -286,18 +275,10 @@ export function useGitPanel(
     setDraftMessage: (message: string) => setDraft((current) => ({ ...current, message })),
     setFileSelected: (file: string, selected: boolean) =>
       setSelectedFiles((files) => {
-        const next = selected
-          ? files.includes(file)
-            ? files
-            : [...files, file]
-          : files.filter((path) => path !== file)
-        selectedFilesRef.current = next
-        return next
+        if (!selected) return files.filter((path) => path !== file)
+        return files.includes(file) ? files : [...files, file]
       }),
-    selectAllFiles: (files: string[]) => {
-      selectedFilesRef.current = files
-      setSelectedFiles(files)
-    },
+    selectAllFiles: (files: string[]) => setSelectedFiles(files),
     confirmCommit,
     push,
     createPr,

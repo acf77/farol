@@ -440,7 +440,9 @@ async function stageFiles(cwd: string, files: string[]): Promise<{ ok: boolean; 
 
 async function unstageFiles(cwd: string, files: string[]): Promise<{ ok: boolean; message: string }> {
   if (!files.length) return { ok: true, message: '' }
-  const res = await git(cwd, ['reset', '-q', 'HEAD', '--', ...files])
+  // No revision argument: `reset` defaults to HEAD, and falls back to the empty
+  // tree on an unborn HEAD (a repo with no commits).
+  const res = await git(cwd, ['reset', '-q', '--', ...files])
   return { ok: res.code === 0, message: cliFirstLine(res) }
 }
 
@@ -601,7 +603,9 @@ export async function commitAll(
   const { added, removed } = indexChanges(st, selected)
 
   const unstaged = await unstageFiles(cwd, removed)
-  if (!unstaged.ok) return { ok: false, error: unstaged.message || 'Could not update staged files' }
+  if (!unstaged.ok) {
+    return failedCommit(cwd, added, removed, unstaged.message, 'Could not update staged files')
+  }
 
   const staged = await stageFiles(cwd, selected)
   if (!staged.ok) {

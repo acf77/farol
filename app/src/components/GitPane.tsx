@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { aiSelectionLabel } from '@shared/ai'
 import {
   committableChanges,
@@ -17,6 +18,8 @@ import { CheckIcon, GitIcon, Spinner } from './icons'
 
 interface Props extends ReturnType<typeof useGitPanel> {
   branch: string
+  branches: string[]
+  remotes: string[]
   provider: AiProvider
   model?: string
   open: boolean
@@ -295,7 +298,7 @@ function ChangesCard({
         </div>
       )}
       {files.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16, maxHeight: 320, overflow: 'auto' }}>
           {files.map((file) => {
             const kind = KIND[file.kind]
             return (
@@ -423,7 +426,7 @@ function RecentCommitsCard({ commits }: { commits: ReturnType<typeof useGitPanel
       <div style={{ ...sectionLabel, marginBottom: 14 }}>Latest commits</div>
       {!commits.length && <div style={{ color: C.textMuted, fontSize: 12 }}>No commits yet</div>}
       {commits.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 360, overflow: 'auto' }}>
           {commits.map((commit, index) => (
             <div key={commit.hash} style={{ position: 'relative', display: 'grid', gridTemplateColumns: '14px minmax(0, 1fr) auto', columnGap: 10, paddingBottom: index === commits.length - 1 ? 0 : 16 }}>
               {index < commits.length - 1 && (
@@ -463,21 +466,44 @@ function ConflictPaths({ title, files }: { title: string; files: string[] }) {
 
 function PullRequestCard({
   branch,
+  branches,
+  remotes,
   status,
   github,
   gitAction,
+  base: userBase,
+  title,
+  onBase,
+  onTitle,
   onCheckConflicts,
   onCreatePr
 }: {
   branch: string
+  branches: string[]
+  remotes: string[]
   status: GitStatus | null
   github: GitHubInfo | null
   gitAction: GitAction | null
+  base: string | null
+  title: string
+  onBase: (base: string) => void
+  onTitle: (title: string) => void
   onCheckConflicts: () => void
-  onCreatePr: () => void
+  onCreatePr: (base: string, title: string) => void
 }) {
   const attached = github?.available ? github.prs[0] : undefined
-  const base = attached?.base ?? status?.baseMerge?.base ?? ''
+  const knownBase = attached?.base ?? status?.baseMerge?.base ?? ''
+  // The current branch cannot be its own pull request base. Remote-only bases
+  // are shown by branch name: `gh pr create --base` wants `staging`, not `origin/staging`.
+  const baseOptions = [
+    ...new Set([
+      ...(knownBase ? [knownBase] : []),
+      ...branches,
+      ...remotes.map((name) => name.replace(/^[^/]+\//, ''))
+    ])
+  ].filter((name) => name && name !== branch)
+  const preferred = baseOptions.find((name) => /(^|\/)(staging|main|master|develop)$/.test(name))
+  const base = (userBase && baseOptions.includes(userBase) ? userBase : '') || knownBase || preferred || ''
   const mergeLoaded = !!status?.conflicts.length || !!github || !!status?.baseMerge
   const mergeItems = mergeLoaded ? conflictStatusItems(status, github) : []
   const working = (status?.conflicts ?? []).map((file) => file.path)
@@ -514,7 +540,19 @@ function PullRequestCard({
         </label>
         <label style={{ minWidth: 0, color: C.textMuted, fontSize: 11 }}>
           Base
-          <input className="bf-input" value={base} readOnly placeholder="Unknown" aria-label="Base branch" style={{ ...input, height: 34, marginTop: 6, fontFamily: MONO }} />
+          <select
+            className="bf-input bf-focus"
+            value={base}
+            onChange={(event) => onBase(event.target.value)}
+            disabled={!!attached}
+            aria-label="Base branch"
+            style={{ ...input, height: 34, marginTop: 6, fontFamily: MONO }}
+          >
+            <option value="">Repository default</option>
+            {baseOptions.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
         </label>
       </div>
 
@@ -542,7 +580,14 @@ function PullRequestCard({
       <ConflictPaths title="Working tree conflicts" files={working} />
       <ConflictPaths title="Predicted conflicts" files={predicted} />
 
-      <input className="bf-input" value="" readOnly placeholder="Pull request title" aria-label="Pull request title" style={{ ...input, height: 36, marginTop: 12 }} />
+      <input
+        className="bf-input bf-focus"
+        value={title}
+        onChange={(event) => onTitle(event.target.value)}
+        placeholder="Pull request title (optional)"
+        aria-label="Pull request title"
+        style={{ ...input, height: 36, marginTop: 12 }}
+      />
       {attached?.url ? (
         <Button
           variant="secondary"
@@ -560,7 +605,7 @@ function PullRequestCard({
           busy={gitAction === 'pr'}
           disabled={!canCreatePr}
           title={prReason ?? 'Hold to create a pull request on GitHub'}
-          onConfirm={onCreatePr}
+          onConfirm={() => onCreatePr(base, title)}
           style={{ width: '100%', height: 38, marginTop: 10, borderRadius: 8 }}
         />
       )}
@@ -588,6 +633,8 @@ function GitLogCard({ log }: { log: GitLogEntry[] }) {
 
 export default function GitPane({
   branch,
+  branches,
+  remotes,
   provider,
   model,
   status,
@@ -613,6 +660,8 @@ export default function GitPane({
   anchorRef
 }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null)
+  const [prBase, setPrBase] = useState<string | null>(null)
+  const [prTitle, setPrTitle] = useState('')
   useEscapeClose(open, onClose)
   useFocusTrap(open, dialogRef)
 
@@ -625,9 +674,9 @@ export default function GitPane({
 
   const commitReason = status ? commitBlockReason(status) : 'Reading working changes…'
   const pushReason = status ? pushBlockReason(status) : 'Reading remote status…'
-  const base = github?.prs[0]?.base ?? status?.baseMerge?.base
+  const base = prBase ?? github?.prs[0]?.base ?? status?.baseMerge?.base
 
-  return (
+  return createPortal(
     <div
       ref={dialogRef}
       role="dialog"
@@ -678,11 +727,25 @@ export default function GitPane({
             <RecentCommitsCard commits={commits} />
           </div>
           <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <PullRequestCard branch={branch} status={status} github={github} gitAction={gitAction} onCheckConflicts={resolveConflicts} onCreatePr={createPr} />
+            <PullRequestCard
+              branch={branch}
+              branches={branches}
+              remotes={remotes}
+              status={status}
+              github={github}
+              gitAction={gitAction}
+              base={prBase}
+              title={prTitle}
+              onBase={setPrBase}
+              onTitle={setPrTitle}
+              onCheckConflicts={resolveConflicts}
+              onCreatePr={createPr}
+            />
             <GitLogCard log={log} />
           </div>
         </div>
       </main>
-    </div>
+    </div>,
+    document.body
   )
 }

@@ -198,6 +198,19 @@ describe('commitAll', () => {
     const res = await commitAll(cwd, 'feat: change', [])
     expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/Select/) })
   })
+
+  it('commits the selection on an unborn HEAD', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'a\n')
+    fs.writeFileSync(path.join(cwd, 'extra.ts'), 'a\n')
+    git(cwd, ['add', 'app.ts', 'extra.ts'])
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'b\n')
+
+    const res = await commitAll(cwd, 'feat: change', ['app.ts'])
+    expect(res.ok).toBe(true)
+    expect(git(cwd, ['show', '--pretty=', '--name-only', 'HEAD']).trim()).toBe('app.ts')
+    expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('')
+  })
 })
 
 describe('mergeBaseConflicts', () => {

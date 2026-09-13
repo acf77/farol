@@ -41,8 +41,8 @@ The always-visible recent-commit list on the **Source Control page**.
 _Avoid_: collapsed Recent commits details
 
 **Pull request**:
-The Compare, Base, **Merge status**, **Check conflicts**, title, and Create pull request block on the **Source Control page**. Compare is the current branch, Base is the known merge or PR base, and the title is unused. Create pull request stays hold-to-confirm and runs `gh pr create --fill`. Working-tree conflict paths and predicted GitHub conflict paths stay as lists on this block; **Merge status** text stays.
-_Avoid_: Compare as a checkout picker, Base as a writable GitHub parameter, using the title for create, new `gh` flags, moving conflict paths off this block, hiding those paths
+The Compare, Base, **Merge status**, **Check conflicts**, title, and Create pull request block on the **Source Control page**. Compare is the current branch. Base is a selector over the known merge/PR base, local branches, and remote-tracking branches, minus the current branch; it defaults to the known base, else a conventional base (`staging`, `main`, `master`, `develop`), else the repository default. The title is an optional input. Create pull request stays hold-to-confirm and runs `gh pr create --fill`, adding `--base` for the chosen base and `--title` when the title is non-empty. Working-tree conflict paths and predicted GitHub conflict paths stay as lists on this block; **Merge status** text stays.
+_Avoid_: Compare as a checkout picker, defaulting Base to the current or most recent feature branch, offering the current branch as its own base, hiding remote-only bases, Base as a fixed read-only field, dropping the title input, moving conflict paths off this block, hiding those paths
 
 **Check conflicts**:
 The always-visible **Pull request** action that is today's Resolve with AI: two-click confirm, same block reasons, then merge the PR or base and send files to Chat.
@@ -75,7 +75,7 @@ _Avoid_: a single success/error banner as the only history, fetch lines, treatin
 - If that commit fails, unchecked files that were staged before the attempt are restored to staged with a whole-file `git add`; files this attempt newly staged are still unstaged
 - An empty or whitespace-only **Commit message** still cannot commit
 - The **Commit message** lives on the **Git panel** like today's draft: it survives close, resets on project switch, clears after a successful commit, and is not saved to disk
-- **Pull request** Compare, Base, and title are layout only; create still hold-to-confirms `--fill` and does not check out a branch
+- **Pull request** Compare is the current branch; Base and title are real create inputs: Base picks the `--base` target and title passes `--title` when non-empty to `--fill`; create still does not check out a branch
 - **Check conflicts** is always on the **Pull request** block and is the same **Git panel** resolve action
 - **Merge status** is Merge status unknown until GitHub or base-merge status has loaded
 - Working-tree and predicted conflict paths stay listed on the **Pull request** block; they are not **Changes** rows
@@ -102,7 +102,7 @@ _Avoid_: a single success/error banner as the only history, fetch lines, treatin
 > **Domain expert:** "No. Generate is optional. Commit uses the current text and the current **Commit selection**."
 >
 > **Dev:** "Are Compare, Base, and the PR title real create inputs?"
-> **Domain expert:** "Layout only. Compare is this branch, Base is the known merge/PR base, title is unused. Keep hold-to-confirm and `--fill`."
+> **Domain expert:** "Compare is this branch. Base and title are real: Base picks the `--base` target from the known base, local branches, and remote-tracking branches (minus this branch), and title passes `--title` when non-empty. Keep hold-to-confirm and `--fill`; never default Base to the current branch."
 >
 > **Dev:** "Is **Check conflicts** a new action, or today's Resolve with AI?"
 > **Domain expert:** "The same action, always visible. Relabel. Keep two-click confirm and the current block reasons. **Merge status** is unknown until GitHub or base-merge has loaded."
@@ -162,7 +162,8 @@ _Avoid_: a single success/error banner as the only history, fetch lines, treatin
 - File checkboxes / Stage all appear on **Changes**, but the current **Git panel** has no stage action and commits all committable files — resolved: **Commit selection**, not `git add`. The current `commitAll` path still stages every committable file and treats `files` as a staleness check only; that must change so a commit includes only the selected paths.
 - **Generate with AI** currently drafts from every committable file — resolved: it sees the **Commit selection** only.
 - Today Commit is disabled until a draft exists — resolved: **Typed commit**. Generate is optional.
-- Screenshot Compare / Base look like pickers, and a title field looks like a create input — resolved: layout only. Compare as a picker would check out a branch, which this app does in New Tab / worktree, not in Git. Create stays `--fill`.
+- Screenshot Compare / Base look like pickers, and a title field looks like a create input — resolved: Compare is read-only, but Base and title are real create inputs. Base selects the `--base` target from the known base, local branches, and remote-tracking branches minus this branch; title passes `--title` when non-empty. Compare still does not check out a branch; create keeps `--fill`.
+- Base could default to the current feature branch, because the local branch list is sorted by most recent commit — resolved: the current branch is excluded, and the default is the known base, else `staging` / `main` / `master` / `develop`, else the repository default. Remote-only bases such as `origin/staging` are offered by branch name too.
 - Today Resolve with AI appears only when a conflict signal exists — resolved: **Check conflicts** is always visible, same two-click confirm and block reasons. **Merge status** stays unknown until GitHub or base-merge has loaded.
 - The screenshot’s mixed **Changes** selection (package.json off) is a later user edit, not the first-load default — resolved: all committable files start selected.
 - Status reloads while the page is open would otherwise re-check every file — resolved: keep the user's **Commit selection**, select newly appeared committable files, drop gone paths.

@@ -1238,10 +1238,12 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       {git.isRepo && (
         <GitPane
           branch={git.branch}
+          branches={git.branches}
+          remotes={git.remotes ?? []}
           provider={settings.agent}
           model={settings.model}
           {...gitPanel}
-          open={gitOpen}
+          open={gitOpen && visible}
           onClose={() => onGitOpenChange(false)}
           anchorRef={gitAnchorRef}
         />

@@ -644,10 +644,10 @@ function registerGitIpc(): void {
     return gitPush(cwd.path)
   })
   ipcMain.handle('git:github', (_e, projectPath: string) => githubStatus(projectPath))
-  ipcMain.handle('git:createPr', async (_e, projectPath: string) => {
+  ipcMain.handle('git:createPr', async (_e, projectPath: string, base?: string, title?: string) => {
     const cwd = await openProjectCwd(projectPath)
     if ('error' in cwd) return { ok: false, message: cwd.error }
-    return createPullRequest(cwd.path)
+    return createPullRequest(cwd.path, base, title)
   })
   ipcMain.handle('git:bringConflicts', async (_e, projectPath: string) => {
     const cwd = await openProjectCwd(projectPath)
