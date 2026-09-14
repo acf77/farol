@@ -95,6 +95,26 @@ describe('createPullRequest', () => {
     expect(execCli.mock.calls[2]?.[2]).toEqual(['pr', 'create', '--fill'])
   })
 
+  it('targets a chosen base and title', async () => {
+    execCli
+      .mockResolvedValueOnce(ok('gh version 2'))
+      .mockResolvedValueOnce(ok('Logged in'))
+      .mockResolvedValueOnce(ok('https://github.com/acme/repo/pull/8\n'))
+    await expect(createPullRequest('/repo', 'staging', 'My change')).resolves.toEqual({
+      ok: true,
+      message: 'Pull request created: https://github.com/acme/repo/pull/8'
+    })
+    expect(execCli.mock.calls[2]?.[2]).toEqual([
+      'pr',
+      'create',
+      '--fill',
+      '--base',
+      'staging',
+      '--title',
+      'My change'
+    ])
+  })
+
   it('surfaces the first line of a gh failure', async () => {
     execCli
       .mockResolvedValueOnce(ok('gh version 2'))

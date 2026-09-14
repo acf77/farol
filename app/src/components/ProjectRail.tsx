@@ -242,8 +242,8 @@ export default function ProjectRail({
         type="button"
         className="bf-focus bf-icon-btn"
         onClick={onGitToggle}
-        title="Git status, commit, and push"
-        aria-label="Git status, commit, and push"
+        title="Open Source Control"
+        aria-label="Open Source Control"
         aria-expanded={gitOpen}
         style={{
           ...noDrag,

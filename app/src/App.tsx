@@ -815,6 +815,7 @@ interface WorkspaceKeyCtx {
   editor: EditorState | null
   paletteOpen: boolean
   settingsOpen: boolean
+  gitOpen: boolean
   setSettingsOpen: Dispatch<SetStateAction<boolean>>
   activeTab: string
   active: Tab | undefined
@@ -860,7 +861,14 @@ function handleDigitShortcut(e: KeyboardEvent, ctx: WorkspaceKeyCtx, digit: stri
 
 function handleWorkspaceKeyDown(e: KeyboardEvent, ctx: WorkspaceKeyCtx): void {
   // The dialog is modal: let it own Escape and Return.
-  if (!ctx.visible || ctx.newTabOpen || ctx.editor || ctx.paletteOpen || ctx.settingsOpen) return
+  if (
+    !ctx.visible ||
+    ctx.newTabOpen ||
+    ctx.editor ||
+    ctx.paletteOpen ||
+    ctx.settingsOpen ||
+    ctx.gitOpen
+  ) return
   if (!(e.metaKey || e.ctrlKey) || e.altKey) return
   const k = e.key.toLowerCase()
   if (k === ',') {
@@ -1235,11 +1243,13 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       {git.isRepo && (
         <GitPane
           branch={git.branch}
+          branches={git.branches}
+          remotes={git.remotes ?? []}
           provider={settings.agent}
           model={settings.models[settings.agent]}
           settings={settings}
           {...gitPanel}
-          open={gitOpen}
+          open={gitOpen && visible}
           onClose={() => onGitOpenChange(false)}
           anchorRef={gitAnchorRef}
         />
@@ -2284,6 +2294,7 @@ function ProjectWorkspace({
         editor,
         paletteOpen,
         settingsOpen,
+        gitOpen,
         setSettingsOpen,
         activeTab,
         active,
@@ -2311,6 +2322,7 @@ function ProjectWorkspace({
     editor,
     paletteOpen,
     settingsOpen,
+    gitOpen,
     newShellTab,
     splitPane,
     closeTab,

@@ -63,14 +63,24 @@ export async function githubInfo(cwd: string): Promise<GitHubInfo> {
 
 /**
  * Open a pull request for the current branch. `--fill` takes the title and body
- * from the branch's commits, and gh targets the repository's default base, so
- * this needs no input beyond the push the caller already made.
+ * from the branch's commits. The caller may override the target base and title;
+ * without them gh still falls back to the repository's default base.
  */
-export async function createPullRequest(cwd: string): Promise<{ ok: boolean; message: string }> {
+export async function createPullRequest(
+  cwd: string,
+  base?: string,
+  title?: string
+): Promise<{ ok: boolean; message: string }> {
   const blocked = await ghBlockReason(cwd, 'open pull requests')
   if (blocked) return { ok: false, message: blocked }
 
-  const res = await execCli('gh', cwd, ['pr', 'create', '--fill'], PR_CREATE_TIMEOUT)
+  const args = ['pr', 'create', '--fill']
+  const baseName = base?.trim()
+  if (baseName) args.push('--base', baseName)
+  const prTitle = title?.trim()
+  if (prTitle) args.push('--title', prTitle)
+
+  const res = await execCli('gh', cwd, args, PR_CREATE_TIMEOUT)
   // gh prints the new PR's URL on stdout and diagnostics on stderr.
   const lines = `${res.out}\n${res.err}`.split('\n').map((l) => l.trim()).filter(Boolean)
   if (res.code !== 0) {

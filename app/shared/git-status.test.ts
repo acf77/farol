@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   commitBlockReason,
+  committableChanges,
   committableFiles,
   conflictMergeBase,
   conflictResolvePrompt,
   conflictSignals,
   conflictStatusItems,
-  draftMatchesStatus,
   isSecretPath,
   parseAheadBehind,
   parseGitStatus,
@@ -97,17 +97,16 @@ describe('committableFiles', () => {
     expect(out.files).toEqual(['src/a.ts', 'notes.md'])
     expect(out.skipped).toEqual(['.env'])
   })
-})
-
-describe('draftMatchesStatus', () => {
-  it('matches the committable set regardless of order', () => {
+  it('returns one display row per safe path', () => {
     const st = status({
       staged: [{ path: 'src/a.ts', kind: 'modified', staged: true }],
-      untracked: [{ path: 'notes.md', kind: 'untracked', staged: false }]
+      unstaged: [{ path: 'src/a.ts', kind: 'modified', staged: false }],
+      untracked: [
+        { path: 'notes.md', kind: 'untracked', staged: false },
+        { path: '.env', kind: 'untracked', staged: false }
+      ]
     })
-    expect(draftMatchesStatus(['notes.md', 'src/a.ts'], st)).toBe(true)
-    expect(draftMatchesStatus(['src/a.ts'], st)).toBe(false)
-    expect(draftMatchesStatus(['src/a.ts', 'notes.md', 'extra.ts'], st)).toBe(false)
+    expect(committableChanges(st).map((file) => file.path)).toEqual(['src/a.ts', 'notes.md'])
   })
 })
 
@@ -249,6 +248,17 @@ describe('conflictMergeBase', () => {
 })
 
 describe('conflictStatusItems', () => {
+  it('reports working-tree conflicts before remote status has loaded', () => {
+    expect(
+      conflictStatusItems(
+        status({ conflicts: [{ path: 'both.ts', kind: 'conflict', staged: false }] }),
+        null
+      )
+    ).toEqual([
+      { tone: 'conflict', text: 'Merge conflicts in the working tree — resolve before committing.' }
+    ])
+  })
+
   it('reports a clean staging merge and no PR', () => {
     expect(
       conflictStatusItems(status({ clean: true, baseMerge: { base: 'staging', conflicts: false } }), {

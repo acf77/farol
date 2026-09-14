@@ -106,6 +106,23 @@ describe('draftCommit', () => {
     expect(prompt).not.toContain('SUPER_SECRET_VALUE')
     expect(prompt).not.toContain('.env')
   })
+
+  it('only sends selected files to the AI prompt', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'a\n')
+    fs.writeFileSync(path.join(cwd, 'notes.md'), 'old\n')
+    git(cwd, ['add', 'app.ts', 'notes.md'])
+    git(cwd, ['commit', '-m', 'init'])
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'b\n')
+    fs.writeFileSync(path.join(cwd, 'notes.md'), 'new\n')
+
+    runAiOnce.mockResolvedValue({ ok: true, text: 'feat: update app' })
+    const draft = await draftCommit(cwd, 'claude', undefined, ['app.ts'])
+    expect(draft.files).toEqual(['app.ts'])
+    const prompt = String(runAiOnce.mock.calls[0]?.[1] ?? '')
+    expect(prompt).toContain('app.ts')
+    expect(prompt).not.toContain('notes.md')
+  })
 })
 
 describe('commitAll', () => {
@@ -130,17 +147,69 @@ describe('commitAll', () => {
     expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('kept.ts')
   })
 
-  it('refuses to commit when the draft file set is stale', async () => {
+  it('commits only the selected files and leaves the rest unstaged', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'a\n')
+    fs.writeFileSync(path.join(cwd, 'extra.ts'), 'a\n')
+    git(cwd, ['add', 'app.ts', 'extra.ts'])
+    git(cwd, ['commit', '-m', 'init'])
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'b\n')
+    fs.writeFileSync(path.join(cwd, 'extra.ts'), 'b\n')
+    git(cwd, ['add', 'extra.ts'])
+
+    const res = await commitAll(cwd, 'feat: change', ['app.ts'])
+    expect(res.ok).toBe(true)
+    expect(git(cwd, ['show', '--pretty=', '--name-only', 'HEAD']).trim()).toBe('app.ts')
+    expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('')
+    expect(git(cwd, ['diff', '--name-only']).trim()).toBe('extra.ts')
+  })
+
+  it('restores an unchecked staged file when the commit fails', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'selected.ts'), 'a\n')
+    fs.writeFileSync(path.join(cwd, 'unchecked.ts'), 'a\nc\n')
+    git(cwd, ['add', 'selected.ts', 'unchecked.ts'])
+    git(cwd, ['commit', '-m', 'init'])
+    fs.writeFileSync(path.join(cwd, 'selected.ts'), 'b\n')
+    fs.writeFileSync(path.join(cwd, 'unchecked.ts'), 'b\nc\n')
+    git(cwd, ['add', 'unchecked.ts'])
+    fs.writeFileSync(path.join(cwd, 'unchecked.ts'), 'b\nd\n')
+
+    git(cwd, ['config', 'core.hooksPath', '.git/hooks'])
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+    fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n')
+    fs.chmodSync(hook, 0o755)
+
+    const res = await commitAll(cwd, 'feat: change', ['selected.ts'])
+    expect(res.ok).toBe(false)
+    expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('unchecked.ts')
+    expect(git(cwd, ['diff', '--cached', '--', 'unchecked.ts'])).toContain('+d')
+    expect(git(cwd, ['diff', '--', 'unchecked.ts']).trim()).toBe('')
+    expect(git(cwd, ['diff', '--name-only']).trim()).toBe('selected.ts')
+  })
+
+  it('rejects an empty commit selection', async () => {
     const cwd = tmpRepo()
     fs.writeFileSync(path.join(cwd, 'app.ts'), 'a\n')
     git(cwd, ['add', 'app.ts'])
     git(cwd, ['commit', '-m', 'init'])
     fs.writeFileSync(path.join(cwd, 'app.ts'), 'b\n')
-    fs.writeFileSync(path.join(cwd, 'extra.ts'), 'c\n')
+
+    const res = await commitAll(cwd, 'feat: change', [])
+    expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/Select/) })
+  })
+
+  it('commits the selection on an unborn HEAD', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'a\n')
+    fs.writeFileSync(path.join(cwd, 'extra.ts'), 'a\n')
+    git(cwd, ['add', 'app.ts', 'extra.ts'])
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'b\n')
 
     const res = await commitAll(cwd, 'feat: change', ['app.ts'])
-    expect(res.ok).toBe(false)
-    expect(res.error).toMatch(/changed/)
+    expect(res.ok).toBe(true)
+    expect(git(cwd, ['show', '--pretty=', '--name-only', 'HEAD']).trim()).toBe('app.ts')
+    expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('')
   })
 })
 

@@ -385,7 +385,8 @@ export interface FarolApi {
     draftCommit(
       projectPath: string,
       provider: AiProvider,
-      model?: string
+      model?: string,
+      files?: string[]
     ): Promise<{
       ok: boolean
       message?: string
@@ -400,7 +401,11 @@ export interface FarolApi {
     ): Promise<{ ok: boolean; message?: string; error?: string }>
     push(projectPath: string): Promise<{ ok: boolean; message: string }>
     github(projectPath: string): Promise<GitHubInfo>
-    createPr(projectPath: string): Promise<{ ok: boolean; message: string }>
+    createPr(
+      projectPath: string,
+      base?: string,
+      title?: string
+    ): Promise<{ ok: boolean; message: string }>
     bringConflicts(projectPath: string): Promise<{ ok: boolean; message: string; prompt?: string }>
     /** Fires when HEAD changes, including from outside the app. */
     onChanged(cb: (changed: GitChanged) => void): () => void

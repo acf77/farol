@@ -609,10 +609,21 @@ function registerGitIpc(): void {
   ipcMain.handle('git:recentCommits', (_e, projectPath: string) => recentCommits(projectPath))
   ipcMain.handle(
     'git:draftCommit',
-    async (_e, projectPath: string, provider: AgentTaskRequest['provider'], model?: string) => {
+    async (
+      _e,
+      projectPath: string,
+      provider: AgentTaskRequest['provider'],
+      model?: string,
+      files?: string[]
+    ) => {
       const cwd = await openProjectCwd(projectPath)
       if ('error' in cwd) return cwd
-      return draftCommit(cwd.path, provider, typeof model === 'string' ? model : undefined)
+      return draftCommit(
+        cwd.path,
+        provider,
+        typeof model === 'string' ? model : undefined,
+        Array.isArray(files) ? files.filter((file) => typeof file === 'string') : undefined
+      )
     }
   )
   ipcMain.handle(
@@ -633,10 +644,10 @@ function registerGitIpc(): void {
     return gitPush(cwd.path)
   })
   ipcMain.handle('git:github', (_e, projectPath: string) => githubStatus(projectPath))
-  ipcMain.handle('git:createPr', async (_e, projectPath: string) => {
+  ipcMain.handle('git:createPr', async (_e, projectPath: string, base?: string, title?: string) => {
     const cwd = await openProjectCwd(projectPath)
     if ('error' in cwd) return { ok: false, message: cwd.error }
-    return createPullRequest(cwd.path)
+    return createPullRequest(cwd.path, base, title)
   })
   ipcMain.handle('git:bringConflicts', async (_e, projectPath: string) => {
     const cwd = await openProjectCwd(projectPath)

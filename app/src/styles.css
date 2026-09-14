@@ -124,6 +124,18 @@ button:disabled {
   will-change: width;
 }
 
+.bf-source-control-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(420px, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .bf-source-control-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 ::-webkit-scrollbar {
   width: 9px;
   height: 9px;
