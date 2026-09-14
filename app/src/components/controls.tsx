@@ -3,11 +3,10 @@ import type { AppSettings } from '@shared/types'
 import {
   AI_LABELS,
   aiSelectionLabel,
-  modelsFor,
   normalizeAi,
   normalizeModel,
-  openrouterModels,
   pickerProviders,
+  providerModels,
   type AiProvider
 } from '@shared/ai'
 import { C } from '../theme'
@@ -314,14 +313,6 @@ export function CliModelMenu({
   const current = normalizeAi(provider)
   const selectedModel = normalizeModel(model)
   const providers = pickerProviders(settings?.openrouter)
-  const orListed =
-    page === 'openrouter'
-      ? openrouterModels(
-          settings?.openrouter?.catalog ?? [],
-          settings?.openrouter?.pinned ?? [],
-          page === current ? selectedModel : undefined
-        )
-      : undefined
 
   const place: React.CSSProperties =
     'bottom' in pos ? { left: pos.left, bottom: pos.bottom } : { left: pos.left, top: pos.top }
@@ -415,7 +406,11 @@ export function CliModelMenu({
                 <span>Default</span>
                 {page === current && !selectedModel && <CheckIcon size={12} />}
               </button>,
-              ...modelsFor(page, page === current ? selectedModel : undefined, orListed).map((m) => (
+              ...providerModels(
+                page,
+                page === current ? selectedModel : undefined,
+                settings?.openrouter
+              ).map((m) => (
                 <button
                   key={m.id}
                   type="button"
@@ -505,13 +500,7 @@ export function CliModelDropdown({
             whiteSpace: 'nowrap'
           }}
         >
-          {aiSelectionLabel(
-            provider,
-            model,
-            provider === 'openrouter'
-              ? openrouterModels(settings?.openrouter?.catalog ?? [], settings?.openrouter?.pinned ?? [])
-              : undefined
-          )}
+          {aiSelectionLabel(provider, model, providerModels(provider, model, settings?.openrouter))}
         </span>
         <ChevronDown size={10} color={C.textMuted} />
       </button>

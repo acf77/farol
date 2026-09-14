@@ -119,12 +119,14 @@ that tab stops watching without cancelling the run.
   run's output so far as context. If that CLI isn't on PATH the step fails with
   a note saying so.
 
-OpenRouter is configured in **Settings** (toolbar gear, File menu, or ⌘,):
-paste an API key, which Farol encrypts locally. Settings fetches tool-capable
-models from OpenRouter’s catalog and pins a short recommended set for Chat and
-pipeline pickers. The key is injected as `OPENROUTER_API_KEY` only into
-Farol-spawned OpenCode processes — not into regular shell panes, and not into
-OpenCode’s own auth file.
+**Settings** (toolbar gear, File menu, or ⌘,) has two tabs. *General* picks the
+agent that new chats start with and that failed steps are handed to. *Models*
+sets each CLI's default `--model` — leave one on *Default* to let that CLI
+decide — and holds the OpenRouter config: paste an API key, which Farol
+encrypts locally, and Settings fetches tool-capable models from OpenRouter’s
+catalog and pins a short recommended set for Chat and pipeline pickers. The key
+is injected as `OPENROUTER_API_KEY` only into Farol-spawned OpenCode processes
+— not into regular shell panes, and not into OpenCode’s own auth file.
 
 The editor is a node canvas. Steps are nodes you drag into position; wires
 between them declare order, dragged from the port on one node's bottom edge to

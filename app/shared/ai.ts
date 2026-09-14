@@ -140,6 +140,17 @@ export function openrouterModels(
   )
 }
 
+/** Picker options for one provider — OpenRouter's come from the saved pins. */
+export function providerModels(
+  provider: AiProvider,
+  current?: string,
+  openrouter?: { catalog: readonly AiModel[]; pinned: readonly string[] }
+): readonly AiModel[] {
+  return provider === 'openrouter'
+    ? openrouterModels(openrouter?.catalog ?? [], openrouter?.pinned ?? [], current)
+    : modelsFor(provider, current)
+}
+
 /** Insert `--model <id>` before the trailing prompt. */
 export function withModel(args: string[], model?: string): string[] {
   const id = normalizeModel(model)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
-import { aiSelectionLabel } from '@shared/ai'
+import { aiSelectionLabel, normalizeModel } from '@shared/ai'
 import {
   commitBlockReason,
   conflictSignals,
@@ -8,10 +8,10 @@ import {
   pullRequestBlockReason,
   pushBlockReason
 } from '@shared/git-status'
-import type { AiProvider, GitCommit, GitFileKind, GitHubInfo, GitStatus } from '@shared/types'
+import type { AiProvider, AppSettings, GitCommit, GitFileKind, GitHubInfo, GitStatus } from '@shared/types'
 import { useGitPanel, type GitAction } from '../hooks/useGitPanel'
 import { C, MONO, UI } from '../theme'
-import { Button } from './controls'
+import { Button, CliModelDropdown } from './controls'
 import { CheckIcon, GitIcon, Spinner } from './icons'
 
 const POPOVER_WIDTH = 360
@@ -21,6 +21,7 @@ interface Props extends ReturnType<typeof useGitPanel> {
   branch: string
   provider: AiProvider
   model?: string
+  settings: AppSettings
   open: boolean
   onClose: () => void
   anchorRef: RefObject<HTMLElement | null>
@@ -457,6 +458,7 @@ function ConfirmButton({ label, confirmLabel, busyLabel, busy, disabled, title, 
 function GitActionButtons({
   provider,
   model,
+  settings,
   gitAction,
   draft,
   draftStale,
@@ -470,6 +472,7 @@ function GitActionButtons({
   pushReason,
   prReason,
   onPrepare,
+  onSelectionChange,
   onDraftMessage,
   onCancelDraft,
   onConfirm,
@@ -478,6 +481,7 @@ function GitActionButtons({
 }: {
   provider: AiProvider
   model?: string
+  settings: AppSettings
   gitAction: GitAction | null
   draft: ReturnType<typeof useGitPanel>['draft']
   draftStale: boolean
@@ -491,6 +495,7 @@ function GitActionButtons({
   pushReason: string | null
   prReason: string | null
   onPrepare: () => void
+  onSelectionChange: (provider: AiProvider, model: string | undefined) => void
   onDraftMessage: (message: string) => void
   onCancelDraft: () => void
   onConfirm: () => void
@@ -547,6 +552,18 @@ function GitActionButtons({
             }}
           />
         </>
+      )}
+      {!draft && (
+        <div style={{ display: 'grid', gridTemplateColumns: '78px minmax(0, 1fr)', alignItems: 'center', gap: 8 }}>
+          <div style={{ ...sectionLabel, margin: 0 }}>Commit model</div>
+          <CliModelDropdown
+            label="Commit message model"
+            provider={provider}
+            model={model}
+            settings={settings}
+            onChange={onSelectionChange}
+          />
+        </div>
       )}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {draft ? (
@@ -679,6 +696,7 @@ export default function GitPane({
   branch,
   provider,
   model,
+  settings,
   status,
   commits,
   github,
@@ -702,6 +720,13 @@ export default function GitPane({
 }: Props) {
   const pos = usePopoverPosition(anchorRef, open)
   useEscapeClose(open, onClose)
+  const [commitProvider, setCommitProvider] = useState(provider)
+  const [commitModel, setCommitModel] = useState<string | undefined>(normalizeModel(model))
+
+  useEffect(() => {
+    setCommitProvider(provider)
+    setCommitModel(normalizeModel(model))
+  }, [provider, model])
 
   useEffect(() => {
     if (!open) return
@@ -764,8 +789,9 @@ export default function GitPane({
         </div>
 
         <GitActionButtons
-          provider={provider}
-          model={model}
+          provider={commitProvider}
+          model={commitModel}
+          settings={settings}
           gitAction={gitAction}
           draft={draft}
           draftStale={draftStale}
@@ -778,7 +804,11 @@ export default function GitPane({
           commitReason={commitReason}
           pushReason={pushReason}
           prReason={prReason}
-          onPrepare={prepareCommit}
+          onPrepare={() => void prepareCommit(commitProvider, commitModel)}
+          onSelectionChange={(nextProvider, nextModel) => {
+            setCommitProvider(nextProvider)
+            setCommitModel(nextModel)
+          }}
           onDraftMessage={setDraftMessage}
           onCancelDraft={cancelDraft}
           onConfirm={confirmCommit}

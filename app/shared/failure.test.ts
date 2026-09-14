@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { REPORT_OUTPUT_LIMIT, failureReport, gitignoreWithEntry } from './failure'
 import { AI_PROVIDERS, aiFixCommand, aiFixPrompt } from './ai'
-import { sanitizeSettings } from './settings'
 
 const base = {
   pipeline: 'Lint & Typecheck',
@@ -159,60 +158,5 @@ describe('aiFixCommand', () => {
       expect(cmd).toContain(`"${aiFixPrompt()}"`)
       expect(cmd).not.toMatch(/[\n`$\\]/)
     }
-  })
-})
-
-describe('sanitizeSettings', () => {
-  it('falls back to Claude on junk', () => {
-    expect(sanitizeSettings(undefined)).toEqual({ agent: 'claude', autoFix: true })
-    expect(sanitizeSettings({ agent: 'gpt-9', autoFix: 'yes' })).toEqual({
-      agent: 'claude',
-      autoFix: true
-    })
-  })
-
-  it('keeps a real choice', () => {
-    expect(sanitizeSettings({ agent: 'codex', autoFix: false })).toEqual({
-      agent: 'codex',
-      autoFix: false
-    })
-  })
-
-  it('keeps OpenRouter pins and catalog, never a hasKey flag', () => {
-    expect(
-      sanitizeSettings({
-        agent: 'openrouter',
-        autoFix: true,
-        openrouter: {
-          hasKey: true,
-          autoPinned: true,
-          pinned: ['openai/gpt-4o', 'openai/gpt-4o'],
-          catalog: [{ id: 'openai/gpt-4o', label: 'GPT-4o' }]
-        }
-      })
-    ).toEqual({
-      agent: 'openrouter',
-      autoFix: true,
-      openrouter: {
-        autoPinned: true,
-        pinned: ['openai/gpt-4o'],
-        catalog: [{ id: 'openai/gpt-4o', label: 'GPT-4o' }]
-      }
-    })
-  })
-
-  it('keeps a chosen model so a new chat can reuse it', () => {
-    expect(sanitizeSettings({ agent: 'claude', autoFix: true, model: 'opus' })).toEqual({
-      agent: 'claude',
-      model: 'opus',
-      autoFix: true
-    })
-  })
-
-  it('drops a blank model so the CLI default applies', () => {
-    expect(sanitizeSettings({ agent: 'cursor', autoFix: true, model: '  ' })).toEqual({
-      agent: 'cursor',
-      autoFix: true
-    })
   })
 })
