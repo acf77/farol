@@ -4,6 +4,8 @@ A desktop app for running AI-assisted work in a local Git checkout, with Chat, p
 
 ## Language
 
+### Source Control page
+
 **Source Control page**:
 The full-page overlay that is the only Git UI. The project-rail Git button opens it, the same way Settings opens.
 _Avoid_: Git popover, second Git panel, Source Control route
@@ -56,7 +58,32 @@ _Avoid_: hiding merge status when the tree is clean, a second status source
 The activity transcript on the **Source Control page**. Each line is a timed outcome of commit, push, create pull request, **Check conflicts**, a **Generate with AI** failure, or a status refresh failure. It replaces the single success and error banners. A successful generate is not a line — the **Commit message** box is the success. Refresh failures use one line per streak: append when a refresh fails after a success or on the first fail; stay quiet while it keeps failing; do not log successful polls. It lives on the **Git panel** for the session: it survives closing the **Source Control page**, resets when the project switches, and is not saved to disk. It is not a fetch log and does not add a fetch action.
 _Avoid_: a single success/error banner as the only history, fetch lines, treating this as **Latest commits**, persisting the transcript to disk, keeping lastMessage/error as a second history, a line for every failed poll, logging successful refreshes, logging a successful generate, a silent generate failure
 
+### Plan mode
+
+**Plan mode**:
+A Chat mode in which the agent may inspect the project, ask clarifying questions, and propose a plan without changing project files or performing actions that modify the project or external systems.
+
+**Build mode**:
+A Chat mode in which the agent may change project files and perform actions that modify the project or external systems.
+_Avoid_: Agent (as a mode name), Implement
+
+**Execute plan**:
+An explicit developer action that switches the Chat from Plan mode to Build mode and asks the agent to implement the proposed plan.
+
+**Execute message**:
+A user Chat message with the fixed text “Execute the plan”, created by selecting **Execute plan**.
+_Avoid_: implementation prompt, run prompt
+
+**Finished plan**:
+A proposed implementation plan that the agent explicitly marks as complete and ready for the developer to execute.
+
+**Review gate**:
+The existing read-only enforcement a provider already uses for pipeline reviews. Prompt-only instructions are not a **Review gate**.
+_Avoid_: sandbox (as the product name for this rule), ask mode (except as Cursor’s review mechanism)
+
 ## Relationships
+
+### Source Control page
 
 - A project checkout has at most one **Source Control page** open
 - The **Source Control page** is driven by the same **Git panel** as the old **Git popover**
@@ -84,7 +111,39 @@ _Avoid_: a single success/error banner as the only history, fetch lines, treatin
 - A refresh-failure **Git log** line is one per streak: append on the first fail or after a success, stay quiet while failures continue, and do not log successful polls
 - **Git log** lives on the **Git panel** for the session: it survives close, resets on project switch, and is not saved to disk
 
+### Plan mode
+
+- The Chat input selects either **Plan mode** or **Build mode** with a **Plan | Build** switch inside the input, on the bottom left — two labeled sides, not a single toggle, menu, or icon-only control. That switch replaces the Clear chat control that previously occupied the same slot. After that replacement, Clear chat stays on existing surfaces only: the last assistant footer and the project rail. It is not added to the Chat header, the command palette, or another slot in the Chat input.
+- A new Chat starts in **Build mode**, including after the developer clears the conversation.
+- Selecting **Plan mode** permits reading and planning; it does not authorize implementation.
+- Selecting **Build mode** authorizes implementation.
+- **Plan mode** is available only for providers that have a **Review gate**. Today that is Codex, Cursor, and OMP. Claude, OpenCode, and OpenRouter have no **Review gate**, so **Plan mode** is disabled for them. Instructions to avoid changes alone are not a **Review gate**.
+- When the current provider has no **Review gate**, the **Plan | Build** switch stays visible with both labels. The Plan side is disabled and cannot be selected; the Build side stays selected. Farol does not hide the switch, remove the Plan label, or leave Plan clickable.
+- That unavailable Plan side carries a tooltip that names the current provider and uses the exact reason “Cannot enforce read-only”. Farol does not use a generic phrase that omits the provider, a mention of **Review gate**, or a longer explanation, and it does not add a banner, toast, status line, or other Chat copy for that explanation.
+- Farol Plan uses that same **Review gate**, not a provider-specific planning mode. Cursor reviews already use ask mode; Farol Plan uses that gate rather than Cursor’s native plan mode.
+- Selecting a provider that has no **Review gate** while **Plan mode** is selected switches the Chat to **Build mode**; **Plan mode** cannot remain selected for that provider. This does not consume **Execute plan**.
+- That forced switch still happens if the agent is working. Locking the mode selector stops the developer from picking a mode, not Farol from leaving **Plan mode** when the new provider has no **Review gate**.
+- After Farol switches the Chat to **Build mode** because the provider has no **Review gate**, later selecting a provider that has one leaves the Chat in **Build mode**; **Plan mode** is not restored automatically.
+- **Plan mode** stays selected for subsequent messages in the same Chat until the developer selects **Build mode** manually, Farol switches to **Build mode** because the provider cannot enforce read-only access, or the developer selects **Execute plan**.
+- The selected mode is remembered per Chat when reopening that Chat or restarting Farol.
+- The Chat mode selector is locked while the agent is working and becomes available again when the response finishes or is stopped.
+- Finishing a plan does not start implementation; an Execute button on that **Finished plan** message provides the **Execute plan** action. The button sits below the plan content on that message. It is not placed in the Chat input, the Chat header, a separate banner, or beside the plan.
+- A Plan-mode response is a **Finished plan** only when the agent emits the hidden control line `FAROL_PLAN: finished` as the last line of the reply. Farol does not infer a **Finished plan** from headings, wording, structure, an earlier line, or any other `FAROL_PLAN:` value. Questions, partial drafts, and ordinary replies omit that line and are not eligible for Execute. The line is stripped from the visible message, the same way other Chat control lines are.
+- In Plan mode, that last line replaces the usual Chat endings: a **Finished plan** ends with `FAROL_PLAN: finished` instead of `FAROL_QUESTIONS` or `FAROL_PIPELINES`. Those two endings are not also required on a Finished plan.
+- In Plan mode, a reply that needs a decision still ends with `FAROL_QUESTIONS`, the same way as in **Build mode**. Farol shows the questions and sends the answers back. That reply is not a **Finished plan**, so it has no Execute button.
+- In Plan mode, a reply that is neither a decision nor a **Finished plan** — for example it only reports what was found — ends with `FAROL_PIPELINES: []`. That empty list is the last line; it is not a **Finished plan** and does not start validation by itself.
+- In Plan mode, Farol never runs pipelines selected via `FAROL_PIPELINES`, even if the reply lists real pipeline IDs instead of `[]`. Those IDs do not start validation. Farol still accepts the reply as ordinary Chat text: it does not reject the turn, hide it, or ask the agent to retry.
+- **Execute plan** both switches the Chat to **Build mode** and starts implementation. Farol adds an **Execute message** — a user message whose text is always “Execute the plan” — rather than asking the developer to compose an implementation prompt.
+- Typing “Execute the plan” in the composer and sending it is not **Execute plan**. It is an ordinary follow-up: it does not start implementation, and it immediately removes the earlier plan’s Execute button. Only the Execute button is **Execute plan**.
+- Only the latest proposed plan in a Chat is eligible for **Execute plan**; earlier plans remain in the conversation without an active Execute button.
+- Sending any follow-up message immediately removes the earlier plan's Execute button, including clarification questions and revision requests, even if the follow-up later fails or is canceled; only a new **Finished plan** can become eligible for execution.
+- Reopening a Chat or restarting Farol restores the Execute button for its latest unexecuted **Finished plan**, provided no follow-up message has invalidated it.
+- Selecting **Execute plan** consumes that plan's Execute button permanently, even if implementation fails or is canceled; the Chat stays in **Build mode** until the developer selects **Plan mode** again.
+- Selecting **Build mode** manually does not consume the latest **Finished plan**'s Execute button; **Execute plan** remains available until a follow-up is sent or **Execute plan** is selected, and it starts implementation even if the Chat is already in **Build mode**.
+
 ## Example dialogue
+
+### Source Control page
 
 > **Dev:** "Should the rail Git button still open the 360px popover, with the screenshot as a separate page?"
 > **Domain expert:** "No. Replace the popover. One Git UI: a Settings-style full-page overlay, same hook and actions."
@@ -155,7 +214,98 @@ _Avoid_: a single success/error banner as the only history, fetch lines, treatin
 > **Dev:** "**Changes** has no conflict checkboxes. Where do working-tree and predicted conflict paths go?"
 > **Domain expert:** "Keep today's lists on the **Pull request** block. **Merge status** text stays. Do not hide the paths."
 
+### Plan mode
+
+> **Developer:** "Can the agent inspect the existing implementation in Plan mode?"
+> **Domain expert:** "Yes, and it can ask questions and propose changes, but it cannot apply those changes while Plan mode is selected."
+
+> **Developer:** "Can I select Plan mode with Claude?"
+> **Domain expert:** "No. Claude has no review gate, so Plan is disabled. Same for OpenCode and OpenRouter. Codex, Cursor, and OMP can use Plan."
+
+> **Developer:** "If I'm on Claude, does the Plan | Build switch disappear?"
+> **Domain expert:** "No. Both sides stay. Plan is disabled — you can see it, but you cannot select it."
+
+> **Developer:** "How do I find out why Plan is unavailable?"
+> **Domain expert:** "Hover or focus the Plan side. The tooltip there names the provider and says it cannot enforce read-only. Nothing else in Chat announces it."
+
+> **Developer:** "Cursor has its own plan mode. Does Farol use that?"
+> **Domain expert:** "No. Farol Plan uses the same read-only gate as Cursor reviews — ask mode — not Cursor’s native plan mode."
+
+> **Developer:** "If Plan is selected and I switch to a provider that cannot enforce read-only access, what happens?"
+> **Domain expert:** "Farol switches the Chat to Build. Plan cannot stay selected. If a finished plan still has Execute, it stays."
+
+> **Developer:** "Farol switched me to Build because that provider could not enforce read-only. If I pick a provider that can, does Plan come back?"
+> **Domain expert:** "No. You stay in Build until you select Plan yourself."
+
+> **Developer:** "Where do I choose Plan or Build?"
+> **Domain expert:** "A Plan | Build switch inside the Chat input, on the bottom left. It replaces Clear chat there. Clear chat stays on the last assistant footer and the project rail."
+
+> **Developer:** "What do I select when I want the agent to change files?"
+> **Domain expert:** "Build."
+
+> **Developer:** "If I clear this Chat, will it stay in Plan mode?"
+> **Domain expert:** "No. Clearing starts a new Chat, and a new Chat starts in Build."
+
+> **Developer:** "Does finishing a plan start implementation?"
+> **Domain expert:** "No. Plan mode stays on. I can click Execute to switch to Build and start implementation, or switch to Build myself."
+
+> **Developer:** "If I restart Farol and reopen this Chat, will Plan mode still be selected?"
+> **Domain expert:** "Yes. Each Chat remembers its selected mode."
+
+> **Developer:** "Can I change modes while the agent is responding?"
+> **Domain expert:** "No. Wait for the response to finish or stop it before changing modes."
+
+> **Developer:** "The agent is working in Plan on Codex. I switch to Claude because of a usage limit. Does Plan stay until the response finishes?"
+> **Domain expert:** "No. Farol switches you to Build immediately. The lock only stops you from picking a mode, not Farol from leaving Plan when the new provider has no review gate."
+
+> **Developer:** "If I restart Farol before executing a finished plan, can I still execute it when I reopen the Chat?"
+> **Domain expert:** "Yes. Its Execute button is restored as long as it is the latest unexecuted finished plan and I have not sent a follow-up."
+
+> **Developer:** "After the agent revises a plan, can I still execute the earlier version?"
+> **Domain expert:** "No. Only the latest plan has an active Execute button."
+
+> **Developer:** "If I request a revision and then cancel it, can I execute the earlier plan?"
+> **Domain expert:** "No. Requesting the revision immediately removes its Execute button, and cancellation or failure does not restore it."
+
+> **Developer:** "If I only ask why the agent chose an approach, can I still execute the earlier plan?"
+> **Domain expert:** "No. Every follow-up message immediately removes its Execute button; the agent must explicitly finish a new plan before Execute is available again."
+
+> **Developer:** "Does every reply in Plan mode get an Execute button?"
+> **Domain expert:** "No. The agent must emit FAROL_PLAN: finished as the last line of the reply. Without that exact last line, there is no Execute button."
+
+> **Developer:** "Does a finished plan still need to end with FAROL_PIPELINES or FAROL_QUESTIONS?"
+> **Domain expert:** "No. In Plan mode that last-line pair is replaced. A finished plan ends with FAROL_PLAN: finished only."
+
+> **Developer:** "If the agent needs a decision while planning, does it still ask with FAROL_QUESTIONS?"
+> **Domain expert:** "Yes. Questions stay. That reply is not a finished plan, so there is no Execute button."
+
+> **Developer:** "If the agent only reports what it found and is not finishing a plan, what is the last line?"
+> **Domain expert:** "FAROL_PIPELINES: [] — empty. That is not a finished plan."
+
+> **Developer:** "If a Plan-mode reply ends with FAROL_PIPELINES listing real pipeline IDs, does Farol run them?"
+> **Domain expert:** "No. Plan mode never runs pipelines. The reply still appears; those IDs are ignored."
+
+> **Developer:** "If implementation fails or I cancel it after clicking Execute, does that plan's Execute button return?"
+> **Domain expert:** "No. The button stays consumed; I can send a follow-up in Build to continue implementation or select Plan mode again to request a new plan."
+
+> **Developer:** "If I switch to Build myself without clicking Execute, can I still execute the finished plan?"
+> **Domain expert:** "Yes. The Execute button stays until I click it or send a follow-up."
+
+> **Developer:** "Where do I click Execute after a finished plan?"
+> **Domain expert:** "On the plan message itself — not in the composer, the header, or a banner."
+
+> **Developer:** "Where on that message is the button?"
+> **Domain expert:** "Below the plan."
+
+> **Developer:** "What will I see in the Chat when I click Execute?"
+> **Domain expert:** "A user message that says Execute the plan, then the agent starts implementing in Build."
+
+> **Developer:** "If I type Execute the plan in the composer myself, does that start implementation?"
+> **Domain expert:** "No. Only the Execute button does. Those words are an ordinary follow-up, so the earlier plan also loses its Execute button."
+
 ## Flagged ambiguities
+
+### Source Control page
 
 - "Source Control page" is the overlay chrome (full-page, Escape to close), not a new app route — resolved with the replace-popover decision.
 - The screenshot’s right-hand pipeline stepper is existing workspace chrome, not a **Source Control page** widget — resolved with Screenshot VC only.
@@ -181,3 +331,36 @@ _Avoid_: a single success/error banner as the only history, fetch lines, treatin
 - Restore could snapshot the index to keep partial hunks — resolved: whole-file `git add` of each restored path. This app already stages whole files and has no hunk UI.
 - Today’s pane splits Staged / Not staged / New / Conflicts, and commit skips secret-looking files — resolved: **Changes** lists **committable file** paths only. No conflict rows. Secrets stay out of **Commit selection** the same way they stay out of today’s commit.
 - Conflict paths would otherwise disappear once **Changes** is committable-only — resolved: keep today’s working-tree and predicted lists on the **Pull request** block. **Merge status** text stays. Do not hide the paths.
+
+### Plan mode
+
+- Resolved: **Plan mode** means read and plan, rather than permission to implement a plan.
+- Resolved: the earlier manual-switch-only decision is superseded by **Execute plan**, which combines switching to **Build mode** with requesting implementation; selecting **Build mode** manually remains available.
+- Resolved: the Chat input calls the writable mode **Build**, not Agent or Implement. "Build" also describes compile and pipeline work in this product; here **Build mode** is only the Chat permission to change the project.
+- Resolved: a new Chat starts in **Build mode**. Clearing a conversation is a new Chat, so it also starts in **Build mode**; Plan is opt-in.
+- Resolved: selecting **Build mode** manually does not consume **Execute plan**; only a follow-up message or selecting **Execute plan** does.
+- Resolved: switching to a provider that cannot enforce read-only access while **Plan mode** is selected switches the Chat to **Build mode**; it does not consume **Execute plan**.
+- Resolved: Farol does not restore **Plan mode** after that forced switch; selecting a capable provider later leaves the Chat in **Build mode** until the developer selects **Plan mode**.
+- Resolved: **Plan mode** and **Build mode** are chosen with a switch inside the Chat input, on the bottom left — not a toolbar control, settings default, or composer menu.
+- Resolved: that switch is a **Plan | Build** control with two labeled sides, not a single toggle, dropdown, or icon-only control.
+- Resolved: the **Plan | Build** switch replaces the Clear chat control on the bottom left of the Chat input, rather than sitting beside it or moving Clear chat elsewhere in the input.
+- Resolved: after that replacement, Clear chat remains on existing surfaces only — the last assistant footer and the project rail — and is not added to a new Chat surface.
+- Resolved: **Execute plan** is offered on the **Finished plan** message, not from the Chat input, the Chat header, or a banner.
+- Resolved: that button sits below the plan content, not beside it or in the assistant footer.
+- Resolved: selecting **Execute plan** creates an **Execute message** whose text is always “Execute the plan”; the developer does not write a separate implementation prompt.
+- Resolved: the composer cannot start implementation by sending that same text; only the Execute button is **Execute plan**. Typed “Execute the plan” is a follow-up, so it also removes the earlier plan’s Execute button.
+- Resolved: Farol tells a Plan-mode reply is a **Finished plan** from a hidden control line the agent emits, not from reading the plan as prose.
+- Resolved: that hidden control line is exactly `FAROL_PLAN: finished`. No other wording or `FAROL_PLAN:` value marks a **Finished plan**.
+- Resolved: `FAROL_PLAN: finished` marks a **Finished plan** only as the last line of the reply. The same line earlier in the message does not.
+- Resolved: In Plan mode, `FAROL_PLAN: finished` replaces the FAROL_QUESTIONS / FAROL_PIPELINES last-line contract for a Finished plan; it is not added alongside them.
+- Resolved: In Plan mode, decision turns still end with FAROL_QUESTIONS. Only a Finished plan uses `FAROL_PLAN: finished` as its last line.
+- Resolved: In Plan mode, a reply that is neither a question nor a **Finished plan** ends with `FAROL_PIPELINES: []`.
+- Resolved: A non-empty `FAROL_PIPELINES` list in Plan mode does not start validation; Plan mode never runs pipelines.
+- Resolved: That reply is accepted and shown; Farol ignores the listed IDs instead of rejecting the turn or asking the agent to retry.
+- Resolved: Enforcing read-only access for **Plan mode** means a **Review gate** — the same enforcement pipeline reviews already use — not a prompt. Providers without a **Review gate** cannot use **Plan mode**.
+- Resolved: Farol Plan reuses those review gates rather than a provider-native planning mode; for Cursor that is ask mode, not Cursor’s native plan mode.
+- Resolved: A forced switch to **Build mode** because the new provider has no **Review gate** still applies while the agent is working; the mode-selector lock does not defer it.
+- Resolved: When the current provider has no **Review gate**, Farol disables the Plan side of the **Plan | Build** switch. The switch stays visible with both labels; Plan is not hidden and is not left clickable.
+- Resolved: That explanation lives in a tooltip on the disabled Plan side, not in a banner, toast, status line, or other Chat surface.
+- Resolved: That tooltip names the current provider and the reason Plan is unavailable, rather than a generic unavailable message.
+- Resolved: That reason’s exact wording is “Cannot enforce read-only”, not a mention of **Review gate** or a longer explanation.
