@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { aiSelectionLabel } from '@shared/ai'
+import { aiSelectionLabel, normalizeModel } from '@shared/ai'
 import {
   committableChanges,
   commitBlockReason,
@@ -10,10 +10,10 @@ import {
   pullRequestBlockReason,
   pushBlockReason
 } from '@shared/git-status'
-import type { AiProvider, GitFileKind, GitHubInfo, GitStatus } from '@shared/types'
+import type { AiProvider, AppSettings, GitFileKind, GitHubInfo, GitStatus } from '@shared/types'
 import { useGitPanel, type GitAction, type GitLogEntry } from '../hooks/useGitPanel'
 import { C, MONO, UI } from '../theme'
-import { Button, Checkbox } from './controls'
+import { Button, Checkbox, CliModelDropdown } from './controls'
 import { CheckIcon, GitIcon, Spinner } from './icons'
 
 interface Props extends ReturnType<typeof useGitPanel> {
@@ -22,6 +22,7 @@ interface Props extends ReturnType<typeof useGitPanel> {
   remotes: string[]
   provider: AiProvider
   model?: string
+  settings: AppSettings
   open: boolean
   onClose: () => void
   anchorRef: RefObject<HTMLElement | null>
@@ -327,6 +328,7 @@ function ChangesCard({
 function CommitCard({
   provider,
   model,
+  settings,
   draft,
   selectedCount,
   gitAction,
@@ -335,11 +337,13 @@ function CommitCard({
   ahead,
   onDraftMessage,
   onPrepare,
+  onSelectionChange,
   onCommit,
   onPush
 }: {
   provider: AiProvider
   model?: string
+  settings: AppSettings
   draft: ReturnType<typeof useGitPanel>['draft']
   selectedCount: number
   gitAction: GitAction | null
@@ -348,6 +352,7 @@ function CommitCard({
   ahead: number
   onDraftMessage: (message: string) => void
   onPrepare: () => void
+  onSelectionChange: (provider: AiProvider, model: string | undefined) => void
   onCommit: () => void
   onPush: () => void
 }) {
@@ -361,15 +366,24 @@ function CommitCard({
     <section style={card}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <div style={sectionLabel}>Commit message</div>
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={!canGenerate}
-          title={blocked ?? `Generate with ${aiSelectionLabel(provider, model)}`}
-          onClick={onPrepare}
-        >
-          {gitAction === 'generate' ? <><Spinner /> Generating…</> : 'Generate with AI'}
-        </Button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <CliModelDropdown
+            label="Commit message model"
+            provider={provider}
+            model={model}
+            settings={settings}
+            onChange={onSelectionChange}
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!canGenerate}
+            title={blocked ?? `Generate with ${aiSelectionLabel(provider, model)}`}
+            onClick={onPrepare}
+          >
+            {gitAction === 'generate' ? <><Spinner /> Generating…</> : 'Generate with AI'}
+          </Button>
+        </div>
       </div>
       {draft.skipped.length > 0 && (
         <div style={{ marginBottom: 8, color: C.yellow, fontSize: 11, overflowWrap: 'anywhere' }}>
@@ -637,6 +651,7 @@ export default function GitPane({
   remotes,
   provider,
   model,
+  settings,
   status,
   commits,
   github,
@@ -664,6 +679,13 @@ export default function GitPane({
   const [prTitle, setPrTitle] = useState('')
   useEscapeClose(open, onClose)
   useFocusTrap(open, dialogRef)
+  const [commitProvider, setCommitProvider] = useState(provider)
+  const [commitModel, setCommitModel] = useState<string | undefined>(normalizeModel(model))
+
+  useEffect(() => {
+    setCommitProvider(provider)
+    setCommitModel(normalizeModel(model))
+  }, [provider, model])
 
   useEffect(() => {
     if (!open) return
@@ -711,8 +733,9 @@ export default function GitPane({
           <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
             <ChangesCard status={status} selectedFiles={selectedFiles} onSelected={setFileSelected} onSelectAll={selectAllFiles} />
             <CommitCard
-              provider={provider}
-              model={model}
+              provider={commitProvider}
+              model={commitModel}
+              settings={settings}
               draft={draft}
               selectedCount={selectedFiles.length}
               gitAction={gitAction}
@@ -720,7 +743,11 @@ export default function GitPane({
               pushReason={pushReason}
               ahead={status?.ahead ?? 0}
               onDraftMessage={setDraftMessage}
-              onPrepare={prepareCommit}
+              onPrepare={() => void prepareCommit(commitProvider, commitModel)}
+              onSelectionChange={(nextProvider, nextModel) => {
+                setCommitProvider(nextProvider)
+                setCommitModel(nextModel)
+              }}
               onCommit={confirmCommit}
               onPush={push}
             />

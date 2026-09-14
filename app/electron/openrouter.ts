@@ -26,14 +26,13 @@ async function writeOpenRouter(
   const prev = settings.openrouter ?? defaultOpenRouter()
   const next: AppSettings = {
     ...settings,
-    ...(agentReset ? { agent: 'claude' as const, model: undefined } : {}),
+    ...(agentReset ? { agent: 'claude' as const } : {}),
     openrouter: {
       pinned: patch.pinned ?? prev.pinned,
       catalog: patch.catalog ?? prev.catalog,
       autoPinned: patch.autoPinned ?? prev.autoPinned
     }
   }
-  if (agentReset) delete next.model
   await saveSettings(next)
   return withOpenRouterKeyFlag(next, hasOpenRouterKey())
 }

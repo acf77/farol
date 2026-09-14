@@ -23,7 +23,7 @@ import type {
   WorktreeRequest
 } from '@shared/types'
 import { AI_LABELS, aiFixPrompt } from '@shared/ai'
-import { defaultSettings } from '@shared/settings'
+import { defaultSettings, withAgentModel } from '@shared/settings'
 import { sessionSeq } from '@shared/session'
 import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
 import { topoSort } from '@shared/graph'
@@ -369,6 +369,7 @@ function branchForTab(tab: Tab | undefined, projectPath: string, git: GitInfo): 
 
 function agentChatTab(owner: Tab, project: Project, branch: string, settings: AppSettings): Tab {
   const cwd = owner.panes[owner.focus]?.cwd || project.path
+  const model = settings.models[settings.agent]
   const taskId = scopedRuntimeId(project.path, `agent:${owner.id}:${Date.now()}`)
   const paneId = `ap:${taskId}`
   return {
@@ -390,7 +391,7 @@ function agentChatTab(owner: Tab, project: Project, branch: string, settings: Ap
         status: 'idle',
         attempt: 0,
         provider: settings.agent,
-        ...(settings.model ? { model: settings.model } : {}),
+        ...(model ? { model } : {}),
         messages: []
       }
     }
@@ -1103,7 +1104,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                 view={view}
                 projectPath={project.path}
                 defaultProvider={settings.agent}
-                defaultModel={settings.model}
+                defaultModel={settings.models[settings.agent]}
                 settings={settings}
                 onMessage={(text, provider, model) =>
                   sendAgentMessage(text, provider, undefined, undefined, model ?? null)
@@ -1194,7 +1195,11 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       {settingsOpen && (
         <SettingsPage
           settings={settings}
-          onSettings={setSettings}
+          onSettings={(next) => {
+            setSettings(next)
+            void api.settings.save(next)
+          }}
+          onOpenRouterSettings={setSettings}
           onClose={() => setSettingsOpen(false)}
         />
       )}
@@ -1241,7 +1246,8 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           branches={git.branches}
           remotes={git.remotes ?? []}
           provider={settings.agent}
-          model={settings.model}
+          model={settings.models[settings.agent]}
+          settings={settings}
           {...gitPanel}
           open={gitOpen && visible}
           onClose={() => onGitOpenChange(false)}
@@ -1319,7 +1325,10 @@ function ProjectWorkspace({
   const pipelinesRef = useRef<Pipeline[]>([])
   const settingsRef = useRef<AppSettings>(settings)
   const askAiRef = useRef<((prompt: string) => void) | undefined>(undefined)
-  const gitPanel = useGitPanel(project.path, () => settingsRef.current, {
+  const gitPanel = useGitPanel(project.path, () => {
+    const { agent, models } = settingsRef.current
+    return { agent, model: models[agent] }
+  }, {
     enabled: visible && git.isRepo,
     open: gitOpen,
     onHeadChange: setGit,
@@ -2100,9 +2109,7 @@ function ProjectWorkspace({
   const setAgentProvider = useCallback(
     (provider: AppSettings['agent'], model?: string) => {
       setSettings((prev) => {
-        const next = model
-          ? { ...prev, agent: provider, model }
-          : { ...prev, agent: provider, model: undefined }
+        const next = { ...withAgentModel(prev, provider, model), agent: provider }
         void api.settings.save(next)
         return next
       })

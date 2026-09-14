@@ -170,13 +170,13 @@ export function useGitPanel(
     })
   }, [opts?.onHeadChange, projectPath, refresh])
 
-  const prepareCommit = useCallback(async () => {
+  const prepareCommit = useCallback(async (provider?: AiProvider, model?: string) => {
     if (gitAction || !selectedFiles.length) return
     const files = selectedFiles
     setGitAction('generate')
     try {
-      const { agent, model } = ai()
-      const res = await api.git.draftCommit(projectPath, agent, model, files)
+      const selection = provider ? { agent: provider, model } : ai()
+      const res = await api.git.draftCommit(projectPath, selection.agent, selection.model, files)
       if (res.ok && res.message) {
         setDraft({ message: res.message, skipped: res.skipped ?? [] })
       } else {

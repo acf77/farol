@@ -15,15 +15,28 @@ export interface OpenRouterSettings {
 export interface AppSettings {
   /** The CLI that failed pipeline steps get handed to. */
   agent: AiProvider
-  /** Last `--model` id for `agent`. Omitted means the CLI's own default. */
-  model?: string
+  /** Default `--model` id per CLI. A missing entry means the CLI's own default. */
+  models: Partial<Record<AiProvider, string>>
   /** Hand a failure straight to the agent instead of waiting to be asked. */
   autoFix: boolean
   openrouter?: OpenRouterSettings
 }
 
 export function defaultSettings(): AppSettings {
-  return { agent: 'claude', autoFix: true }
+  return { agent: 'claude', models: {}, autoFix: true }
+}
+
+/** Set or clear one CLI's default model; an empty id falls back to the CLI's own. */
+export function withAgentModel(
+  settings: AppSettings,
+  provider: AiProvider,
+  model?: string
+): AppSettings {
+  const models = { ...settings.models }
+  const id = normalizeModel(model)
+  if (id) models[provider] = id
+  else delete models[provider]
+  return { ...settings, models }
 }
 
 export function defaultOpenRouter(): OpenRouterSettings {
@@ -65,15 +78,29 @@ export function withOpenRouterKeyFlag(settings: AppSettings, hasKey: boolean): A
   }
 }
 
+function sanitizeModels(raw: unknown): Partial<Record<AiProvider, string>> {
+  const out: Partial<Record<AiProvider, string>> = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const [provider, value] of Object.entries(raw)) {
+    const id = normalizeModel(value)
+    if (id && isAiProvider(provider)) out[provider] = id
+  }
+  return out
+}
+
 export function sanitizeSettings(raw: unknown): AppSettings {
   const d = defaultSettings()
   if (!raw || typeof raw !== 'object') return d
   const s = raw as Record<string, unknown>
-  const model = normalizeModel(s.model)
+  const agent = isAiProvider(s.agent) ? s.agent : d.agent
+  const models = sanitizeModels(s.models)
+  // Settings written before per-agent models held one `model`, for `agent`.
+  const legacy = normalizeModel(s.model)
+  if (legacy && !models[agent]) models[agent] = legacy
   const openrouter = sanitizeOpenRouter(s.openrouter)
   return {
-    agent: isAiProvider(s.agent) ? s.agent : d.agent,
-    ...(model ? { model } : {}),
+    agent,
+    models,
     autoFix: typeof s.autoFix === 'boolean' ? s.autoFix : d.autoFix,
     ...(openrouter ? { openrouter } : {})
   }
