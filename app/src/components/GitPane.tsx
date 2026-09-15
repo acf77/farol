@@ -23,6 +23,7 @@ interface Props extends ReturnType<typeof useGitPanel> {
   provider: AiProvider
   model?: string
   settings: AppSettings
+  onCommitMessageModelChange: (provider: AiProvider, model: string | undefined) => void
   open: boolean
   onClose: () => void
   anchorRef: RefObject<HTMLElement | null>
@@ -652,6 +653,7 @@ export default function GitPane({
   provider,
   model,
   settings,
+  onCommitMessageModelChange,
   status,
   commits,
   github,
@@ -747,6 +749,7 @@ export default function GitPane({
               onSelectionChange={(nextProvider, nextModel) => {
                 setCommitProvider(nextProvider)
                 setCommitModel(nextModel)
+                onCommitMessageModelChange(nextProvider, nextModel)
               }}
               onCommit={confirmCommit}
               onPush={push}

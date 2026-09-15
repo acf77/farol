@@ -1,4 +1,4 @@
-import type { AgentQuestion, AgentTaskStatus, AiProvider, PipelineNode, StepState } from '@shared/types'
+import type { AgentMode, AgentQuestion, AgentTaskStatus, AiProvider, PipelineNode, StepState } from '@shared/types'
 import type { TermState } from './ansi'
 import type { PaneNode } from './layout'
 
@@ -63,6 +63,8 @@ export interface AgentMessage {
    * rebuilds messages as `{role, text}`, so this does not survive a restart.
    */
   at?: number
+  /** A completed Plan response, optionally invalidated or executed. */
+  plan?: { finished: true; consumed?: true }
 }
 
 export interface AgentPane extends BasePane {
@@ -71,6 +73,7 @@ export interface AgentPane extends BasePane {
   status: AgentTaskStatus | 'idle'
   attempt: number
   provider: AiProvider
+  mode: AgentMode
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
   messages: AgentMessage[]

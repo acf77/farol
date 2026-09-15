@@ -44,6 +44,20 @@ export function newNodePos(nodes: PipelineNode[]): { x: number; y: number } {
   return { x: 72, y: maxY + 112 }
 }
 
+/** One blank editable node, placed after the existing graph. */
+export function newPipelineNode(nodes: PipelineNode[], type: StepType): PipelineNode {
+  return {
+    id: nextNodeId(nodes),
+    name: type === 'ai' ? 'AI step' : 'Shell step',
+    type,
+    cmd: '',
+    ...(type === 'ai' ? { ai: 'claude' as const } : {}),
+    after: [],
+    gate: defaultGate(type),
+    ...newNodePos(nodes)
+  }
+}
+
 function incomingCount(nodes: PipelineNode[], byId: Map<string, PipelineNode>): Map<string, number> {
   const indeg = new Map<string, number>()
   for (const n of nodes) indeg.set(n.id, 0)

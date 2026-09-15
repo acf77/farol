@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type { AppSettings, PipelineNode, StepType } from '@shared/types'
 import { aiSelectionLabel, normalizeAi } from '@shared/types'
-import { defaultGate, nextNodeId, newNodePos, nodeGate, topoSort } from '@shared/graph'
+import { defaultGate, newPipelineNode, nodeGate, topoSort } from '@shared/graph'
 import { C, MONO, UI } from '../theme'
 import { Checkbox, CliModelDropdown, ConfirmButton, SegmentedControl } from './controls'
 import type { EditorState } from '../types'
@@ -9,7 +9,7 @@ import type { EditorState } from '../types'
 interface Props {
   editor: EditorState
   settings?: AppSettings
-  onChange: (e: EditorState) => void
+  onChange: Dispatch<SetStateAction<EditorState | null>>
   onCancel: () => void
   onSave: () => void
 }
@@ -53,11 +53,18 @@ export default function PipelineCanvas({ editor, settings, onChange, onCancel, o
   const pan = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null)
   const drag = useRef<{ id: string; dx: number; dy: number } | null>(null)
   const skipClick = useRef(false)
+  const pendingInsert = useRef<string | null>(null)
+
+  const updateEditor = useCallback(
+    (update: (current: EditorState) => EditorState) =>
+      onChange((current) => (current ? update(current) : current)),
+    [onChange]
+  )
 
   const patch = (id: string, next: Partial<PipelineNode>): void =>
-    onChange({
-      ...editor,
-      nodes: editor.nodes.map((n) => {
+    updateEditor((current) => ({
+      ...current,
+      nodes: current.nodes.map((n) => {
         if (n.id !== id) return n
         const merged = { ...n, ...next }
         if (merged.type !== 'shell') return merged
@@ -72,36 +79,29 @@ export default function PipelineCanvas({ editor, settings, onChange, onCancel, o
           y: merged.y
         }
       })
-    })
+    }))
 
   const addNode = (type: StepType): void => {
-    const id = nextNodeId(editor.nodes)
-    const pos = newNodePos(editor.nodes)
-    const node: PipelineNode = {
-      id,
-      name: type === 'ai' ? 'AI step' : 'Shell step',
-      type,
-      cmd: '',
-      ...(type === 'ai' ? { ai: 'claude' as const } : {}),
-      after: [],
-      gate: defaultGate(type),
-      ...pos
-    }
-    onChange({ ...editor, nodes: [...editor.nodes, node] })
-    setSel(id)
+    updateEditor((current) => {
+      const node = newPipelineNode(current.nodes, type)
+      pendingInsert.current = node.id
+      return { ...current, nodes: [...current.nodes, node] }
+    })
     setSelEdge(null)
   }
 
   const removeNode = useCallback(
     (id: string): void => {
-      const nodes = editor.nodes
-        .filter((n) => n.id !== id)
-        .map((n) => ({ ...n, after: n.after.filter((a) => a !== id) }))
-      onChange({ ...editor, nodes })
-      setSel(nodes[0]?.id ?? null)
+      updateEditor((current) => {
+        const nodes = current.nodes
+          .filter((n) => n.id !== id)
+          .map((n) => ({ ...n, after: n.after.filter((a) => a !== id) }))
+        setSel(nodes[0]?.id ?? null)
+        return { ...current, nodes }
+      })
       setSelEdge(null)
     },
-    [editor, onChange]
+    [updateEditor]
   )
 
   const connect = (from: string, to: string): void => {
@@ -113,16 +113,29 @@ export default function PipelineCanvas({ editor, settings, onChange, onCancel, o
 
   const disconnect = useCallback(
     (from: string, to: string): void => {
-      onChange({
-        ...editor,
-        nodes: editor.nodes.map((n) =>
+      updateEditor((current) => ({
+        ...current,
+        nodes: current.nodes.map((n) =>
           n.id === to ? { ...n, after: n.after.filter((a) => a !== from) } : n
         )
-      })
+      }))
       setSelEdge(null)
     },
-    [editor, onChange]
+    [updateEditor]
   )
+
+  useEffect(() => {
+    const id = pendingInsert.current
+    const node = id ? editor.nodes.find((current) => current.id === id) : undefined
+    if (!node || !wrapRef.current) return
+    pendingInsert.current = null
+    setSel(id)
+    setCam((current) => ({
+      ...current,
+      x: (wrapRef.current!.clientWidth - NODE_W * current.z) / 2 - node.x * current.z,
+      y: (wrapRef.current!.clientHeight - NODE_H * current.z) / 2 - node.y * current.z
+    }))
+  }, [editor.nodes])
 
   const toWorld = useCallback(
     (clientX: number, clientY: number): { x: number; y: number } => {
@@ -224,14 +237,14 @@ export default function PipelineCanvas({ editor, settings, onChange, onCancel, o
         <input
           className="bf-input"
           value={editor.name}
-          onChange={(e) => onChange({ ...editor, name: e.target.value })}
+          onChange={(e) => updateEditor((current) => ({ ...current, name: e.target.value }))}
           placeholder="My Pipeline"
           spellCheck={false}
           style={{ ...inputStyle, width: 220, height: 26 }}
         />
         <Checkbox
           checked={editor.mandatory === true}
-          onChange={(v) => onChange({ ...editor, mandatory: v })}
+          onChange={(v) => updateEditor((current) => ({ ...current, mandatory: v }))}
         >
           Mandatory in Chat
         </Checkbox>

@@ -16,6 +16,13 @@ import { defaultShell, shellEnv } from './session'
 /** OSC 7 — how a shell announces its working directory to its terminal. */
 const OSC7 = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*)(?:\x07|\x1b\\)/g
 
+function terminalSize(cols: number, rows: number): { cols: number; rows: number } {
+  return {
+    cols: Math.max(20, Math.min(500, Math.floor(cols))),
+    rows: Math.max(5, Math.min(200, Math.floor(rows)))
+  }
+}
+
 interface Session {
   proc: pty.IPty
   cwd: string
@@ -43,8 +50,7 @@ export class ShellManager {
     try {
       proc = pty.spawn(agent ? (resolveBin(command) ?? command) : command, args, {
         name: 'xterm-256color',
-        cols: Math.max(20, Math.min(500, Math.floor(cols))),
-        rows: Math.max(5, Math.min(200, Math.floor(rows))),
+        ...terminalSize(cols, rows),
         cwd,
         env: agent ? aiEnv(agent) : shellEnv()
       })
@@ -121,10 +127,8 @@ export class ShellManager {
     const session = this.sessions.get(paneId)
     if (!session) return
     try {
-      session.proc.resize(
-        Math.max(20, Math.min(500, Math.floor(cols))),
-        Math.max(5, Math.min(200, Math.floor(rows)))
-      )
+      const size = terminalSize(cols, rows)
+      session.proc.resize(size.cols, size.rows)
     } catch {
       /* the process may have just exited */
     }

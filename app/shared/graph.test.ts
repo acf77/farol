@@ -5,6 +5,7 @@ import {
   chainToNodes,
   connectorKind,
   descendants,
+  newPipelineNode,
   readyIds,
   sanitizePipeline,
   topoSort,
@@ -47,6 +48,15 @@ describe('chainToNodes', () => {
     const nodes = chainToNodes([{ name: 'B', type: 'ai', ai: 'cursor', model: 'composer-2.5', cmd: 'review' }])
     expect(nodes[0].ai).toBe('cursor')
     expect(nodes[0].model).toBe('composer-2.5')
+  })
+})
+
+describe('newPipelineNode', () => {
+  it('adds unique shell and AI cards after the current graph', () => {
+    const first = newPipelineNode([], 'shell')
+    const second = newPipelineNode([first], 'ai')
+    expect(first).toMatchObject({ id: 'n1', type: 'shell', gate: true, x: 72, y: 48 })
+    expect(second).toMatchObject({ id: 'n2', type: 'ai', ai: 'claude', gate: false, x: 72, y: 160 })
   })
 })
 

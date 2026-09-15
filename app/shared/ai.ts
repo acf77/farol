@@ -5,6 +5,7 @@ import { openCodeModel } from './openrouter'
 
 export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'omp', 'openrouter'] as const
 export type AiProvider = (typeof AI_PROVIDERS)[number]
+export type AgentMode = 'plan' | 'build'
 /** The binary Farol actually spawns — OpenRouter rides OpenCode. */
 export type AiCli = Exclude<AiProvider, 'openrouter'>
 
@@ -28,12 +29,14 @@ export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
     { id: 'sonnet', label: 'Sonnet 5' },
     { id: 'opus', label: 'Opus 5' },
     { id: 'fable', label: 'Fable 5.1' },
-    { id: 'haiku', label: 'Haiku' }
+    { id: 'haiku', label: 'Haiku 5' }
   ],
   codex: [
     { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
     { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
-    { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' }
+    { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+    { id: 'gpt-5.6', label: 'GPT-5.6' },
+    { id: 'gpt-5.5', label: 'GPT-5.5' }
   ],
   cursor: [
     { id: 'composer-2.5', label: 'Composer 2.5' },
@@ -41,23 +44,32 @@ export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
     { id: 'claude-sonnet-5', label: 'Sonnet 5' },
     { id: 'claude-opus-5', label: 'Opus 5' },
     { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
-    { id: 'grok-4.6', label: 'Grok 4.6' }
+    { id: 'gemini-3-pro', label: 'Gemini 3 Pro' },
+    { id: 'grok-4.6', label: 'Grok 4.6' },
+    { id: 'gpt-5.5', label: 'GPT-5.5' }
   ],
   opencode: [
     { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5' },
     { id: 'anthropic/claude-opus-5', label: 'Claude Opus 5' },
     { id: 'openai/gpt-5.6', label: 'GPT-5.6' },
-    { id: 'google/gemini-3-flash', label: 'Gemini 3 Flash' }
+    { id: 'openai/gpt-5.5', label: 'GPT-5.5' },
+    { id: 'google/gemini-3-pro', label: 'Gemini 3 Pro' },
+    { id: 'google/gemini-3-flash', label: 'Gemini 3 Flash' },
+    { id: 'x-ai/grok-4.6', label: 'Grok 4.6' }
   ],
   /** `--model` fuzzy-matches, but exact catalog ids avoid an ambiguous pick. */
   omp: [
     { id: 'claude-opus-5-medium', label: 'Claude Opus 5' },
     { id: 'claude-sonnet-5-medium', label: 'Claude Sonnet 5' },
     { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+    { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+    { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
     { id: 'gemini-3-pro', label: 'Gemini 3 Pro' },
-    { id: 'composer-2.5', label: 'Composer 2.5' }
+    { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
+    { id: 'composer-2.5', label: 'Composer 2.5' },
+    { id: 'grok-4.6', label: 'Grok 4.6' }
   ],
-  /** Filled from Settings pins — see `modelsFor(..., listed)`. */
+  /** Filled from the saved OpenRouter catalog — pins are listed first. */
   openrouter: []
 }
 
@@ -71,6 +83,16 @@ export function cliFor(provider: AiProvider): AiCli {
 
 export function usesOpenRouterEnv(provider: AiProvider): boolean {
   return provider === 'openrouter' || provider === 'opencode'
+}
+
+/** Providers whose managed CLI can enforce Farol's read-only Plan mode. */
+export function hasReviewGate(provider: AiProvider): boolean {
+  return provider === 'codex' || provider === 'cursor' || provider === 'omp'
+}
+
+/** Plan survives only on a provider that can enforce it; everything else is Build. */
+export function normalizeMode(mode: AgentMode | undefined, provider: AiProvider): AgentMode {
+  return mode === 'plan' && hasReviewGate(provider) ? 'plan' : 'build'
 }
 
 /** Older pipelines omit `ai`; they keep running Claude. */
@@ -118,12 +140,13 @@ export function modelsFor(
   return base
 }
 
-/** OpenRouter appears only after a key is saved and at least one model is pinned. */
+/** OpenRouter appears after a key is saved and it has at least one known model. */
 export function pickerProviders(openrouter?: {
   hasKey?: boolean
   pinned: string[]
+  catalog?: readonly AiModel[]
 }): readonly AiProvider[] {
-  if (openrouter?.hasKey && openrouter.pinned.length) return AI_PROVIDERS
+  if (openrouter?.hasKey && (openrouter.pinned.length || openrouter.catalog?.length)) return AI_PROVIDERS
   return AI_PROVIDERS.filter((p) => p !== 'openrouter')
 }
 
@@ -133,14 +156,16 @@ export function openrouterModels(
   current?: string
 ): readonly AiModel[] {
   const byId = new Map(catalog.map((m) => [m.id, m]))
+  const pinnedModels = pinned.map((id) => byId.get(id) ?? { id, label: id })
+  const remaining = catalog.filter((model) => !pinned.includes(model.id))
   return modelsFor(
     'openrouter',
     current,
-    pinned.map((id) => byId.get(id) ?? { id, label: id })
+    [...pinnedModels, ...remaining]
   )
 }
 
-/** Picker options for one provider — OpenRouter's come from the saved pins. */
+/** Picker options for one provider — OpenRouter pins lead its saved catalog. */
 export function providerModels(
   provider: AiProvider,
   current?: string,
@@ -248,11 +273,12 @@ export function managedAiCommand(
   provider: AiProvider,
   prompt: string,
   model?: string,
-  opts?: { jsonFormat?: boolean }
+  opts?: { jsonFormat?: boolean; mode?: AgentMode }
 ): AiCommand {
   const cli = cliFor(provider)
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
   const jsonFormat = opts?.jsonFormat !== false
+  const plan = opts?.mode === 'plan' && hasReviewGate(provider)
   switch (cli) {
     case 'codex':
       return {
@@ -270,7 +296,7 @@ export function managedAiCommand(
             '-c',
             'approval_policy=never',
             '--sandbox',
-            'workspace-write',
+            plan ? 'read-only' : 'workspace-write',
             prompt
           ],
           passed
@@ -283,7 +309,10 @@ export function managedAiCommand(
         bins: ['agent', 'cursor-agent'],
         // Agent mode is the CLI default. Current Cursor releases only accept
         // explicit `plan` and `ask` values for --mode.
-        args: withModel(['-p', '--force', '--output-format', 'stream-json', prompt], passed),
+        args: withModel(
+          ['-p', '--force', ...(plan ? ['--mode=ask'] : []), '--output-format', 'stream-json', prompt],
+          passed
+        ),
         hint: 'Install the Cursor CLI (https://cursor.com/docs/cli) to use managed Chat.',
         stream: 'ndjson'
       }
@@ -304,7 +333,12 @@ export function managedAiCommand(
         bins: ['omp'],
         // `--mode json` is already non-interactive, so `-p` is redundant; it also
         // routes omp's own banners to stderr, leaving stdout pure NDJSON.
-        args: withModel(['--mode', 'json', '--auto-approve', prompt], passed),
+        args: withModel(
+          plan
+            ? ['--mode', 'json', '--auto-approve', '--tools', 'read,glob,grep,lsp', prompt]
+            : ['--mode', 'json', '--auto-approve', prompt],
+          passed
+        ),
         hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to use managed Chat.',
         stream: 'ndjson'
       }

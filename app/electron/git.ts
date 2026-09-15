@@ -498,6 +498,16 @@ export async function push(cwd: string): Promise<{ ok: boolean; message: string 
   return { ok: res.code === 0, message: line || (res.code === 0 ? 'Pushed' : 'Push failed') }
 }
 
+/** Bring a clean tracking branch forward without creating a merge commit. */
+export async function pull(cwd: string): Promise<{ ok: boolean; message: string }> {
+  const st = await status(cwd)
+  if (!st.upstream) return { ok: false, message: 'Set an upstream branch before pulling.' }
+  if (!st.clean) return { ok: false, message: 'Commit or stash local changes before pulling.' }
+  const res = await git(cwd, ['pull', '--ff-only'], 120_000)
+  const line = cliFirstLine(res)
+  return { ok: res.code === 0, message: line || (res.code === 0 ? 'Already up to date' : 'Pull failed') }
+}
+
 async function commit(cwd: string, message: string): Promise<{ ok: boolean; message: string }> {
   const trimmed = message.trim()
   if (!trimmed) return { ok: false, message: 'Commit message is empty' }

@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   QUESTIONS_MARKER,
   formatAnswers,
+  isFinishedPlan,
   isQuestionToolName,
   normalizeQuestions,
   parseQuestionsMarker,
   questionsFromToolInput,
+  stripFinishedPlan,
   validateAnswers
 } from './questions'
 
@@ -75,6 +77,26 @@ describe('questionsFromToolInput', () => {
   it('reads AskUserQuestion / question tool input', () => {
     expect(questionsFromToolInput({ questions: [db] })).toEqual([db])
     expect(questionsFromToolInput({ command: 'ls' })).toBeUndefined()
+  })
+})
+
+describe('isFinishedPlan', () => {
+  it('accepts only the exact final Plan marker', () => {
+    expect(isFinishedPlan('Ready.\nFAROL_PLAN: finished\n')).toBe(true)
+    expect(isFinishedPlan('FAROL_PLAN: finished\nOne more thing')).toBe(false)
+    expect(isFinishedPlan('FAROL_PLAN: draft')).toBe(false)
+  })
+})
+
+describe('stripFinishedPlan', () => {
+  it('drops the trailing marker line so the plan body can be replayed', () => {
+    expect(stripFinishedPlan('Step 1: do X\nStep 2: do Y\nFAROL_PLAN: finished')).toBe(
+      'Step 1: do X\nStep 2: do Y'
+    )
+  })
+
+  it('leaves text unchanged when there is no marker to strip', () => {
+    expect(stripFinishedPlan('Just some text')).toBe('Just some text')
   })
 })
 

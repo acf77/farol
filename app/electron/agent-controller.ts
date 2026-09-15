@@ -14,14 +14,17 @@ import {
   isUnknownJsonFormatError,
   managedAiCommand,
   normalizeAi,
+  normalizeMode,
   normalizeModel
 } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
 import {
   BLOCK_MARKER,
+  FINISHED_PLAN,
   PIPELINES_MARKER,
   QUESTIONS_MARKER,
   formatAnswers,
+  isFinishedPlan,
   parseQuestionsMarker,
   validateAnswers,
   type AgentQuestion
@@ -306,6 +309,7 @@ export class AgentController {
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
     const clean = request.prompt.trim()
+    const mode = normalizeMode(request.mode, request.provider)
     if (!clean) return { ok: false, message: 'Enter a task for the agent.' }
     const existing = this.tasks.get(request.id)
     if (existing) {
@@ -314,19 +318,21 @@ export class AgentController {
         ...existing.request,
         ...request,
         prompt: existing.request.prompt,
+        mode,
         pipelines: request.pipelines.filter((pipeline) => pipeline.nodes.length)
       }
       this.emit({ kind: 'user', taskId: request.id, text: clean })
       this.followUp(existing, clean)
       return { ok: true }
     }
-    if (!request.pipelines.some((pipeline) => pipeline.nodes.length)) {
+    if (mode !== 'plan' && !request.pipelines.some((pipeline) => pipeline.nodes.length)) {
       return { ok: false, message: 'Create a non-empty validation pipeline first.' }
     }
     const task: Task = {
       request: {
         ...request,
         prompt: request.prompt.trim(),
+        mode,
         pipelines: request.pipelines.filter((pipeline) => pipeline.nodes.length)
       },
       process: null,
@@ -351,35 +357,17 @@ export class AgentController {
     text: string,
     provider?: AiProvider,
     pipelines?: Pipeline[],
-    model?: string
+    model?: string,
+    mode?: AgentTaskRequest['mode']
   ): { ok: boolean; message?: string } {
     const task = this.tasks.get(taskId)
     const clean = text.trim()
     if (!task) return { ok: false, message: 'This agent task is no longer available.' }
     if (!clean) return { ok: false, message: 'Enter a message.' }
-    // A provider switch mid-chat (e.g. after a usage limit) must stick before
-    // the next cycle, including when the follow-up is only queued.
-    if (isAiProvider(provider)) {
-      task.request.provider = provider
-      task.request.model = normalizeModel(model)
-    }
-    // Pipeline edits (e.g. AI step provider) are snapshotted at start; refresh
-    // on every follow-up so validation uses what the user configured now.
-    if (pipelines) {
-      const next = pipelines.filter((pipeline) => pipeline.nodes.length)
-      if (next.length) task.request.pipelines = next
-    }
+    this.applyMessageOverrides(task, provider, model, mode, pipelines)
     this.emit({ kind: 'user', taskId, text: clean })
     if (task.pendingQuestions) {
-      this.emit({
-        kind: 'question',
-        taskId,
-        requestId: task.pendingQuestions.requestId,
-        questions: task.pendingQuestions.questions,
-        dismissed: true
-      })
-      task.pendingQuestions = undefined
-      if (task.process?.pid) killPidTree(task.process.pid)
+      this.dismissPendingQuestions(task)
       this.followUp(task, clean)
       return { ok: true }
     }
@@ -393,13 +381,57 @@ export class AgentController {
     return { ok: true }
   }
 
+  /**
+   * A provider switch mid-chat (e.g. after a usage limit) must stick before
+   * the next cycle, including when the follow-up is only queued. Pipeline
+   * edits (e.g. AI step provider) are snapshotted at start; refresh on every
+   * follow-up so validation uses what the user configured now.
+   */
+  private applyMessageOverrides(
+    task: Task,
+    provider: AiProvider | undefined,
+    model: string | undefined,
+    mode: AgentTaskRequest['mode'] | undefined,
+    pipelines: Pipeline[] | undefined
+  ): void {
+    if (isAiProvider(provider)) {
+      task.request.provider = provider
+      task.request.model = normalizeModel(model)
+    }
+    task.request.mode = normalizeMode(mode ?? task.request.mode, task.request.provider)
+    if (pipelines) {
+      const next = pipelines.filter((pipeline) => pipeline.nodes.length)
+      if (next.length) task.request.pipelines = next
+    }
+  }
+
+  /** Dismiss a stale question card and clear the in-flight process before resuming. */
+  private dismissPendingQuestions(task: Task): void {
+    if (!task.pendingQuestions) return
+    this.emit({
+      kind: 'question',
+      taskId: task.request.id,
+      requestId: task.pendingQuestions.requestId,
+      questions: task.pendingQuestions.questions,
+      dismissed: true
+    })
+    task.pendingQuestions = undefined
+    if (task.process?.pid) killPidTree(task.process.pid)
+  }
+
   /** Switch provider on an existing task without sending a message. */
-  setProvider(taskId: string, provider: AiProvider, model?: string): { ok: boolean; message?: string } {
+  setProvider(
+    taskId: string,
+    provider: AiProvider,
+    model?: string,
+    mode?: AgentTaskRequest['mode']
+  ): { ok: boolean; message?: string } {
     const task = this.tasks.get(taskId)
     if (!task) return { ok: false, message: 'This agent task is no longer available.' }
     if (!isAiProvider(provider)) return { ok: false, message: 'Unknown agent provider.' }
     task.request.provider = provider
     task.request.model = normalizeModel(model)
+    task.request.mode = normalizeMode(mode ?? task.request.mode, provider)
     return { ok: true }
   }
 
@@ -684,6 +716,7 @@ export class AgentController {
     attempt: number,
     scan: CycleScan
   ): Promise<CycleAttemptResult> {
+    if (task.request.mode === 'plan') return this.finishPlanCycleAttempt(task, attempt, scan)
     const selection = selectedPipelines(scan.assistant, task.request.pipelines)
     const retryInvalid = (reason: string): CycleAttemptResult => ({
       kind: 'retry',
@@ -743,6 +776,24 @@ export class AgentController {
         repairPromptOpening(task.request.prompt, attempt, outcome.failures, guidance)
       )
     }
+  }
+
+  /** Plan mode never validates — it only recognizes the finished-plan marker. */
+  private finishPlanCycleAttempt(task: Task, attempt: number, scan: CycleScan): CycleAttemptResult {
+    if (isFinishedPlan(scan.assistant)) {
+      return this.completeCycle(task, attempt, 'Plan ready to execute')
+    }
+    const marker = parsePipelineIds(scan.assistant)
+    if ('error' in marker) {
+      return {
+        kind: 'retry',
+        prompt: this.prompt(
+          task,
+          `Continue the original task: ${task.request.prompt}\n\nEnd this Plan response with ${FINISHED_PLAN}, ${QUESTIONS_MARKER} if you need a decision, or ${PIPELINES_MARKER} [] when it is not yet a finished plan.`
+        )
+      }
+    }
+    return this.completeCycle(task, attempt, 'Plan response complete')
   }
 
   private async cycleAfterRun(
@@ -860,6 +911,7 @@ export class AgentController {
   }
 
   private prompt(task: Task, opening: string): string {
+    const plan = task.request.mode === 'plan'
     const mandatoryIds = mandatoryPipelines(task.request.pipelines).map((pipeline) => pipeline.id)
     const mandatoryNote = mandatoryIds.length
       ? `Mandatory pipelines (run only when files change, and after a failed mandatory run until they pass): ${mandatoryIds.join(', ')}. ${PIPELINES_MARKER} [] is only valid when you made no file changes and no mandatory pipeline is still waiting to pass.`
@@ -870,13 +922,19 @@ export class AgentController {
       `Work only in ${task.request.cwd}.`,
       this.pipelineHistory(task),
       `When you need a decision from the user, ask with ${QUESTIONS_MARKER} followed by a JSON array of questions on one line, and do not include ${PIPELINES_MARKER} on that turn. Each question: { "question": "complete question", "header": "short label", "options": [{ "label": "1-5 words", "description": "what this choice means" }], "multiple": false }. \`multiple: true\` allows more than one option. A custom free-text option is always offered — do not add "Other". Farol shows the questions in Chat and sends the answers back to you.`,
-      `When the requested file change is complete, select every relevant validation pipeline from the catalog below. If you made no file changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
-      mandatoryNote,
-      `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
+      plan
+        ? `Plan mode is read-only. You may inspect the project, ask clarifying questions, and propose a plan, but must not change project files or modify external systems. A finished plan ends with exactly one final line: ${FINISHED_PLAN}. If you need a decision, end with ${QUESTIONS_MARKER}. For an ordinary non-final response, end with ${PIPELINES_MARKER} []. Do not emit ${FINISHED_PLAN} until the plan is complete and ready for the developer to execute. Farol will never run pipelines from a Plan response.`
+        : `When the requested file change is complete, select every relevant validation pipeline from the catalog below. If you made no file changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
+      plan ? '' : mandatoryNote,
+      plan
+        ? `Do not run validation pipelines in Plan mode.`
+        : `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
       `Do not call the Farol MCP tools in this managed Chat session. They are not available here — they require approval in some providers, and the managed harness executes your selected pipelines directly.`,
-      `End every response with exactly one line: either ${QUESTIONS_MARKER} [...] when you need a user decision, or ${PIPELINES_MARKER} ["pipeline-id"] when the file-change work for this turn is done — ${PIPELINES_MARKER} [] if no validation is needed. Use a JSON array and only catalog ids for pipelines.`,
+      plan
+        ? `End every response with exactly one line: ${QUESTIONS_MARKER} [...] when you need a decision, ${FINISHED_PLAN} when the plan is complete, or ${PIPELINES_MARKER} [] for an ordinary response.`
+        : `End every response with exactly one line: either ${QUESTIONS_MARKER} [...] when you need a user decision, or ${PIPELINES_MARKER} ["pipeline-id"] when the file-change work for this turn is done — ${PIPELINES_MARKER} [] if no validation is needed. Use a JSON array and only catalog ids for pipelines.`,
       '',
-      `Available Farol pipelines:\n${pipelineCatalog(task.request.pipelines)}`,
+      plan ? '' : `Available Farol pipelines:\n${pipelineCatalog(task.request.pipelines)}`,
       `If a block or error prevents you from completing the task, stop immediately and end your response with “${BLOCK_MARKER} <reason>”. Do not keep trying.`
     ]
       .filter(Boolean)
@@ -901,7 +959,8 @@ export class AgentController {
   private runAgent(task: Task, prompt: string, sink: AgentSink, plain = false): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
     const spec = managedAiCommand(task.request.provider, prompt, task.request.model, {
-      jsonFormat: !plain
+      jsonFormat: !plain,
+      mode: task.request.mode
     })
     const env = aiEnv(task.request.provider)
     const bin = resolveBinFrom(spec.bins)

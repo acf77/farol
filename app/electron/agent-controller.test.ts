@@ -61,6 +61,62 @@ const lintMandatory = {
 }
 
 describe('AgentController', () => {
+  it('finishes Plan mode without running validation and marks the handoff', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    const execute = vi.fn().mockImplementation(async (_request, _prompt, output: (chunk: string) => void) => {
+      output('## Plan\n\n1. Change the widget.\nFAROL_PLAN: finished\n')
+      return 0
+    })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, provider: 'codex', mode: 'plan' })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.message === 'Plan ready to execute')).toBe(true)
+    )
+
+    expect(execute.mock.calls[0][1]).toContain('Plan mode is read-only')
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('ignores a FAROL_PIPELINES selection in Plan mode instead of running it', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    const execute = selecting('validate')
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, provider: 'codex', mode: 'plan' })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('retries a Plan response with no recognized ending', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    const execute = vi.fn()
+      .mockImplementationOnce(async (_request, _prompt, output: (chunk: string) => void) => {
+        output('Just some thoughts, no marker.\n')
+        return 0
+      })
+      .mockImplementationOnce(async (_request, _prompt, output: (chunk: string) => void) => {
+        output('## Plan\n\nFAROL_PLAN: finished\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, provider: 'codex', mode: 'plan' })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.message === 'Plan ready to execute')).toBe(true)
+    )
+
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute.mock.calls[1][1]).toContain('End this Plan response with FAROL_PLAN: finished')
+    expect(run).not.toHaveBeenCalled()
+  })
+
   it('gives the agent every pipeline and runs all selected ids', async () => {
     const events: AgentTaskEvent[] = []
     const lint = {

@@ -9,6 +9,7 @@ import {
   type SetStateAction
 } from 'react'
 import type {
+  AgentMode,
   AgentTaskEvent,
   AiProvider,
   AppSettings,
@@ -22,8 +23,9 @@ import type {
   StepState,
   WorktreeRequest
 } from '@shared/types'
-import { AI_LABELS, aiFixPrompt } from '@shared/ai'
-import { defaultSettings, withAgentModel } from '@shared/settings'
+import { AI_LABELS, aiFixPrompt, normalizeMode } from '@shared/ai'
+import { isFinishedPlan, sanitizePlan } from '@shared/questions'
+import { defaultSettings, withAgentModel, withCommitMessageModel } from '@shared/settings'
 import { sessionSeq } from '@shared/session'
 import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
 import { topoSort } from '@shared/graph'
@@ -84,6 +86,7 @@ function asText(value: unknown): string {
 }
 
 function sanitizeAgentMessage(message: AgentMessage): AgentMessage {
+  const plan = sanitizePlan(message.plan)
   return {
     ...message,
     text: asText(message.text),
@@ -112,8 +115,27 @@ function sanitizeAgentMessage(message: AgentMessage): AgentMessage {
             requestId: asText(message.question.requestId)
           }
         }
-      : {})
+      : {}),
+    ...(plan ? { plan } : {})
   }
+}
+
+function planMessage(message: AgentMessage, mode: AgentMode): AgentMessage {
+  if (mode !== 'plan' || message.role !== 'assistant') return message
+  if (isFinishedPlan(message.text)) return { ...message, plan: { finished: true } }
+  return message.plan ? { ...message, plan: undefined } : message
+}
+
+/**
+ * Mark finished plans as consumed — once a plan is executed or superseded, it can't be replayed.
+ * With `onlyIndex`, only that message is touched; otherwise every finished plan is.
+ */
+function consumePlans(messages: AgentMessage[], onlyIndex?: number): AgentMessage[] {
+  return messages.map((message, i) =>
+    (onlyIndex === undefined || i === onlyIndex) && message.plan?.finished && !message.plan.consumed
+      ? { ...message, plan: { ...message.plan, consumed: true as const } }
+      : message
+  )
 }
 
 /** Managed Chat and MCP runs share agent semantics — not manual UI runs. */
@@ -206,6 +228,7 @@ function tabsFromSession(sess: ProjectSession): Tab[] {
                   : 'needs-attention') as AgentPane['status'],
               attempt: p.attempt,
               provider: p.provider,
+              mode: normalizeMode(p.mode, p.provider),
               ...(p.model ? { model: p.model } : {}),
               messages: trimAgentMessages(
                 [
@@ -294,12 +317,14 @@ function toSession(
                 status: p.status,
                 attempt: p.attempt,
                 provider: p.provider,
+                mode: p.mode,
                 ...(p.model ? { model: p.model } : {}),
                 // A restored transcript is for reading, not for replaying a
                 // whole run's output — the workspace file is rewritten often.
                 messages: p.messages.map((m) => ({
                   role: m.role,
-                  text: m.text.length > MAX_SAVED_CHARS ? m.text.slice(-MAX_SAVED_CHARS) : m.text
+                  text: m.text.length > MAX_SAVED_CHARS ? m.text.slice(-MAX_SAVED_CHARS) : m.text,
+                  ...(m.plan ? { plan: m.plan } : {})
                 }))
               }
             : { id: p.id, title: p.title, cwd: p.cwd }
@@ -391,6 +416,7 @@ function agentChatTab(owner: Tab, project: Project, branch: string, settings: Ap
         status: 'idle',
         attempt: 0,
         provider: settings.agent,
+        mode: 'build',
         ...(model ? { model } : {}),
         messages: []
       }
@@ -420,9 +446,12 @@ function applyAgentOutputEvent(
     !last.question &&
     asText(last.text).length < MAX_MESSAGE_CHARS
   ) {
-    messages[messages.length - 1] = { ...last, text: asText(last.text) + chunk }
+    messages[messages.length - 1] = planMessage(
+      { ...last, text: asText(last.text) + chunk },
+      pane.mode
+    )
   } else {
-    messages.push({ role: 'assistant', text: chunk })
+    messages.push(planMessage({ role: 'assistant', text: chunk }, pane.mode))
   }
   return appendAgentMessages(pane, messages)
 }
@@ -565,7 +594,10 @@ function applyAgentEvent(
 ): AgentPane {
   if (event.kind === 'output') return applyAgentOutputEvent(pane, event)
   if (event.kind === 'assistant') {
-    return appendAgentMessages(pane, [...pane.messages, { role: 'assistant', text: asText(event.text) }])
+    return appendAgentMessages(pane, [
+      ...pane.messages,
+      planMessage({ role: 'assistant', text: asText(event.text) }, pane.mode)
+    ])
   }
   if (event.kind === 'tool') return applyAgentToolEvent(pane, event)
   if (event.kind === 'question') return applyAgentQuestionEvent(pane, event)
@@ -927,10 +959,13 @@ interface ProjectWorkspaceViewProps {
     providerOverride?: AppSettings['agent'],
     ownerOverride?: Tab,
     cwdOverride?: string,
-    modelOverride?: string | null
+    modelOverride?: string | null,
+    modeOverride?: AgentMode
   ) => void
   cancelAgent: () => void
   setAgentProvider: (provider: AppSettings['agent'], model?: string) => void
+  setAgentMode: (mode: AgentMode) => void
+  executePlan: (index: number) => void
   showTerminal: (tabId?: string, mode?: 'split' | 'terminal') => void
   requestNewChat: () => void
   clearChatConfirm: boolean
@@ -1003,6 +1038,8 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     sendAgentMessage,
     cancelAgent,
     setAgentProvider,
+    setAgentMode,
+    executePlan,
     showTerminal,
     requestNewChat,
     clearChatConfirm,
@@ -1106,14 +1143,16 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                 defaultProvider={settings.agent}
                 defaultModel={settings.models[settings.agent]}
                 settings={settings}
-                onMessage={(text, provider, model) =>
-                  sendAgentMessage(text, provider, undefined, undefined, model ?? null)
+                onMessage={(text, provider, model, mode) =>
+                  sendAgentMessage(text, provider, undefined, undefined, model ?? null, mode)
                 }
                 onAnswer={(requestId, answers) => {
                   if (chatPane) void api.agent.answer(chatPane.taskId, requestId, answers)
                 }}
                 onCancel={cancelAgent}
                 onProviderChange={setAgentProvider}
+                onModeChange={setAgentMode}
+                onExecutePlan={executePlan}
                 onOpenPipeline={(tabId) => showTerminal(tabId, 'terminal')}
                 onNewChat={requestNewChat}
                 clearChatConfirm={clearChatConfirm}
@@ -1245,9 +1284,14 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           branch={git.branch}
           branches={git.branches}
           remotes={git.remotes ?? []}
-          provider={settings.agent}
-          model={settings.models[settings.agent]}
+          provider={settings.commitMessage.agent}
+          model={settings.commitMessage.model}
           settings={settings}
+          onCommitMessageModelChange={(provider, model) => {
+            const next = withCommitMessageModel(settings, provider, model)
+            setSettings(next)
+            void api.settings.save(next)
+          }}
           {...gitPanel}
           open={gitOpen && visible}
           onClose={() => onGitOpenChange(false)}
@@ -1268,7 +1312,7 @@ interface ProjectWorkspaceProps {
   gitOpen: boolean
   onGitOpenChange: Dispatch<SetStateAction<boolean>>
   gitAnchorRef: RefObject<HTMLButtonElement>
-  onGitControlChange: (control: { dotColor: string } | null) => void
+  onGitControlChange: (control: { dotColor: string; pull: () => void; pulling: boolean } | null) => void
   onOpenProject: () => void
   onOpenPath: (path: string) => void
   onCloseProject: () => void
@@ -1342,10 +1386,12 @@ function ProjectWorkspace({
       return
     }
     onGitControlChange({
-      dotColor: gitStatusDotColor(gitPanel.status, gitPanel.github)
+      dotColor: gitStatusDotColor(gitPanel.status, gitPanel.github),
+      pull: gitPanel.pull,
+      pulling: gitPanel.gitAction === 'pull'
     })
     return () => onGitControlChange(null)
-  }, [visible, git.isRepo, gitPanel.status, gitPanel.github, onGitControlChange])
+  }, [visible, git.isRepo, gitPanel.status, gitPanel.github, gitPanel.pull, gitPanel.gitAction, onGitControlChange])
 
   useEffect(() => {
     if (!visible) onGitOpenChange(false)
@@ -1983,7 +2029,8 @@ function ProjectWorkspace({
       providerOverride?: AppSettings['agent'],
       ownerOverride?: Tab,
       cwdOverride?: string,
-      modelOverride?: string | null
+      modelOverride?: string | null,
+      modeOverride?: AgentMode
     ) => {
       setChatClearedNotice(false)
       const context = ensureChat(ownerOverride)
@@ -1993,6 +2040,8 @@ function ProjectWorkspace({
       if (!clean) return
       const provider = providerOverride ?? pane.provider
       const model = modelOverride === null ? undefined : (modelOverride ?? pane.model)
+      const requestedMode = modeOverride ?? pane.mode
+      const mode = normalizeMode(requestedMode, provider)
 
       const failStart = (message?: string): void => {
         patchPane(pane.id, (current) =>
@@ -2011,7 +2060,7 @@ function ProjectWorkspace({
       const availablePipelines = pipelinesRef.current
         .filter((pipeline) => pipeline.nodes.length)
         .map((pipeline) => ({ ...pipeline, id: managedRuntimePipelineId(pipeline.id) }))
-      if (!availablePipelines.length) {
+      if (!availablePipelines.length && mode === 'build') {
         failStart('No validation pipelines are configured — Chat cannot start until this project has at least one.')
         return
       }
@@ -2022,15 +2071,16 @@ function ProjectWorkspace({
         prompt: clean,
         provider,
         ...(model ? { model } : {}),
+        mode,
         pipelines: availablePipelines,
         cwd: cwdOverride || pane.cwd,
         branch
       }
-      const runAgent = (mode: 'message' | 'start'): void => {
-        if (mode === 'message') {
+      const runAgent = (operation: 'message' | 'start'): void => {
+        if (operation === 'message') {
           // Prefer start when the task is gone (e.g. after a restart).
           // Pass current pipelines so mid-chat edits (AI provider, steps) stick.
-          void api.agent.message(pane.taskId, clean, provider, availablePipelines, model).then((result) => {
+          void api.agent.message(pane.taskId, clean, provider, availablePipelines, model, mode).then((result) => {
             if (result.ok) return
             runAgent('start')
           })
@@ -2040,7 +2090,7 @@ function ProjectWorkspace({
           if (result.ok) return
           // Still winding down after Stop — queue with the selected provider.
           void api.agent
-            .message(pane.taskId, clean, provider, availablePipelines, model)
+            .message(pane.taskId, clean, provider, availablePipelines, model, mode)
             .then((queued) => {
               if (queued.ok) return
               failStart(result.message || queued.message)
@@ -2057,11 +2107,15 @@ function ProjectWorkspace({
                 attempt: 1,
                 provider,
                 ...(model ? { model } : { model: undefined }),
+                mode,
                 messages: [
-                  ...current.messages,
+                  ...consumePlans(current.messages),
                   {
                     role: 'system',
-                    text: `Choosing from ${availablePipelines.length} validation pipeline${availablePipelines.length === 1 ? '' : 's'}.`
+                    text:
+                      mode === 'plan'
+                        ? 'Plan mode is read-only.'
+                        : `Choosing from ${availablePipelines.length} validation pipeline${availablePipelines.length === 1 ? '' : 's'}.`
                   }
                 ]
               }
@@ -2072,7 +2126,16 @@ function ProjectWorkspace({
       }
 
       patchPane(pane.id, (current) =>
-        current.kind === 'agent' ? { ...current, status: 'working', provider, model } : current
+        current.kind === 'agent'
+          ? {
+              ...current,
+              status: 'working',
+              provider,
+              model,
+              mode,
+              messages: consumePlans(current.messages)
+            }
+          : current
       )
       // Resume the same task so history and the selected provider carry forward.
       runAgent('message')
@@ -2116,12 +2179,37 @@ function ProjectWorkspace({
       if (!chatPane) return
       // Always record the choice on the pane so the next start/message uses it,
       // including when the user switches after a usage/session limit mid-chat.
+      const mode = normalizeMode(chatPane.mode, provider)
       patchPane(chatPane.id, (pane) =>
-        pane.kind === 'agent' ? { ...pane, provider, model } : pane
+        pane.kind === 'agent' ? { ...pane, provider, model, mode } : pane
       )
-      void api.agent.setProvider(chatPane.taskId, provider, model)
+      void api.agent.setProvider(chatPane.taskId, provider, model, mode)
     },
     [chatPane, patchPane]
+  )
+
+  const setAgentMode = useCallback(
+    (mode: AgentMode) => {
+      const pane = chatPane ?? ensureChat()?.pane
+      if (!pane) return
+      const next = normalizeMode(mode, pane.provider)
+      patchPane(pane.id, (current) => (current.kind === 'agent' ? { ...current, mode: next } : current))
+      void api.agent.setProvider(pane.taskId, pane.provider, pane.model, next)
+    },
+    [chatPane, ensureChat, patchPane]
+  )
+
+  const executePlan = useCallback(
+    (index: number) => {
+      if (!chatPane) return
+      const target = chatPane.messages[index]
+      if (!target?.plan?.finished || target.plan.consumed) return
+      patchPane(chatPane.id, (pane) =>
+        pane.kind === 'agent' ? { ...pane, mode: 'build', messages: consumePlans(pane.messages, index) } : pane
+      )
+      sendAgentMessage('Execute the plan', undefined, undefined, undefined, undefined, 'build')
+    },
+    [chatPane, patchPane, sendAgentMessage]
   )
 
   const cancelAgent = useCallback(() => {
@@ -2550,6 +2638,8 @@ function ProjectWorkspace({
       sendAgentMessage={sendAgentMessage}
       cancelAgent={cancelAgent}
       setAgentProvider={setAgentProvider}
+      setAgentMode={setAgentMode}
+      executePlan={executePlan}
       showTerminal={showTerminal}
       requestNewChat={requestNewChat}
       clearChatConfirm={clearChatConfirm}
@@ -2673,7 +2763,7 @@ export default function App() {
   const [activePath, setActivePath] = useState<string | null>(null)
   const [projectsCollapsed, setProjectsCollapsed] = useState(false)
   const [gitOpen, setGitOpen] = useState(false)
-  const [gitControl, setGitControl] = useState<{ dotColor: string } | null>(null)
+  const [gitControl, setGitControl] = useState<{ dotColor: string; pull: () => void; pulling: boolean } | null>(null)
   const gitAnchorRef = useRef<HTMLButtonElement>(null)
   const [branchDialog, setBranchDialog] = useState<{ path: string; nonce: number }>({
     path: '',
@@ -2885,6 +2975,8 @@ export default function App() {
         gitOpen={gitOpen}
         gitDotColor={gitControl?.dotColor}
         onGitToggle={() => setGitOpen((open) => !open)}
+        onGitPull={gitControl?.pull}
+        gitPulling={gitControl?.pulling}
       />
       <div style={{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden' }}>
         {projects.map((project) => {

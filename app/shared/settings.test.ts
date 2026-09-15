@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultSettings, sanitizeSettings, withAgentModel } from './settings'
+import { defaultSettings, sanitizeSettings, withAgentModel, withCommitMessageModel } from './settings'
 
 describe('sanitizeSettings', () => {
   it('keeps a per-agent model map and drops unknown providers', () => {
@@ -8,12 +8,18 @@ describe('sanitizeSettings', () => {
       models: { claude: 'opus', cursor: ' grok-4.6 ', nope: 'x', codex: '' },
       autoFix: false
     })
-    expect(s).toEqual({ agent: 'cursor', models: { claude: 'opus', cursor: 'grok-4.6' }, autoFix: false })
+    expect(s).toEqual({
+      agent: 'cursor',
+      models: { claude: 'opus', cursor: 'grok-4.6' },
+      commitMessage: { agent: 'cursor', model: 'grok-4.6' },
+      autoFix: false
+    })
   })
 
   it('migrates the pre-1.5.61 single `model` onto the saved agent', () => {
     const s = sanitizeSettings({ agent: 'codex', model: 'gpt-5.6-sol', autoFix: true })
     expect(s.models).toEqual({ codex: 'gpt-5.6-sol' })
+    expect(s.commitMessage).toEqual({ agent: 'codex', model: 'gpt-5.6-sol' })
   })
 
   it('prefers an explicit map entry over the legacy field', () => {
@@ -25,6 +31,7 @@ describe('sanitizeSettings', () => {
     expect(sanitizeSettings({ agent: 'cursor', autoFix: true, model: '  ' })).toEqual({
       agent: 'cursor',
       models: {},
+      commitMessage: { agent: 'cursor' },
       autoFix: true
     })
   })
@@ -51,12 +58,46 @@ describe('sanitizeSettings', () => {
     ).toEqual({
       agent: 'openrouter',
       models: {},
+      commitMessage: { agent: 'openrouter' },
       autoFix: true,
       openrouter: {
         autoPinned: true,
         pinned: ['openai/gpt-4o'],
         catalog: [{ id: 'openai/gpt-4o', label: 'GPT-4o' }]
       }
+    })
+  })
+})
+
+describe('commit message selection', () => {
+  it('persists independently from the chat agent and model defaults', () => {
+    const base = sanitizeSettings({ agent: 'claude', models: { claude: 'opus' }, autoFix: true })
+    expect(withCommitMessageModel(base, 'codex', 'gpt-5.6-sol')).toMatchObject({
+      agent: 'claude',
+      models: { claude: 'opus' },
+      commitMessage: { agent: 'codex', model: 'gpt-5.6-sol' }
+    })
+  })
+
+  it('keeps a full OpenRouter catalog and pins after settings migration', () => {
+    const settings = sanitizeSettings({
+      agent: 'claude',
+      autoFix: true,
+      openrouter: {
+        autoPinned: true,
+        pinned: ['openai/gpt-4o'],
+        catalog: [
+          { id: 'openai/gpt-4o', label: 'GPT-4o' },
+          { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' }
+        ]
+      }
+    })
+    expect(settings.openrouter).toMatchObject({
+      pinned: ['openai/gpt-4o'],
+      catalog: [
+        { id: 'openai/gpt-4o', label: 'GPT-4o' },
+        { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' }
+      ]
     })
   })
 })

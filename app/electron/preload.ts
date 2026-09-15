@@ -73,6 +73,7 @@ const api: FarolApi = {
     commit: (projectPath, message, files) =>
       ipcRenderer.invoke('git:commit', projectPath, message, files),
     push: (projectPath: string) => ipcRenderer.invoke('git:push', projectPath),
+    pull: (projectPath: string) => ipcRenderer.invoke('git:pull', projectPath),
     github: (projectPath: string) => ipcRenderer.invoke('git:github', projectPath),
     createPr: (projectPath: string, base?: string, title?: string) =>
       ipcRenderer.invoke('git:createPr', projectPath, base, title),
@@ -86,10 +87,10 @@ const api: FarolApi = {
   },
   agent: {
     start: (request) => ipcRenderer.invoke('agent:start', request),
-    message: (taskId, text, provider, pipelines, model) =>
-      ipcRenderer.invoke('agent:message', taskId, text, provider, pipelines, model),
-    setProvider: (taskId, provider, model) =>
-      ipcRenderer.invoke('agent:setProvider', taskId, provider, model),
+    message: (taskId, text, provider, pipelines, model, mode) =>
+      ipcRenderer.invoke('agent:message', taskId, text, provider, pipelines, model, mode),
+    setProvider: (taskId, provider, model, mode) =>
+      ipcRenderer.invoke('agent:setProvider', taskId, provider, model, mode),
     cancel: (taskId) => ipcRenderer.invoke('agent:cancel', taskId),
     dispose: (taskId) => ipcRenderer.invoke('agent:dispose', taskId),
     answer: (taskId, requestId, answers) =>

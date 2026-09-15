@@ -62,8 +62,9 @@ describe('sanitizeSession', () => {
               status: 'working',
               attempt: 1,
               provider: 'claude',
+              mode: 'plan',
               model: 'sonnet',
-              messages: []
+              messages: [{ role: 'assistant', text: 'Plan\nFAROL_PLAN: finished', plan: { finished: true } }]
             }
           ]
         }
@@ -71,7 +72,10 @@ describe('sanitizeSession', () => {
     })
 
     expect(s?.tabs[1].ownerTabId).toBe('sh2')
-    expect(s?.tabs[1].panes[0]).toMatchObject({ kind: 'agent', provider: 'claude', model: 'sonnet' })
+    expect(s?.tabs[1].panes[0]).toMatchObject({ kind: 'agent', provider: 'claude', mode: 'plan', model: 'sonnet' })
+    expect((s?.tabs[1].panes[0] as { messages?: unknown[] }).messages?.[0]).toMatchObject({
+      plan: { finished: true }
+    })
   })
 })
 

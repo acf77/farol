@@ -12,7 +12,7 @@ function chat(id: string, branch = 'main'): Tab {
     panes: {
       [id]: {
         id, kind: 'agent', title: 'Chat', cwd: '/repo', taskId: id,
-        status: 'idle', attempt: 0, provider: 'openrouter', messages: []
+        status: 'idle', attempt: 0, provider: 'openrouter', mode: 'build', messages: []
       }
     }
   }

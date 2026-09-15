@@ -288,7 +288,7 @@ export function Checkbox({
   )
 }
 
-type MenuPos = { left: number; width: number } & ({ top: number } | { bottom: number })
+type MenuPos = { left: number; width: number; maxHeight: number } & ({ top: number } | { bottom: number })
 
 /**
  * Two-step picker: choose a provider, then one of its supported model ids.
@@ -335,7 +335,9 @@ export function CliModelMenu({
           position: 'fixed',
           ...place,
           zIndex: 70,
-          width: pos.width,
+          width: `min(${pos.width}px, calc(100vw - 16px))`,
+          maxHeight: pos.maxHeight,
+          overflowY: 'auto',
           background: C.panel,
           border: `1px solid ${C.cardBorder}`,
           borderRadius: 8,
@@ -462,7 +464,15 @@ export function CliModelDropdown({
     }
     const rect = btnRef.current?.getBoundingClientRect()
     if (!rect) return
-    setPos({ left: rect.left, top: rect.bottom + 4, width: Math.max(rect.width, 168) })
+    const width = Math.min(Math.max(rect.width, 168), window.innerWidth - 16)
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+    const below = window.innerHeight - rect.bottom
+    const maxHeight = Math.max(96, (below >= 220 ? below : rect.top) - 12)
+    setPos(
+      below >= 220
+        ? { left, top: rect.bottom + 4, width, maxHeight }
+        : { left, bottom: Math.max(8, window.innerHeight - rect.top + 4), width, maxHeight }
+    )
     setOpen(true)
   }
 

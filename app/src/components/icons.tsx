@@ -328,3 +328,13 @@ export function GitIcon({ size = 13, color = 'currentColor' }: IconProps) {
     </svg>
   )
 }
+
+/** Refresh a remote-backed reading without implying a destructive reset. */
+export function RefreshIcon({ size = 14, color = 'currentColor' }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.4}>
+      <path d="M13 6.3A5.5 5.5 0 1 0 14.3 10" />
+      <path d="M13 2.7v3.8H9.2" />
+    </svg>
+  )
+}

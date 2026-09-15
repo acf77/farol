@@ -10,10 +10,37 @@
 export const QUESTIONS_MARKER = 'FAROL_QUESTIONS:'
 export const PIPELINES_MARKER = 'FAROL_PIPELINES:'
 export const BLOCK_MARKER = 'FAROL_BLOCKED:'
-export const CONTROL_MARKERS = [PIPELINES_MARKER, QUESTIONS_MARKER, BLOCK_MARKER] as const
+export const PLAN_MARKER = 'FAROL_PLAN:'
+export const FINISHED_PLAN = `${PLAN_MARKER} finished`
+export const CONTROL_MARKERS = [PIPELINES_MARKER, QUESTIONS_MARKER, BLOCK_MARKER, PLAN_MARKER] as const
+
+/** Only the exact final control line makes a response executable. */
+export function isFinishedPlan(text: string): boolean {
+  return text.trimEnd().split(/\r?\n/).at(-1)?.trim() === FINISHED_PLAN
+}
+
+/** Drop the trailing marker line so the plan body can be replayed to the agent. */
+export function stripFinishedPlan(text: string): string {
+  const lines = text.trimEnd().split(/\r?\n/)
+  if (lines.at(-1)?.trim() === FINISHED_PLAN) lines.pop()
+  return lines.join('\n').trimEnd()
+}
 
 export function hasControlMarker(text: string): boolean {
   return CONTROL_MARKERS.some((marker) => text.includes(marker))
+}
+
+export interface FinishedPlan {
+  finished: true
+  consumed?: true
+}
+
+/** Trust nothing: both the IPC boundary and the persisted-session boundary funnel through here. */
+export function sanitizePlan(raw: unknown): FinishedPlan | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const plan = raw as Record<string, unknown>
+  if (plan.finished !== true) return undefined
+  return { finished: true, ...(plan.consumed === true ? { consumed: true } : {}) }
 }
 
 export interface QuestionOption {

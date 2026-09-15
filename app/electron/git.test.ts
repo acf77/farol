@@ -11,7 +11,7 @@ const { runAiOnce, githubInfo } = vi.hoisted(() => ({
 vi.mock('./ai-oneshot', () => ({ runAiOnce }))
 vi.mock('./github', () => ({ githubInfo }))
 
-import { bringPrConflicts, commitAll, draftCommit, githubStatus, mergeBaseConflicts, mergeForConflicts, parseCommitLog, push, sanitizeCommitMessage, status } from './git'
+import { bringPrConflicts, commitAll, draftCommit, githubStatus, mergeBaseConflicts, mergeForConflicts, parseCommitLog, pull, push, sanitizeCommitMessage, status } from './git'
 
 const dirs: string[] = []
 
@@ -330,6 +330,41 @@ describe('status and push without upstream', () => {
     expect(st).toMatchObject({ upstream: false, ahead: 1 })
     expect(st.remote).toBeUndefined()
     await expect(push(cwd)).resolves.toMatchObject({ ok: false, message: expect.stringMatching(/remote/) })
+  })
+
+  it('pulls the current tracking branch from origin', async () => {
+    const cwd = cloneRepo()
+    const origin = git(cwd, ['remote', 'get-url', 'origin']).trim()
+    fs.writeFileSync(path.join(origin, 'remote.txt'), 'from origin\n')
+    git(origin, ['add', 'remote.txt'])
+    git(origin, ['commit', '-m', 'remote update'])
+
+    await expect(pull(cwd)).resolves.toMatchObject({ ok: true })
+    expect(fs.readFileSync(path.join(cwd, 'remote.txt'), 'utf8')).toBe('from origin\n')
+  })
+
+  it('refuses to pull with local changes', async () => {
+    const cwd = cloneRepo()
+    fs.writeFileSync(path.join(cwd, 'file.txt'), 'local change\n')
+
+    await expect(pull(cwd)).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringMatching(/commit or stash/i)
+    })
+  })
+
+  it('refuses divergent history without creating a merge commit', async () => {
+    const cwd = cloneRepo()
+    const origin = git(cwd, ['remote', 'get-url', 'origin']).trim()
+    fs.writeFileSync(path.join(cwd, 'local.txt'), 'local\n')
+    git(cwd, ['add', 'local.txt'])
+    git(cwd, ['commit', '-m', 'local update'])
+    fs.writeFileSync(path.join(origin, 'remote.txt'), 'remote\n')
+    git(origin, ['add', 'remote.txt'])
+    git(origin, ['commit', '-m', 'remote update'])
+
+    await expect(pull(cwd)).resolves.toMatchObject({ ok: false })
+    expect(git(cwd, ['log', '-1', '--format=%s']).trim()).toBe('local update')
   })
 })
 

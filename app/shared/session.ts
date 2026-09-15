@@ -1,8 +1,9 @@
 /** Persisted workspace: last project, tabs, split trees, and preferences. */
 
 import type { AppSettings } from './settings'
-import type { AiProvider } from './ai'
+import type { AgentMode, AiProvider } from './ai'
 import { normalizeAi, normalizeModel } from './ai'
+import { sanitizePlan } from './questions'
 
 export type SavedNode =
   | { t: 'leaf'; id: string }
@@ -24,9 +25,14 @@ export interface SavedAgentPane {
   status: string
   attempt: number
   provider: AiProvider
+  mode?: AgentMode
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
-  messages: { role: 'user' | 'assistant' | 'system'; text: string }[]
+  messages: {
+    role: 'user' | 'assistant' | 'system'
+    text: string
+    plan?: { finished: true; consumed?: true }
+  }[]
 }
 
 export type SavedPane = SavedShellPane | SavedAgentPane
@@ -112,7 +118,8 @@ function sanitizeAgentMessages(raw: unknown): SavedAgentPane['messages'] {
     ) {
       return []
     }
-    return [{ role: item.role, text: item.text }]
+    const plan = sanitizePlan(item.plan)
+    return [{ role: item.role, text: item.text, ...(plan ? { plan } : {}) }]
   })
 }
 
@@ -135,6 +142,7 @@ function sanitizePane(raw: unknown): SavedPane | null {
     status: typeof pane.status === 'string' ? pane.status : 'needs-attention',
     attempt: typeof pane.attempt === 'number' && Number.isFinite(pane.attempt) ? pane.attempt : 0,
     provider: normalizeAi(pane.provider),
+    ...(pane.mode === 'plan' ? { mode: 'plan' as const } : {}),
     ...(model ? { model } : {}),
     messages
   }

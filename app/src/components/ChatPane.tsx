@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentSkill, AiProvider, AppSettings, Pipeline } from '@shared/types'
-import { AI_LABELS, aiSelectionLabel, normalizeAi, normalizeModel } from '@shared/ai'
+import type { AgentMode, AgentSkill, AiProvider, AppSettings, Pipeline } from '@shared/types'
+import { AI_LABELS, aiSelectionLabel, hasReviewGate, normalizeAi, normalizeModel } from '@shared/ai'
 import {
   convertSkillDraft,
   filterSkills,
@@ -40,11 +40,13 @@ interface Props {
   /** Last-chosen model for `defaultProvider`. Omitted means the CLI default. */
   defaultModel?: string
   settings?: AppSettings
-  onMessage: (text: string, provider: AiProvider, model?: string) => void
+  onMessage: (text: string, provider: AiProvider, model: string | undefined, mode: AgentMode) => void
   /** `answers: null` dismisses the chooser. */
   onAnswer: (requestId: string, answers: string[][] | null) => void
   onCancel: () => void
   onProviderChange: (provider: AiProvider, model?: string) => void
+  onModeChange: (mode: AgentMode) => void
+  onExecutePlan: (index: number) => void
   onOpenPipeline: (tabId: string) => void
   onNewChat: () => void
   clearChatConfirm?: boolean
@@ -492,7 +494,9 @@ function Turn({
   provider,
   onOpenPipeline,
   onNewChat,
-  onAnswer
+  onAnswer,
+  canExecutePlan,
+  onExecutePlan
 }: {
   m: AgentMessage
   i: number
@@ -502,6 +506,8 @@ function Turn({
   onOpenPipeline: (tabId: string) => void
   onNewChat: () => void
   onAnswer: (requestId: string, answers: string[][] | null) => void
+  canExecutePlan: boolean
+  onExecutePlan: (index: number) => void
 }) {
   if (m.role === 'user') {
     return (
@@ -557,8 +563,17 @@ function Turn({
         </div>
       )}
 
+      {canExecutePlan && <ExecutePlanButton onExecute={() => onExecutePlan(i)} />}
       {showFooter && <AssistantFooter text={m.text} provider={provider} onNewChat={onNewChat} />}
     </div>
+  )
+}
+
+function ExecutePlanButton({ onExecute }: { onExecute: () => void }) {
+  return (
+    <Button variant="primary" onClick={onExecute} style={{ alignSelf: 'flex-start' }}>
+      Execute plan
+    </Button>
   )
 }
 
@@ -628,7 +643,7 @@ function ChatClearedBanner({ onDismissChatCleared }: { onDismissChatCleared?: ()
   )
 }
 
-function ChatGreeting({ availableCount }: { availableCount: number }) {
+function ChatGreeting({ availableCount, mode }: { availableCount: number; mode: AgentMode }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
       <img
@@ -651,7 +666,7 @@ function ChatGreeting({ availableCount }: { availableCount: number }) {
         {greetingFor(new Date())}
       </div>
       <div style={{ fontSize: 13, lineHeight: 1.55, color: C.textMuted, marginTop: 8, maxWidth: 420 }}>
-        {availableCount
+        {availableCount || mode === 'plan'
           ? 'How can I help you build today?'
           : 'Create a validation pipeline to start a chat.'}
       </div>
@@ -863,8 +878,8 @@ function ComposerPickerMenu({
   )
 }
 
-function composerPlaceholder(availableCount: number, hasAttachments: boolean): string {
-  if (!availableCount) return 'Create a validation pipeline to start'
+function composerPlaceholder(availableCount: number, hasAttachments: boolean, mode: AgentMode): string {
+  if (!availableCount && mode === 'build') return 'Create a validation pipeline to start'
   if (hasAttachments) return 'Add a message or send the attached files…'
   return 'Message the agent… (drop files here)'
 }
@@ -1096,14 +1111,77 @@ const COMPOSER_TEXTAREA_STYLE: React.CSSProperties = {
   caretColor: C.text
 }
 
+export function ChatModeSwitch({
+  mode,
+  provider,
+  locked,
+  onChange
+}: {
+  mode: AgentMode
+  provider: AiProvider
+  locked: boolean
+  onChange: (mode: AgentMode) => void
+}) {
+  const planAvailable = hasReviewGate(provider)
+  const unavailablePlanTitle = `${AI_LABELS[provider]}: Cannot enforce read-only`
+  return (
+    <div
+      aria-label="Chat mode"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        padding: 2,
+        gap: 2,
+        borderRadius: 8,
+        background: C.panel,
+        border: `1px solid ${C.cardBorder}`
+      }}
+    >
+      <button
+        type="button"
+        className="bf-focus"
+        disabled={locked || !planAvailable}
+        onClick={() => onChange('plan')}
+        title={planAvailable ? 'Plan without making changes' : unavailablePlanTitle}
+        aria-pressed={mode === 'plan'}
+        style={{
+          border: 'none', borderRadius: 6, padding: '3px 7px',
+          background: mode === 'plan' ? C.card : 'transparent',
+          color: !planAvailable ? C.faint : mode === 'plan' ? C.text : C.textMuted,
+          fontSize: 11, fontWeight: 600, cursor: locked || !planAvailable ? 'default' : 'pointer'
+        }}
+      >
+        Plan
+      </button>
+      <button
+        type="button"
+        className="bf-focus"
+        disabled={locked}
+        onClick={() => onChange('build')}
+        title="Build with file changes"
+        aria-pressed={mode === 'build'}
+        style={{
+          border: 'none', borderRadius: 6, padding: '3px 7px',
+          background: mode === 'build' ? C.card : 'transparent', color: mode === 'build' ? C.text : C.textMuted,
+          fontSize: 11, fontWeight: 600, cursor: locked ? 'default' : 'pointer'
+        }}
+      >
+        Build
+      </button>
+    </div>
+  )
+}
+
 function ComposerToolbar({
   agentBtnRef,
   provider,
   model,
+  mode,
   isBusy,
+  modeLocked,
   canSend,
-  onNewChat,
   onOpenAgentMenu,
+  onModeChange,
   onOpenMention,
   onAttach,
   onCancel,
@@ -1112,10 +1190,12 @@ function ComposerToolbar({
   agentBtnRef: React.RefObject<HTMLButtonElement>
   provider: AiProvider
   model?: string
+  mode: AgentMode
   isBusy: boolean
+  modeLocked: boolean
   canSend: boolean
-  onNewChat: () => void
   onOpenAgentMenu: () => void
+  onModeChange: (mode: AgentMode) => void
   onOpenMention: () => void
   onAttach: () => void
   onCancel: () => void
@@ -1123,27 +1203,7 @@ function ComposerToolbar({
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-      <button
-        type="button"
-        className="bf-focus bf-composer-btn"
-        onClick={onNewChat}
-        title="Clear chat and start fresh"
-        aria-label="Clear chat and start fresh"
-        style={{
-          width: 26,
-          height: 26,
-          borderRadius: 8,
-          border: 'none',
-          background: C.panel,
-          display: 'grid',
-          placeItems: 'center',
-          color: '#A1A19A',
-          cursor: 'pointer',
-          padding: 0
-        }}
-      >
-        <ClearChatIcon size={14} color="#A1A19A" />
-      </button>
+      <ChatModeSwitch mode={mode} provider={provider} locked={modeLocked} onChange={onModeChange} />
       <span style={{ flex: 1 }} />
       <button
         ref={agentBtnRef}
@@ -1258,14 +1318,16 @@ function ComposerBox({
   projectPath,
   availableCount,
   isBusy,
+  modeLocked,
   provider,
   model,
+  mode,
   settings,
   textareaRef,
   onMessage,
   onCancel,
   onProviderChange,
-  onNewChat,
+  onModeChange,
   onProviderLocal,
   sendTextRef,
   showFade
@@ -1273,14 +1335,16 @@ function ComposerBox({
   projectPath: string
   availableCount: number
   isBusy: boolean
+  modeLocked: boolean
   provider: AiProvider
   model?: string
+  mode: AgentMode
   settings?: AppSettings
   textareaRef: React.RefObject<HTMLTextAreaElement>
-  onMessage: (text: string, provider: AiProvider, model?: string) => void
+  onMessage: (text: string, provider: AiProvider, model: string | undefined, mode: AgentMode) => void
   onCancel: () => void
   onProviderChange: (provider: AiProvider, model?: string) => void
-  onNewChat: () => void
+  onModeChange: (mode: AgentMode) => void
   onProviderLocal: (provider: AiProvider, model?: string) => void
   /** Lets the parent fire the same send path suggestions used before (incl. history). */
   sendTextRef: React.MutableRefObject<(clean: string) => void>
@@ -1292,7 +1356,7 @@ function ComposerBox({
   const [savingAttachments, setSavingAttachments] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const [modelOpen, setModelOpen] = useState(false)
-  const [agentMenuPos, setAgentMenuPos] = useState<{ left: number; bottom: number } | null>(null)
+  const [agentMenuPos, setAgentMenuPos] = useState<{ left: number; bottom: number; maxHeight: number } | null>(null)
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null)
   const [mentionFiles, setMentionFiles] = useState<string[]>([])
   const [mentionIndex, setMentionIndex] = useState(0)
@@ -1313,7 +1377,9 @@ function ComposerBox({
   const skillWarnText = skillWarningLine(skillWarning, provider)
 
   const canSend =
-    (!!text.trim() || attachments.length > 0) && availableCount > 0 && savingAttachments === 0
+    (!!text.trim() || attachments.length > 0) &&
+    (availableCount > 0 || mode === 'plan') &&
+    savingAttachments === 0
 
   useEffect(() => {
     const node = textareaRef.current
@@ -1398,7 +1464,8 @@ function ComposerBox({
     if (r) {
       setAgentMenuPos({
         left: Math.min(Math.max(8, r.right - 188), window.innerWidth - 196),
-        bottom: window.innerHeight - r.top + 6
+        bottom: window.innerHeight - r.top + 6,
+        maxHeight: Math.max(96, r.top - 12)
       })
     }
     setModelOpen((v) => !v)
@@ -1437,7 +1504,7 @@ function ComposerBox({
 
   const sendText = (clean: string): void => {
     if (!clean) return
-    onMessage(clean, provider, model)
+    onMessage(clean, provider, model, mode)
     const history = historyRef.current
     if (history[history.length - 1] !== clean) history.push(clean)
     if (history.length > 100) history.splice(0, history.length - 100)
@@ -1567,8 +1634,8 @@ function ComposerBox({
                 )
             })
           }
-          placeholder={composerPlaceholder(availableCount, attachments.length > 0)}
-          disabled={!availableCount}
+          placeholder={composerPlaceholder(availableCount, attachments.length > 0, mode)}
+          disabled={!availableCount && mode === 'build'}
           rows={1}
           style={COMPOSER_TEXTAREA_STYLE}
         />
@@ -1576,9 +1643,11 @@ function ComposerBox({
           agentBtnRef={agentBtnRef}
           provider={provider}
           model={model}
+          mode={mode}
           isBusy={isBusy}
+          modeLocked={modeLocked}
           canSend={canSend}
-          onNewChat={onNewChat}
+          onModeChange={onModeChange}
           onOpenAgentMenu={openAgentMenu}
           onOpenMention={openMentionPicker}
           onAttach={() => fileInputRef.current?.click()}
@@ -1620,7 +1689,7 @@ function ComposerBox({
           provider={provider}
           model={model}
           settings={settings}
-          pos={{ left: agentMenuPos.left, bottom: agentMenuPos.bottom, width: 188 }}
+          pos={{ ...agentMenuPos, width: 188 }}
           onPick={(p, m) => {
             onProviderLocal(p, m)
             onProviderChange(p, m)
@@ -1646,6 +1715,8 @@ export default function ChatPane({
   onAnswer,
   onCancel,
   onProviderChange,
+  onModeChange,
+  onExecutePlan,
   onOpenPipeline,
   onNewChat,
   clearChatConfirm,
@@ -1672,10 +1743,12 @@ export default function ChatPane({
   const sendTextRef = useRef<(clean: string) => void>(() => {})
 
   const status = pane?.status ?? 'idle'
+  const mode = pane?.mode ?? 'build'
   const isBusy = busy.has(status)
+  const modeLocked = isBusy || status === 'asking'
   const messages = pane?.messages ?? []
   const availableCount = pipelines.filter((p) => p.nodes.length).length
-  const showSuggestions = availableCount > 0
+  const showSuggestions = availableCount > 0 && mode === 'build'
 
   useEffect(() => {
     setProvider(normalizeAi(pane?.provider ?? defaultProvider))
@@ -1731,7 +1804,7 @@ export default function ChatPane({
         >
           {messages.length === 0 ? (
             <>
-              <ChatGreeting availableCount={availableCount} />
+              <ChatGreeting availableCount={availableCount} mode={mode} />
               <div style={{ flex: 1, minHeight: 24 }} />
               {showSuggestions && <SuggestionList onPick={(p) => sendTextRef.current(p)} />}
             </>
@@ -1748,6 +1821,8 @@ export default function ChatPane({
                     onOpenPipeline={onOpenPipeline}
                     onNewChat={onNewChat}
                     onAnswer={onAnswer}
+                    canExecutePlan={!!m.plan?.finished && !m.plan.consumed && !isBusy}
+                    onExecutePlan={onExecutePlan}
                   />
                 </MessageErrorBoundary>
               ))}
@@ -1760,14 +1835,16 @@ export default function ChatPane({
         projectPath={projectPath}
         availableCount={availableCount}
         isBusy={isBusy}
+        modeLocked={modeLocked}
         provider={provider}
         model={model}
+        mode={mode}
         settings={settings}
         textareaRef={textareaRef}
         onMessage={onMessage}
         onCancel={onCancel}
         onProviderChange={onProviderChange}
-        onNewChat={onNewChat}
+        onModeChange={onModeChange}
         onProviderLocal={(p, m) => {
           setProvider(p)
           setModel(m)

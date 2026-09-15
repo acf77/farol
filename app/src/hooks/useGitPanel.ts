@@ -12,7 +12,7 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
-export type GitAction = 'generate' | 'commit' | 'push' | 'pr' | 'conflicts'
+export type GitAction = 'generate' | 'commit' | 'push' | 'pull' | 'pr' | 'conflicts'
 
 export type GitCommitDraft = {
   message: string
@@ -221,10 +221,8 @@ export function useGitPanel(
       try {
         const res = await op()
         appendLog(action, res.message || failed, res.ok)
-        if (res.ok) {
-          void refresh()
-          return res
-        }
+        void refresh()
+        return res
       } catch (error) {
         appendLog(action, errorMessage(error, failed), false)
       } finally {
@@ -236,6 +234,11 @@ export function useGitPanel(
 
   const push = useCallback(
     () => runRemote('push', 'Push', () => api.git.push(projectPath), 'Push failed'),
+    [projectPath, runRemote]
+  )
+
+  const pull = useCallback(
+    () => runRemote('pull', 'Pull', () => api.git.pull(projectPath), 'Pull failed'),
     [projectPath, runRemote]
   )
 
@@ -280,6 +283,7 @@ export function useGitPanel(
       }),
     selectAllFiles: (files: string[]) => setSelectedFiles(files),
     confirmCommit,
+    pull,
     push,
     createPr,
     resolveConflicts

@@ -17,13 +17,15 @@ export interface AppSettings {
   agent: AiProvider
   /** Default `--model` id per CLI. A missing entry means the CLI's own default. */
   models: Partial<Record<AiProvider, string>>
+  /** The AI used only to draft Git commit messages. */
+  commitMessage: { agent: AiProvider; model?: string }
   /** Hand a failure straight to the agent instead of waiting to be asked. */
   autoFix: boolean
   openrouter?: OpenRouterSettings
 }
 
 export function defaultSettings(): AppSettings {
-  return { agent: 'claude', models: {}, autoFix: true }
+  return { agent: 'claude', models: {}, commitMessage: { agent: 'claude' }, autoFix: true }
 }
 
 /** Set or clear one CLI's default model; an empty id falls back to the CLI's own. */
@@ -37,6 +39,16 @@ export function withAgentModel(
   if (id) models[provider] = id
   else delete models[provider]
   return { ...settings, models }
+}
+
+/** Change the dedicated commit-message generator without touching chat defaults. */
+export function withCommitMessageModel(
+  settings: AppSettings,
+  agent: AiProvider,
+  model?: string
+): AppSettings {
+  const id = normalizeModel(model)
+  return { ...settings, commitMessage: { agent, ...(id ? { model: id } : {}) } }
 }
 
 export function defaultOpenRouter(): OpenRouterSettings {
@@ -63,8 +75,10 @@ function sanitizeCatalog(raw: unknown): AiModel[] {
 export function sanitizeOpenRouter(raw: unknown): OpenRouterSettings | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const o = raw as Record<string, unknown>
-  const pinned = uniqueIds(o.pinned)
   const catalog = sanitizeCatalog(o.catalog)
+  // Older settings could pin ids before a catalog was fetched. Keep those ids
+  // as well, so a saved selection survives a temporary catalog outage.
+  const pinned = uniqueIds(o.pinned)
   const autoPinned = o.autoPinned === true
   if (!pinned.length && !catalog.length && !autoPinned) return undefined
   return { pinned, catalog, autoPinned }
@@ -97,10 +111,22 @@ export function sanitizeSettings(raw: unknown): AppSettings {
   // Settings written before per-agent models held one `model`, for `agent`.
   const legacy = normalizeModel(s.model)
   if (legacy && !models[agent]) models[agent] = legacy
+  const commitRaw = s.commitMessage
+  const hasCommitMessage = !!commitRaw && typeof commitRaw === 'object'
+  const commit = hasCommitMessage ? (commitRaw as Record<string, unknown>) : {}
+  const commitAgent = isAiProvider(commit.agent) ? commit.agent : agent
+  // Installs that predate the dedicated commit-message field inherit the chat
+  // model once; after that, an absent model means "use the CLI's own default"
+  // (same convention as `models`), even if the user cleared it deliberately.
+  const commitModel = normalizeModel(commit.model) ?? (hasCommitMessage ? undefined : models[commitAgent])
   const openrouter = sanitizeOpenRouter(s.openrouter)
   return {
     agent,
     models,
+    commitMessage: {
+      agent: commitAgent,
+      ...(commitModel ? { model: commitModel } : {})
+    },
     autoFix: typeof s.autoFix === 'boolean' ? s.autoFix : d.autoFix,
     ...(openrouter ? { openrouter } : {})
   }

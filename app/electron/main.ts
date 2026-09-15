@@ -12,7 +12,7 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, githubStatus, info as gitInfo, push as gitPush, recentCommits, status as gitStatus } from './git'
+import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, githubStatus, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus } from './git'
 import { createPullRequest } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, PipelineWatcher } from './store'
@@ -643,6 +643,11 @@ function registerGitIpc(): void {
     if ('error' in cwd) return { ok: false, message: cwd.error }
     return gitPush(cwd.path)
   })
+  ipcMain.handle('git:pull', async (_e, projectPath: string) => {
+    const cwd = await openProjectCwd(projectPath)
+    if ('error' in cwd) return { ok: false, message: cwd.error }
+    return gitPull(cwd.path)
+  })
   ipcMain.handle('git:github', (_e, projectPath: string) => githubStatus(projectPath))
   ipcMain.handle('git:createPr', async (_e, projectPath: string, base?: string, title?: string) => {
     const cwd = await openProjectCwd(projectPath)
@@ -670,13 +675,14 @@ function registerTaskIpc(): void {
       text: string,
       provider?: AgentTaskRequest['provider'],
       pipelines?: AgentTaskRequest['pipelines'],
-      model?: string
-    ) => agents.message(taskId, text, provider, pipelines, model)
+      model?: string,
+      mode?: AgentTaskRequest['mode']
+    ) => agents.message(taskId, text, provider, pipelines, model, mode)
   )
   ipcMain.handle(
     'agent:setProvider',
-    (_e, taskId: string, provider: AgentTaskRequest['provider'], model?: string) =>
-      agents.setProvider(taskId, provider, model)
+    (_e, taskId: string, provider: AgentTaskRequest['provider'], model?: string, mode?: AgentTaskRequest['mode']) =>
+      agents.setProvider(taskId, provider, model, mode)
   )
   ipcMain.handle('agent:cancel', (_e, taskId: string) => agents.cancel(taskId))
   ipcMain.handle('agent:dispose', (_e, taskId: string) => agents.dispose(taskId))

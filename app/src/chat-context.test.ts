@@ -28,6 +28,7 @@ function chat(ownerTabId: string): Tab {
     status: 'working',
     attempt: 1,
     provider: 'claude',
+    mode: 'build',
     messages: []
   }
   return {

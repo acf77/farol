@@ -1,6 +1,6 @@
 /** Types shared between the main process, the preload bridge, and the renderer. */
 
-import type { AiProvider } from './ai'
+import type { AgentMode, AiProvider } from './ai'
 import type { AgentQuestion } from './questions'
 import type { ProjectSession } from './session'
 import type { AgentSkill } from './skills'
@@ -10,7 +10,7 @@ import type { AppSettings, OpenRouterSettings } from './settings'
 export type { AgentQuestion, AgentSkill }
 
 export type { AiModel } from './ai'
-export type { AiProvider, AppSettings, OpenRouterSettings, ProjectSession, WorktreeRequest }
+export type { AgentMode, AiProvider, AppSettings, OpenRouterSettings, ProjectSession, WorktreeRequest }
 export { aiFixCommand } from './ai'
 export { FAILURE_REPORT_REL } from './failure'
 export { parseVerdict, VERDICT_MARKER, verdictPromptSuffix } from './verdict'
@@ -213,6 +213,8 @@ export interface AgentTaskRequest {
   id: string
   prompt: string
   provider: AiProvider
+  /** Build can change files; Plan is enforced read-only by a Review gate. */
+  mode?: AgentMode
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
   /** Snapshot of every pipeline the agent may select for validation. */
@@ -400,6 +402,7 @@ export interface FarolApi {
       files?: string[]
     ): Promise<{ ok: boolean; message?: string; error?: string }>
     push(projectPath: string): Promise<{ ok: boolean; message: string }>
+    pull(projectPath: string): Promise<{ ok: boolean; message: string }>
     github(projectPath: string): Promise<GitHubInfo>
     createPr(
       projectPath: string,
@@ -422,12 +425,14 @@ export interface FarolApi {
       text: string,
       provider?: AiProvider,
       pipelines?: Pipeline[],
-      model?: string
+      model?: string,
+      mode?: AgentMode
     ): Promise<{ ok: boolean; message?: string }>
     setProvider(
       taskId: string,
       provider: AiProvider,
-      model?: string
+      model?: string,
+      mode?: AgentMode
     ): Promise<{ ok: boolean; message?: string }>
     cancel(taskId: string): Promise<void>
     /** Cancel and drop the task so cleared chats cannot retain prompt history. */

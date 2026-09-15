@@ -6,6 +6,7 @@ import {
   aiSelectionLabel,
   cliFor,
   interactiveAiCommand,
+  hasReviewGate,
   isAiProvider,
   isUnknownJsonFormatError,
   managedAiCommand,
@@ -13,6 +14,7 @@ import {
   normalizeAi,
   normalizeModel,
   pickerProviders,
+  providerModels,
   usesOpenRouterEnv,
   withModel
 } from './ai'
@@ -30,6 +32,17 @@ describe('normalizeAi', () => {
     expect(normalizeAi(undefined)).toBe('claude')
     expect(normalizeAi('gpt')).toBe('claude')
     expect(isAiProvider('agent')).toBe(false)
+  })
+})
+
+describe('review gates', () => {
+  it('exposes Plan only where managed Chat can enforce read-only access', () => {
+    expect(hasReviewGate('codex')).toBe(true)
+    expect(hasReviewGate('cursor')).toBe(true)
+    expect(hasReviewGate('omp')).toBe(true)
+    expect(hasReviewGate('claude')).toBe(false)
+    expect(hasReviewGate('opencode')).toBe(false)
+    expect(hasReviewGate('openrouter')).toBe(false)
   })
 })
 
@@ -113,6 +126,12 @@ describe('aiCommand', () => {
 })
 
 describe('managedAiCommand', () => {
+  it('uses each provider review gate for Plan mode', () => {
+    expect(managedAiCommand('codex', 'plan this', undefined, { mode: 'plan' }).args).toContain('read-only')
+    expect(managedAiCommand('cursor', 'plan this', undefined, { mode: 'plan' }).args).toContain('--mode=ask')
+    expect(managedAiCommand('omp', 'plan this', undefined, { mode: 'plan' }).args).toContain('read,glob,grep,lsp')
+  })
+
   it('auto-approves every provider so headless Chat can use shell tools', () => {
     expect(managedAiCommand('claude', 'fix this').args).toEqual([
       '-p',
@@ -212,12 +231,24 @@ describe('managedAiCommand', () => {
     expect(interactiveAiCommand('openrouter')).toBe('opencode')
   })
 
-  it('hides OpenRouter in pickers until a key and pins exist', () => {
+  it('shows OpenRouter after a key and catalog exist, with pins first', () => {
     expect(pickerProviders().includes('openrouter')).toBe(false)
     expect(pickerProviders({ hasKey: true, pinned: [] }).includes('openrouter')).toBe(false)
     expect(pickerProviders({ hasKey: true, pinned: ['openai/gpt-4o'] }).includes('openrouter')).toBe(
       true
     )
+    expect(
+      pickerProviders({ hasKey: true, pinned: [], catalog: [{ id: 'openai/gpt-4o', label: 'GPT-4o' }] })
+    ).toContain('openrouter')
+    expect(
+      providerModels('openrouter', undefined, {
+        pinned: ['openai/gpt-4o'],
+        catalog: [
+          { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' },
+          { id: 'openai/gpt-4o', label: 'GPT-4o' }
+        ]
+      }).map((model) => model.id)
+    ).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
   })
 
   it('passes --model through on managed commands', () => {

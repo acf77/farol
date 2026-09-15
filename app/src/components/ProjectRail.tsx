@@ -19,7 +19,8 @@ import {
   ClearChatIcon,
   GitIcon,
   PinIcon,
-  ProjectIcon
+  ProjectIcon,
+  RefreshIcon
 } from './icons'
 
 const api = window.farol
@@ -60,6 +61,8 @@ interface Props {
   gitOpen?: boolean
   gitDotColor?: string
   onGitToggle?: () => void
+  onGitPull?: () => void
+  gitPulling?: boolean
 }
 
 function PinButton({ pinned, onClick }: { pinned: boolean; onClick: () => void }) {
@@ -129,7 +132,9 @@ export default function ProjectRail({
   showGit,
   gitOpen,
   gitDotColor,
-  onGitToggle
+  onGitToggle,
+  onGitPull,
+  gitPulling
 }: Props) {
   const agentBusy = (path: string): boolean => !!busyPaths?.has(path)
   const agentUnread = (path: string): boolean => !!unreadPaths?.has(path)
@@ -237,6 +242,14 @@ export default function ProjectRail({
         WebkitAppRegion: 'no-drag'
       } as React.CSSProperties}
     >
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: rail ? 'column' : 'row',
+          gap: 6,
+          width: rail ? 34 : '100%'
+        }}
+      >
       <button
         ref={gitAnchorRef}
         type="button"
@@ -247,7 +260,8 @@ export default function ProjectRail({
         aria-expanded={gitOpen}
         style={{
           ...noDrag,
-          width: rail ? 34 : '100%',
+          width: rail ? 34 : undefined,
+          flex: rail ? 'none' : 1,
           height: 34,
           borderRadius: 8,
           border: `1px solid ${gitOpen ? C.accent : C.cardBorder}`,
@@ -280,6 +294,30 @@ export default function ProjectRail({
           />
         )}
       </button>
+      {onGitPull && (
+        <button
+          type="button"
+          className="bf-focus bf-icon-btn"
+          onClick={onGitPull}
+          disabled={gitPulling}
+          title={gitPulling ? 'Pulling from origin…' : 'Pull current branch from origin'}
+          aria-label={gitPulling ? 'Pulling current branch from origin' : 'Pull current branch from origin'}
+          style={{
+            ...iconBtn,
+            width: 34,
+            height: 34,
+            border: `1px solid ${C.cardBorder}`,
+            background: 'rgba(255,255,255,0.03)',
+            color: C.textMuted,
+            opacity: gitPulling ? 0.55 : 1
+          }}
+        >
+          <span style={{ display: 'inline-flex', animation: gitPulling ? 'bfspin 0.9s linear infinite' : undefined }}>
+            <RefreshIcon size={14} />
+          </span>
+        </button>
+      )}
+      </div>
     </div>
   )
 

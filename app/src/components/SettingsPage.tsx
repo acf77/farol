@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { AppSettings } from '@shared/types'
 import { AI_LABELS, pickerProviders, providerModels, type AiProvider } from '@shared/ai'
 import { OPENROUTER_API_URL } from '@shared/openrouter'
-import { withAgentModel } from '@shared/settings'
+import { withAgentModel, withCommitMessageModel } from '@shared/settings'
 import { C, UI } from '../theme'
-import { Button, Checkbox, SegmentedControl } from './controls'
+import { Button, Checkbox, CliModelDropdown, SegmentedControl } from './controls'
 
 interface Props {
   settings: AppSettings
@@ -228,6 +228,19 @@ export default function SettingsPage({ settings, onSettings, onOpenRouterSetting
                     />
                   ))}
                 </div>
+              </Section>
+
+              <Section
+                title="Commit message generator"
+                hint="Used only when Git drafts a commit message. It does not follow the chat default."
+              >
+                <CliModelDropdown
+                  label="Commit message provider and model"
+                  provider={settings.commitMessage.agent}
+                  model={settings.commitMessage.model}
+                  settings={settings}
+                  onChange={(agent, model) => onSettings(withCommitMessageModel(settings, agent, model))}
+                />
               </Section>
 
               <Section
