@@ -422,7 +422,7 @@ export function writeLine(state: TermState, text: string, style: Omit<Segment, '
   else if (last.length > 0) rows.push([])
 
   rows[rows.length - 1] = text
-    ? [...text.slice(0, MAX_COLS)].map((ch) => ({
+    ? Array.from(text.slice(0, MAX_COLS), (ch) => ({
         ch,
         color: style.color,
         bold: style.bold,

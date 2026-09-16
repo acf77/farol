@@ -113,9 +113,11 @@ export default function PaneGrid({
                 >
                   {pane.title}
                 </span>
-                <span
-                  className="bf-tab-close"
+                <button
+                  type="button"
+                  className="bf-tab-close bf-focus"
                   title="Close pane"
+                  aria-label={`Close ${pane.title} pane`}
                   onClick={(e) => {
                     e.stopPropagation()
                     onClosePane(pane.id)
@@ -123,6 +125,9 @@ export default function PaneGrid({
                   style={{
                     width: 14,
                     height: 14,
+                    padding: 0,
+                    border: 'none',
+                    background: 'transparent',
                     display: 'grid',
                     placeItems: 'center',
                     cursor: 'pointer',
@@ -131,7 +136,7 @@ export default function PaneGrid({
                   }}
                 >
                   ×
-                </span>
+                </button>
               </div>
             )}
             <div

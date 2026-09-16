@@ -20,7 +20,8 @@ import {
   GitIcon,
   PinIcon,
   ProjectIcon,
-  RefreshIcon
+  RefreshIcon,
+  Spinner
 } from './icons'
 
 const api = window.farol
@@ -55,14 +56,16 @@ interface Props {
   onNewChat: (projectPath: string) => void
   collapsed: boolean
   onSetCollapsed: (collapsed: boolean) => void
-  /** Anchor for the git popover on the active repo checkout. */
+  /** Source Control trigger for the active checkout. */
   gitAnchorRef?: React.RefObject<HTMLButtonElement>
   showGit?: boolean
   gitOpen?: boolean
   gitDotColor?: string
   onGitToggle?: () => void
-  onGitPull?: () => void
+  gitBusy?: boolean
   gitPulling?: boolean
+  gitPullResult?: { ok: boolean; message: string }
+  onGitPull?: () => void
 }
 
 function PinButton({ pinned, onClick }: { pinned: boolean; onClick: () => void }) {
@@ -91,6 +94,7 @@ function ChatActivityDot({ busy, unread }: { busy: boolean; unread: boolean }) {
   const title = busy ? 'Work in progress' : unread ? 'Unread chat updates' : undefined
   return (
     <span
+      role={title ? 'img' : undefined}
       title={title}
       aria-label={title}
       style={{
@@ -99,7 +103,6 @@ function ChatActivityDot({ busy, unread }: { busy: boolean; unread: boolean }) {
         flex: 'none',
         borderRadius: '50%',
         background: busy ? C.green : unread ? C.accent : C.fainter,
-        boxShadow: busy ? `0 0 6px ${C.green}` : unread ? `0 0 6px ${C.accent}` : undefined,
         animation: busy ? 'bfpulse 1.1s ease-in-out infinite' : 'none'
       }}
     />
@@ -112,8 +115,8 @@ function shortPath(p: string): string {
 }
 
 function activityTip(display: string, busy: boolean, unread: boolean): string {
-  if (busy) return `${display} — work in progress`
-  if (unread) return `${display} — unread chat updates`
+  if (busy) return `${display}: work in progress`
+  if (unread) return `${display}: unread chat updates`
   return display
 }
 
@@ -133,8 +136,10 @@ export default function ProjectRail({
   gitOpen,
   gitDotColor,
   onGitToggle,
-  onGitPull,
-  gitPulling
+  gitBusy,
+  gitPulling,
+  gitPullResult,
+  onGitPull
 }: Props) {
   const agentBusy = (path: string): boolean => !!busyPaths?.has(path)
   const agentUnread = (path: string): boolean => !!unreadPaths?.has(path)
@@ -231,6 +236,13 @@ export default function ProjectRail({
   const activeGroup = groups.find((g) => g.projects.some((p) => p.project.path === activePath))
   const activeBranch =
     activeGroup?.projects.find((p) => p.project.path === activePath)?.branch ?? ''
+  const gitStatusLabel = !gitDotColor
+    ? ''
+    : gitDotColor === C.green
+      ? 'working tree clean'
+      : gitDotColor === C.red
+        ? 'conflicts present'
+        : 'working tree has changes'
 
   const gitFooter = showGit && onGitToggle && (
     <div
@@ -256,7 +268,7 @@ export default function ProjectRail({
         className="bf-focus bf-icon-btn"
         onClick={onGitToggle}
         title="Open Source Control"
-        aria-label="Open Source Control"
+        aria-label={gitStatusLabel ? `Open Source Control: ${gitStatusLabel}` : 'Open Source Control'}
         aria-expanded={gitOpen}
         style={{
           ...noDrag,
@@ -298,23 +310,21 @@ export default function ProjectRail({
         <button
           type="button"
           className="bf-focus bf-icon-btn"
+          disabled={gitBusy}
+          aria-label={gitPulling ? 'Pulling current branch' : 'Pull and refresh current branch'}
+          title={gitPulling ? 'Pulling current branch…' : gitPullResult?.message || 'Pull and refresh current branch'}
           onClick={onGitPull}
-          disabled={gitPulling}
-          title={gitPulling ? 'Pulling from origin…' : 'Pull current branch from origin'}
-          aria-label={gitPulling ? 'Pulling current branch from origin' : 'Pull current branch from origin'}
           style={{
             ...iconBtn,
             width: 34,
             height: 34,
+            flex: 'none',
             border: `1px solid ${C.cardBorder}`,
-            background: 'rgba(255,255,255,0.03)',
-            color: C.textMuted,
-            opacity: gitPulling ? 0.55 : 1
+            color: !gitPulling && gitPullResult?.ok === false ? C.red : C.textMuted,
+            opacity: gitBusy && !gitPulling ? 0.5 : 1
           }}
         >
-          <span style={{ display: 'inline-flex', animation: gitPulling ? 'bfspin 0.9s linear infinite' : undefined }}>
-            <RefreshIcon size={14} />
-          </span>
+          {gitPulling ? <Spinner size={14} /> : <RefreshIcon size={14} />}
         </button>
       )}
       </div>
@@ -349,7 +359,7 @@ export default function ProjectRail({
         {activeGroup && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
             <ProjectIcon size={14} color={C.accentBright} />
-            <RailLabel color="#F0F0EC" weight={500}>
+            <RailLabel color={C.text} weight={500}>
               {activeGroup.label}
             </RailLabel>
             {activeBranch && <RailLabel color={C.textMuted}>{activeBranch}</RailLabel>}
@@ -362,17 +372,27 @@ export default function ProjectRail({
             const busy = agentBusy(project.path)
             const unread = agentUnread(project.path)
             return (
-              <div
+              <button
                 key={project.path}
+                type="button"
+                className="bf-focus"
                 onClick={() => {
                   onSelect(project.path)
                   if (!pinned) onSetCollapsed(false)
                 }}
                 title={activityTip(project.display, busy, unread)}
-                style={{ cursor: 'pointer' }}
+                aria-label={activityTip(project.display, busy, unread)}
+                style={{
+                  cursor: 'pointer',
+                  border: 'none',
+                  background: 'transparent',
+                  padding: 0,
+                  display: 'grid',
+                  placeItems: 'center'
+                }}
               >
                 <ChatActivityDot busy={busy} unread={unread} />
-              </div>
+              </button>
             )
           })}
         </div>

@@ -47,6 +47,10 @@ button:disabled {
   cursor: default;
 }
 
+.bf-page-overlay {
+  -webkit-app-region: no-drag;
+}
+
 @keyframes bfspin {
   to {
     transform: rotate(360deg);

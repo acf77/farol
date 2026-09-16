@@ -8,6 +8,7 @@ import {
   type RefObject,
   type SetStateAction
 } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   AgentMode,
   AgentTaskEvent,
@@ -16,6 +17,7 @@ import type {
   GitInfo,
   Pipeline,
   PipelineNode,
+  ProviderUsage,
   Project,
   ProjectSession,
   RunEvent,
@@ -25,7 +27,13 @@ import type {
 } from '@shared/types'
 import { AI_LABELS, aiFixPrompt, normalizeMode } from '@shared/ai'
 import { isFinishedPlan, sanitizePlan } from '@shared/questions'
-import { defaultSettings, withAgentModel, withCommitMessageModel } from '@shared/settings'
+import {
+  defaultSettings,
+  modeDefault,
+  modeFallbacks,
+  withAgentModel,
+  withCommitMessageModel
+} from '@shared/settings'
 import { sessionSeq } from '@shared/session'
 import { owningWorktree } from '@shared/worktree'
 import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
@@ -59,10 +67,11 @@ import TerminalPane from './components/TerminalPane'
 import ProjectRail from './components/ProjectRail'
 import Sidebar from './components/Sidebar'
 import GitPane, { gitStatusDotColor } from './components/GitPane'
-import { useGitPanel } from './hooks/useGitPanel'
+import { useGitPanel, type GitLogEntry } from './hooks/useGitPanel'
 import PipelineCanvas from './components/PipelineCanvas'
 import CommandPalette, { type PaletteItem } from './components/CommandPalette'
 import SettingsPage from './components/SettingsPage'
+import { useUsage } from './hooks/useUsage'
 import { FolderPlusIcon } from './components/icons'
 
 const api = window.farol
@@ -81,6 +90,14 @@ const MAX_MESSAGE_CHARS = 40_000
 /** Per-message ceiling on what a restored session carries back. */
 const MAX_SAVED_CHARS = 4_000
 const NO_GIT: GitInfo = { isRepo: false, branch: '', branches: [] }
+
+type GitControl = {
+  dotColor: string
+  busy: boolean
+  pulling: boolean
+  pullResult: GitLogEntry | undefined
+  pull: ReturnType<typeof useGitPanel>['pull']
+}
 
 function asText(value: unknown): string {
   return typeof value === 'string' ? value : String(value ?? '')
@@ -385,7 +402,7 @@ function branchForTab(tab: Tab | undefined, projectPath: string, git: GitInfo): 
 
 function agentChatTab(owner: Tab, project: Project, branch: string, settings: AppSettings): Tab {
   const cwd = owner.panes[owner.focus]?.cwd || project.path
-  const model = settings.models[settings.agent]
+  const { agent, model } = modeDefault(settings, 'build')
   const taskId = scopedRuntimeId(project.path, `agent:${owner.id}:${Date.now()}`)
   const paneId = `ap:${taskId}`
   return {
@@ -406,7 +423,7 @@ function agentChatTab(owner: Tab, project: Project, branch: string, settings: Ap
         taskId,
         status: 'idle',
         attempt: 0,
-        provider: settings.agent,
+        provider: agent,
         mode: 'build',
         ...(model ? { model } : {}),
         messages: []
@@ -597,6 +614,12 @@ function applyAgentEvent(
       ...pane.messages,
       { role: 'user', text: asText(event.text), at: Date.now() }
     ])
+  }
+  if (event.kind === 'provider') {
+    return appendAgentMessages(
+      { ...pane, provider: event.provider, model: event.model, mode: event.mode },
+      [...pane.messages, { role: 'system', text: asText(event.reason) }]
+    )
   }
   if (event.kind === 'pipeline') {
     // Runner start/end owns the card. Only start-failed pipelines (error:) never emit a RunEvent.
@@ -942,6 +965,8 @@ interface ProjectWorkspaceViewProps {
   updateVersion: string | null
   settings: AppSettings
   setSettings: Dispatch<SetStateAction<AppSettings>>
+  usage: ProviderUsage[]
+  onRefreshUsage: () => void
   chatOwner: Tab | undefined
   chatPane: AgentPane | null
   pipelines: Pipeline[]
@@ -1023,6 +1048,8 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     updateVersion,
     settings,
     setSettings,
+    usage,
+    onRefreshUsage,
     chatOwner,
     chatPane,
     pipelines,
@@ -1103,6 +1130,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         onNewTerminal={newShellTab}
         recents={recents}
         menuOpen={menuOpen}
+        menuDisabled={settingsOpen || editor !== null}
         onMenuToggle={() => {
           setMenuOpen((v) => !v)
           void api.project.recents().then(setRecents)
@@ -1134,6 +1162,8 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                 defaultProvider={settings.agent}
                 defaultModel={settings.models[settings.agent]}
                 settings={settings}
+                usage={usage}
+                onRefreshUsage={onRefreshUsage}
                 onMessage={(text, provider, model, mode) =>
                   sendAgentMessage(text, provider, undefined, undefined, model ?? null, mode)
                 }
@@ -1222,7 +1252,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       </div>
 
       <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
-      {settingsOpen && (
+      {settingsOpen && visible && (
         <SettingsPage
           settings={settings}
           onSettings={(next) => {
@@ -1248,12 +1278,12 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         />
       )}
 
-      {editor && (
+      {editor && visible && createPortal(
         <div
+          className="bf-page-overlay"
           style={{
             position: 'fixed',
-            inset: 0,
-            // Above the app toolbar (zIndex 30) so Save/Cancel stay clickable.
+            inset: `${CHROME_ROW}px 0 0`,
             zIndex: 80,
             display: 'flex',
             flexDirection: 'column',
@@ -1263,11 +1293,13 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           <PipelineCanvas
             editor={editor}
             settings={settings}
+            keyboardEnabled={!settingsOpen}
             onChange={setEditor}
             onCancel={() => setEditor(null)}
             onSave={saveEditor}
           />
-        </div>
+        </div>,
+        document.body
       )}
 
       {git.isRepo && (
@@ -1303,10 +1335,12 @@ interface ProjectWorkspaceProps {
   gitOpen: boolean
   onGitOpenChange: Dispatch<SetStateAction<boolean>>
   gitAnchorRef: RefObject<HTMLButtonElement>
-  onGitControlChange: (control: { dotColor: string; pull: () => void; pulling: boolean } | null) => void
+  onGitControlChange: (control: GitControl | null) => void
   onOpenProject: () => void
   onOpenPath: (path: string) => void
   onCloseProject: () => void
+  usage: ProviderUsage[]
+  onRefreshUsage: () => void
   /** Tell the project rail when this checkout's agent is working. */
   onAgentBusyChange?: (projectPath: string, busy: boolean) => void
   /** Tell the project rail when a finished chat still needs to be opened. */
@@ -1325,6 +1359,8 @@ function ProjectWorkspace({
   onOpenProject,
   onOpenPath,
   onCloseProject,
+  usage,
+  onRefreshUsage,
   onAgentBusyChange,
   onAgentUnreadChange
 }: ProjectWorkspaceProps) {
@@ -1378,11 +1414,13 @@ function ProjectWorkspace({
     }
     onGitControlChange({
       dotColor: gitStatusDotColor(gitPanel.status, gitPanel.github),
-      pull: gitPanel.pull,
-      pulling: gitPanel.gitAction === 'pull'
+      busy: gitPanel.gitAction !== null,
+      pulling: gitPanel.gitAction === 'pull',
+      pullResult: gitPanel.log.filter((entry) => entry.action === 'Pull').at(-1),
+      pull: gitPanel.pull
     })
     return () => onGitControlChange(null)
-  }, [visible, git.isRepo, gitPanel.status, gitPanel.github, gitPanel.pull, gitPanel.gitAction, onGitControlChange])
+  }, [visible, git.isRepo, gitPanel.status, gitPanel.github, gitPanel.gitAction, gitPanel.log, gitPanel.pull, onGitControlChange])
 
   useEffect(() => {
     if (!visible) onGitOpenChange(false)
@@ -2033,6 +2071,7 @@ function ProjectWorkspace({
       const model = modelOverride === null ? undefined : (modelOverride ?? pane.model)
       const requestedMode = modeOverride ?? pane.mode
       const mode = normalizeMode(requestedMode, provider)
+      const fallbacks = modeFallbacks(settingsRef.current, mode, provider, model)
 
       const failStart = (message?: string): void => {
         patchPane(pane.id, (current) =>
@@ -2064,6 +2103,7 @@ function ProjectWorkspace({
         provider,
         ...(model ? { model } : {}),
         mode,
+        ...(fallbacks.length ? { fallbacks } : {}),
         pipelines: availablePipelines,
         cwd,
         checkout: owningWorktree(cwd, git.worktrees ?? [])?.path ?? project.path,
@@ -2073,17 +2113,19 @@ function ProjectWorkspace({
         if (operation === 'message') {
           // Prefer start when the task is gone (e.g. after a restart).
           // Pass current pipelines so mid-chat edits (AI provider, steps) stick.
-          void api.agent.message(pane.taskId, clean, provider, availablePipelines, model, mode).then((result) => {
-            if (result.ok) return
-            runAgent('start')
-          })
+          void api.agent
+            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks)
+            .then((result) => {
+              if (result.ok) return
+              runAgent('start')
+            })
           return
         }
         void api.agent.start(startRequest).then((result) => {
           if (result.ok) return
           // Still winding down after Stop — queue with the selected provider.
           void api.agent
-            .message(pane.taskId, clean, provider, availablePipelines, model, mode)
+            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks)
             .then((queued) => {
               if (queued.ok) return
               failStart(result.message || queued.message)
@@ -2185,9 +2227,16 @@ function ProjectWorkspace({
     (mode: AgentMode) => {
       const pane = chatPane ?? ensureChat()?.pane
       if (!pane) return
-      const next = normalizeMode(mode, pane.provider)
-      patchPane(pane.id, (current) => (current.kind === 'agent' ? { ...current, mode: next } : current))
-      void api.agent.setProvider(pane.taskId, pane.provider, pane.model, next)
+      // A mode with its own chain configured switches model with the mode;
+      // without one, the pane keeps whatever is already selected.
+      const head = settingsRef.current.modeDefaults[mode][0]
+      const provider = head?.agent ?? pane.provider
+      const model = head ? head.model : pane.model
+      const next = normalizeMode(mode, provider)
+      patchPane(pane.id, (current) =>
+        current.kind === 'agent' ? { ...current, mode: next, provider, model } : current
+      )
+      void api.agent.setProvider(pane.taskId, provider, model, next)
     },
     [chatPane, ensureChat, patchPane]
   )
@@ -2625,6 +2674,8 @@ function ProjectWorkspace({
       updateVersion={updateVersion}
       settings={settings}
       setSettings={setSettings}
+      usage={usage}
+      onRefreshUsage={onRefreshUsage}
       chatOwner={chatOwner}
       chatPane={chatPane}
       pipelines={pipelines}
@@ -2683,80 +2734,12 @@ function ProjectWorkspace({
   )
 }
 
-const noDrag = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
-
-function TrafficLight({
-  color,
-  title,
-  onClick
-}: {
-  color: string
-  title: string
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      className="bf-focus bf-brighten"
-      title={title}
-      aria-label={title}
-      onClick={onClick}
-      style={{
-        ...noDrag,
-        width: 12,
-        height: 28,
-        border: 'none',
-        padding: 0,
-        background: 'transparent',
-        cursor: 'pointer',
-        flex: 'none',
-        display: 'grid',
-        placeItems: 'center'
-      }}
-    >
-      <span
-        style={{
-          width: 12,
-          height: 12,
-          borderRadius: '50%',
-          background: color,
-          pointerEvents: 'none'
-        }}
-      />
-    </button>
-  )
-}
-
-/** Window controls stay in the toolbar row; sidebars start below this strip. */
-function Semaphore() {
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        height: CHROME_ROW,
-        padding: `0 ${PANEL_INSET}px`,
-        alignItems: 'center',
-        zIndex: 35,
-        display: 'flex',
-        gap: 8,
-        WebkitAppRegion: 'drag'
-      } as React.CSSProperties}
-    >
-      <TrafficLight color={C.light.red} title="Close" onClick={() => api.window.close()} />
-      <TrafficLight color={C.light.yellow} title="Minimise" onClick={() => api.window.minimize()} />
-      <TrafficLight color={C.light.green} title="Zoom" onClick={() => api.window.maximize()} />
-    </div>
-  )
-}
-
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
   const [projectsCollapsed, setProjectsCollapsed] = useState(false)
   const [gitOpen, setGitOpen] = useState(false)
-  const [gitControl, setGitControl] = useState<{ dotColor: string; pull: () => void; pulling: boolean } | null>(null)
+  const [gitControl, setGitControl] = useState<GitControl | null>(null)
   const gitAnchorRef = useRef<HTMLButtonElement>(null)
   const [branchDialog, setBranchDialog] = useState<{ path: string; nonce: number }>({
     path: '',
@@ -2769,6 +2752,7 @@ export default function App() {
   const [agentBusyPaths, setAgentBusyPaths] = useState<ReadonlySet<string>>(() => new Set())
   const [agentUnreadPaths, setAgentUnreadPaths] = useState<ReadonlySet<string>>(() => new Set())
   const hydrated = useRef(false)
+  const { usage, refresh: refreshUsage } = useUsage()
 
   const setAgentBusy = useCallback((projectPath: string, busy: boolean) => {
     setAgentBusyPaths((prev) => {
@@ -2897,12 +2881,12 @@ export default function App() {
           height: '100vh',
           display: 'flex',
           flexDirection: 'column',
+          boxSizing: 'border-box',
           background: GRADIENT_BG,
           color: C.text,
           fontFamily: UI
         }}
       >
-        <Semaphore />
         <div
           style={{
             height: CHROME_ROW,
@@ -2948,10 +2932,10 @@ export default function App() {
         width: '100vw',
         height: '100vh',
         overflow: 'hidden',
+        boxSizing: 'border-box',
         background: GRADIENT_BG
       }}
     >
-      <Semaphore />
       <ProjectRail
         projects={projects}
         activePath={activePath}
@@ -2968,8 +2952,10 @@ export default function App() {
         gitOpen={gitOpen}
         gitDotColor={gitControl?.dotColor}
         onGitToggle={() => setGitOpen((open) => !open)}
-        onGitPull={gitControl?.pull}
+        gitBusy={gitControl?.busy}
         gitPulling={gitControl?.pulling}
+        gitPullResult={gitControl?.pullResult}
+        onGitPull={gitControl?.pull}
       />
       <div style={{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden' }}>
         {projects.map((project) => {
@@ -3010,6 +2996,8 @@ export default function App() {
                 onOpenProject={openProject}
                 onOpenPath={(path) => void openPath(path)}
                 onCloseProject={() => closeProject(project.path)}
+                usage={usage}
+                onRefreshUsage={refreshUsage}
                 onAgentBusyChange={setAgentBusy}
                 onAgentUnreadChange={setAgentUnread}
               />

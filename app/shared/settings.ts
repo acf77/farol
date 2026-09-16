@@ -1,6 +1,13 @@
 /** Machine-scoped preferences — which agent to hand work to, and when. */
 
-import { isAiProvider, normalizeModel, type AiModel, type AiProvider } from './ai'
+import {
+  hasReviewGate,
+  isAiProvider,
+  normalizeModel,
+  type AgentMode,
+  type AiModel,
+  type AiProvider
+} from './ai'
 import { uniqueIds } from './openrouter'
 
 export interface OpenRouterSettings {
@@ -12,6 +19,15 @@ export interface OpenRouterSettings {
   hasKey?: boolean
 }
 
+/** One rung of a mode's fallback chain: a CLI, optionally pinned to a model. */
+export interface ModelChoice {
+  agent: AiProvider
+  model?: string
+}
+
+/** Ordered per-mode chains. The first rung starts a chat; the rest are fallbacks. */
+export type ModeDefaults = Record<AgentMode, ModelChoice[]>
+
 export interface AppSettings {
   /** The CLI that failed pipeline steps get handed to. */
   agent: AiProvider
@@ -21,11 +37,80 @@ export interface AppSettings {
   commitMessage: { agent: AiProvider; model?: string }
   /** Hand a failure straight to the agent instead of waiting to be asked. */
   autoFix: boolean
+  /**
+   * Which model each chat mode opens with, and which to try when one fails.
+   * An empty chain means the mode just uses `agent` / `models[agent]`.
+   */
+  modeDefaults: ModeDefaults
   openrouter?: OpenRouterSettings
 }
 
 export function defaultSettings(): AppSettings {
-  return { agent: 'claude', models: {}, commitMessage: { agent: 'claude' }, autoFix: true }
+  return {
+    agent: 'claude',
+    models: {},
+    commitMessage: { agent: 'claude' },
+    autoFix: true,
+    modeDefaults: { plan: [], build: [] }
+  }
+}
+
+/**
+ * Drop rungs Farol cannot honour: unknown providers, duplicates, and — for
+ * Plan — any CLI without a review gate, which `normalizeMode` would silently
+ * downgrade to Build.
+ */
+export function sanitizeModeChain(raw: unknown, mode: AgentMode): ModelChoice[] {
+  if (!Array.isArray(raw)) return []
+  const out: ModelChoice[] = []
+  const seen = new Set<string>()
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue
+    const { agent, model } = row as { agent?: unknown; model?: unknown }
+    if (!isAiProvider(agent) || (mode === 'plan' && !hasReviewGate(agent))) continue
+    const id = normalizeModel(model)
+    const key = `${agent}:${id ?? ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ agent, ...(id ? { model: id } : {}) })
+  }
+  return out
+}
+
+export function withModeChain(
+  settings: AppSettings,
+  mode: AgentMode,
+  chain: readonly ModelChoice[]
+): AppSettings {
+  return {
+    ...settings,
+    modeDefaults: { ...settings.modeDefaults, [mode]: sanitizeModeChain(chain, mode) }
+  }
+}
+
+/** What a chat in `mode` opens with — the chain's first rung, else the plain default. */
+export function modeDefault(settings: AppSettings, mode: AgentMode): ModelChoice {
+  const head = settings.modeDefaults[mode][0]
+  if (head) return head
+  const model = settings.models[settings.agent]
+  return { agent: settings.agent, ...(model ? { model } : {}) }
+}
+
+/**
+ * Rungs still worth trying after `agent`/`model` failed. A pick the chain does
+ * not contain has consumed none of it, so the whole chain stays available;
+ * a mode with no chain configured never falls back.
+ */
+export function modeFallbacks(
+  settings: AppSettings,
+  mode: AgentMode,
+  agent: AiProvider,
+  model?: string
+): ModelChoice[] {
+  const chain = settings.modeDefaults[mode]
+  const id = normalizeModel(model)
+  const at = chain.findIndex((rung) => rung.agent === agent && normalizeModel(rung.model) === id)
+  return chain.slice(at + 1)
 }
 
 /** Set or clear one CLI's default model; an empty id falls back to the CLI's own. */
@@ -102,6 +187,11 @@ function sanitizeModels(raw: unknown): Partial<Record<AiProvider, string>> {
   return out
 }
 
+function sanitizeModeDefaults(raw: unknown): ModeDefaults {
+  const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  return { plan: sanitizeModeChain(o.plan, 'plan'), build: sanitizeModeChain(o.build, 'build') }
+}
+
 export function sanitizeSettings(raw: unknown): AppSettings {
   const d = defaultSettings()
   if (!raw || typeof raw !== 'object') return d
@@ -128,6 +218,7 @@ export function sanitizeSettings(raw: unknown): AppSettings {
       ...(commitModel ? { model: commitModel } : {})
     },
     autoFix: typeof s.autoFix === 'boolean' ? s.autoFix : d.autoFix,
+    modeDefaults: sanitizeModeDefaults(s.modeDefaults),
     ...(openrouter ? { openrouter } : {})
   }
 }

@@ -9,6 +9,7 @@ import type { EditorState } from '../types'
 interface Props {
   editor: EditorState
   settings?: AppSettings
+  keyboardEnabled: boolean
   onChange: Dispatch<SetStateAction<EditorState | null>>
   onCancel: () => void
   onSave: () => void
@@ -42,7 +43,14 @@ function wouldCycle(nodes: PipelineNode[], childId: string, parentId: string): b
   return topoSort(next) === null
 }
 
-export default function PipelineCanvas({ editor, settings, onChange, onCancel, onSave }: Props) {
+export default function PipelineCanvas({
+  editor,
+  settings,
+  keyboardEnabled,
+  onChange,
+  onCancel,
+  onSave
+}: Props) {
   const [sel, setSel] = useState<string | null>(editor.nodes[0]?.id ?? null)
   const [selEdge, setSelEdge] = useState<{ from: string; to: string } | null>(null)
   const [cam, setCam] = useState({ x: 48, y: 36, z: 1 })
@@ -147,11 +155,13 @@ export default function PipelineCanvas({ editor, settings, onChange, onCancel, o
   )
 
   useEffect(() => {
+    if (!keyboardEnabled) return
     const typing = (e: KeyboardEvent): boolean => {
       const t = e.target as HTMLElement
       return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
     }
     const down = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented) return
       if (e.code === 'Space' && !typing(e)) space.current = true
       if (e.key === 'Backspace' || e.key === 'Delete') {
         if (typing(e)) return
@@ -180,10 +190,11 @@ export default function PipelineCanvas({ editor, settings, onChange, onCancel, o
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
     return () => {
+      space.current = false
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
     }
-  }, [sel, selEdge, editor.nodes.length, onCancel, removeNode, disconnect])
+  }, [keyboardEnabled, sel, selEdge, editor.nodes.length, onCancel, removeNode, disconnect])
 
   useEffect(() => {
     const el = wrapRef.current
@@ -248,10 +259,10 @@ export default function PipelineCanvas({ editor, settings, onChange, onCancel, o
         >
           Mandatory in Chat
         </Checkbox>
-        <button className="bf-hover-fill" onClick={() => addNode('shell')} style={toolBtn}>
+        <button type="button" className="bf-hover-fill" onClick={() => addNode('shell')} style={toolBtn}>
           + Shell
         </button>
-        <button className="bf-hover-fill" onClick={() => addNode('ai')} style={toolBtn}>
+        <button type="button" className="bf-hover-fill" onClick={() => addNode('ai')} style={toolBtn}>
           + AI
         </button>
         <div style={{ flex: 1 }} />

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { Pipeline, PipelineNode, StepState } from '@shared/types'
 import { topoSort } from '@shared/graph'
 import { C, MONO } from '../theme'
@@ -42,7 +42,7 @@ function statusOf(run: RunState | undefined): Status {
   return { label: 'Failed', color: C.red }
 }
 
-function runStatusColor(status: string | undefined, idle = '#777772'): string {
+function runStatusColor(status: string | undefined, idle: string = C.faint): string {
   if (status === 'running') return C.accentBright
   if (status === 'pass') return C.green
   if (status === 'fail') return C.red
@@ -124,14 +124,17 @@ function CollapsedRail({
           <RailLabel color={C.accentBright}>
             Step {done + 1} of {running.nodes.length}
           </RailLabel>
-          <div
-            className="bf-icon-btn"
+          <button
+            type="button"
+            className="bf-focus bf-icon-btn"
             onClick={() => onStop(running.id)}
             title="Stop pipeline"
+            aria-label={`Stop ${running.name}`}
             style={{
               width: 28,
               height: 28,
               borderRadius: '50%',
+              border: 0,
               background: C.red,
               display: 'grid',
               placeItems: 'center',
@@ -139,7 +142,7 @@ function CollapsedRail({
             }}
           >
             <StopIcon size={12} />
-          </div>
+          </button>
         </div>
       ) : (
         railFor && (
@@ -162,20 +165,25 @@ function CollapsedRail({
         {pipelines.map((p) => {
           const st = runs[p.id]
           return (
-            <div
+            <button
               key={p.id}
+              type="button"
+              className="bf-focus"
               onClick={() => {
                 onSelect(p.id)
                 setExpanded(p.id)
                 onSetCollapsed(false)
               }}
               title={`${p.name} — ${statusOf(st).label}`}
+              aria-label={`${p.name}: ${statusOf(st).label}`}
               style={{
-                width: 8,
-                height: 8,
+                width: 10,
+                height: 10,
+                padding: 0,
+                border: 'none',
                 borderRadius: '50%',
                 cursor: 'pointer',
-                background: runStatusColor(st?.status, '#3E3E3A')
+                background: runStatusColor(st?.status, C.border)
               }}
             />
           )
@@ -253,7 +261,7 @@ function PipelineCard({
 }) {
   const st = statusOf(run)
   const isRunning = run?.status === 'running'
-  const nodes = topoSort(pipeline.nodes) ?? pipeline.nodes
+  const nodes = useMemo(() => topoSort(pipeline.nodes) ?? pipeline.nodes, [pipeline.nodes])
   const doneCount = nodes.filter((n) => run?.stepResults[n.id] === 'pass').length
 
   return (
@@ -261,35 +269,34 @@ function PipelineCard({
       onContextMenu={onContextMenu}
       style={{
         borderRadius: 12,
-        background: isSel ? '#2D2D2B' : '#232322',
-        border: `1px solid ${isSel ? C.accent : '#3E3E3A'}`,
+        background: isSel ? C.panel : C.card,
+        border: `1px solid ${isSel ? C.accent : C.border}`,
         boxShadow: isSel ? '0 0 0 1px rgba(214, 242, 58,.25)' : 'none'
       }}
     >
       <div
-        onClick={() => {
-          onSelect()
-          onToggleExpand()
-        }}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 9,
-          padding: '10px 9px',
-          cursor: 'pointer'
+          padding: '10px 9px'
         }}
       >
         {isRunning ? (
-          <div
+          <button
+            type="button"
+            className="bf-focus"
             onClick={(e) => {
               e.stopPropagation()
               onStop()
             }}
             title="Stop run"
+            aria-label={`Stop ${pipeline.name}`}
             style={{
               width: 20,
               height: 20,
               borderRadius: '50%',
+              border: 'none',
               background: C.red,
               display: 'grid',
               placeItems: 'center',
@@ -298,21 +305,23 @@ function PipelineCard({
             }}
           >
             <StopIcon size={10} />
-          </div>
+          </button>
         ) : (
-          <div
+          <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation()
               onRun()
             }}
             title="Run pipeline"
-            className="bf-runbtn"
+            aria-label={`Run ${pipeline.name}`}
+            className="bf-focus bf-runbtn"
             style={{
               width: 20,
               height: 20,
               borderRadius: '50%',
-              background: run?.status === 'pass' ? C.accent : 'transparent',
               border: `1.5px solid ${run?.status === 'pass' ? C.accent : runStatusColor(run?.status)}`,
+              background: run?.status === 'pass' ? C.accent : 'transparent',
               color: C.accentInk,
               display: 'grid',
               placeItems: 'center',
@@ -322,22 +331,45 @@ function PipelineCard({
           >
             {run?.status === 'pass' && (
               <span className="bf-runbtn-check">
-                <CheckIcon size={11} color="#1B1D13" />
+                <CheckIcon size={11} color={C.accentInk} />
               </span>
             )}
             <span className="bf-runbtn-play" style={{ display: 'none' }}>
               <PlayIcon size={8} />
             </span>
-          </div>
+          </button>
         )}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
+        <button
+          type="button"
+          className="bf-focus"
+          onClick={() => {
+            onSelect()
+            onToggleExpand()
+          }}
+          aria-expanded={isExp}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-start',
+            border: 'none',
+            background: 'transparent',
+            padding: 0,
+            cursor: 'pointer',
+            textAlign: 'left',
+            fontFamily: 'inherit',
+            color: 'inherit'
+          }}
+        >
+          <span
             style={{
               fontSize: 12.5,
               fontWeight: 600,
               whiteSpace: 'nowrap',
               overflow: 'hidden',
-              textOverflow: 'ellipsis'
+              textOverflow: 'ellipsis',
+              maxWidth: '100%'
             }}
           >
             {pipeline.name}
@@ -357,9 +389,9 @@ function PipelineCard({
                 Required
               </span>
             )}
-          </div>
-          <div style={{ fontSize: 12, marginTop: 3, color: st.color }}>{st.label}</div>
-        </div>
+          </span>
+          <span style={{ fontSize: 12, marginTop: 3, color: st.color }}>{st.label}</span>
+        </button>
         <span style={{ fontSize: 10.5, color: '#A1A19A', flex: 'none' }}>
           {doneCount} / {nodes.length} steps
         </span>
@@ -368,14 +400,7 @@ function PipelineCard({
 
       {isExp && (
         <div style={{ padding: '0 8px 8px' }}>
-          <div
-            style={{
-              background: '#232322',
-              border: '1px solid #3E3E3A',
-              borderRadius: 9,
-              overflow: 'hidden'
-            }}
-          >
+          <div style={{ overflow: 'hidden' }}>
             {nodes.map((n, i) => (
               <StepRow
                 key={n.id}
@@ -599,8 +624,9 @@ function SelectedPanelFooter({
     )
   }
   return (
-    <div
-      className="bf-linkish"
+    <button
+      type="button"
+      className="bf-focus bf-linkish"
       onClick={onOpenTerminal}
       style={{
         flex: 'none',
@@ -609,13 +635,16 @@ function SelectedPanelFooter({
         justifyContent: 'center',
         gap: 8,
         padding: '10px 0 7px',
-        color: '#C4C4BE',
-        cursor: 'pointer'
+        color: C.textRow,
+        cursor: 'pointer',
+        border: 'none',
+        background: 'transparent',
+        fontFamily: 'inherit'
       }}
     >
       <span style={{ fontSize: 11.5 }}>View logs</span>
       <ChevronRight />
-    </div>
+    </button>
   )
 }
 
@@ -646,7 +675,7 @@ function PipelineContextMenu({
           background: '#232322',
           border: `1px solid ${C.cardBorder}`,
           borderRadius: 10,
-          boxShadow: '0 14px 36px rgba(0,0,0,0.5)',
+          boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
           padding: 4
         }}
       >
@@ -700,6 +729,19 @@ export default function Sidebar({
   const { showRail, onWidthTransitionEnd } = useCollapseRail(collapsed)
   const running = pipelines.find((p) => runs[p.id]?.status === 'running')
   const shellStyle = sidePanelShellStyle(collapsed, { panelWidth: PIPELINE_PANEL_WIDTH })
+  const selRun = selected ? runs[selected.id] : undefined
+  const selStatus = statusOf(selRun)
+  const selNodes = useMemo(
+    () => (selected ? topoSort(selected.nodes) ?? selected.nodes : []),
+    [selected]
+  )
+  const current = useMemo(
+    () =>
+      selNodes.find((n) => selRun?.stepResults[n.id] === 'running') ??
+      [...selNodes].reverse().find((n) => selRun?.stepResults[n.id] === 'fail') ??
+      selNodes[0],
+    [selNodes, selRun]
+  )
 
   if (showRail) {
     return (
@@ -716,14 +758,6 @@ export default function Sidebar({
       />
     )
   }
-
-  const selRun = selected ? runs[selected.id] : undefined
-  const selStatus = statusOf(selRun)
-  const selNodes = selected ? (topoSort(selected.nodes) ?? selected.nodes) : []
-  const current =
-    selNodes.find((n) => selRun?.stepResults[n.id] === 'running') ??
-    [...selNodes].reverse().find((n) => selRun?.stepResults[n.id] === 'fail') ??
-    selNodes[0]
 
   return (
     <div
@@ -761,8 +795,9 @@ export default function Sidebar({
         >
           PIPELINES
         </span>
-        <div
-          className="bf-newpipe"
+        <button
+          type="button"
+          className="bf-focus bf-newpipe"
           onClick={onNew}
           title="New pipeline"
           style={{
@@ -770,18 +805,19 @@ export default function Sidebar({
             alignItems: 'center',
             gap: 5,
             padding: '5px 10px',
-            background: '#2D2D2B',
-            border: '1px solid #3E3E3A',
-            borderRadius: 7,
+            background: C.panel,
+            border: `1px solid ${C.border}`,
+            borderRadius: 8,
             fontSize: 11.5,
             fontWeight: 600,
-            color: '#F0F0EC',
-            cursor: 'pointer'
+            color: C.text,
+            cursor: 'pointer',
+            fontFamily: 'inherit'
           }}
         >
           <span style={{ fontSize: 13, lineHeight: 1 }}>+</span>
           <span>New Pipeline</span>
-        </div>
+        </button>
         <button
           type="button"
           className="bf-focus bf-icon-btn"

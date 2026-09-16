@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentMode, AgentSkill, AiProvider, AppSettings, Pipeline } from '@shared/types'
+import type { AgentMode, AgentSkill, AiProvider, AppSettings, Pipeline, ProviderUsage } from '@shared/types'
 import { AI_LABELS, aiSelectionLabel, hasReviewGate, normalizeAi, normalizeModel } from '@shared/ai'
 import {
   convertSkillDraft,
@@ -14,6 +14,7 @@ import { C, MONO, PANE } from '../theme'
 import { MarkdownBody, stripControlMarkers } from '../markdown'
 import { MessageErrorBoundary } from '../ErrorBoundary'
 import { Button, CliModelMenu } from './controls'
+import UsageBar from './UsageBar'
 import {
   AttachmentIcon,
   CheckIcon,
@@ -40,6 +41,8 @@ interface Props {
   /** Last-chosen model for `defaultProvider`. Omitted means the CLI default. */
   defaultModel?: string
   settings?: AppSettings
+  usage: ProviderUsage[]
+  onRefreshUsage: () => void
   onMessage: (text: string, provider: AiProvider, model: string | undefined, mode: AgentMode) => void
   /** `answers: null` dismisses the chooser. */
   onAnswer: (requestId: string, answers: string[][] | null) => void
@@ -121,7 +124,7 @@ function ChatCard({
     <div
       style={{
         border: `1px solid ${C.cardBorder}`,
-        borderRadius: 11,
+        borderRadius: 12,
         overflow: 'hidden',
         background: C.card,
         ...style
@@ -187,7 +190,7 @@ function ChatBanner({
         padding: '12px 14px',
         background: C.card,
         border: `1px solid ${C.cardBorder}`,
-        borderRadius: 11,
+        borderRadius: 12,
         ...style
       }}
     >
@@ -270,14 +273,23 @@ function PipelineMsgCard({
             </span>
           )}
           <span style={{ flex: 1 }} />
-          <span
-            className="bf-linkish"
+          <button
+            type="button"
+            className="bf-focus bf-linkish"
             onClick={() => onOpenPipeline(pc.tabId)}
-            style={{ fontSize: 11.5, color: '#A1A19A', cursor: 'pointer' }}
+            style={{
+              fontSize: 11.5,
+              color: '#A1A19A',
+              cursor: 'pointer',
+              border: 'none',
+              background: 'transparent',
+              padding: 0,
+              fontFamily: 'inherit'
+            }}
             title="Jump to this run's terminal tab"
           >
             Open in terminal
-          </span>
+          </button>
         </>
       }
     >
@@ -315,12 +327,42 @@ function AssistantFooter({
       <span style={{ fontSize: 12 }}>{AI_LABELS[provider]}</span>
       <span style={{ flex: 1 }} />
       <div style={{ display: 'flex', gap: 16 }}>
-        <span title="Copy" onClick={() => void navigator.clipboard?.writeText(stripControlMarkers(text))}>
+        <button
+          type="button"
+          className="bf-focus bf-composer-btn"
+          title="Copy"
+          aria-label="Copy message"
+          onClick={() => void navigator.clipboard?.writeText(stripControlMarkers(text))}
+          style={{
+            display: 'grid',
+            placeItems: 'center',
+            border: 'none',
+            background: 'transparent',
+            color: 'inherit',
+            padding: 0,
+            cursor: 'pointer'
+          }}
+        >
           <CopyIcon />
-        </span>
-        <span title="Clear chat and start fresh" onClick={onNewChat}>
+        </button>
+        <button
+          type="button"
+          className="bf-focus bf-composer-btn"
+          title="Clear chat and start fresh"
+          aria-label="Clear chat and start fresh"
+          onClick={onNewChat}
+          style={{
+            display: 'grid',
+            placeItems: 'center',
+            border: 'none',
+            background: 'transparent',
+            color: 'inherit',
+            padding: 0,
+            cursor: 'pointer'
+          }}
+        >
           <ClearChatIcon size={15} />
-        </span>
+        </button>
       </div>
     </div>
   )
@@ -596,8 +638,7 @@ function ClearChatBanner({
           Clear this conversation?
         </div>
         <div id="clear-chat-desc" style={{ fontSize: 12.5, lineHeight: 1.45, color: C.textMuted, marginTop: 4 }}>
-          This branch keeps one chat at a time. Clearing permanently deletes the current messages
-          and shows a blank composer — it does not hide the old chat or open a second one.
+          Clearing permanently deletes this branch&apos;s current messages.
         </div>
       </div>
       <div style={{ display: 'flex', gap: 8, flex: 'none' }}>
@@ -618,7 +659,7 @@ function ChatClearedBanner({ onDismissChatCleared }: { onDismissChatCleared?: ()
   return (
     <ChatBanner role="status">
       <span style={{ flex: 1, fontSize: 12.5, lineHeight: 1.45, color: C.textMuted }}>
-        Conversation cleared. Previous messages were removed from this branch — switch to another
+        Conversation cleared. Previous messages were removed from this branch. Switch to another
         branch in the sidebar to see its chat.
       </span>
       <button
@@ -679,7 +720,7 @@ function SuggestionList({ onPick }: { onPick: (prompt: string) => void }) {
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
         gap: 8,
         marginTop: 12,
         paddingBottom: 8
@@ -1030,7 +1071,7 @@ function composerSurfaceStyle(dragOver: boolean): React.CSSProperties {
     margin: '0 auto',
     background: dragOver ? C.panel : C.card,
     border: dragOver ? `1px solid ${C.accent}` : `1px solid ${C.cardBorder}`,
-    borderRadius: 14,
+    borderRadius: 12,
     padding: '14px 16px 11px',
     position: 'relative',
     boxShadow: dragOver ? '0 0 0 1px rgba(214, 242, 58,.2)' : 'none'
@@ -1126,6 +1167,7 @@ export function ChatModeSwitch({
   const unavailablePlanTitle = `${AI_LABELS[provider]}: Cannot enforce read-only`
   return (
     <div
+      role="group"
       aria-label="Chat mode"
       style={{
         display: 'flex',
@@ -1143,6 +1185,7 @@ export function ChatModeSwitch({
         disabled={locked || !planAvailable}
         onClick={() => onChange('plan')}
         title={planAvailable ? 'Plan without making changes' : unavailablePlanTitle}
+        aria-label={planAvailable ? 'Plan mode' : unavailablePlanTitle}
         aria-pressed={mode === 'plan'}
         style={{
           border: 'none', borderRadius: 6, padding: '3px 7px',
@@ -1176,6 +1219,8 @@ function ComposerToolbar({
   agentBtnRef,
   provider,
   model,
+  usage,
+  onRefreshUsage,
   mode,
   isBusy,
   modeLocked,
@@ -1190,6 +1235,8 @@ function ComposerToolbar({
   agentBtnRef: React.RefObject<HTMLButtonElement>
   provider: AiProvider
   model?: string
+  usage: ProviderUsage[]
+  onRefreshUsage: () => void
   mode: AgentMode
   isBusy: boolean
   modeLocked: boolean
@@ -1202,7 +1249,7 @@ function ComposerToolbar({
   onSend: () => void
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 14, rowGap: 8 }}>
       <ChatModeSwitch mode={mode} provider={provider} locked={modeLocked} onChange={onModeChange} />
       <span style={{ flex: 1 }} />
       <button
@@ -1235,6 +1282,7 @@ function ComposerToolbar({
         </span>
         <ChevronDown size={11} />
       </button>
+      <UsageBar usage={usage} provider={provider} onRefresh={onRefreshUsage} />
       <button
         type="button"
         className="bf-focus"
@@ -1291,13 +1339,18 @@ function SendButton({
   onSend: () => void
 }) {
   return (
-    <div
+    <button
+      type="button"
+      className="bf-focus"
       onClick={() => (isBusy ? onCancel() : onSend())}
+      disabled={!isBusy && !canSend}
       title={isBusy ? 'Stop' : 'Send'}
+      aria-label={isBusy ? 'Stop the agent' : 'Send message'}
       style={{
         width: 34,
         height: 30,
-        borderRadius: 9,
+        borderRadius: 8,
+        border: 'none',
         background: isBusy ? C.red : canSend ? C.accent : C.panel,
         color: !isBusy && canSend ? C.accentInk : C.text,
         display: 'grid',
@@ -1310,7 +1363,7 @@ function SendButton({
       ) : (
         <SendIcon />
       )}
-    </div>
+    </button>
   )
 }
 
@@ -1323,6 +1376,8 @@ function ComposerBox({
   model,
   mode,
   settings,
+  usage,
+  onRefreshUsage,
   textareaRef,
   onMessage,
   onCancel,
@@ -1340,6 +1395,8 @@ function ComposerBox({
   model?: string
   mode: AgentMode
   settings?: AppSettings
+  usage: ProviderUsage[]
+  onRefreshUsage: () => void
   textareaRef: React.RefObject<HTMLTextAreaElement>
   onMessage: (text: string, provider: AiProvider, model: string | undefined, mode: AgentMode) => void
   onCancel: () => void
@@ -1555,7 +1612,7 @@ function ComposerBox({
         flex: 'none',
         position: 'relative',
         zIndex: 2,
-        padding: '32px 34px 24px',
+        padding: '28px clamp(16px, 4vw, 34px) 20px',
         background: C.terminal
       }}
     >
@@ -1601,11 +1658,14 @@ function ComposerBox({
           <div style={{ fontSize: 12, color: '#EF4444', marginBottom: 8 }}>{skillWarnText}</div>
         )}
         {savingAttachments > 0 && (
-          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>Saving attachment…</div>
+          <div role="status" style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
+            Saving attachment…
+          </div>
         )}
         <textarea
           ref={textareaRef}
           value={text}
+          aria-label="Message the agent"
           onPaste={(e) => {
             if (!e.clipboardData.files.length) return
             e.preventDefault()
@@ -1643,6 +1703,8 @@ function ComposerBox({
           agentBtnRef={agentBtnRef}
           provider={provider}
           model={model}
+          usage={usage}
+          onRefreshUsage={onRefreshUsage}
           mode={mode}
           isBusy={isBusy}
           modeLocked={modeLocked}
@@ -1711,6 +1773,8 @@ export default function ChatPane({
   defaultProvider,
   defaultModel,
   settings,
+  usage,
+  onRefreshUsage,
   onMessage,
   onAnswer,
   onCancel,
@@ -1840,6 +1904,8 @@ export default function ChatPane({
         model={model}
         mode={mode}
         settings={settings}
+        usage={usage}
+        onRefreshUsage={onRefreshUsage}
         textareaRef={textareaRef}
         onMessage={onMessage}
         onCancel={onCancel}

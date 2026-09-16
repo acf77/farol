@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -55,12 +56,56 @@ export function resolveBinFrom(names: string[], dirs: string[] = searchDirs()): 
   return null
 }
 
+/**
+ * OpenCode keeps every session in one SQLite db under XDG_DATA_HOME
+ * (`~/.local/share/opencode/opencode.db`). Two concurrent OpenCode processes
+ * writing it get "database is locked", so Farol gives each process a private
+ * data home seeded with the user's credentials. OpenRouter rides the same
+ * binary, so `usesOpenRouterEnv` is also the "spawns opencode" signal here.
+ */
+const OPENCODE_AUTH_FILES = ['auth.json', 'account.json'] as const
+/** Where the shared OpenCode data (auth + the contended db) lives. */
+const OPENCODE_DATA_HOME = path.join(os.homedir(), '.local', 'share', 'opencode')
+/** Each isolated clone lives under a unique dir here; the OS reaps tmpdir. */
+const OPENCODE_ISOLATION_ROOT = path.join(os.tmpdir(), 'farol-opencode')
+
+/** Link the user's credentials into a fresh OpenCode data home, or copy when
+ * symlinks are unavailable. Missing files only drop a provider, not the run. */
+function seedOpencodeCredentials(target: string): void {
+  for (const name of OPENCODE_AUTH_FILES) {
+    const from = path.join(OPENCODE_DATA_HOME, name)
+    if (!fs.existsSync(from)) continue
+    const to = path.join(target, name)
+    try {
+      fs.symlinkSync(from, to)
+    } catch {
+      try {
+        fs.copyFileSync(from, to)
+      } catch {
+        /* no credentials to seed */
+      }
+    }
+  }
+}
+
+/** A private XDG_DATA_HOME so this process gets its own sqlite db, not the
+ * shared one other sessions are writing. The dir is a fresh, unique tmpdir
+ * entry the OS reclaims after the process ends. */
+function isolatedOpencodeDataHome(): string {
+  const root = path.join(OPENCODE_ISOLATION_ROOT, randomUUID())
+  const target = path.join(root, 'opencode')
+  fs.mkdirSync(target, { recursive: true })
+  seedOpencodeCredentials(target)
+  return root
+}
+
 export function aiEnv(provider?: AiProvider): Record<string, string> {
   const env = shellEnv()
   env.PATH = pathDirs(env.PATH).join(path.delimiter)
   if (provider && usesOpenRouterEnv(provider)) {
     const key = peekOpenRouterKey()
     if (key) env[OPENROUTER_API_KEY_ENV] = key
+    env.XDG_DATA_HOME = isolatedOpencodeDataHome()
   }
   return env
 }

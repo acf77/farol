@@ -87,8 +87,8 @@ const api: FarolApi = {
   },
   agent: {
     start: (request) => ipcRenderer.invoke('agent:start', request),
-    message: (taskId, text, provider, pipelines, model, mode) =>
-      ipcRenderer.invoke('agent:message', taskId, text, provider, pipelines, model, mode),
+    message: (taskId, text, provider, pipelines, model, mode, fallbacks) =>
+      ipcRenderer.invoke('agent:message', taskId, text, provider, pipelines, model, mode, fallbacks),
     setProvider: (taskId, provider, model, mode) =>
       ipcRenderer.invoke('agent:setProvider', taskId, provider, model, mode),
     cancel: (taskId) => ipcRenderer.invoke('agent:cancel', taskId),
@@ -107,6 +107,9 @@ const api: FarolApi = {
     refresh: () => ipcRenderer.invoke('openrouter:refresh'),
     setPinned: (ids) => ipcRenderer.invoke('openrouter:setPinned', ids)
   },
+  usage: {
+    read: () => ipcRenderer.invoke('usage:read')
+  },
   update: {
     check: () => ipcRenderer.invoke('update:check'),
     install: () => ipcRenderer.send('update:install'),
@@ -116,11 +119,6 @@ const api: FarolApi = {
     glass: () => ipcRenderer.invoke('ui:glass'),
     onGlass: (cb) => on<boolean>('ui:glass', cb),
     onSettings: (cb) => on('ui:settings', () => cb())
-  },
-  window: {
-    minimize: () => ipcRenderer.send('window:minimize'),
-    maximize: () => ipcRenderer.send('window:maximize'),
-    close: () => ipcRenderer.send('window:close')
   }
 }
 

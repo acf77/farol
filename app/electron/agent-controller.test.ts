@@ -108,6 +108,69 @@ describe('AgentController', () => {
     expect(execute.mock.calls[0][1]).toContain('- [pending] (low) Existing')
   })
 
+  it('walks the fallback chain when a provider fails, then gives up on the last rung', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const seen: string[] = []
+    // Every rung fails the same way: a usage limit on the first two, a bad
+    // exit on the third.
+    const execute = vi
+      .fn()
+      .mockImplementation(async (req: AgentTaskRequest, _prompt: string, output: (c: string) => void) => {
+        seen.push(`${req.provider}:${req.model ?? ''}`)
+        if (seen.length < 3) {
+          output('Claude usage limit reached\n')
+          return 1
+        }
+        return 2
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({
+      ...request,
+      model: 'opus',
+      fallbacks: [{ agent: 'codex', model: 'gpt-5.6-sol' }, { agent: 'omp' }]
+    })
+    await vi.waitFor(() =>
+      expect(
+        events.some((event) => event.kind === 'status' && event.status === 'needs-attention')
+      ).toBe(true)
+    )
+
+    expect(seen).toEqual(['claude:opus', 'codex:gpt-5.6-sol', 'omp:'])
+    const switches = events.filter((event) => event.kind === 'provider')
+    expect(switches.map((event) => event.kind === 'provider' && event.provider)).toEqual([
+      'codex',
+      'omp'
+    ])
+    expect(switches[0].kind === 'provider' && switches[0].reason).toContain('Claude · Opus 5')
+    // Falling back burns no validation attempt.
+    const last = events.filter((event) => event.kind === 'status').at(-1)
+    expect(last).toMatchObject({ attempt: 1, message: 'Agent exited with code 2' })
+  })
+
+  it('does not fall back when the agent itself reports a blocker', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    const execute = vi
+      .fn()
+      .mockImplementation(async (_req: AgentTaskRequest, _prompt: string, output: (c: string) => void) => {
+        output('Cannot do this.\nFAROL_BLOCKED: the API key is missing\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, fallbacks: [{ agent: 'codex' }] })
+    await vi.waitFor(() =>
+      expect(
+        events.some((event) => event.kind === 'status' && event.status === 'needs-attention')
+      ).toBe(true)
+    )
+
+    expect(events.some((event) => event.kind === 'provider')).toBe(false)
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
   it('finishes Plan mode without running validation and marks the handoff', async () => {
     const events: AgentTaskEvent[] = []
     const run = vi.fn()

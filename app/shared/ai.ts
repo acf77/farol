@@ -69,7 +69,7 @@ export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
     { id: 'composer-2.5', label: 'Composer 2.5' },
     { id: 'grok-4.6', label: 'Grok 4.6' }
   ],
-  /** Filled from the saved OpenRouter catalog — pins are listed first. */
+  /** Filled from the user's OpenRouter pins (or its whole catalog, unpinned). */
   openrouter: []
 }
 
@@ -150,22 +150,22 @@ export function pickerProviders(openrouter?: {
   return AI_PROVIDERS.filter((p) => p !== 'openrouter')
 }
 
+/**
+ * Pins are the whole OpenRouter list once there is at least one — the catalog
+ * runs to hundreds of ids, and pinning is how the user narrows it. With
+ * nothing pinned the full catalog shows, so the menu is never empty.
+ */
 export function openrouterModels(
   catalog: readonly AiModel[],
   pinned: readonly string[],
   current?: string
 ): readonly AiModel[] {
   const byId = new Map(catalog.map((m) => [m.id, m]))
-  const pinnedModels = pinned.map((id) => byId.get(id) ?? { id, label: id })
-  const remaining = catalog.filter((model) => !pinned.includes(model.id))
-  return modelsFor(
-    'openrouter',
-    current,
-    [...pinnedModels, ...remaining]
-  )
+  const listed = pinned.length ? pinned.map((id) => byId.get(id) ?? { id, label: id }) : catalog
+  return modelsFor('openrouter', current, listed)
 }
 
-/** Picker options for one provider — OpenRouter pins lead its saved catalog. */
+/** Picker options for one provider — OpenRouter narrows to its pins. */
 export function providerModels(
   provider: AiProvider,
   current?: string,

@@ -15,6 +15,7 @@ interface Props {
   onNewTerminal: () => void
   recents: Project[]
   menuOpen: boolean
+  menuDisabled: boolean
   onMenuToggle: () => void
   onMenuClose: () => void
   onOpenProject: () => void
@@ -56,6 +57,7 @@ export default function Toolbar({
   onNewTerminal,
   recents,
   menuOpen,
+  menuDisabled,
   onMenuToggle,
   onMenuClose,
   onOpenProject,
@@ -70,6 +72,10 @@ export default function Toolbar({
   /** Escape dismisses the file menu and returns focus to its trigger. */
   useEffect(() => {
     if (!menuOpen) return
+    if (menuDisabled) {
+      onMenuClose()
+      return
+    }
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
       onMenuClose()
@@ -77,7 +83,7 @@ export default function Toolbar({
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [menuOpen, onMenuClose])
+  }, [menuOpen, menuDisabled, onMenuClose])
 
   return (
     <div
@@ -263,34 +269,31 @@ export default function Toolbar({
           </span>
         )}
 
-        <span
+        <button
           id={TRIGGER_ID}
+          type="button"
           className="bf-focus"
-          role="button"
-          tabIndex={0}
+          disabled={menuDisabled}
           onClick={onMenuToggle}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              onMenuToggle()
-            }
-          }}
           aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          title="Project menu"
+          aria-expanded={menuOpen && !menuDisabled}
+          title={menuDisabled ? 'Close Settings or the pipeline editor to use File' : 'Project menu'}
           style={{
             ...noDrag,
+            border: 'none',
+            background: 'transparent',
             fontSize: 12,
             color: C.textMuted,
-            cursor: 'pointer',
+            cursor: menuDisabled ? 'default' : 'pointer',
+            opacity: menuDisabled ? 0.5 : 1,
             padding: '4px 6px'
           }}
         >
           File
-        </span>
+        </button>
       </div>
 
-      {menuOpen && (
+      {menuOpen && !menuDisabled && (
         <div
           aria-hidden
           onClick={onMenuClose}
@@ -298,7 +301,7 @@ export default function Toolbar({
         />
       )}
 
-      {menuOpen && (
+      {menuOpen && !menuDisabled && (
         <div
           role="menu"
           aria-label="Project"

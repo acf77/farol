@@ -5,10 +5,12 @@ import type {
   AgentTaskRequest,
   AgentTaskStatus,
   AiProvider,
+  ModelChoice,
   Pipeline,
   PipelineRunResult
 } from '../shared/types'
 import {
+  aiSelectionLabel,
   cliFor,
   isAiProvider,
   isUnknownJsonFormatError,
@@ -108,6 +110,8 @@ interface Task {
   abort: AbortController
   /** Set on file writes / failed mandatory runs; cleared when they pass. */
   mandatoryOutstanding: boolean
+  /** Rungs of the mode's chain not yet tried; refilled when a turn begins. */
+  fallbacks: ModelChoice[]
   /** Bumped when a follow-up starts so a dying cycle cannot clobber it. */
   askEpoch: number
   questionSeq: number
@@ -129,6 +133,8 @@ type CycleScan = {
   assistant: string
   output: string
   blocked: string | null
+  /** The stop came from the CLI itself (quota, auth, context), not the agent. */
+  blockedByProvider: boolean
   shellInvocations: string[]
   filesChanged: boolean
   questions?: AgentQuestion[]
@@ -330,6 +336,7 @@ export class AgentController {
         mode,
         pipelines: request.pipelines.filter((pipeline) => pipeline.nodes.length)
       }
+      existing.fallbacks = [...(request.fallbacks ?? [])]
       this.emit({ kind: 'user', taskId: request.id, text: clean })
       this.followUp(existing, clean)
       return { ok: true }
@@ -353,6 +360,7 @@ export class AgentController {
       todos: [],
       abort: new AbortController(),
       mandatoryOutstanding: false,
+      fallbacks: [...(request.fallbacks ?? [])],
       askEpoch: 0,
       questionSeq: 0,
       todoSeq: 0
@@ -369,13 +377,14 @@ export class AgentController {
     provider?: AiProvider,
     pipelines?: Pipeline[],
     model?: string,
-    mode?: AgentTaskRequest['mode']
+    mode?: AgentTaskRequest['mode'],
+    fallbacks?: ModelChoice[]
   ): { ok: boolean; message?: string } {
     const task = this.tasks.get(taskId)
     const clean = text.trim()
     if (!task) return { ok: false, message: 'This agent task is no longer available.' }
     if (!clean) return { ok: false, message: 'Enter a message.' }
-    this.applyMessageOverrides(task, provider, model, mode, pipelines)
+    this.applyMessageOverrides(task, provider, model, mode, pipelines, fallbacks)
     this.emit({ kind: 'user', taskId, text: clean })
     if (task.pendingQuestions) {
       this.dismissPendingQuestions(task)
@@ -403,12 +412,14 @@ export class AgentController {
     provider: AiProvider | undefined,
     model: string | undefined,
     mode: AgentTaskRequest['mode'] | undefined,
-    pipelines: Pipeline[] | undefined
+    pipelines: Pipeline[] | undefined,
+    fallbacks: ModelChoice[] | undefined
   ): void {
     if (isAiProvider(provider)) {
       task.request.provider = provider
       task.request.model = normalizeModel(model)
     }
+    if (fallbacks) task.fallbacks = [...fallbacks]
     task.request.mode = normalizeMode(mode ?? task.request.mode, task.request.provider)
     if (pipelines) {
       const next = pipelines.filter((pipeline) => pipeline.nodes.length)
@@ -600,9 +611,11 @@ export class AgentController {
 
   private cycleSink(task: Task, scan: CycleScan): AgentSink {
     const check = (): void => {
-      const reason = blockedMarker(scan.assistant) ?? providerFailure(scan.output)
+      const agentStop = blockedMarker(scan.assistant)
+      const reason = agentStop ?? providerFailure(scan.output)
       if (!scan.blocked && reason) {
         scan.blocked = reason
+        scan.blockedByProvider = !agentStop
         if (task.process?.pid) killPidTree(task.process.pid)
       }
     }
@@ -842,17 +855,39 @@ export class AgentController {
     return this.completeCycle(task, attempt, 'Plan response complete')
   }
 
-  private async cycleAfterRun(
+  /**
+   * Step down the mode's fallback chain after a provider-side failure — a
+   * missing CLI, a non-zero exit, or a quota/auth banner. The agent's own
+   * FAROL_BLOCKED is excluded: that is a judgement about the task, and every
+   * other model would reach it too. Returns false once the chain is spent.
+   */
+  private switchToFallback(task: Task, reason: string): boolean {
+    const next = task.fallbacks.shift()
+    if (!next) return false
+    const from = aiSelectionLabel(task.request.provider, task.request.model)
+    task.request.provider = next.agent
+    task.request.model = normalizeModel(next.model)
+    task.request.mode = normalizeMode(task.request.mode, next.agent)
+    this.emit({
+      kind: 'provider',
+      taskId: task.request.id,
+      provider: task.request.provider,
+      model: task.request.model,
+      mode: task.request.mode,
+      reason: `${from} failed (${reason}) — retrying with ${aiSelectionLabel(next.agent, next.model)}.`
+    })
+    return true
+  }
+
+  /**
+   * Questions reach us either scanned from the stream or as a marker in the
+   * final text. Returns null when the turn asked nothing.
+   */
+  private questionsAfterRun(
     task: Task,
     attempt: number,
-    scan: CycleScan,
-    code: number
-  ): Promise<CycleAttemptResult> {
-    if (task.cancelled) {
-      this.settleCancel(task)
-      return { kind: 'done' }
-    }
-    await this.applyTodos(task, scan.assistant)
+    scan: CycleScan
+  ): CycleAttemptResult | null {
     const marked = scan.questions ? null : parseQuestionsMarker(scan.assistant)
     if (marked && 'error' in marked) {
       return {
@@ -864,17 +899,40 @@ export class AgentController {
       }
     }
     const questions = scan.questions ?? (marked && 'questions' in marked ? marked.questions : undefined)
-    if (questions?.length) {
-      this.pauseForQuestions(task, attempt, questions, scan.questionId)
+    if (!questions?.length) return null
+    this.pauseForQuestions(task, attempt, questions, scan.questionId)
+    return { kind: 'done' }
+  }
+
+  private async cycleAfterRun(
+    task: Task,
+    attempt: number,
+    scan: CycleScan,
+    code: number,
+    prompt: string
+  ): Promise<CycleAttemptResult> {
+    if (task.cancelled) {
+      this.settleCancel(task)
       return { kind: 'done' }
     }
+    await this.applyTodos(task, scan.assistant)
+    const asked = this.questionsAfterRun(task, attempt, scan)
+    if (asked) return asked
     if (scan.blocked) {
+      // The same turn, on the next model down the chain — nothing was produced
+      // to repair, so the attempt counter does not move.
+      if (scan.blockedByProvider && this.switchToFallback(task, scan.blocked)) {
+        return { kind: 'retry', rewindAttempt: true, prompt }
+      }
       // A follow-up may already be queued with a switched provider (e.g. after
       // a usage limit). Surface the stop, then continue that message.
       this.finishOrContinue(task, attempt, 'needs-attention', `Agent stopped: ${scan.blocked}`)
       return { kind: 'done' }
     }
     if (code !== 0) {
+      if (this.switchToFallback(task, `exit code ${code}`)) {
+        return { kind: 'retry', rewindAttempt: true, prompt }
+      }
       this.finishOrContinue(task, attempt, 'needs-attention', `Agent exited with code ${code}`)
       return { kind: 'done' }
     }
@@ -909,6 +967,7 @@ export class AgentController {
       assistant: '',
       output: '',
       blocked: null,
+      blockedByProvider: false,
       shellInvocations: [],
       filesChanged: false
     }
@@ -918,7 +977,7 @@ export class AgentController {
       ? await this.executor(task.request, prompt, sink.text, sink.tool)
       : await this.runAgent(task, prompt, sink)
     if (task.askEpoch !== epoch) return { kind: 'done' }
-    return await this.cycleAfterRun(task, attempt, scan, code)
+    return await this.cycleAfterRun(task, attempt, scan, code, prompt)
   }
 
   private async cycle(task: Task, opening: string): Promise<void> {
