@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { AppSettings } from '@shared/types'
-import { AI_LABELS, pickerProviders, providerModels, type AiProvider } from '@shared/ai'
+import type { AgentMode, AppSettings, ModelChoice } from '@shared/types'
+import {
+  AI_LABELS,
+  hasReviewGate,
+  pickerProviders,
+  providerModels,
+  type AiProvider
+} from '@shared/ai'
 import { OPENROUTER_API_URL } from '@shared/openrouter'
-import { withAgentModel, withCommitMessageModel } from '@shared/settings'
+import { withAgentModel, withCommitMessageModel, withModeChain } from '@shared/settings'
 import { C, UI } from '../theme'
 import { Button, Checkbox, CliModelDropdown, SegmentedControl } from './controls'
+import { ChevronDown, ChevronUp } from './icons'
 import { CHROME_ROW } from './side-panel'
 
 interface Props {
@@ -22,12 +29,20 @@ const TABS: readonly { value: TabKey; label: string }[] = [
   { value: 'models', label: 'Models' }
 ]
 
+const card: React.CSSProperties = {
+  border: `1px solid ${C.cardBorder}`,
+  borderRadius: 12,
+  background: C.card,
+  padding: 16,
+  minWidth: 0
+}
+
 const field: React.CSSProperties = {
   height: 28,
   padding: '0 8px',
   borderRadius: 7,
-  border: `1px solid ${C.border}`,
-  background: C.card,
+  border: `1px solid ${C.cardBorder}`,
+  background: C.terminal,
   color: C.text,
   fontSize: 12.5
 }
@@ -42,9 +57,9 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <section>
-      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: hint ? 4 : 8 }}>{title}</div>
-      {hint && <div style={{ fontSize: 11.5, color: C.textMuted, marginBottom: 10 }}>{hint}</div>}
+    <section style={card}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: hint ? 4 : 10 }}>{title}</div>
+      {hint && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.45, marginBottom: 14 }}>{hint}</div>}
       {children}
     </section>
   )
@@ -80,6 +95,87 @@ function ModelRow({
         ))}
       </select>
     </label>
+  )
+}
+
+/**
+ * One mode's ordered chain. Farol starts a chat on the top rung and walks down
+ * whenever a CLI fails for reasons the agent cannot fix (missing binary,
+ * non-zero exit, usage or quota limit).
+ */
+function ModeChain({
+  mode,
+  settings,
+  onSettings
+}: {
+  mode: AgentMode
+  settings: AppSettings
+  onSettings: (next: AppSettings) => void
+}) {
+  const chain = settings.modeDefaults[mode]
+  // Plan is only enforceable where the CLI has a read-only review gate.
+  const only = mode === 'plan' ? hasReviewGate : undefined
+  const save = (next: ModelChoice[]): void => onSettings(withModeChain(settings, mode, next))
+  const move = (from: number, to: number): void => {
+    const next = [...chain]
+    const [rung] = next.splice(from, 1)
+    next.splice(to, 0, rung)
+    save(next)
+  }
+  const fallback = pickerProviders(settings.openrouter).find((p) => !only || only(p))
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {chain.map((rung, i) => (
+        <div key={`${rung.agent}:${rung.model ?? ''}`} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 18, flex: 'none', fontSize: 11.5, color: C.faint }}>{i + 1}.</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <CliModelDropdown
+              label={`${mode === 'plan' ? 'Plan' : 'Build'} model ${i + 1}`}
+              provider={rung.agent}
+              model={rung.model}
+              settings={settings}
+              only={only}
+              onChange={(agent, model) =>
+                save(chain.map((r, at) => (at === i ? { agent, ...(model ? { model } : {}) } : r)))
+              }
+            />
+          </div>
+          <Button
+            variant="ghost"
+            aria-label={`Move model ${i + 1} up`}
+            disabled={i === 0}
+            onClick={() => move(i, i - 1)}
+          >
+            <ChevronUp size={11} color="currentColor" />
+          </Button>
+          <Button
+            variant="ghost"
+            aria-label={`Move model ${i + 1} down`}
+            disabled={i === chain.length - 1}
+            onClick={() => move(i, i + 1)}
+          >
+            <ChevronDown size={11} color="currentColor" />
+          </Button>
+          <Button
+            variant="danger"
+            aria-label={`Remove model ${i + 1}`}
+            onClick={() => save(chain.filter((_, at) => at !== i))}
+          >
+            Remove
+          </Button>
+        </div>
+      ))}
+      <div>
+        <Button
+          variant="secondary"
+          disabled={!fallback}
+          onClick={() => fallback && save([...chain, { agent: fallback }])}
+        >
+          {chain.length ? 'Add fallback' : 'Add model'}
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -178,45 +274,54 @@ export default function SettingsPage({ settings, onSettings, onOpenRouterSetting
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '24px 16px' }}>
-        <div
-          style={{
-            maxWidth: 520,
-            margin: '0 auto',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 16
-          }}
-        >
-          {tab === 'general' ? (
-            <>
-              <Section title="Agent" hint="Starts new chats and picks up failures sent from a run.">
-                <select
-                  className="bf-input bf-focus"
-                  aria-label="Default agent"
-                  value={settings.agent}
-                  onChange={(e) => onSettings({ ...settings, agent: e.target.value as AiProvider })}
-                  style={{ ...field, width: '100%' }}
-                >
-                  {providers.map((p) => (
-                    <option key={p} value={p}>
-                      {AI_LABELS[p]}
-                    </option>
-                  ))}
-                </select>
-              </Section>
+        {tab === 'general' ? (
+          <div
+            style={{
+              maxWidth: 620,
+              margin: '0 auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 14
+            }}
+          >
+            <Section title="Agent" hint="Starts new chats and picks up failures sent from a run.">
+              <select
+                className="bf-input bf-focus"
+                aria-label="Default agent"
+                value={settings.agent}
+                onChange={(e) => onSettings({ ...settings, agent: e.target.value as AiProvider })}
+                style={{ ...field, width: '100%' }}
+              >
+                {providers.map((p) => (
+                  <option key={p} value={p}>
+                    {AI_LABELS[p]}
+                  </option>
+                ))}
+              </select>
+            </Section>
 
-              <Section title="Failures">
-                <Checkbox
-                  checked={settings.autoFix}
-                  onChange={(autoFix) => onSettings({ ...settings, autoFix })}
-                  style={{ fontSize: 12, color: C.textSoft }}
-                >
-                  Send a failed step&apos;s report straight to Chat
-                </Checkbox>
-              </Section>
-            </>
-          ) : (
-            <>
+            <Section title="Failures">
+              <Checkbox
+                checked={settings.autoFix}
+                onChange={(autoFix) => onSettings({ ...settings, autoFix })}
+                style={{ fontSize: 12, color: C.textSoft }}
+              >
+                Send a failed step&apos;s report straight to Chat
+              </Checkbox>
+            </Section>
+          </div>
+        ) : (
+          <div
+            style={{
+              maxWidth: 900,
+              margin: '0 auto',
+              display: 'grid',
+              gridTemplateColumns: configured ? 'minmax(0, 1fr) minmax(0, 1fr)' : 'minmax(0, 1fr)',
+              gap: 14,
+              alignItems: 'start'
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
               <Section
                 title="Default model"
                 hint="Each agent starts new chats with the model picked here. Pipeline steps keep their own."
@@ -231,6 +336,20 @@ export default function SettingsPage({ settings, onSettings, onOpenRouterSetting
                     />
                   ))}
                 </div>
+              </Section>
+
+              <Section
+                title="Build mode"
+                hint="New chats start on the first model. If it fails — CLI missing, non-zero exit, usage or quota limit — Farol retries the same turn on the next one down."
+              >
+                <ModeChain mode="build" settings={settings} onSettings={onSettings} />
+              </Section>
+
+              <Section
+                title="Plan mode"
+                hint="Only CLIs that can enforce a read-only gate are offered. Leave empty to keep whichever model the chat is already on."
+              >
+                <ModeChain mode="plan" settings={settings} onSettings={onSettings} />
               </Section>
 
               <Section
@@ -312,59 +431,59 @@ export default function SettingsPage({ settings, onSettings, onOpenRouterSetting
                 </div>
                 {error && <div style={{ fontSize: 12, color: C.red, marginBottom: 8 }}>{error}</div>}
               </Section>
+            </div>
 
-              {configured && (
-                <Section title="Pinned models" hint="Chat and pipelines list these under OpenRouter.">
-                  <input
-                    className="bf-input bf-focus"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Filter catalog…"
-                    spellCheck={false}
-                    style={{ ...field, width: '100%', marginBottom: 10 }}
-                  />
-                  {!catalog.length && (
-                    <div style={{ fontSize: 12, color: C.textMuted }}>
-                      {error
-                        ? 'Catalog unavailable.'
-                        : 'No tool-capable models yet. Refresh after saving a key.'}
-                    </div>
-                  )}
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 4,
-                      maxHeight: 360,
-                      overflow: 'auto'
-                    }}
-                  >
-                    {visible.map((m) => (
-                      <Checkbox
-                        key={m.id}
-                        checked={pinned.has(m.id)}
-                        onChange={(on) => {
-                          const current = or?.pinned ?? []
-                          const next = on
-                            ? [...current, m.id]
-                            : current.filter((id) => id !== m.id)
-                          void api.openrouter.setPinned(next).then((result) => apply(result))
-                        }}
-                        title={m.id}
-                        style={{ fontSize: 12, color: C.textSoft }}
-                      >
-                        <span>
-                          {m.label}
-                          <span style={{ color: C.faint, marginLeft: 6 }}>{m.id}</span>
-                        </span>
-                      </Checkbox>
-                    ))}
+            {configured && (
+              <Section title="Pinned models" hint="Chat and pipelines list these under OpenRouter.">
+                <input
+                  className="bf-input bf-focus"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Filter catalog…"
+                  spellCheck={false}
+                  style={{ ...field, width: '100%', marginBottom: 10 }}
+                />
+                {!catalog.length && (
+                  <div style={{ fontSize: 12, color: C.textMuted }}>
+                    {error
+                      ? 'Catalog unavailable.'
+                      : 'No tool-capable models yet. Refresh after saving a key.'}
                   </div>
-                </Section>
-              )}
-            </>
-          )}
-        </div>
+                )}
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                    maxHeight: 360,
+                    overflow: 'auto'
+                  }}
+                >
+                  {visible.map((m) => (
+                    <Checkbox
+                      key={m.id}
+                      checked={pinned.has(m.id)}
+                      onChange={(on) => {
+                        const current = or?.pinned ?? []
+                        const next = on
+                          ? [...current, m.id]
+                          : current.filter((id) => id !== m.id)
+                        void api.openrouter.setPinned(next).then((result) => apply(result))
+                      }}
+                      title={m.id}
+                      style={{ fontSize: 12, color: C.textSoft }}
+                    >
+                      <span>
+                        {m.label}
+                        <span style={{ color: C.faint, marginLeft: 6 }}>{m.id}</span>
+                      </span>
+                    </Checkbox>
+                  ))}
+                </div>
+              </Section>
+            )}
+          </div>
+        )}
       </div>
     </div>,
     document.body

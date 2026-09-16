@@ -308,6 +308,7 @@ export function CliModelMenu({
   model,
   pos,
   settings,
+  only,
   onPick,
   onClose
 }: {
@@ -315,13 +316,16 @@ export function CliModelMenu({
   model?: string
   pos: MenuPos
   settings?: AppSettings
+  /** Narrows the provider page — Plan mode only offers review-gated CLIs. */
+  only?: (provider: AiProvider) => boolean
   onPick: (provider: AiProvider, model: string | undefined) => void
   onClose: () => void
 }) {
   const [page, setPage] = useState<AiProvider | 'cli'>('cli')
   const current = normalizeAi(provider)
   const selectedModel = normalizeModel(model)
-  const providers = pickerProviders(settings?.openrouter)
+  const all = pickerProviders(settings?.openrouter)
+  const providers = only ? all.filter(only) : all
 
   const place: React.CSSProperties =
     'bottom' in pos ? { left: pos.left, bottom: pos.bottom } : { left: pos.left, top: pos.top }
@@ -453,12 +457,14 @@ export function CliModelDropdown({
   provider,
   model,
   settings,
+  only,
   onChange,
   label
 }: {
   provider: AiProvider
   model?: string
   settings?: AppSettings
+  only?: (provider: AiProvider) => boolean
   onChange: (provider: AiProvider, model: string | undefined) => void
   label?: string
 }) {
@@ -528,6 +534,7 @@ export function CliModelDropdown({
           provider={provider}
           model={model}
           settings={settings}
+          only={only}
           pos={pos}
           onPick={(p, m) => {
             onChange(p, m)

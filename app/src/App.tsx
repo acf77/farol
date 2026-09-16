@@ -27,7 +27,13 @@ import type {
 } from '@shared/types'
 import { AI_LABELS, aiFixPrompt, normalizeMode } from '@shared/ai'
 import { isFinishedPlan, sanitizePlan } from '@shared/questions'
-import { defaultSettings, withAgentModel, withCommitMessageModel } from '@shared/settings'
+import {
+  defaultSettings,
+  modeDefault,
+  modeFallbacks,
+  withAgentModel,
+  withCommitMessageModel
+} from '@shared/settings'
 import { sessionSeq } from '@shared/session'
 import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
 import { topoSort } from '@shared/graph'
@@ -405,7 +411,7 @@ function branchForTab(tab: Tab | undefined, projectPath: string, git: GitInfo): 
 
 function agentChatTab(owner: Tab, project: Project, branch: string, settings: AppSettings): Tab {
   const cwd = owner.panes[owner.focus]?.cwd || project.path
-  const model = settings.models[settings.agent]
+  const { agent, model } = modeDefault(settings, 'build')
   const taskId = scopedRuntimeId(project.path, `agent:${owner.id}:${Date.now()}`)
   const paneId = `ap:${taskId}`
   return {
@@ -426,7 +432,7 @@ function agentChatTab(owner: Tab, project: Project, branch: string, settings: Ap
         taskId,
         status: 'idle',
         attempt: 0,
-        provider: settings.agent,
+        provider: agent,
         mode: 'build',
         ...(model ? { model } : {}),
         messages: []
@@ -617,6 +623,12 @@ function applyAgentEvent(
       ...pane.messages,
       { role: 'user', text: asText(event.text), at: Date.now() }
     ])
+  }
+  if (event.kind === 'provider') {
+    return appendAgentMessages(
+      { ...pane, provider: event.provider, model: event.model, mode: event.mode },
+      [...pane.messages, { role: 'system', text: asText(event.reason) }]
+    )
   }
   if (event.kind === 'pipeline') {
     // Runner start/end owns the card. Only start-failed pipelines (error:) never emit a RunEvent.
@@ -2068,6 +2080,7 @@ function ProjectWorkspace({
       const model = modelOverride === null ? undefined : (modelOverride ?? pane.model)
       const requestedMode = modeOverride ?? pane.mode
       const mode = normalizeMode(requestedMode, provider)
+      const fallbacks = modeFallbacks(settingsRef.current, mode, provider, model)
 
       const failStart = (message?: string): void => {
         patchPane(pane.id, (current) =>
@@ -2098,6 +2111,7 @@ function ProjectWorkspace({
         provider,
         ...(model ? { model } : {}),
         mode,
+        ...(fallbacks.length ? { fallbacks } : {}),
         pipelines: availablePipelines,
         cwd: cwdOverride || pane.cwd,
         branch
@@ -2106,17 +2120,19 @@ function ProjectWorkspace({
         if (operation === 'message') {
           // Prefer start when the task is gone (e.g. after a restart).
           // Pass current pipelines so mid-chat edits (AI provider, steps) stick.
-          void api.agent.message(pane.taskId, clean, provider, availablePipelines, model, mode).then((result) => {
-            if (result.ok) return
-            runAgent('start')
-          })
+          void api.agent
+            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks)
+            .then((result) => {
+              if (result.ok) return
+              runAgent('start')
+            })
           return
         }
         void api.agent.start(startRequest).then((result) => {
           if (result.ok) return
           // Still winding down after Stop — queue with the selected provider.
           void api.agent
-            .message(pane.taskId, clean, provider, availablePipelines, model, mode)
+            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks)
             .then((queued) => {
               if (queued.ok) return
               failStart(result.message || queued.message)
@@ -2218,9 +2234,16 @@ function ProjectWorkspace({
     (mode: AgentMode) => {
       const pane = chatPane ?? ensureChat()?.pane
       if (!pane) return
-      const next = normalizeMode(mode, pane.provider)
-      patchPane(pane.id, (current) => (current.kind === 'agent' ? { ...current, mode: next } : current))
-      void api.agent.setProvider(pane.taskId, pane.provider, pane.model, next)
+      // A mode with its own chain configured switches model with the mode;
+      // without one, the pane keeps whatever is already selected.
+      const head = settingsRef.current.modeDefaults[mode][0]
+      const provider = head?.agent ?? pane.provider
+      const model = head ? head.model : pane.model
+      const next = normalizeMode(mode, provider)
+      patchPane(pane.id, (current) =>
+        current.kind === 'agent' ? { ...current, mode: next, provider, model } : current
+      )
+      void api.agent.setProvider(pane.taskId, provider, model, next)
     },
     [chatPane, ensureChat, patchPane]
   )
