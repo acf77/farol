@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { GitInfo, WorktreeRequest } from '@shared/types'
 import { branchNameError, worktreeFolderName } from '@shared/worktree'
 import { C, MONO, glass as G } from '../theme'
@@ -77,12 +77,15 @@ function ExistingWorkspaces({
   onPick: (value: string) => void
   onOpen: () => void
 }) {
+  const selectId = useId()
   const canOpen = !!existingPick && !busy
   return (
     <>
       <div style={row}>
-        <span style={label}>Open existing</span>
+        <label htmlFor={selectId} style={label}>Open existing</label>
         <select
+          id={selectId}
+          className="bf-input bf-focus"
           value={existingPick}
           disabled={busy}
           onChange={(e) => onPick(e.target.value)}
@@ -102,6 +105,7 @@ function ExistingWorkspaces({
         </select>
         <button
           type="button"
+          className="bf-focus"
           disabled={!canOpen}
           onClick={onOpen}
           style={{
@@ -158,10 +162,13 @@ function BaseBranchSelect({
   git: GitInfo
   onChange: (value: string) => void
 }) {
+  const selectId = useId()
   return (
     <div style={row}>
-      <span style={label}>From branch</span>
+      <label htmlFor={selectId} style={label}>From branch</label>
       <select
+        id={selectId}
+        className="bf-input bf-focus"
         value={base}
         disabled={!!existing}
         onChange={(e) => onChange(e.target.value)}
@@ -232,6 +239,7 @@ function DialogActions({
       <div style={{ flex: 1 }} />
       <button
         type="button"
+        className="bf-focus"
         onClick={onCancel}
         style={{
           height: 26,
@@ -248,7 +256,7 @@ function DialogActions({
       </button>
       <button
         type="submit"
-        className="bf-btn-primary"
+        className="bf-btn-primary bf-focus"
         disabled={!canSubmit}
         style={{
           height: 26,
@@ -283,7 +291,14 @@ export default function NewTabDialog({
   const [branch, setBranch] = useState('')
   const [folder, setFolder] = useState('')
   const [existingPick, setExistingPick] = useState('')
+  const titleId = useId()
+  const descriptionId = useId()
+  const branchId = useId()
+  const folderId = useId()
+  const nameHintId = useId()
+  const errorId = useId()
   const branchRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDialogElement>(null)
 
   const workspaces = useMemo(() => {
     const trees = [...(git.worktrees ?? [])]
@@ -297,10 +312,20 @@ export default function NewTabDialog({
     return trees
   }, [git.worktrees, projectPath])
 
-  useEffect(() => {
-    if (workspaces.length) return
-    branchRef.current?.focus()
-  }, [workspaces.length])
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    const previousFocus = document.activeElement
+    dialog.showModal()
+    branchRef.current?.focus({ preventScroll: true })
+    return () => {
+      const restore = dialog.contains(document.activeElement) || document.activeElement === document.body
+      dialog.close()
+      if (restore && previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+        previousFocus.focus({ preventScroll: true })
+      }
+    }
+  }, [])
 
   const name = branch.trim()
   const nameError = name ? branchNameError(name) : null
@@ -327,21 +352,55 @@ export default function NewTabDialog({
   }
 
   return (
-    <div
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') {
-          e.stopPropagation()
-          onCancel()
-        }
+    <dialog
+      ref={dialogRef}
+      className="bf-new-tab-dialog bf-page-overlay"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      onCancel={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onCancel()
       }}
-      style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'grid', placeItems: 'center' }}
+      onKeyDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCancel()
+      }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        width: '100%',
+        height: '100%',
+        maxWidth: 'none',
+        maxHeight: 'none',
+        margin: 0,
+        padding: 16,
+        border: 'none',
+        boxSizing: 'border-box',
+        display: 'grid',
+        placeItems: 'center',
+        background: 'rgba(0,0,0,0.45)',
+        color: C.text,
+        font: 'inherit',
+        overflow: 'auto'
+      }}
     >
-      <div onClick={onCancel} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)' }} />
+      <style>{`
+        .bf-new-tab-dialog:not([open]) { display: none !important; }
+        .bf-new-tab-dialog::backdrop { background: transparent; }
+        .bf-new-tab-dialog > form > * { flex-shrink: 0; }
+      `}</style>
       <form
         onSubmit={submit}
+        aria-describedby={error ? errorId : undefined}
         style={{
           position: 'relative',
-          width: 400,
+          width: 434,
+          maxWidth: '100%',
+          maxHeight: 'calc(100dvh - 32px)',
+          boxSizing: 'border-box',
+          overflow: 'auto',
+          overflowWrap: 'anywhere',
           padding: 16,
           borderRadius: 10,
           background: liquid ? G.panel : C.panel,
@@ -352,8 +411,8 @@ export default function NewTabDialog({
           gap: 11
         }}
       >
-        <div style={{ fontSize: 13, fontWeight: 600, color: C.textStrong }}>Open branch as project</div>
-        <div style={{ fontSize: 11.5, color: C.textMuted, lineHeight: 1.4, marginTop: -4 }}>
+        <div id={titleId} style={{ fontSize: 13, fontWeight: 600, color: C.textStrong }}>Open branch as project</div>
+        <div id={descriptionId} style={{ fontSize: 11.5, color: C.textMuted, lineHeight: 1.4, marginTop: -4 }}>
           Each branch gets its own worktree and project. Tabs inside a project share that checkout.
         </div>
 
@@ -371,10 +430,13 @@ export default function NewTabDialog({
         <BaseBranchSelect base={base} existing={existing} git={git} onChange={setBase} />
 
         <div style={row}>
-          <span style={label}>New branch</span>
+          <label htmlFor={branchId} style={label}>New branch</label>
           <input
+            id={branchId}
             ref={branchRef}
-            className="bf-input"
+            className="bf-input bf-focus"
+            aria-invalid={!!nameError}
+            aria-describedby={`${nameHintId}${error ? ` ${errorId}` : ''}`}
             value={branch}
             onChange={(e) => setBranch(e.target.value)}
             placeholder="ci/lint"
@@ -384,9 +446,11 @@ export default function NewTabDialog({
         </div>
 
         <div style={row}>
-          <span style={label}>Folder</span>
+          <label htmlFor={folderId} style={label}>Folder</label>
           <input
-            className="bf-input"
+            id={folderId}
+            className="bf-input bf-focus"
+            aria-describedby={`${nameHintId}${error ? ` ${errorId}` : ''}`}
             value={folder}
             onChange={(e) => setFolder(e.target.value)}
             placeholder={defaultFolder}
@@ -395,7 +459,7 @@ export default function NewTabDialog({
           />
         </div>
 
-        <div style={{ minHeight: 15, paddingLeft: 102, fontSize: 11, lineHeight: '15px' }}>
+        <div id={nameHintId} role="status" aria-atomic="true" style={{ minHeight: 15, paddingLeft: 102, fontSize: 11, lineHeight: '15px', overflowWrap: 'anywhere' }}>
           <BranchHint
             nameError={nameError}
             existing={existing}
@@ -404,24 +468,26 @@ export default function NewTabDialog({
           />
         </div>
 
-        {error && (
-          <div
-            style={{
-              padding: '5px 8px',
-              borderRadius: 6,
-              background: 'rgba(255, 98, 90,0.15)',
-              color: '#FF817B',
-              fontSize: 11
-            }}
-          >
-            {error}
-          </div>
-        )}
+        <div
+          id={errorId}
+          role="alert"
+          aria-atomic="true"
+          style={error ? {
+            padding: '5px 8px',
+            borderRadius: 6,
+            background: 'rgba(255, 98, 90,0.15)',
+            color: '#FF817B',
+            fontSize: 11,
+            overflowWrap: 'anywhere'
+          } : { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)' }}
+        >
+          {error}
+        </div>
 
         <div style={{ height: 1, background: 'rgba(255,255,255,0.09)' }} />
 
         <DialogActions busy={busy} canSubmit={canSubmit} onCancel={onCancel} />
       </form>
-    </div>
+    </dialog>
   )
 }

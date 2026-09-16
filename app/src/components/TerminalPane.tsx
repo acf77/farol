@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { C, MONO, PANE } from '../theme'
 import type { Tab, View } from '../types'
 import { leaves } from '../layout'
@@ -55,6 +55,18 @@ export default function TerminalPane({
 }: Props) {
   const shellCount = tabs.filter((t) => t.kind === 'shell').length
   const [ctx, setCtx] = useState<CtxMenu | null>(null)
+  const tabPrefix = useId()
+  const tabRefs = useRef(new Map<string, HTMLDivElement>())
+
+  const closeTab = (id: string): void => {
+    const tab = tabRefs.current.get(id)
+    if (tab?.contains(document.activeElement)) {
+      const index = tabs.findIndex((t) => t.id === id)
+      const next = tabs[index + 1] ?? tabs[index - 1]
+      if (next) tabRefs.current.get(next.id)?.focus()
+    }
+    onClose(id)
+  }
 
   useEffect(() => {
     if (!ctx) return
@@ -78,7 +90,10 @@ export default function TerminalPane({
   }
 
   const dotFor = (t: Tab): string =>
-    t.status === 'running' ? C.accentBright : t.status === 'pass' ? C.green : t.status === 'fail' ? C.red : '#777772'
+    t.status === 'running' ? C.accentBright : t.status === 'pass' ? C.green : t.status === 'fail' ? C.red : C.faint
+
+  const statusWord = (t: Tab): string =>
+    t.status === 'running' ? 'running' : t.status === 'pass' ? 'passed' : t.status === 'fail' ? 'failed' : ''
 
   const splitBtn = (label: string, title: string, onClick: () => void, Icon: typeof SplitRightIcon) => (
     <button
@@ -97,7 +112,7 @@ export default function TerminalPane({
         border: 0,
         borderRadius: 5,
         background: 'transparent',
-        color: canSplit ? '#A1A19A' : '#777772',
+        color: canSplit ? C.textMuted : C.faint,
         display: 'grid',
         placeItems: 'center',
         cursor: canSplit ? 'pointer' : 'default'
@@ -120,33 +135,64 @@ export default function TerminalPane({
           borderBottom: '1px solid #3E3E3A'
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'stretch', height: '100%', minWidth: 0, overflow: 'hidden' }}>
+        <div
+          role="tablist"
+          aria-label="Terminal tabs"
+          style={{
+            display: 'flex',
+            alignItems: 'stretch',
+            height: '100%',
+            minWidth: 0,
+            overflowX: 'auto',
+            overflowY: 'hidden'
+          }}
+        >
           {tabs.map((t) => {
             const on = t.id === activeId
             const canClose = !(t.kind === 'shell' && shellCount <= 1)
             const paneCount = leaves(t.root).length
+            const status = statusWord(t)
             return (
               <div
                 key={t.id}
                 className={`bf-term-tab${on ? ' bf-term-tab-active' : ''}`}
+                ref={(element) => {
+                  if (element) tabRefs.current.set(t.id, element)
+                  else tabRefs.current.delete(t.id)
+                }}
+                id={`${tabPrefix}-tab-${t.id}`}
                 role="tab"
+                aria-controls={`${tabPrefix}-panel-${t.id}`}
                 aria-selected={on}
-                tabIndex={0}
+                tabIndex={on ? 0 : -1}
                 onClick={() => onSelect(t.id)}
                 onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
                     onSelect(t.id)
+                  } else if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+                    e.preventDefault()
+                    const index = tabs.indexOf(t)
+                    const nextIndex = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1
+                      : (index + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+                    const next = tabs[nextIndex]
+                    onSelect(next.id)
+                    tabRefs.current.get(next.id)?.focus()
+                  } else if (e.key === 'Delete' && canClose) {
+                    e.preventDefault()
+                    closeTab(t.id)
                   }
                 }}
                 onAuxClick={(e) => {
-                  if (e.button === 1 && canClose) onClose(t.id)
+                  if (e.button === 1 && canClose) closeTab(t.id)
                 }}
                 onContextMenu={(e) => {
                   onSelect(t.id)
                   openCtx(e)
                 }}
-                title={t.branch && t.branch !== branch ? `${t.title} — on ${t.branch}` : t.title}
+                title={t.branch && t.branch !== branch ? `${t.title} (on ${t.branch})` : t.title}
+                aria-label={`${t.title}${t.branch && t.branch !== branch ? ` (on ${t.branch})` : ''}${status ? `, ${status}` : ''}`}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -197,18 +243,23 @@ export default function TerminalPane({
                   </span>
                 )}
                 {canClose && (
-                  <span
-                    className="bf-tab-close"
+                  <button
+                    type="button"
+                    className="bf-tab-close bf-focus"
                     onClick={(e) => {
                       e.stopPropagation()
-                      onClose(t.id)
+                      closeTab(t.id)
                     }}
                     title="Close tab (⌘W)"
+                    aria-label={`Close ${t.title}`}
                     style={{
                       flex: 'none',
                       width: 14,
                       height: 14,
+                      padding: 0,
+                      border: 'none',
                       borderRadius: 4,
+                      background: 'transparent',
                       display: 'grid',
                       placeItems: 'center',
                       fontSize: 11,
@@ -217,22 +268,27 @@ export default function TerminalPane({
                     }}
                   >
                     ×
-                  </span>
+                  </button>
                 )}
               </div>
             )
           })}
         </div>
 
-        <div
-          className="bf-icon-btn"
+        <button
+          type="button"
+          className="bf-focus bf-icon-btn"
           onClick={onNew}
           title="New terminal tab (⌘T)"
+          aria-label="New terminal tab"
           style={{
             width: 24,
             height: 24,
             flex: 'none',
-            borderRadius: 7,
+            padding: 0,
+            border: 'none',
+            background: 'transparent',
+            borderRadius: 8,
             display: 'grid',
             placeItems: 'center',
             color: '#A1A19A',
@@ -241,7 +297,7 @@ export default function TerminalPane({
           }}
         >
           +
-        </div>
+        </button>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 'none' }}>
           {splitBtn('Split right', 'Split right (⌘D)', onSplitRight, SplitRightIcon)}

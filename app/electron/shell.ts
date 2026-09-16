@@ -147,6 +147,6 @@ export class ShellManager {
   }
 
   disposeAll(): void {
-    for (const paneId of [...this.sessions.keys()]) this.dispose(paneId)
+    for (const paneId of this.sessions.keys()) this.dispose(paneId)
   }
 }

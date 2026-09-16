@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { CONTROL_MARKERS } from '@shared/questions'
 import { C, MONO } from './theme'
 
@@ -39,7 +39,7 @@ function inline(text: string, keyPrefix: string, depth = 0): ReactNode[] {
       )
     } else if (bold) {
       nodes.push(
-        <strong key={key} style={{ fontWeight: 600, color: '#F0F0EC' }}>
+        <strong key={key} style={{ fontWeight: 600, color: C.text }}>
           {inline(bold.slice(2, -2), key, depth + 1)}
         </strong>
       )
@@ -72,20 +72,22 @@ function inline(text: string, keyPrefix: string, depth = 0): ReactNode[] {
 function heading(level: number, text: string, key: string): ReactNode {
   const size = level === 1 ? 18 : level === 2 ? 15.5 : 13.5
   const weight = level <= 2 ? 600 : 500
+  const Tag = (level === 1 ? 'h1' : level === 2 ? 'h2' : 'h3') as 'h1' | 'h2' | 'h3'
   return (
-    <div
+    <Tag
       key={key}
       style={{
         fontSize: size,
         fontWeight: weight,
         letterSpacing: level === 1 ? '-0.2px' : undefined,
-        color: '#F0F0EC',
+        color: C.text,
+        margin: 0,
         marginTop: level === 1 ? 4 : 2,
         marginBottom: 2
       }}
     >
       {inline(text, key)}
-    </div>
+    </Tag>
   )
 }
 
@@ -96,14 +98,14 @@ function codeBlock(body: string, lang: string | undefined, key: string): ReactNo
       style={{
         margin: '4px 0',
         padding: '12px 14px',
-        background: '#181817',
-        border: '1px solid #3E3E3A',
-        borderRadius: 9,
+        background: C.terminal,
+        border: `1px solid ${C.border}`,
+        borderRadius: 8,
         overflowX: 'auto',
         fontFamily: MONO,
         fontSize: 12,
         lineHeight: 1.5,
-        color: '#C4C4BE'
+        color: C.textRow
       }}
     >
       {lang ? (
@@ -116,12 +118,12 @@ function codeBlock(body: string, lang: string | undefined, key: string): ReactNo
 
 function listItem(text: string, ordered: boolean, index: number, key: string): ReactNode {
   return (
-    <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+    <li key={key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
       <span
         style={{
           flex: 'none',
           minWidth: ordered ? 18 : 10,
-          color: '#A1A19A',
+          color: C.textMuted,
           fontFamily: ordered ? MONO : 'inherit',
           fontSize: ordered ? 12 : 13.5,
           lineHeight: 1.6
@@ -130,7 +132,7 @@ function listItem(text: string, ordered: boolean, index: number, key: string): R
         {ordered ? `${index}.` : '•'}
       </span>
       <span style={{ flex: 1, minWidth: 0 }}>{inline(text, key)}</span>
-    </div>
+    </li>
   )
 }
 
@@ -300,7 +302,7 @@ function parseHr(line: string, key: string, next: number): BlockParse | null {
   if (!/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) return null
   return {
     node: (
-      <hr key={key} style={{ border: 'none', borderTop: '1px solid #3E3E3A', margin: '10px 0' }} />
+      <hr key={key} style={{ border: 'none', borderTop: `1px solid ${C.border}`, margin: '10px 0' }} />
     ),
     next
   }
@@ -319,9 +321,9 @@ function parseQuote(lines: string[], i: number, key: string): BlockParse | null 
       <div
         key={key}
         style={{
-          borderLeft: '2px solid #3E3E3A',
+          borderLeft: `2px solid ${C.border}`,
           paddingLeft: 12,
-          color: '#A1A19A',
+          color: C.textMuted,
           display: 'flex',
           flexDirection: 'column',
           gap: 4
@@ -351,11 +353,22 @@ function parseList(
     items.push(lines[j].replace(strip, ''))
     j++
   }
+  const List = ordered ? 'ol' : 'ul'
   return {
     node: (
-      <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <List
+        key={key}
+        style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 3
+        }}
+      >
         {items.map((item, ii) => listItem(item, ordered, ii + 1, `${key}-i${ii}`))}
-      </div>
+      </List>
     ),
     next: j
   }
@@ -429,20 +442,21 @@ export function renderMarkdown(source: string): ReactNode[] {
 }
 
 export function MarkdownBody({ text }: { text: string }) {
-  let body: ReactNode
-  try {
-    body = renderMarkdown(typeof text === 'string' ? text : String(text ?? ''))
-  } catch (error) {
-    console.error('[farol] markdown render failed', error)
-    body = typeof text === 'string' ? text : String(text ?? '')
-  }
+  const body = useMemo<ReactNode>(() => {
+    try {
+      return renderMarkdown(text)
+    } catch (error) {
+      console.error('[farol] markdown render failed', error)
+      return text
+    }
+  }, [text])
   return (
     <div
       className="bf-md"
       style={{
         fontSize: 13.5,
         lineHeight: 1.6,
-        color: '#F0F0EC',
+        color: C.text,
         textWrap: 'pretty',
         display: 'flex',
         flexDirection: 'column',
