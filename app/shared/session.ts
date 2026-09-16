@@ -84,6 +84,12 @@ export function sanitizeOpenProjects(
   return { openProjects, activeProject }
 }
 
+/** Projects that left the workspace between two saved lists. */
+export function closedProjects(previous: string[], next: string[]): string[] {
+  const open = new Set(next.map((projectPath) => projectPath.replace(/[/\\]+$/, '')))
+  return previous.filter((projectPath) => !open.has(projectPath.replace(/[/\\]+$/, '')))
+}
+
 export function savedLeaves(n: SavedNode, out: string[] = []): string[] {
   if (n.t === 'leaf') out.push(n.id)
   else {

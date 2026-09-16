@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sanitizeOpenProjects, sanitizeSession, sessionSeq } from './session'
+import { closedProjects, sanitizeOpenProjects, sanitizeSession, sessionSeq } from './session'
 
 const splitTab = {
   id: 'sh2',
@@ -82,6 +82,12 @@ describe('sanitizeSession', () => {
 describe('sessionSeq', () => {
   it('walks tab, pane, and split ids so new ones do not collide', () => {
     expect(sessionSeq([splitTab])).toEqual({ shell: 2, pane: 2, split: 1 })
+  })
+})
+
+describe('closedProjects', () => {
+  it('returns paths that left the workspace, ignoring trailing slashes', () => {
+    expect(closedProjects(['/a', '/b/'], ['/b', '/c'])).toEqual(['/a'])
   })
 })
 

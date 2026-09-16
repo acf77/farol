@@ -259,6 +259,7 @@ describe('managedAiCommand', () => {
       '--verbose',
       '--permission-mode',
       'bypassPermissions',
+      '--strict-mcp-config',
       '--model',
       'opus',
       'fix this'

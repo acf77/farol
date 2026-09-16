@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentTaskEvent, AgentTaskRequest, PipelineRunResult } from '../shared/types'
 import { failureReport } from '../shared/failure'
+import { TODOS_MARKER, type TodoStore } from '../shared/todos'
 import { AgentController, type AgentExecutor } from './agent-controller'
 
 const request: AgentTaskRequest = {
@@ -61,6 +62,50 @@ const lintMandatory = {
 }
 
 describe('AgentController', () => {
+  it('stores the checkout todo list and shows the update as a tool card', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    const store: TodoStore = {
+      load: vi.fn().mockResolvedValue([]),
+      save: vi.fn().mockResolvedValue(undefined),
+      forget: vi.fn()
+    }
+    const execute = vi.fn().mockImplementation(async (_request, _prompt, output: (chunk: string) => void) => {
+      output(`${TODOS_MARKER} [{"content":"Ship it","status":"in_progress","priority":"high"}]\nFAROL_PIPELINES: []\n`)
+      return 0
+    })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute, store)
+
+    controller.start({ ...request, provider: 'codex' })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(store.save).toHaveBeenCalledWith(request.cwd, [
+      { content: 'Ship it', status: 'in_progress', priority: 'high' }
+    ])
+    expect(events.some((event) => event.kind === 'tool' && event.name === 'todo')).toBe(true)
+  })
+
+  it('injects the stored list into the next turn', async () => {
+    const run = vi.fn()
+    const store: TodoStore = {
+      load: vi.fn().mockResolvedValue([{ content: 'Existing', status: 'pending', priority: 'low' }]),
+      save: vi.fn().mockResolvedValue(undefined),
+      forget: vi.fn()
+    }
+    const execute = vi.fn().mockImplementation(async (_request, _prompt, output: (chunk: string) => void) => {
+      output('ok\nFAROL_PIPELINES: []\n')
+      return 0
+    })
+    const controller = new AgentController({ run }, () => {}, execute, store)
+
+    controller.start({ ...request, provider: 'codex' })
+    await vi.waitFor(() => expect(execute).toHaveBeenCalled())
+
+    expect(execute.mock.calls[0][1]).toContain('- [pending] (low) Existing')
+  })
+
   it('finishes Plan mode without running validation and marks the handoff', async () => {
     const events: AgentTaskEvent[] = []
     const run = vi.fn()

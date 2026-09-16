@@ -32,6 +32,8 @@ import { isAiProvider } from '../shared/ai'
 import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
 import { appendTail, plainText } from '../shared/terminal'
 import { AgentController } from './agent-controller'
+import { createTodoStore } from './todos'
+import { closedProjects } from '../shared/session'
 import { scopedRuntimeId } from '../shared/runtime'
 import net from 'net'
 import os from 'os'
@@ -53,7 +55,8 @@ const runner = new PipelineRunner((e: RunEvent) => {
   send('run:event', e)
   for (const run of agentRuns) run.onEvent(e)
 })
-const agents = new AgentController(runner, (event) => send('agent:event', event))
+const todos = createTodoStore(() => app.getPath('userData'))
+const agents = new AgentController(runner, (event) => send('agent:event', event), undefined, todos)
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
 )
@@ -554,8 +557,12 @@ function registerSessionIpc(): void {
   ipcMain.handle('session:openProjects', () => loadOpenProjects())
   ipcMain.handle(
     'session:saveOpenProjects',
-    (_e, paths: string[], activePath: string | null) =>
-      saveOpenProjects(Array.isArray(paths) ? paths : [], activePath)
+    async (_e, paths: string[], activePath: string | null) => {
+      const next = Array.isArray(paths) ? paths : []
+      const previous = (await loadOpenProjects()).paths
+      await saveOpenProjects(next, activePath)
+      await Promise.all(closedProjects(previous, next).map((checkout) => todos.forget(checkout)))
+    }
   )
   ipcMain.handle('session:load', (_e, projectPath: string) =>
     loadProjectSession(projectPath, projectPath)

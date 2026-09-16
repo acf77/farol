@@ -18,6 +18,7 @@ import {
   normalizeModel
 } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
+import { lastControlLine } from '../shared/control-line'
 import {
   BLOCK_MARKER,
   FINISHED_PLAN,
@@ -35,6 +36,15 @@ import {
   matchedCatalogShells,
   pipelinesForCatalogCmds
 } from '../shared/catalog-shell'
+import {
+  MAX_TODOS_MARKER_LENGTH,
+  TODOS_MARKER,
+  formatTodos,
+  parseTodosMarker,
+  todoSummary,
+  type Todo,
+  type TodoStore
+} from '../shared/todos'
 import {
   isWriteToolName,
   mandatoryOptOutError,
@@ -94,12 +104,14 @@ interface Task {
   disposeWhenIdle: boolean
   guidance: string[]
   pipelineRuns: PipelineActivity[]
+  todos: Todo[]
   abort: AbortController
   /** Set on file writes / failed mandatory runs; cleared when they pass. */
   mandatoryOutstanding: boolean
   /** Bumped when a follow-up starts so a dying cycle cannot clobber it. */
   askEpoch: number
   questionSeq: number
+  todoSeq: number
   pendingQuestions?: { requestId: string; questions: AgentQuestion[] }
 }
 
@@ -127,7 +139,7 @@ type CycleAttemptResult = { kind: 'done' } | { kind: 'retry'; prompt: string; re
 
 const DEFAULT_MAX_ATTEMPTS = 5
 /** How much trailing output the marker and failure scans keep in memory. */
-const SCAN_WINDOW = 16_384
+const SCAN_WINDOW = Math.max(16_384, MAX_TODOS_MARKER_LENGTH)
 /** Cap stored prompt history so long chats cannot retain unbounded text. */
 const MAX_PROMPT_CHARS = 100_000
 /** Cap pipeline activity retained for prompt context. */
@@ -236,14 +248,10 @@ function catalogShellBypassError(
 }
 
 function parsePipelineIds(output: string): { ids: string[] } | { error: string } {
-  const marker = output.lastIndexOf(PIPELINES_MARKER)
-  if (marker < 0) {
+  const raw = lastControlLine(output, PIPELINES_MARKER)
+  if (raw === undefined) {
     return { error: `End your response with ${PIPELINES_MARKER} followed by a JSON array of pipeline ids.` }
   }
-  const raw = output
-    .slice(marker + PIPELINES_MARKER.length)
-    .split(/\r?\n/, 1)[0]
-    .trim()
   try {
     const ids = JSON.parse(raw) as unknown
     if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) {
@@ -304,7 +312,8 @@ export class AgentController {
   constructor(
     private runner: ValidationRunner,
     private emit: (event: AgentTaskEvent) => void,
-    private executor?: AgentExecutor
+    private executor?: AgentExecutor,
+    private todoStore?: TodoStore
   ) {}
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
@@ -341,10 +350,12 @@ export class AgentController {
       disposeWhenIdle: false,
       guidance: [],
       pipelineRuns: [],
+      todos: [],
       abort: new AbortController(),
       mandatoryOutstanding: false,
       askEpoch: 0,
-      questionSeq: 0
+      questionSeq: 0,
+      todoSeq: 0
     }
     this.tasks.set(request.id, task)
     this.emit({ kind: 'user', taskId: request.id, text: clean })
@@ -643,6 +654,41 @@ export class AgentController {
     }
   }
 
+  private async loadTodos(task: Task): Promise<void> {
+    if (!this.todoStore) return
+    task.todos = await this.todoStore.load(task.request.cwd).catch(() => task.todos)
+  }
+
+  private async applyTodos(task: Task, assistant: string): Promise<void> {
+    const todos = parseTodosMarker(assistant)
+    if (!todos) return
+    const previous = task.todos
+    task.todos = todos
+    task.todoSeq += 1
+    const toolId = `${task.request.id}:todos:${task.todoSeq}`
+    try {
+      await this.todoStore?.save(task.request.cwd, todos)
+      this.emit({
+        kind: 'tool',
+        taskId: task.request.id,
+        toolId,
+        name: 'todo',
+        detail: todoSummary(todos),
+        state: 'done'
+      })
+    } catch (error) {
+      task.todos = previous
+      this.emit({
+        kind: 'tool',
+        taskId: task.request.id,
+        toolId,
+        name: 'todo',
+        detail: error instanceof Error ? error.message : 'Could not save the todo list',
+        state: 'error'
+      })
+    }
+  }
+
   private async runValidationPipelines(
     task: Task,
     pipelines: Pipeline[],
@@ -806,6 +852,7 @@ export class AgentController {
       this.settleCancel(task)
       return { kind: 'done' }
     }
+    await this.applyTodos(task, scan.assistant)
     const marked = scan.questions ? null : parseQuestionsMarker(scan.assistant)
     if (marked && 'error' in marked) {
       return {
@@ -876,6 +923,7 @@ export class AgentController {
 
   private async cycle(task: Task, opening: string): Promise<void> {
     const maxAttempts = Math.max(1, Math.min(20, task.request.maxAttempts ?? DEFAULT_MAX_ATTEMPTS))
+    await this.loadTodos(task)
     let prompt = this.prompt(task, opening)
     let attempt = 0
     try {
@@ -926,19 +974,29 @@ export class AgentController {
         ? `Plan mode is read-only. You may inspect the project, ask clarifying questions, and propose a plan, but must not change project files or modify external systems. A finished plan ends with exactly one final line: ${FINISHED_PLAN}. If you need a decision, end with ${QUESTIONS_MARKER}. For an ordinary non-final response, end with ${PIPELINES_MARKER} []. Do not emit ${FINISHED_PLAN} until the plan is complete and ready for the developer to execute. Farol will never run pipelines from a Plan response.`
         : `When the requested file change is complete, select every relevant validation pipeline from the catalog below. If you made no file changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
       plan ? '' : mandatoryNote,
+      this.todoContext(task),
       plan
         ? `Do not run validation pipelines in Plan mode.`
         : `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
       `Do not call the Farol MCP tools in this managed Chat session. They are not available here — they require approval in some providers, and the managed harness executes your selected pipelines directly.`,
       plan
-        ? `End every response with exactly one line: ${QUESTIONS_MARKER} [...] when you need a decision, ${FINISHED_PLAN} when the plan is complete, or ${PIPELINES_MARKER} [] for an ordinary response.`
-        : `End every response with exactly one line: either ${QUESTIONS_MARKER} [...] when you need a user decision, or ${PIPELINES_MARKER} ["pipeline-id"] when the file-change work for this turn is done — ${PIPELINES_MARKER} [] if no validation is needed. Use a JSON array and only catalog ids for pipelines.`,
+        ? `End every response with exactly one final line: ${QUESTIONS_MARKER} [...] when you need a decision, ${FINISHED_PLAN} when the plan is complete, or ${PIPELINES_MARKER} [] for an ordinary response.`
+        : `End every response with exactly one final line: either ${QUESTIONS_MARKER} [...] when you need a user decision, or ${PIPELINES_MARKER} ["pipeline-id"] when the file-change work for this turn is done — ${PIPELINES_MARKER} [] if no validation is needed. Use a JSON array and only catalog ids for pipelines.`,
       '',
       plan ? '' : `Available Farol pipelines:\n${pipelineCatalog(task.request.pipelines)}`,
       `If a block or error prevents you from completing the task, stop immediately and end your response with “${BLOCK_MARKER} <reason>”. Do not keep trying.`
     ]
       .filter(Boolean)
       .join('\n')
+  }
+
+  private todoContext(task: Task): string {
+    return (
+      `Todo list (shared by every chat in this checkout): put one line ` +
+      `${TODOS_MARKER} [{"content":"...","status":"pending|in_progress|completed|cancelled","priority":"high|medium|low"}] ` +
+      `just before your final marker to replace the whole list, or ${TODOS_MARKER} [] to clear it. ` +
+      `Keep exactly one todo in_progress while work remains.\n${formatTodos(task.todos)}`
+    )
   }
 
   private pipelineHistory(task: Task): string {
