@@ -70,7 +70,7 @@ function ExistingWorkspaces({
   onPick,
   onOpen
 }: {
-  workspaces: NonNullable<GitInfo['worktrees']>
+  workspaces: { path: string; branch: string }[]
   projectPath: string
   existingPick: string
   busy: boolean
@@ -286,7 +286,9 @@ export default function NewTabDialog({
   const branchRef = useRef<HTMLInputElement>(null)
 
   const workspaces = useMemo(() => {
-    const trees = [...(git.worktrees ?? [])]
+    const trees = (git.worktrees ?? []).filter(
+      (w): w is { path: string; branch: string } => !!w.branch
+    )
     const main = projectPath.replace(/[/\\]+$/, '')
     trees.sort((a, b) => {
       const aMain = a.path.replace(/[/\\]+$/, '') === main ? 0 : 1

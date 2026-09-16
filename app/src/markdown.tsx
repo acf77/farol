@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { CONTROL_MARKERS } from '@shared/questions'
+import { stripControlMarkerLines } from '@shared/control-line'
 import { C, MONO } from './theme'
 
 /**
@@ -7,12 +7,7 @@ import { C, MONO } from './theme'
  * controller has already consumed them.
  */
 export function stripControlMarkers(text: string): string {
-  return text
-    .split(/\r?\n/)
-    .filter((line) => !CONTROL_MARKERS.some((marker) => line.trimStart().startsWith(marker)))
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trimEnd()
+  return stripControlMarkerLines(text).replace(/\n{3,}/g, '\n\n').trimEnd()
 }
 
 function inline(text: string, keyPrefix: string, depth = 0): ReactNode[] {

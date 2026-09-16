@@ -57,6 +57,17 @@ describe('parseTodosMarker', () => {
     expect(parseTodosMarker(`${TODOS_MARKER} not json\nFAROL_PIPELINES: []`)).toBeNull()
     expect(parseTodosMarker(`${TODOS_MARKER} {"content":"x"}\nFAROL_PIPELINES: []`)).toBeNull()
   })
+
+  it('ignores a marker inside a fenced code example', () => {
+    const example = [
+      'Update it like this:',
+      '```',
+      `${TODOS_MARKER} [{"content":"fake","status":"pending","priority":"low"}]`,
+      '```',
+      'FAROL_PIPELINES: []'
+    ].join('\n')
+    expect(parseTodosMarker(example)).toBeNull()
+  })
 })
 
 describe('formatTodos', () => {

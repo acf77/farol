@@ -21,10 +21,32 @@ export const CONTROL_MARKERS = [
 
 type ControlMarker = (typeof CONTROL_MARKERS)[number]
 
+/** A ``` or ~~~ fence line opens or closes an example block. */
+const FENCE = /^(?:`{3,}|~{3,})/
+
+/** Every line tagged with whether it sits inside a fenced code example. */
+function fencedLines(text: string): { line: string; fenced: boolean }[] {
+  const out: { line: string; fenced: boolean }[] = []
+  let fenced = false
+  for (const line of text.split(/\r?\n/)) {
+    const fence = FENCE.test(line.trimStart())
+    out.push({ line, fenced: fenced || fence })
+    if (fence) fenced = !fenced
+  }
+  return out
+}
+
+/** Lines outside fenced code blocks, where a marker is an instruction rather than an example. */
+function controlLines(text: string): string[] {
+  return fencedLines(text)
+    .filter(({ fenced }) => !fenced)
+    .map(({ line }) => line)
+}
+
 /** The value after the last line-anchored `marker`, or undefined if absent. */
 export function lastControlLine(text: string, marker: string): string | undefined {
   let value: string | undefined
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of controlLines(text)) {
     const trimmed = line.trimStart()
     if (trimmed.startsWith(marker)) value = trimmed.slice(marker.length).trim()
   }
@@ -36,10 +58,21 @@ export function lastControlMarkerLine(
   text: string
 ): { marker: ControlMarker; value: string } | null {
   let found: { marker: ControlMarker; value: string } | null = null
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of controlLines(text)) {
     const trimmed = line.trimStart()
     const marker = CONTROL_MARKERS.find((candidate) => trimmed.startsWith(candidate))
     if (marker) found = { marker, value: trimmed.slice(marker.length).trim() }
   }
   return found
+}
+
+/** Drop line-anchored control markers while leaving fenced code examples intact. */
+export function stripControlMarkerLines(text: string): string {
+  return fencedLines(text)
+    .filter(
+      ({ line, fenced }) =>
+        fenced || !CONTROL_MARKERS.some((marker) => line.trimStart().startsWith(marker))
+    )
+    .map(({ line }) => line)
+    .join('\n')
 }

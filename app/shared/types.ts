@@ -79,7 +79,7 @@ export interface GitInfo {
   /** True when this path is a bare hub — open worktrees as projects instead of checking out. */
   bare?: boolean
   /** Other checkouts of this repo — closing a tab does not remove these. */
-  worktrees?: { path: string; branch: string }[]
+  worktrees?: { path: string; branch: string | null }[]
 }
 
 export interface GitChanged {
@@ -219,7 +219,10 @@ export interface AgentTaskRequest {
   model?: string
   /** Snapshot of every pipeline the agent may select for validation. */
   pipelines: Pipeline[]
+  /** Execution directory; may be a subdirectory of the checkout. */
   cwd: string
+  /** Checkout that owns the task, so todos are shared across its subdirectories. */
+  checkout: string
   branch: string
   maxAttempts?: number
 }

@@ -656,7 +656,7 @@ export class AgentController {
 
   private async loadTodos(task: Task): Promise<void> {
     if (!this.todoStore) return
-    task.todos = await this.todoStore.load(task.request.cwd).catch(() => task.todos)
+    task.todos = await this.todoStore.load(task.request.checkout).catch(() => task.todos)
   }
 
   private async applyTodos(task: Task, assistant: string): Promise<void> {
@@ -667,7 +667,7 @@ export class AgentController {
     task.todoSeq += 1
     const toolId = `${task.request.id}:todos:${task.todoSeq}`
     try {
-      await this.todoStore?.save(task.request.cwd, todos)
+      await this.todoStore?.save(task.request.checkout, todos)
       this.emit({
         kind: 'tool',
         taskId: task.request.id,

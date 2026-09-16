@@ -26,6 +26,7 @@ const request: AgentTaskRequest = {
     }
   ],
   cwd: '/tmp/project',
+  checkout: '/tmp/project',
   branch: 'main',
   maxAttempts: 3
 }
@@ -76,12 +77,12 @@ describe('AgentController', () => {
     })
     const controller = new AgentController({ run }, (event) => events.push(event), execute, store)
 
-    controller.start({ ...request, provider: 'codex' })
+    controller.start({ ...request, provider: 'codex', cwd: '/tmp/project/sub' })
     await vi.waitFor(() =>
       expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
     )
 
-    expect(store.save).toHaveBeenCalledWith(request.cwd, [
+    expect(store.save).toHaveBeenCalledWith(request.checkout, [
       { content: 'Ship it', status: 'in_progress', priority: 'high' }
     ])
     expect(events.some((event) => event.kind === 'tool' && event.name === 'todo')).toBe(true)
@@ -100,9 +101,10 @@ describe('AgentController', () => {
     })
     const controller = new AgentController({ run }, () => {}, execute, store)
 
-    controller.start({ ...request, provider: 'codex' })
+    controller.start({ ...request, provider: 'codex', cwd: '/tmp/project/sub' })
     await vi.waitFor(() => expect(execute).toHaveBeenCalled())
 
+    expect(store.load).toHaveBeenCalledWith(request.checkout)
     expect(execute.mock.calls[0][1]).toContain('- [pending] (low) Existing')
   })
 

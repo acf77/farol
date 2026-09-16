@@ -34,6 +34,7 @@ import { appendTail, plainText } from '../shared/terminal'
 import { AgentController } from './agent-controller'
 import { createTodoStore } from './todos'
 import { closedProjects } from '../shared/session'
+import { owningWorktree } from '../shared/worktree'
 import { scopedRuntimeId } from '../shared/runtime'
 import net from 'net'
 import os from 'os'
@@ -561,7 +562,22 @@ function registerSessionIpc(): void {
       const next = Array.isArray(paths) ? paths : []
       const previous = (await loadOpenProjects()).paths
       await saveOpenProjects(next, activePath)
-      await Promise.all(closedProjects(previous, next).map((checkout) => todos.forget(checkout)))
+      const closed = closedProjects(previous, next)
+      if (!closed.length) return
+      // Todos are keyed by the checkout a chat resolves to, not the opened path —
+      // a subdirectory project still shares its repo root's list. Only forget a
+      // checkout once no remaining project points at it.
+      const checkoutOf = async (projectPath: string): Promise<string> => {
+        const info = await gitInfo(projectPath)
+        return path.resolve(owningWorktree(projectPath, info.worktrees ?? [])?.path ?? projectPath)
+      }
+      const openCheckouts = new Set(await Promise.all(next.map(checkoutOf)))
+      await Promise.all(
+        closed.map(async (projectPath) => {
+          const checkout = await checkoutOf(projectPath)
+          if (!openCheckouts.has(checkout)) await todos.forget(checkout)
+        })
+      )
     }
   )
   ipcMain.handle('session:load', (_e, projectPath: string) =>

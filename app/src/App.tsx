@@ -27,6 +27,7 @@ import { AI_LABELS, aiFixPrompt, normalizeMode } from '@shared/ai'
 import { isFinishedPlan, sanitizePlan } from '@shared/questions'
 import { defaultSettings, withAgentModel, withCommitMessageModel } from '@shared/settings'
 import { sessionSeq } from '@shared/session'
+import { owningWorktree } from '@shared/worktree'
 import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
 import { topoSort } from '@shared/graph'
 import { clearIndent, emptyTerm, ensureNewline, setIndent, trimTo, write, writeLine } from './ansi'
@@ -379,17 +380,7 @@ function displayPath(p: string, project: Project | null): string {
 function branchForTab(tab: Tab | undefined, projectPath: string, git: GitInfo): string {
   if (tab?.branch) return tab.branch
   const cwd = tab?.panes[tab.focus]?.cwd ?? projectPath
-  const n = normPath(cwd)
-  let best: { path: string; branch: string } | undefined
-  for (const w of git.worktrees ?? []) {
-    if (!w.branch) continue
-    const wp = normPath(w.path)
-    if (n === wp || n.startsWith(wp + '/') || n.startsWith(wp + '\\')) {
-      if (!best || wp.length > normPath(best.path).length) best = w
-    }
-  }
-  if (best) return best.branch
-  return git.branch || '—'
+  return owningWorktree(cwd, git.worktrees ?? [])?.branch || git.branch || '—'
 }
 
 function agentChatTab(owner: Tab, project: Project, branch: string, settings: AppSettings): Tab {
@@ -1821,7 +1812,7 @@ function ProjectWorkspace({
         setActiveTab('sh1')
       }
 
-      void loadGit(project.path)
+      await loadGit(project.path)
       const loaded = await api.pipelines.load(project.path)
       setPipelines(loaded)
       const keep =
@@ -2066,6 +2057,7 @@ function ProjectWorkspace({
       }
 
       const branch = branchForTab(owner, project.path, git)
+      const cwd = cwdOverride || pane.cwd
       const startRequest = {
         id: pane.taskId,
         prompt: clean,
@@ -2073,7 +2065,8 @@ function ProjectWorkspace({
         ...(model ? { model } : {}),
         mode,
         pipelines: availablePipelines,
-        cwd: cwdOverride || pane.cwd,
+        cwd,
+        checkout: owningWorktree(cwd, git.worktrees ?? [])?.path ?? project.path,
         branch
       }
       const runAgent = (operation: 'message' | 'start'): void => {

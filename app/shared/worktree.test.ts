@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   branchNameError,
+  owningWorktree,
   parseAlreadyOpenPath,
   parseWorktreeList,
   pipelineStoreRoot,
@@ -48,6 +49,29 @@ describe('pipelineStoreRoot', () => {
 
   it('keeps a non-repo path as-is', () => {
     expect(pipelineStoreRoot('/tmp/sandbox', [], null)).toBe('/tmp/sandbox')
+  })
+})
+
+describe('owningWorktree', () => {
+  const trees = parseWorktreeList(
+    [
+      'worktree /repos/app',
+      'branch refs/heads/main',
+      '',
+      'worktree /repos/app-feature',
+      'branch refs/heads/feature/x',
+      ''
+    ].join('\n')
+  )
+
+  it('picks the deepest worktree that contains the path', () => {
+    expect(owningWorktree('/repos/app/src', trees)?.path).toBe('/repos/app')
+    expect(owningWorktree('/repos/app-feature/src', trees)?.path).toBe('/repos/app-feature')
+  })
+
+  it('ignores trailing separators and returns null outside every worktree', () => {
+    expect(owningWorktree('/repos/app/', trees)?.path).toBe('/repos/app')
+    expect(owningWorktree('/tmp/sandbox', trees)).toBeNull()
   })
 })
 
