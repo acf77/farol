@@ -189,11 +189,14 @@ export function SegmentedControl<T extends string>({
 }) {
   const activeBg = tone === 'ai' ? 'rgba(184, 148, 255,0.22)' : 'rgba(255,255,255,0.14)'
   const activeFg = tone === 'ai' ? C.purpleSoft : '#fff'
+  const buttons = useRef(new Map<T, HTMLButtonElement>())
 
-  const move = (dir: 1 | -1): void => {
+  const move = (dir: 1 | -1): T | undefined => {
     const i = options.findIndex((o) => o.value === value)
     const next = options[(i + dir + options.length) % options.length]
-    if (next) onChange(next.value)
+    if (!next) return undefined
+    onChange(next.value)
+    return next.value
   }
 
   return (
@@ -213,6 +216,10 @@ export function SegmentedControl<T extends string>({
         return (
           <button
             key={o.value}
+            ref={(node) => {
+              if (node) buttons.current.set(o.value, node)
+              else buttons.current.delete(o.value)
+            }}
             type="button"
             role="radio"
             aria-checked={on}
@@ -222,10 +229,12 @@ export function SegmentedControl<T extends string>({
             onKeyDown={(e) => {
               if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
                 e.preventDefault()
-                move(1)
+                const next = move(1)
+                if (next) buttons.current.get(next)?.focus()
               } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
                 e.preventDefault()
-                move(-1)
+                const next = move(-1)
+                if (next) buttons.current.get(next)?.focus()
               }
             }}
             style={{

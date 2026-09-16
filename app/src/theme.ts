@@ -41,9 +41,7 @@ export const C = {
   purpleSoft: 'oklch(0.84 0.1 300)',
   yellow: 'oklch(0.84 0.17 85)',
   yellowDim: 'oklch(0.48 0.1 85)',
-  grey: 'oklch(0.56 0.006 95)',
-
-  light: { red: '#FF5F57', yellow: '#FFBD2E', green: '#28C840' }
+  grey: 'oklch(0.56 0.006 95)'
 } as const
 
 /**

@@ -50,8 +50,6 @@ export function applyGlass(win: BrowserWindow): boolean {
   const g = load()
   if (!g?.isGlassSupported()) return false
   try {
-    // Custom traffic lights live in the renderer; keep the native ones hidden.
-    win.setWindowButtonVisibility(false)
     const id = g.addView(win.getNativeWindowHandle(), {
       cornerRadius: 12,
       tintColor: '#181817cc',

@@ -107,6 +107,9 @@ const api: FarolApi = {
     refresh: () => ipcRenderer.invoke('openrouter:refresh'),
     setPinned: (ids) => ipcRenderer.invoke('openrouter:setPinned', ids)
   },
+  usage: {
+    read: () => ipcRenderer.invoke('usage:read')
+  },
   update: {
     check: () => ipcRenderer.invoke('update:check'),
     install: () => ipcRenderer.send('update:install'),
@@ -116,11 +119,6 @@ const api: FarolApi = {
     glass: () => ipcRenderer.invoke('ui:glass'),
     onGlass: (cb) => on<boolean>('ui:glass', cb),
     onSettings: (cb) => on('ui:settings', () => cb())
-  },
-  window: {
-    minimize: () => ipcRenderer.send('window:minimize'),
-    maximize: () => ipcRenderer.send('window:maximize'),
-    close: () => ipcRenderer.send('window:close')
   }
 }
 

@@ -3,11 +3,10 @@ import { UI } from '../theme'
 
 export const SIDE_RAIL_WIDTH = 54
 export const SIDE_PANEL_WIDTH = 280
-/** Toolbar / semaphore row. Sidebars start below this, never inside it. */
+/** Toolbar row. Sidebars start below this, never inside it. */
 export const CHROME_ROW = 52
 /** Gap between chrome and both side panels, and from the window edges. */
 export const PANEL_INSET = 10
-
 export function RailLabel({
   children,
   color,

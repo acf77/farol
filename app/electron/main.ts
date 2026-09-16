@@ -26,6 +26,7 @@ import { listProjectFiles, saveChatAttachment } from './files'
 import { listAgentSkills } from './skills'
 import { AppUpdater } from './update'
 import { applyGlass, glassAvailable } from './glass'
+import { providerUsage } from './usage'
 import { mergeMcpConfig, MCP_CONFIG_REL_PATHS, type McpServerEntry } from '../shared/mcp-config'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
 import { isAiProvider } from '../shared/ai'
@@ -88,7 +89,7 @@ function createWindow(): void {
     minWidth: 860,
     minHeight: 520,
     show: false,
-    frame: false,
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
     // Liquid Glass needs a transparent window and must not use vibrancy.
     transparent: wantGlass,
     backgroundColor: wantGlass ? '#00000000' : '#181817',
@@ -700,12 +701,10 @@ function registerAppIpc(): void {
   ipcMain.handle('openrouter:clearKey', () => clearOpenRouter())
   ipcMain.handle('openrouter:refresh', () => refreshOpenRouterCatalog())
   ipcMain.handle('openrouter:setPinned', (_e, ids: string[]) => setOpenRouterPinned(ids))
+  ipcMain.handle('usage:read', () => providerUsage())
   ipcMain.handle('update:check', () => updater.check())
   ipcMain.on('update:install', () => updater.install())
   ipcMain.handle('ui:glass', () => glassActive)
-  ipcMain.on('window:minimize', () => win?.minimize())
-  ipcMain.on('window:maximize', () => (win?.isMaximized() ? win.unmaximize() : win?.maximize()))
-  ipcMain.on('window:close', () => win?.close())
 }
 
 function registerIpc(): void {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentMode, AgentSkill, AiProvider, AppSettings, Pipeline } from '@shared/types'
+import type { AgentMode, AgentSkill, AiProvider, AppSettings, Pipeline, ProviderUsage } from '@shared/types'
 import { AI_LABELS, aiSelectionLabel, hasReviewGate, normalizeAi, normalizeModel } from '@shared/ai'
 import {
   convertSkillDraft,
@@ -14,6 +14,7 @@ import { C, MONO, PANE } from '../theme'
 import { MarkdownBody, stripControlMarkers } from '../markdown'
 import { MessageErrorBoundary } from '../ErrorBoundary'
 import { Button, CliModelMenu } from './controls'
+import UsageBar from './UsageBar'
 import {
   AttachmentIcon,
   CheckIcon,
@@ -40,6 +41,8 @@ interface Props {
   /** Last-chosen model for `defaultProvider`. Omitted means the CLI default. */
   defaultModel?: string
   settings?: AppSettings
+  usage: ProviderUsage[]
+  onRefreshUsage: () => void
   onMessage: (text: string, provider: AiProvider, model: string | undefined, mode: AgentMode) => void
   /** `answers: null` dismisses the chooser. */
   onAnswer: (requestId: string, answers: string[][] | null) => void
@@ -1176,6 +1179,8 @@ function ComposerToolbar({
   agentBtnRef,
   provider,
   model,
+  usage,
+  onRefreshUsage,
   mode,
   isBusy,
   modeLocked,
@@ -1190,6 +1195,8 @@ function ComposerToolbar({
   agentBtnRef: React.RefObject<HTMLButtonElement>
   provider: AiProvider
   model?: string
+  usage: ProviderUsage[]
+  onRefreshUsage: () => void
   mode: AgentMode
   isBusy: boolean
   modeLocked: boolean
@@ -1235,6 +1242,7 @@ function ComposerToolbar({
         </span>
         <ChevronDown size={11} />
       </button>
+      <UsageBar usage={usage} provider={provider} onRefresh={onRefreshUsage} />
       <button
         type="button"
         className="bf-focus"
@@ -1323,6 +1331,8 @@ function ComposerBox({
   model,
   mode,
   settings,
+  usage,
+  onRefreshUsage,
   textareaRef,
   onMessage,
   onCancel,
@@ -1340,6 +1350,8 @@ function ComposerBox({
   model?: string
   mode: AgentMode
   settings?: AppSettings
+  usage: ProviderUsage[]
+  onRefreshUsage: () => void
   textareaRef: React.RefObject<HTMLTextAreaElement>
   onMessage: (text: string, provider: AiProvider, model: string | undefined, mode: AgentMode) => void
   onCancel: () => void
@@ -1643,6 +1655,8 @@ function ComposerBox({
           agentBtnRef={agentBtnRef}
           provider={provider}
           model={model}
+          usage={usage}
+          onRefreshUsage={onRefreshUsage}
           mode={mode}
           isBusy={isBusy}
           modeLocked={modeLocked}
@@ -1711,6 +1725,8 @@ export default function ChatPane({
   defaultProvider,
   defaultModel,
   settings,
+  usage,
+  onRefreshUsage,
   onMessage,
   onAnswer,
   onCancel,
@@ -1840,6 +1856,8 @@ export default function ChatPane({
         model={model}
         mode={mode}
         settings={settings}
+        usage={usage}
+        onRefreshUsage={onRefreshUsage}
         textareaRef={textareaRef}
         onMessage={onMessage}
         onCancel={onCancel}

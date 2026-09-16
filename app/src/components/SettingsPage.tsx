@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { AppSettings } from '@shared/types'
 import { AI_LABELS, pickerProviders, providerModels, type AiProvider } from '@shared/ai'
 import { OPENROUTER_API_URL } from '@shared/openrouter'
 import { withAgentModel, withCommitMessageModel } from '@shared/settings'
 import { C, UI } from '../theme'
 import { Button, Checkbox, CliModelDropdown, SegmentedControl } from './controls'
+import { CHROME_ROW } from './side-panel'
 
 interface Props {
   settings: AppSettings
@@ -133,13 +135,14 @@ export default function SettingsPage({ settings, onSettings, onOpenRouterSetting
     ? catalog.filter((m) => `${m.label} ${m.id}`.toLowerCase().includes(q))
     : catalog
 
-  return (
+  return createPortal(
     <div
       role="dialog"
       aria-label="Settings"
+      className="bf-page-overlay"
       style={{
         position: 'fixed',
-        inset: 0,
+        inset: `${CHROME_ROW}px 0 0`,
         zIndex: 90,
         display: 'flex',
         flexDirection: 'column',
@@ -363,6 +366,7 @@ export default function SettingsPage({ settings, onSettings, onOpenRouterSetting
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

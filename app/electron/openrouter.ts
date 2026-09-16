@@ -8,6 +8,7 @@ import {
 import { defaultOpenRouter, withOpenRouterKeyFlag } from '../shared/settings'
 import { clearOpenRouterKey, hasOpenRouterKey, peekOpenRouterKey, setOpenRouterKey } from './secrets'
 import { loadSettings, saveSettings } from './store'
+import { clearUsageCache } from './usage'
 
 export interface OpenRouterResult {
   settings: AppSettings
@@ -78,11 +79,13 @@ export async function saveOpenRouterKey(raw: unknown): Promise<OpenRouterResult>
       error: err instanceof Error ? err.message : String(err)
     }
   }
+  clearUsageCache()
   return refreshOpenRouterCatalog()
 }
 
 export async function clearOpenRouter(): Promise<OpenRouterResult> {
   clearOpenRouterKey()
+  clearUsageCache()
   const settings = await loadSettings()
   const reset = settings.agent === 'openrouter'
   return { settings: await writeOpenRouter({}, reset) }

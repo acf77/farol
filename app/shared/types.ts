@@ -6,8 +6,9 @@ import type { ProjectSession } from './session'
 import type { AgentSkill } from './skills'
 import type { WorktreeRequest } from './worktree'
 import type { AppSettings, OpenRouterSettings } from './settings'
+import type { ProviderUsage } from './usage'
 
-export type { AgentQuestion, AgentSkill }
+export type { AgentQuestion, AgentSkill, ProviderUsage }
 
 export type { AiModel } from './ai'
 export type { AgentMode, AiProvider, AppSettings, OpenRouterSettings, ProjectSession, WorktreeRequest }
@@ -455,6 +456,10 @@ export interface FarolApi {
     refresh(): Promise<{ settings: AppSettings; error?: string }>
     setPinned(ids: string[]): Promise<{ settings: AppSettings; error?: string }>
   }
+  usage: {
+    /** Plan limits and balance for every provider, cached in the main process. */
+    read(): Promise<ProviderUsage[]>
+  }
   update: {
     check(): Promise<UpdateStatus>
     install(): void
@@ -465,10 +470,5 @@ export interface FarolApi {
     glass(): Promise<boolean>
     onGlass(cb: (active: boolean) => void): () => void
     onSettings(cb: () => void): () => void
-  }
-  window: {
-    minimize(): void
-    maximize(): void
-    close(): void
   }
 }
