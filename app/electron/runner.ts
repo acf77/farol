@@ -230,7 +230,7 @@ export class PipelineRunner {
   }
 
   cancelAll(): void {
-    for (const id of [...this.active.keys()]) this.cancel(id)
+    for (const id of this.active.keys()) this.cancel(id)
   }
 
   private async execute(pipeline: Pipeline, cwd: string, state: Active): Promise<void> {

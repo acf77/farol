@@ -81,6 +81,36 @@ A proposed implementation plan that the agent explicitly marks as complete and r
 The existing read-only enforcement a provider already uses for pipeline reviews. Prompt-only instructions are not a **Review gate**.
 _Avoid_: sandbox (as the product name for this rule), ask mode (except as Cursor’s review mechanism)
 
+### Agent Git actions
+
+**Git action**:
+A version-control operation Farol performs for an agent the way it runs a pipeline for it: status, commit, push, or create pull request.
+_Avoid_: Git command, agent-run git, a second version-control path
+
+**FAROL_GIT control line**:
+The hidden line a managed Chat agent emits to ask Farol for a **Git action**, because that Chat cannot call the Farol MCP tools. It is `FAROL_GIT:` followed by one JSON object on one line — for example `{ "action": "commit", "message": "…" }` — and is stripped from the visible message like the other control lines.
+_Avoid_: a Farol MCP call inside managed Chat, prose that describes a commit, the agent running git itself
+
+**Git tool**:
+A Farol MCP tool that carries a **Git action** over the bridge to the running app: `git_status`, `git_commit`, `git_push`, `git_create_pr`. Terminal-pane and other MCP clients use these; managed Chat uses the **FAROL_GIT control line** instead.
+_Avoid_: git run inside the MCP server's own process, a path that bypasses the app
+
+**Agent commit**:
+The commit a **Git action** creates, including exactly the files the current agent turn changed — never the user's **Commit selection**.
+_Avoid_: committing the **Commit selection**, committing the whole working tree, `git add -A`
+
+**Git hook pipeline**:
+A pipeline bound to a **Git action** in `.farol` that runs as a gate: when it passes, Farol performs the action; when it fails, Farol does not, and the failure goes back to the agent.
+_Avoid_: a script in `.git/hooks` (Farol still performs the action itself), a check after the action, a pipeline the agent picks with `FAROL_PIPELINES`
+
+**Git actions toggle**:
+The master, machine-scoped switch in Settings that decides whether Farol performs agent **Git actions**. On by default, with no per-project override.
+_Avoid_: per-project or per-action switches, off by default
+
+**Managed-chat contract**:
+The standing rules Farol gives a managed Chat agent — work only in the project, never run the catalog's commands, end each Build turn with `FAROL_QUESTIONS` or `FAROL_PIPELINES`, and, when the turn changed files, commit them through `FAROL_GIT`.
+_Avoid_: relying on the agent to remember to commit, a per-turn reminder to commit
+
 ## Relationships
 
 ### Source Control page
@@ -140,6 +170,22 @@ _Avoid_: sandbox (as the product name for this rule), ask mode (except as Cursor
 - Reopening a Chat or restarting Farol restores the Execute button for its latest unexecuted **Finished plan**, provided no follow-up message has invalidated it.
 - Selecting **Execute plan** consumes that plan's Execute button permanently, even if implementation fails or is canceled; the Chat stays in **Build mode** until the developer selects **Plan mode** again.
 - Selecting **Build mode** manually does not consume the latest **Finished plan**'s Execute button; **Execute plan** remains available until a follow-up is sent or **Execute plan** is selected, and it starts implementation even if the Chat is already in **Build mode**.
+
+### Agent Git actions
+
+- Farol offers **Git actions** — status, commit, push, create pull request — to agents the way it offers pipelines.
+- A **Git action** runs inside Farol; the agent process does not run git for it.
+- Managed Chat requests a **Git action** with the **FAROL_GIT control line**; an agent outside managed Chat uses the matching **Git tool**.
+- The **Managed-chat contract** compels the agent to commit its own work: a turn that changed files generates a commit message and requests a commit, and it may then request a push.
+- An **Agent commit** contains the files that turn changed, not the user's **Commit selection**.
+- A **Git hook pipeline** is chosen per action in `.farol`; the same action on another project may use a different pipeline, or none.
+- A failing **Git hook pipeline** blocks only that action, and the failure reaches the agent like a validation failure so it can repair.
+- The **Git actions toggle** gates every **Git action**: when it is off, Farol refuses even a bound hook and a valid request, and says so.
+- A failed or refused **Git action** does not replace the turn's own `FAROL_PIPELINES` validation; the hook pipeline is separate from that selection.
+- A **Git action** outcome appears on the existing **Git panel**: the **Git log** records it and the panel refreshes.
+- Status is read-only; commit, push, and create pull request change the checkout or the remote.
+- **Plan mode** never performs a **Git action**; a `FAROL_GIT` line in Plan mode is ignored the way a non-empty `FAROL_PIPELINES` list is, and the reply is still accepted.
+- The **Git actions toggle** is machine-scoped and is not saved per project.
 
 ## Example dialogue
 
@@ -303,6 +349,41 @@ _Avoid_: sandbox (as the product name for this rule), ask mode (except as Cursor
 > **Developer:** "If I type Execute the plan in the composer myself, does that start implementation?"
 > **Domain expert:** "No. Only the Execute button does. Those words are an ordinary follow-up, so the earlier plan also loses its Execute button."
 
+### Agent Git actions
+
+> **Dev:** "Why can't the agent just run `git commit` in its shell?"
+> **Domain expert:** "It asks Farol with **FAROL_GIT** instead. Farol performs the action inside the app, so it can be gated by a pipeline and shows up in the **Git panel**."
+
+> **Dev:** "What actually compels it to commit?"
+> **Domain expert:** "The **Managed-chat contract**. A turn that changed files generates a commit message and requests a commit through **FAROL_GIT**."
+
+> **Dev:** "Which files go in that commit?"
+> **Domain expert:** "Files changed this turn. Not the user's **Commit selection** — that still belongs to the **Source Control page**."
+
+> **Dev:** "How do I stop the agent committing?"
+> **Domain expert:** "Turn off the **Git actions toggle** in Settings. It is one switch for this machine, not per project."
+
+> **Dev:** "Does that also stop a pull request?"
+> **Domain expert:** "Yes. Status, commit, push, and create pull request all pass through it."
+
+> **Dev:** "How is this hooked to a pipeline?"
+> **Domain expert:** "Bind a **Git hook pipeline** to the action in `.farol`. It runs as a gate: pass, the action runs; fail, it does not and the agent gets the failure."
+
+> **Dev:** "Is that a `.git/hooks` script?"
+> **Domain expert:** "No. Farol still performs the action; the pipeline only gates it."
+
+> **Dev:** "If the hook passes, does the agent still select that pipeline with **FAROL_PIPELINES**?"
+> **Domain expert:** "No. The hook is chosen by `.farol` per action. The turn's own **FAROL_PIPELINES** validation is separate."
+
+> **Dev:** "Can the agent commit while I'm in Plan mode?"
+> **Domain expert:** "No. Plan mode is read-only, so a **FAROL_GIT** line is ignored — the same as a non-empty **FAROL_PIPELINES** list."
+
+> **Dev:** "Will I see the agent's commit in the Git page?"
+> **Domain expert:** "Yes. The existing **Git panel** shows it and the **Git log** records the outcome."
+
+> **Dev:** "Can an agent in a terminal pane use these too?"
+> **Domain expert:** "Yes, through the **Git tools** — `git_status`, `git_commit`, `git_push`, `git_create_pr` — over the bridge to the running app."
+
 ## Flagged ambiguities
 
 ### Source Control page
@@ -364,3 +445,16 @@ _Avoid_: sandbox (as the product name for this rule), ask mode (except as Cursor
 - Resolved: That explanation lives in a tooltip on the disabled Plan side, not in a banner, toast, status line, or other Chat surface.
 - Resolved: That tooltip names the current provider and the reason Plan is unavailable, rather than a generic unavailable message.
 - Resolved: That reason’s exact wording is “Cannot enforce read-only”, not a mention of **Review gate** or a longer explanation.
+
+### Agent Git actions
+
+- Exposing "the git tools like the pipelines" could mean a second Git API — resolved: **Git actions** reuse the existing **Git panel** actions; status, commit, push, and create pull request.
+- Managed Chat cannot call the Farol MCP tools today — resolved: it requests a **Git action** with the **FAROL_GIT control line**; the **Git tools** are the MCP path for terminal and other clients.
+- What compels the model to commit could be a per-turn reminder — resolved: the **Managed-chat contract** carries it, alongside the existing `FAROL_QUESTIONS` / `FAROL_PIPELINES` rules.
+- "The agent commits its work" could reuse the user's **Commit selection** — resolved: an **Agent commit** uses only the files the turn changed. The page's Commit still uses **Commit selection**.
+- The first answer chose a per-project on/off switch — resolved: the **Git actions toggle** is a master switch for the machine, with no per-project override.
+- "git hook" sounds like `.git/hooks` or a post-commit script — resolved: a **Git hook pipeline** is a Farol pipeline bound per action in `.farol`, and it gates before Farol performs the action.
+- The agent has a shell and could run git directly — resolved: for these actions it asks Farol, so the pipeline gate and the **Git panel** history apply.
+- A **Git action** and the turn's `FAROL_PIPELINES` validation could be conflated — resolved: the hook pipeline is chosen by `.farol` per action, the agent does not select it, and ordinary validation still runs.
+- The agent's **Git action** could be invisible to the UI — resolved: it appears on the existing **Git panel**, and the **Git log** records its outcome.
+- Plan mode could still allow status (read-only) — resolved: **Plan mode** performs no **Git action**; a `FAROL_GIT` line there is ignored the way a non-empty `FAROL_PIPELINES` list is.
