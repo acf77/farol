@@ -301,7 +301,7 @@ type MenuPos = { left: number; width: number; maxHeight: number } & ({ top: numb
 
 /**
  * Two-step picker: choose a provider, then one of its supported model ids.
- * `Default` leaves model selection to that provider.
+ * `Default` leaves model selection to that provider; Cursor's default is Auto.
  */
 export function CliModelMenu({
   provider,
@@ -326,6 +326,11 @@ export function CliModelMenu({
   const selectedModel = normalizeModel(model)
   const all = pickerProviders(settings?.openrouter)
   const providers = only ? all.filter(only) : all
+  /** Cursor lists Auto explicitly; other CLIs keep an omit-model Default row. */
+  const defaultLabel = page === 'cursor' ? 'Auto' : 'Default'
+  const defaultModel = page === 'cursor' ? 'auto' : undefined
+  const defaultSelected =
+    page === current && (page === 'cursor' ? selectedModel === 'auto' || !selectedModel : !selectedModel)
 
   const place: React.CSSProperties =
     'bottom' in pos ? { left: pos.left, bottom: pos.bottom } : { left: pos.left, top: pos.top }
@@ -407,25 +412,27 @@ export function CliModelMenu({
                 type="button"
                 role="menuitem"
                 className="bf-focus bf-menu-item"
-                onClick={() => onPick(page, undefined)}
+                onClick={() => onPick(page, defaultModel)}
                 style={{
                   display: 'flex',
                   width: '100%',
                   justifyContent: 'space-between',
                   border: 'none',
                   background: 'transparent',
-                  color: page === current && !selectedModel ? C.textStrong : C.textMuted,
+                  color: defaultSelected ? C.textStrong : C.textMuted,
                   cursor: 'pointer'
                 }}
               >
-                <span>Default</span>
-                {page === current && !selectedModel && <CheckIcon size={12} />}
+                <span>{defaultLabel}</span>
+                {defaultSelected && <CheckIcon size={12} />}
               </button>,
               ...providerModels(
                 page,
                 page === current ? selectedModel : undefined,
                 settings?.openrouter
-              ).map((m) => (
+              )
+                .filter((m) => !(page === 'cursor' && m.id === 'auto'))
+                .map((m) => (
                 <button
                   key={m.id}
                   type="button"

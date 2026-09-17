@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
 import type { Pipeline } from '../shared/types'
 
 const { peekSecret, evaluate } = vi.hoisted(() => ({
@@ -10,17 +13,33 @@ vi.mock('ai', () => ({ experimental_evaluate: evaluate }))
 vi.mock('./store', () => ({ loadSettings: vi.fn() }))
 
 import { checkJev, selectPipelines, verdictFromOutput } from './jev'
+import { configureJevLogs, jevLogPath } from './jev-log'
+
+let logRoot: string
 
 beforeEach(() => {
   peekSecret.mockReset()
   evaluate.mockReset()
   vi.spyOn(console, 'info').mockImplementation(() => {})
+  logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'farol-jev-'))
+  configureJevLogs(() => logRoot)
 })
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  fs.rmSync(logRoot, { recursive: true, force: true })
+})
 
 function pipeline(id: string, mandatory?: boolean): Pipeline {
   return { id, name: id, nodes: [], ...(mandatory ? { mandatory } : {}) }
+}
+
+function readJevLog(): Record<string, unknown>[] {
+  const file = jevLogPath()
+  expect(file).toBeTruthy()
+  const raw = fs.readFileSync(file!, 'utf8').trim()
+  if (!raw) return []
+  return raw.split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
 describe('Jev decision logs', () => {
@@ -36,7 +55,7 @@ describe('Jev decision logs', () => {
     })
     expect(await selectPipelines(['yes', 'no', 'unsure', 'missing'].map((id) => pipeline(id)), 'private-state'))
       .toEqual(['yes'])
-    expect(console.info).toHaveBeenCalledExactlyOnceWith('[farol] Jev', expect.objectContaining({
+    const entry = {
       purpose: 'pipeline-selection',
       status: 'evaluated',
       confidence: 0.85,
@@ -47,8 +66,10 @@ describe('Jev decision logs', () => {
         { id: 'unsure', probability: 0.5, decision: null, reason: 'inconclusive' },
         { id: 'missing', probability: null, decision: null, reason: 'missing-answer' }
       ]
-    }))
-    const logged = JSON.stringify(vi.mocked(console.info).mock.calls)
+    }
+    expect(console.info).toHaveBeenCalledExactlyOnceWith('[farol] Jev', expect.objectContaining(entry))
+    expect(readJevLog()).toEqual([expect.objectContaining(entry)])
+    const logged = JSON.stringify([...vi.mocked(console.info).mock.calls, ...readJevLog()])
     for (const text of ['secret-key', 'private-state', 'unexpected']) expect(logged).not.toContain(text)
   })
 
@@ -64,7 +85,8 @@ describe('Jev decision logs', () => {
       purpose: 'step-verdict',
       reason
     }))
-    const logged = JSON.stringify(vi.mocked(console.info).mock.calls)
+    expect(readJevLog()).toEqual([expect.objectContaining({ purpose: 'step-verdict', reason })])
+    const logged = JSON.stringify([...vi.mocked(console.info).mock.calls, ...readJevLog()])
     expect(logged).not.toContain('private-state')
     expect(logged).not.toContain('secret-key')
   })
@@ -76,6 +98,11 @@ describe('Jev decision logs', () => {
       status: 'skipped',
       reason: 'no-candidates'
     }))
+    expect(readJevLog()).toEqual([expect.objectContaining({
+      purpose: 'pipeline-selection',
+      status: 'skipped',
+      reason: 'no-candidates'
+    })])
   })
 
   it('identifies Settings probe decisions', async () => {
@@ -87,6 +114,7 @@ describe('Jev decision logs', () => {
       status: 'evaluated',
       decisions: [{ id: 'failed', probability: 0.99, decision: true, reason: 'confident' }]
     }))
+    expect(readJevLog()).toEqual([expect.objectContaining({ purpose: 'settings-probe' })])
   })
 })
 

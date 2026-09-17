@@ -15,7 +15,7 @@ import { ShellManager } from './shell'
 import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, githubStatus, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus } from './git'
 import { createPullRequest } from './github'
 import { PipelineRunner } from './runner'
-import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, PipelineWatcher } from './store'
+import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, flushWorkspace, PipelineWatcher } from './store'
 import {
   clearOpenRouter,
   refreshOpenRouterCatalog,
@@ -23,6 +23,7 @@ import {
   setOpenRouterPinned
 } from './openrouter'
 import { checkJev, clearJev, saveJevKey } from './jev'
+import { configureJevLogs } from './jev-log'
 import { listProjectFiles, saveChatAttachment } from './files'
 import { listAgentSkills } from './skills'
 import { AppUpdater } from './update'
@@ -793,6 +794,7 @@ function applyBrandIcon(): void {
 }
 
 app.whenReady().then(() => {
+  configureJevLogs(() => app.getPath('userData'))
   applyBrandIcon()
   registerIpc()
   buildMenu()
@@ -808,12 +810,39 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => {
-  agents.cancelAll()
-  shells.disposeAll()
-  runner.cancelAll()
-  head.stop()
-  pipelineFiles.stop()
-  for (const server of bridges.values()) server.close()
-  bridges.clear()
+// Quitting (a plain Cmd+Q, or the in-place updater's `app.quit()`) can race a
+// settings/session write that was only just queued — see `flushWorkspace`.
+// The renderer's own final write (session flush on beforeunload/pagehide)
+// only fires once its window actually closes, so close windows first and let
+// that write get queued before draining and letting the quit through.
+let quitReady = false
+let quitInProgress = false
+app.on('before-quit', (event) => {
+  if (quitReady) return
+  event.preventDefault()
+  if (quitInProgress) return
+  quitInProgress = true
+  void (async () => {
+    agents.cancelAll()
+    shells.disposeAll()
+    runner.cancelAll()
+    head.stop()
+    pipelineFiles.stop()
+    for (const server of bridges.values()) server.close()
+    bridges.clear()
+
+    await Promise.all(
+      BrowserWindow.getAllWindows().map(
+        (w) =>
+          new Promise<void>((resolve) => {
+            if (w.isDestroyed()) return resolve()
+            w.once('closed', () => resolve())
+            w.close()
+          })
+      )
+    )
+    await flushWorkspace().catch(() => {})
+    quitReady = true
+    app.quit()
+  })()
 })

@@ -39,6 +39,7 @@ export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
     { id: 'gpt-5.5', label: 'GPT-5.5' }
   ],
   cursor: [
+    { id: 'auto', label: 'Auto' },
     { id: 'composer-2.5', label: 'Composer 2.5' },
     { id: 'gpt-5.6', label: 'GPT-5.6' },
     { id: 'claude-sonnet-5', label: 'Sonnet 5' },
@@ -113,7 +114,8 @@ export function aiModelLabel(
   listed?: readonly AiModel[]
 ): string | undefined {
   const id = normalizeModel(model)
-  if (!id) return undefined
+  // Cursor's CLI default is Auto; show it even when the model id was omitted.
+  if (!id) return provider === 'cursor' ? 'Auto' : undefined
   return (listed ?? AI_MODELS[provider]).find((m) => m.id === id)?.label ?? id
 }
 

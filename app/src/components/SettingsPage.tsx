@@ -204,6 +204,8 @@ function ModelRow({
   onChange: (model?: string) => void
 }) {
   const current = settings.models[provider]
+  const selectValue =
+    provider === 'cursor' ? (current === 'auto' || !current ? 'auto' : current) : (current ?? '')
   return (
     <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <span style={{ width: 96, flex: 'none', fontSize: 12, color: C.textSoft }}>
@@ -211,12 +213,18 @@ function ModelRow({
       </span>
       <select
         className="bf-input bf-focus"
-        value={current ?? ''}
+        value={selectValue}
         onChange={(e) => onChange(e.target.value || undefined)}
         style={{ ...field, flex: 1, minWidth: 0 }}
       >
-        <option value="">Default — the CLI decides</option>
-        {providerModels(provider, current, settings.openrouter).map((m) => (
+        {provider === 'cursor' ? (
+          <option value="auto">Auto</option>
+        ) : (
+          <option value="">Default — the CLI decides</option>
+        )}
+        {providerModels(provider, current, settings.openrouter)
+          .filter((m) => !(provider === 'cursor' && m.id === 'auto'))
+          .map((m) => (
           <option key={m.id} value={m.id}>
             {m.label}
           </option>

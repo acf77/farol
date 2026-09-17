@@ -1616,7 +1616,12 @@ function ComposerBox({
       }}
     >
       <div className={showFade ? 'bf-chat-fade is-on' : 'bf-chat-fade'} aria-hidden="true" />
-      <TodoList key={projectPath} projectPath={projectPath} />
+      <TodoList
+        key={projectPath}
+        projectPath={projectPath}
+        onRun={sendText}
+        canRun={!isBusy && (availableCount > 0 || mode === 'plan')}
+      />
       <div
         ref={composerBoxRef}
         onDragOver={(e) => {

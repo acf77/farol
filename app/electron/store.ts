@@ -487,3 +487,8 @@ export async function clearLastProject(): Promise<void> {
     ws.lastProject = null
   })
 }
+
+/** Resolves once every workspace write queued so far has hit disk. */
+export function flushWorkspace(): Promise<void> {
+  return workspaceMutation
+}

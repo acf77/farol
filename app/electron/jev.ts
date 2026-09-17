@@ -22,6 +22,7 @@ import {
 } from '../shared/jev'
 import type { Pipeline, SettingsResult } from '../shared/types'
 import type { StepVerdict } from '../shared/verdict'
+import { logJev } from './jev-log'
 import { clearSecret, peekSecret, setSecret } from './secrets'
 import { loadSettings } from './store'
 
@@ -47,7 +48,7 @@ export async function askJev(
   }
   const key = peekSecret('aiGatewayApiKey')
   if (!key) {
-    console.info('[farol] Jev', { ...context, status: 'skipped', reason: 'no-key' })
+    logJev({ ...context, status: 'skipped', reason: 'no-key' })
     throw new Error(NO_KEY)
   }
   try {
@@ -60,7 +61,7 @@ export async function askJev(
     const decisions = Object.fromEntries(
       Object.keys(questions).map((id) => [id, answers[id] ? decide(answers[id]) : null])
     )
-    console.info('[farol] Jev', {
+    logJev({
       ...context,
       status: 'evaluated',
       durationMs: Date.now() - started,
@@ -73,7 +74,7 @@ export async function askJev(
     })
     return decisions
   } catch (err) {
-    console.info('[farol] Jev', {
+    logJev({
       ...context,
       status: 'fallback',
       reason: err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
@@ -127,7 +128,7 @@ export async function selectPipelines(candidates: Pipeline[], state: string): Pr
   const questions = pipelineSelectionQuestions(candidates)
   const ids = Object.keys(questions)
   if (!ids.length) {
-    console.info('[farol] Jev', {
+    logJev({
       timestamp: new Date().toISOString(),
       purpose: 'pipeline-selection',
       status: 'skipped',

@@ -57,6 +57,8 @@ describe('normalizeModel', () => {
     expect(aiSelectionLabel('claude', undefined)).toBe('Claude')
     expect(aiSelectionLabel('claude', 'sonnet')).toBe('Claude · Sonnet 5')
     expect(aiSelectionLabel('claude', 'custom-id')).toBe('Claude · custom-id')
+    expect(aiSelectionLabel('cursor', undefined)).toBe('Cursor · Auto')
+    expect(aiSelectionLabel('cursor', 'auto')).toBe('Cursor · Auto')
     expect(modelsFor('claude', 'custom-id').some((m) => m.id === 'custom-id')).toBe(true)
     expect(aiSelectionLabel('openrouter', undefined)).toBe('OpenRouter')
   })
@@ -116,6 +118,16 @@ describe('aiCommand', () => {
       'text',
       '--model',
       'composer-2.5',
+      'review this'
+    ])
+    expect(aiCommand('cursor', 'review this', 'auto').args).toEqual([
+      '-p',
+      '--force',
+      '--mode=ask',
+      '--output-format',
+      'text',
+      '--model',
+      'auto',
       'review this'
     ])
   })

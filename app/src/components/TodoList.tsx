@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { TODO_PRIORITIES, TODO_STATUSES, todoSummary, type Todo } from '@shared/todos'
 import { C } from '../theme'
 import { Button, ConfirmButton } from './controls'
-import { CancelIcon, CheckIcon, ChevronDown, CircleIcon, DeleteIcon, EditIcon, Spinner } from './icons'
+import { CancelIcon, CheckIcon, ChevronDown, CircleIcon, DeleteIcon, EditIcon, PlayIcon, Spinner } from './icons'
 
 const STATUS_LABELS = {
   pending: 'Pending',
@@ -101,7 +101,17 @@ function TodoEditor({
   )
 }
 
-export default function TodoList({ projectPath }: { projectPath: string }) {
+export default function TodoList({
+  projectPath,
+  onRun,
+  canRun
+}: {
+  projectPath: string
+  /** Send a todo's content to the agent as a chat message. */
+  onRun: (content: string) => void
+  /** Whether the agent can take a new message right now (not busy, has an available model). */
+  canRun: boolean
+}) {
   const [snapshot, setSnapshot] = useState<{ checkout: string; todos: Todo[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
@@ -207,7 +217,7 @@ export default function TodoList({ projectPath }: { projectPath: string }) {
               {!snapshot.todos.length && <p style={{ color: C.textMuted }}>No todos yet. Add one or ask the agent to plan the work.</p>}
               <ol style={{ margin: 0, padding: 0, listStyle: 'none' }}>
                 {snapshot.todos.map((todo, index) => (
-                  <li key={index} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 0', borderBottom: `1px solid ${C.cardBorder}` }}>
+                  <li key={index} className="bf-todo-row" style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 0', borderBottom: `1px solid ${C.cardBorder}` }}>
                     <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0, paddingTop: 3 }}>
                       {todo.status === 'pending' && <CircleIcon size={14} color={C.textMuted} />}
                       {todo.status === 'in_progress' && <Spinner size={14} color={C.accent} />}
@@ -218,7 +228,18 @@ export default function TodoList({ projectPath }: { projectPath: string }) {
                       <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.5 }}>{todo.content}</div>
                       <div style={{ color: C.textMuted, marginTop: 4, fontSize: 11.5 }}>{STATUS_LABELS[todo.status]} · {todo.priority} priority</div>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 2, flexShrink: 0 }}>
+                    <div className="bf-todo-actions" style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 2, flexShrink: 0 }}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={saving || !canRun}
+                        aria-label={`Run todo ${index + 1}`}
+                        title="Send this todo to the agent"
+                        onClick={() => onRun(todo.content)}
+                        style={{ padding: '0 6px' }}
+                      >
+                        <PlayIcon />
+                      </Button>
                       <Button type="button" variant="ghost" disabled={saving} aria-label={`Edit todo ${index + 1}`} title="Edit todo" onClick={() => setEditing(index)} style={{ padding: '0 6px' }}>
                         <EditIcon />
                       </Button>

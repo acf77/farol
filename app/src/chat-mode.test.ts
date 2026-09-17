@@ -1,8 +1,6 @@
-import { createElement, type ComponentProps, type DependencyList, type EffectCallback, type ReactElement } from 'react'
-import * as React from 'react'
+import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AppSettings, ProjectSession } from '@shared/types'
 import { normalizeMode } from '@shared/ai'
 import { sanitizeSession } from '@shared/session'
 import { modeDefault, sanitizeSettings } from '@shared/settings'
@@ -18,78 +16,6 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
-
-function workspaceRenderer(render: () => ReactElement) {
-  const slots: unknown[] = []
-  let cursor = 0
-  const pending: EffectCallback[] = []
-  const cleanups = new Set<() => void>()
-  const slot = <T,>(create: () => T): T => {
-    const index = cursor++
-    if (!(index in slots)) slots[index] = create()
-    return slots[index] as T
-  }
-  const changed = (previous: DependencyList | undefined, next: DependencyList | undefined) =>
-    !previous || !next || previous.length !== next.length || next.some((value, i) => !Object.is(value, previous[i]))
-  const memo = <T,>(create: () => T, deps: DependencyList | undefined): T => {
-    const cell = slot(() => ({ value: create(), deps }))
-    if (changed(cell.deps, deps)) {
-      cell.value = create()
-      cell.deps = deps
-    }
-    return cell.value
-  }
-  return {
-    render() {
-      cursor = 0
-      const spies = [
-        vi.spyOn(React, 'useState').mockImplementation(((initial: unknown) => {
-          const cell = slot(() => ({ value: typeof initial === 'function' ? initial() : initial }))
-          return [cell.value, (next: unknown) => {
-            cell.value = typeof next === 'function' ? next(cell.value) : next
-          }]
-        }) as typeof React.useState),
-        vi.spyOn(React, 'useRef').mockImplementation(((initial: unknown) =>
-          slot(() => ({ current: initial }))) as typeof React.useRef),
-        vi.spyOn(React, 'useMemo').mockImplementation(memo),
-        vi.spyOn(React, 'useCallback').mockImplementation((callback, deps) => memo(() => callback, deps)),
-        vi.spyOn(React, 'useEffect').mockImplementation((effect, deps) => {
-          const cell = slot(() => ({ deps: undefined as DependencyList | undefined, cleanup: undefined as (() => void) | undefined }))
-          if (!changed(cell.deps, deps)) return
-          cell.deps = deps
-          pending.push(() => {
-            if (cell.cleanup) {
-              cell.cleanup()
-              cleanups.delete(cell.cleanup)
-            }
-            cell.cleanup = effect() || undefined
-            if (cell.cleanup) cleanups.add(cell.cleanup)
-          })
-        })
-      ]
-      try {
-        return render()
-      } finally {
-        spies.forEach((spy) => spy.mockRestore())
-        pending.splice(0).forEach((effect) => effect())
-      }
-    },
-    unmount() {
-      cleanups.forEach((cleanup) => cleanup())
-      cleanups.clear()
-    }
-  }
-}
-
-function chatElement(element: ReactElement): ReactElement<ComponentProps<typeof ChatPane>> | undefined {
-  if (element.type === ChatPane) return element
-  for (const child of React.Children.toArray(element.props.children)) {
-    if (!React.isValidElement(child)) continue
-    const found = chatElement(child)
-    if (found) return found
-  }
-  return undefined
-}
 
 function renderChat(pane: AgentPane | null): string {
   const settings = sanitizeSettings({
@@ -123,7 +49,8 @@ function renderChat(pane: AgentPane | null): string {
 
 describe('restored chat model selection', () => {
   it.each([
-    { provider: 'cursor' as const, model: undefined, label: 'Cursor' },
+    { provider: 'cursor' as const, model: undefined, label: 'Cursor · Auto' },
+    { provider: 'cursor' as const, model: 'auto', label: 'Cursor · Auto' },
     { provider: 'codex' as const, model: undefined, label: 'Codex' },
     { provider: 'codex' as const, model: 'custom-model', label: 'Codex · custom-model' }
   ])('keeps $provider / $model instead of inheriting the settings model', ({ provider, model, label }) => {

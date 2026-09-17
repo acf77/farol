@@ -258,6 +258,17 @@ button:disabled {
   background: rgba(255, 255, 255, 0.06) !important;
 }
 
+/* Todo row actions stay hidden until the row is hovered or a control in it has focus. */
+.bf-todo-actions {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.bf-todo-row:hover .bf-todo-actions,
+.bf-todo-row:focus-within .bf-todo-actions {
+  opacity: 1;
+}
+
 .bf-brighten:hover {
   filter: brightness(1.12);
 }
