@@ -5,7 +5,13 @@ import type { AgentQuestion } from './questions'
 import type { ProjectSession } from './session'
 import type { AgentSkill } from './skills'
 import type { WorktreeRequest } from './worktree'
-import type { AppSettings, ModelChoice, OpenRouterSettings } from './settings'
+import type {
+  AppSettings,
+  JevSettings,
+  ModelChoice,
+  OpenRouterSettings,
+  SettingsResult
+} from './settings'
 import type { ProviderUsage } from './usage'
 
 export type { AgentQuestion, AgentSkill, ProviderUsage }
@@ -15,9 +21,11 @@ export type {
   AgentMode,
   AiProvider,
   AppSettings,
+  JevSettings,
   ModelChoice,
   OpenRouterSettings,
   ProjectSession,
+  SettingsResult,
   WorktreeRequest
 }
 export { aiFixCommand } from './ai'
@@ -476,10 +484,16 @@ export interface FarolApi {
     save(settings: AppSettings): Promise<void>
   }
   openrouter: {
-    saveKey(key: string): Promise<{ settings: AppSettings; error?: string }>
-    clearKey(): Promise<{ settings: AppSettings; error?: string }>
-    refresh(): Promise<{ settings: AppSettings; error?: string }>
-    setPinned(ids: string[]): Promise<{ settings: AppSettings; error?: string }>
+    saveKey(key: string): Promise<SettingsResult>
+    clearKey(): Promise<SettingsResult>
+    refresh(): Promise<SettingsResult>
+    setPinned(ids: string[]): Promise<SettingsResult>
+  }
+  /** Jev is internal-only: a key to store and a probe to prove it works. */
+  jev: {
+    saveKey(key: string): Promise<SettingsResult>
+    clearKey(): Promise<SettingsResult>
+    check(): Promise<SettingsResult>
   }
   usage: {
     /** Plan limits and balance for every provider, cached in the main process. */

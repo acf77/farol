@@ -2,11 +2,12 @@ import { app, safeStorage } from 'electron'
 import fs from 'fs'
 import path from 'path'
 
-interface SecretsFile {
-  openrouterApiKey?: string
-}
+/** One entry per provider Farol holds a key for, each encrypted at rest. */
+export type SecretName = 'openrouterApiKey' | 'aiGatewayApiKey'
 
-let cachedKey: string | null | undefined
+type SecretsFile = Partial<Record<SecretName, string>>
+
+const cache = new Map<SecretName, string | null>()
 
 function secretsPath(): string {
   return path.join(app.getPath('userData'), 'secrets.json')
@@ -24,7 +25,7 @@ function readFile(): SecretsFile {
 function writeFile(next: SecretsFile): void {
   const file = secretsPath()
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  if (!next.openrouterApiKey) {
+  if (!Object.values(next).some(Boolean)) {
     try {
       fs.unlinkSync(file)
     } catch {
@@ -44,31 +45,35 @@ function decrypt(payload: string): string | null {
   }
 }
 
-export function hasOpenRouterKey(): boolean {
-  return peekOpenRouterKey() !== null
+export function hasSecret(name: SecretName): boolean {
+  return peekSecret(name) !== null
 }
 
-export function peekOpenRouterKey(): string | null {
-  if (cachedKey !== undefined) return cachedKey
-  const stored = readFile().openrouterApiKey
-  cachedKey = stored ? decrypt(stored) : null
-  return cachedKey
+export function peekSecret(name: SecretName): string | null {
+  const cached = cache.get(name)
+  if (cached !== undefined) return cached
+  const stored = readFile()[name]
+  const value = stored ? decrypt(stored) : null
+  cache.set(name, value)
+  return value
 }
 
-export function setOpenRouterKey(plain: string): void {
+export function setSecret(name: SecretName, plain: string): void {
   if (!safeStorage.isEncryptionAvailable()) {
     throw new Error('Cannot encrypt the API key on this machine.')
   }
   const key = plain.trim()
   if (!key) {
-    clearOpenRouterKey()
+    clearSecret(name)
     return
   }
-  writeFile({ openrouterApiKey: safeStorage.encryptString(key).toString('base64') })
-  cachedKey = key
+  writeFile({ ...readFile(), [name]: safeStorage.encryptString(key).toString('base64') })
+  cache.set(name, key)
 }
 
-export function clearOpenRouterKey(): void {
-  writeFile({})
-  cachedKey = null
+export function clearSecret(name: SecretName): void {
+  const next = readFile()
+  delete next[name]
+  writeFile(next)
+  cache.set(name, null)
 }

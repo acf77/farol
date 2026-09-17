@@ -1259,7 +1259,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             setSettings(next)
             void api.settings.save(next)
           }}
-          onOpenRouterSettings={setSettings}
+          onAdoptSettings={setSettings}
           onClose={() => setSettingsOpen(false)}
         />
       )}

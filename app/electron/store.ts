@@ -11,8 +11,13 @@ import {
   type ProjectSession,
   type Workspace
 } from '../shared/session'
-import { sanitizeSettings, withOpenRouterKeyFlag, type AppSettings } from '../shared/settings'
-import { hasOpenRouterKey } from './secrets'
+import {
+  sanitizeSettings,
+  withJevKeyFlag,
+  withOpenRouterKeyFlag,
+  type AppSettings
+} from '../shared/settings'
+import { hasSecret } from './secrets'
 import { pipelineStoreRootFor } from './git'
 import { migrateUserDataFiles } from './user-data-migrate'
 
@@ -464,7 +469,11 @@ export async function saveProjectSession(
 }
 
 export async function loadSettings(): Promise<AppSettings> {
-  return withOpenRouterKeyFlag(sanitizeSettings((await readWorkspace()).settings), hasOpenRouterKey())
+  const stored = sanitizeSettings((await readWorkspace()).settings)
+  return withJevKeyFlag(
+    withOpenRouterKeyFlag(stored, hasSecret('openrouterApiKey')),
+    hasSecret('aiGatewayApiKey')
+  )
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {

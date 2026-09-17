@@ -19,6 +19,21 @@ export interface OpenRouterSettings {
   hasKey?: boolean
 }
 
+/**
+ * Jev is internal-only, so the single thing to configure is whether Farol holds
+ * a Vercel AI Gateway key. The flag comes from the encrypted store on load and
+ * is never persisted.
+ */
+export interface JevSettings {
+  hasKey: boolean
+}
+
+/** What a key mutation hands back: the settings to adopt, plus why it failed. */
+export interface SettingsResult {
+  settings: AppSettings
+  error?: string
+}
+
 /** One rung of a mode's fallback chain: a CLI, optionally pinned to a model. */
 export interface ModelChoice {
   agent: AiProvider
@@ -43,6 +58,8 @@ export interface AppSettings {
    */
   modeDefaults: ModeDefaults
   openrouter?: OpenRouterSettings
+  /** Absent until an AI Gateway key is stored. */
+  jev?: JevSettings
 }
 
 export function defaultSettings(): AppSettings {
@@ -167,6 +184,15 @@ export function sanitizeOpenRouter(raw: unknown): OpenRouterSettings | undefined
   const autoPinned = o.autoPinned === true
   if (!pinned.length && !catalog.length && !autoPinned) return undefined
   return { pinned, catalog, autoPinned }
+}
+
+/** Jev is on exactly when a key is stored, so the flag is the whole setting. */
+export function withJevKeyFlag(settings: AppSettings, hasKey: boolean): AppSettings {
+  if (hasKey) return { ...settings, jev: { hasKey } }
+  if (!settings.jev) return settings
+  const next = { ...settings }
+  delete next.jev
+  return next
 }
 
 export function withOpenRouterKeyFlag(settings: AppSettings, hasKey: boolean): AppSettings {

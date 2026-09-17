@@ -14,7 +14,7 @@ import {
   type ProviderUsage,
   type UsageWindow
 } from '../shared/usage'
-import { peekOpenRouterKey } from './secrets'
+import { peekSecret } from './secrets'
 
 const CODEX_SESSIONS = path.join(os.homedir(), '.codex', 'sessions')
 const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects')
@@ -163,7 +163,7 @@ async function getJson(url: string, key: string): Promise<unknown> {
 }
 
 async function openrouterUsage(now: number): Promise<ProviderUsage> {
-  const key = peekOpenRouterKey()
+  const key = peekSecret('openrouterApiKey')
   if (!key) return unavailable('openrouter', 'Add an OpenRouter API key in Settings.', now)
   const [credits, keyCredits] = await Promise.all([
     getJson(`${OPENROUTER_API_URL}/credits`, key)

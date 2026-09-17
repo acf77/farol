@@ -4,7 +4,7 @@ import os from 'os'
 import path from 'path'
 import { usesOpenRouterEnv, type AiProvider } from '../shared/ai'
 import { OPENROUTER_API_KEY_ENV } from '../shared/openrouter'
-import { peekOpenRouterKey } from './secrets'
+import { peekSecret } from './secrets'
 import { shellEnv } from './session'
 
 export function extraBinDirs(): string[] {
@@ -103,7 +103,7 @@ export function aiEnv(provider?: AiProvider): Record<string, string> {
   const env = shellEnv()
   env.PATH = pathDirs(env.PATH).join(path.delimiter)
   if (provider && usesOpenRouterEnv(provider)) {
-    const key = peekOpenRouterKey()
+    const key = peekSecret('openrouterApiKey')
     if (key) env[OPENROUTER_API_KEY_ENV] = key
     env.XDG_DATA_HOME = isolatedOpencodeDataHome()
   }

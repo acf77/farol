@@ -1,4 +1,4 @@
-import type { AiModel, AppSettings } from '../shared/types'
+import type { AiModel, AppSettings, SettingsResult } from '../shared/types'
 import {
   OPENROUTER_MODELS_URL,
   parseOpenRouterCatalog,
@@ -6,17 +6,12 @@ import {
   uniqueIds
 } from '../shared/openrouter'
 import { defaultOpenRouter, withOpenRouterKeyFlag } from '../shared/settings'
-import { clearOpenRouterKey, hasOpenRouterKey, peekOpenRouterKey, setOpenRouterKey } from './secrets'
+import { clearSecret, hasSecret, peekSecret, setSecret } from './secrets'
 import { loadSettings, saveSettings } from './store'
 import { clearUsageCache } from './usage'
 
-export interface OpenRouterResult {
-  settings: AppSettings
-  error?: string
-}
-
 async function currentSettings(): Promise<AppSettings> {
-  return withOpenRouterKeyFlag(await loadSettings(), hasOpenRouterKey())
+  return withOpenRouterKeyFlag(await loadSettings(), hasSecret('openrouterApiKey'))
 }
 
 async function writeOpenRouter(
@@ -35,7 +30,7 @@ async function writeOpenRouter(
     }
   }
   await saveSettings(next)
-  return withOpenRouterKeyFlag(next, hasOpenRouterKey())
+  return withOpenRouterKeyFlag(next, hasSecret('openrouterApiKey'))
 }
 
 export async function fetchOpenRouterCatalog(apiKey: string): Promise<AiModel[]> {
@@ -63,16 +58,16 @@ async function applyCatalog(catalog: AiModel[]): Promise<AppSettings> {
   })
 }
 
-export async function openRouterStatus(): Promise<OpenRouterResult> {
+export async function openRouterStatus(): Promise<SettingsResult> {
   return { settings: await currentSettings() }
 }
 
-export async function saveOpenRouterKey(raw: unknown): Promise<OpenRouterResult> {
+export async function saveOpenRouterKey(raw: unknown): Promise<SettingsResult> {
   if (typeof raw !== 'string' || !raw.trim()) {
     return { settings: await currentSettings(), error: 'Paste an OpenRouter API key.' }
   }
   try {
-    setOpenRouterKey(raw)
+    setSecret('openrouterApiKey', raw)
   } catch (err) {
     return {
       settings: await currentSettings(),
@@ -83,16 +78,16 @@ export async function saveOpenRouterKey(raw: unknown): Promise<OpenRouterResult>
   return refreshOpenRouterCatalog()
 }
 
-export async function clearOpenRouter(): Promise<OpenRouterResult> {
-  clearOpenRouterKey()
+export async function clearOpenRouter(): Promise<SettingsResult> {
+  clearSecret('openrouterApiKey')
   clearUsageCache()
   const settings = await loadSettings()
   const reset = settings.agent === 'openrouter'
   return { settings: await writeOpenRouter({}, reset) }
 }
 
-export async function refreshOpenRouterCatalog(): Promise<OpenRouterResult> {
-  const key = peekOpenRouterKey()
+export async function refreshOpenRouterCatalog(): Promise<SettingsResult> {
+  const key = peekSecret('openrouterApiKey')
   if (!key) return { settings: await currentSettings(), error: 'Save an OpenRouter API key first.' }
   try {
     return { settings: await applyCatalog(await fetchOpenRouterCatalog(key)) }
@@ -104,7 +99,7 @@ export async function refreshOpenRouterCatalog(): Promise<OpenRouterResult> {
   }
 }
 
-export async function setOpenRouterPinned(ids: unknown): Promise<OpenRouterResult> {
+export async function setOpenRouterPinned(ids: unknown): Promise<SettingsResult> {
   const pinned = uniqueIds(ids)
   const settings = await loadSettings()
   const reset = settings.agent === 'openrouter' && pinned.length === 0

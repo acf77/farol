@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { AgentMode, AppSettings, ModelChoice } from '@shared/types'
+import type { AgentMode, AppSettings, ModelChoice, SettingsResult } from '@shared/types'
 import {
   AI_LABELS,
   hasReviewGate,
@@ -8,6 +8,7 @@ import {
   providerModels,
   type AiProvider
 } from '@shared/ai'
+import { AI_GATEWAY_API_URL, JEV_MODEL_ID } from '@shared/jev'
 import { OPENROUTER_API_URL } from '@shared/openrouter'
 import { withAgentModel, withCommitMessageModel, withModeChain } from '@shared/settings'
 import { C, UI } from '../theme'
@@ -18,7 +19,8 @@ import { CHROME_ROW } from './side-panel'
 interface Props {
   settings: AppSettings
   onSettings: (next: AppSettings) => void
-  onOpenRouterSettings: (next: AppSettings) => void
+  /** Adopt settings the main process already owns — provider keys, catalogs. */
+  onAdoptSettings: (next: AppSettings) => void
   onClose: () => void
 }
 
@@ -45,6 +47,132 @@ const field: React.CSSProperties = {
   background: C.terminal,
   color: C.text,
   fontSize: 12.5
+}
+
+/** Save, replace, or clear one encrypted provider key. */
+function ApiKeyField({
+  configured,
+  placeholder,
+  busy,
+  onSave,
+  onClear
+}: {
+  configured: boolean
+  placeholder: string
+  busy: boolean
+  /** Resolves true once the key is stored, which is when the draft is cleared. */
+  onSave: (key: string) => Promise<boolean>
+  onClear: () => void
+}) {
+  const [draft, setDraft] = useState('')
+  const [replace, setReplace] = useState(false)
+
+  if (configured && !replace) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 12.5, color: C.textSoft }}>API key saved</span>
+        <Button variant="ghost" onClick={() => setReplace(true)}>
+          Replace
+        </Button>
+        <Button variant="danger" disabled={busy} onClick={onClear}>
+          Clear
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <form
+      style={{ display: 'flex', gap: 8, marginBottom: 10 }}
+      onSubmit={(e) => {
+        e.preventDefault()
+        void onSave(draft).then((saved) => {
+          if (!saved) return
+          setDraft('')
+          setReplace(false)
+        })
+      }}
+    >
+      <input
+        className="bf-input bf-focus"
+        type="password"
+        autoComplete="off"
+        spellCheck={false}
+        placeholder={placeholder}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        style={{ ...field, flex: 1 }}
+      />
+      <Button type="submit" variant="primary" disabled={busy || !draft.trim()}>
+        Save
+      </Button>
+      {configured && (
+        <Button type="button" variant="ghost" onClick={() => setReplace(false)}>
+          Cancel
+        </Button>
+      )}
+    </form>
+  )
+}
+
+/**
+ * Jev never reaches a model picker — Farol calls it for its own decisions — so
+ * the only thing to configure is the gateway key those calls go out with.
+ */
+function JevSection({
+  settings,
+  onAdoptSettings
+}: {
+  settings: AppSettings
+  onAdoptSettings: (next: AppSettings) => void
+}) {
+  const api = window.farol
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [probed, setProbed] = useState(false)
+  const configured = !!settings.jev?.hasKey
+
+  const run = (call: Promise<SettingsResult>): Promise<boolean> => {
+    setBusy(true)
+    return call.then((result) => {
+      onAdoptSettings(result.settings)
+      setError(result.error ?? null)
+      setProbed(!result.error)
+      setBusy(false)
+      return !result.error
+    })
+  }
+
+  return (
+    <Section
+      title="Jev"
+      hint={`${JEV_MODEL_ID} via ${AI_GATEWAY_API_URL} — Farol's internal decisions only. Jev writes no text, so it is not offered to Chat or to pipeline steps.`}
+    >
+      <ApiKeyField
+        configured={configured}
+        placeholder="vck_…"
+        busy={busy}
+        onSave={(key) => run(api.jev.saveKey(key))}
+        onClear={() => void run(api.jev.clearKey())}
+      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Button
+          variant="secondary"
+          disabled={busy || !configured}
+          onClick={() => void run(api.jev.check())}
+        >
+          Test
+        </Button>
+        {busy && <span style={{ fontSize: 11.5, color: C.textMuted }}>Working…</span>}
+        {!busy && configured && probed && !error && (
+          <span style={{ fontSize: 11.5, color: C.textSoft }}>
+            Jev answered the check question.
+          </span>
+        )}
+      </div>
+      {error && <div style={{ fontSize: 12, color: C.red, marginTop: 8 }}>{error}</div>}
+    </Section>
+  )
 }
 
 function Section({
@@ -179,13 +307,11 @@ function ModeChain({
   )
 }
 
-export default function SettingsPage({ settings, onSettings, onOpenRouterSettings, onClose }: Props) {
+export default function SettingsPage({ settings, onSettings, onAdoptSettings, onClose }: Props) {
   const api = window.farol
   const or = settings.openrouter
   const configured = !!or?.hasKey
   const [tab, setTab] = useState<TabKey>('general')
-  const [draft, setDraft] = useState('')
-  const [replace, setReplace] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -207,20 +333,17 @@ export default function SettingsPage({ settings, onSettings, onOpenRouterSetting
     retried.current = true
     setBusy(true)
     void api.openrouter.refresh().then((result) => {
-      onOpenRouterSettings(result.settings)
+      onAdoptSettings(result.settings)
       setError(result.error ?? null)
       setBusy(false)
     })
-  }, [api.openrouter, configured, onOpenRouterSettings, or?.autoPinned])
+  }, [api.openrouter, configured, onAdoptSettings, or?.autoPinned])
 
-  const apply = (result: { settings: AppSettings; error?: string }, clearDraft = false): void => {
-    onOpenRouterSettings(result.settings)
+  const apply = (result: SettingsResult): boolean => {
+    onAdoptSettings(result.settings)
     setError(result.error ?? null)
-    if (clearDraft && !result.error) {
-      setDraft('')
-      setReplace(false)
-    }
     setBusy(false)
+    return !result.error
   }
 
   const providers = pickerProviders(or)
@@ -309,6 +432,8 @@ export default function SettingsPage({ settings, onSettings, onOpenRouterSetting
                 Send a failed step&apos;s report straight to Chat
               </Checkbox>
             </Section>
+
+            <JevSection settings={settings} onAdoptSettings={onAdoptSettings} />
           </div>
         ) : (
           <div
@@ -369,52 +494,19 @@ export default function SettingsPage({ settings, onSettings, onOpenRouterSetting
                 title="OpenRouter"
                 hint={`Endpoint ${OPENROUTER_API_URL} · runs through OpenCode`}
               >
-                {configured && !replace ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                    <span style={{ fontSize: 12.5, color: C.textSoft }}>API key saved</span>
-                    <Button variant="ghost" onClick={() => setReplace(true)}>
-                      Replace
-                    </Button>
-                    <Button
-                      variant="danger"
-                      disabled={busy}
-                      onClick={() => {
-                        setBusy(true)
-                        void api.openrouter.clearKey().then((result) => apply(result, true))
-                      }}
-                    >
-                      Clear
-                    </Button>
-                  </div>
-                ) : (
-                  <form
-                    style={{ display: 'flex', gap: 8, marginBottom: 10 }}
-                    onSubmit={(e) => {
-                      e.preventDefault()
-                      setBusy(true)
-                      void api.openrouter.saveKey(draft).then((result) => apply(result, true))
-                    }}
-                  >
-                    <input
-                      className="bf-input bf-focus"
-                      type="password"
-                      autoComplete="off"
-                      spellCheck={false}
-                      placeholder="sk-or-…"
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      style={{ ...field, flex: 1 }}
-                    />
-                    <Button type="submit" variant="primary" disabled={busy || !draft.trim()}>
-                      Save
-                    </Button>
-                    {configured && (
-                      <Button type="button" variant="ghost" onClick={() => setReplace(false)}>
-                        Cancel
-                      </Button>
-                    )}
-                  </form>
-                )}
+                <ApiKeyField
+                  configured={configured}
+                  placeholder="sk-or-…"
+                  busy={busy}
+                  onSave={(key) => {
+                    setBusy(true)
+                    return api.openrouter.saveKey(key).then(apply)
+                  }}
+                  onClear={() => {
+                    setBusy(true)
+                    void api.openrouter.clearKey().then(apply)
+                  }}
+                />
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                   <Button
@@ -422,7 +514,7 @@ export default function SettingsPage({ settings, onSettings, onOpenRouterSetting
                     disabled={busy || !configured}
                     onClick={() => {
                       setBusy(true)
-                      void api.openrouter.refresh().then((result) => apply(result))
+                      void api.openrouter.refresh().then(apply)
                     }}
                   >
                     Refresh catalog
@@ -468,7 +560,7 @@ export default function SettingsPage({ settings, onSettings, onOpenRouterSetting
                         const next = on
                           ? [...current, m.id]
                           : current.filter((id) => id !== m.id)
-                        void api.openrouter.setPinned(next).then((result) => apply(result))
+                        void api.openrouter.setPinned(next).then(apply)
                       }}
                       title={m.id}
                       style={{ fontSize: 12, color: C.textSoft }}

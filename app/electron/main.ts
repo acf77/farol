@@ -22,6 +22,7 @@ import {
   saveOpenRouterKey,
   setOpenRouterPinned
 } from './openrouter'
+import { checkJev, clearJev, saveJevKey } from './jev'
 import { listProjectFiles, saveChatAttachment } from './files'
 import { listAgentSkills } from './skills'
 import { AppUpdater } from './update'
@@ -727,6 +728,9 @@ function registerAppIpc(): void {
   ipcMain.handle('openrouter:clearKey', () => clearOpenRouter())
   ipcMain.handle('openrouter:refresh', () => refreshOpenRouterCatalog())
   ipcMain.handle('openrouter:setPinned', (_e, ids: string[]) => setOpenRouterPinned(ids))
+  ipcMain.handle('jev:saveKey', (_e, key: string) => saveJevKey(key))
+  ipcMain.handle('jev:clearKey', () => clearJev())
+  ipcMain.handle('jev:check', () => checkJev())
   ipcMain.handle('usage:read', () => providerUsage())
   ipcMain.handle('update:check', () => updater.check())
   ipcMain.on('update:install', () => updater.install())
