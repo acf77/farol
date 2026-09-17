@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { C, MONO, UI } from '../theme'
 
@@ -16,14 +16,13 @@ interface Props {
   onClose: () => void
 }
 
-/**
- * ⌘K command palette. Filters a flat action list; Enter runs the highlighted
- * row. Escape / backdrop click dismisses without side effects.
- */
 export default function CommandPalette({ open, items, onClose }: Props) {
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const activeRef = useRef<HTMLDivElement>(null)
+  const listId = useId()
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -33,75 +32,88 @@ export default function CommandPalette({ open, items, onClose }: Props) {
       return hay.includes(q)
     })
   }, [items, query])
+  const activeIndex = Math.min(index, Math.max(filtered.length - 1, 0))
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return
+    const dialog = dialogRef.current
+    if (!dialog) return
+    const previousFocus = document.activeElement
     setQuery('')
     setIndex(0)
-    const id = window.setTimeout(() => inputRef.current?.focus(), 0)
-    return () => window.clearTimeout(id)
-  }, [open])
-
-  useEffect(() => {
-    setIndex(0)
-  }, [query])
-
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose()
-        return
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setIndex((i) => Math.min(i + 1, Math.max(filtered.length - 1, 0)))
-        return
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setIndex((i) => Math.max(i - 1, 0))
-        return
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        const item = filtered[index]
-        if (item) {
-          onClose()
-          item.run()
-        }
+    dialog.showModal()
+    inputRef.current?.focus({ preventScroll: true })
+    return () => {
+      const restore = dialog.contains(document.activeElement) || document.activeElement === document.body
+      dialog.close()
+      if (restore && previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+        previousFocus.focus({ preventScroll: true })
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, filtered, index, onClose])
+  }, [open])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [open, activeIndex, filtered])
+
+  const runItem = (item: PaletteItem): void => {
+    dialogRef.current?.close()
+    onClose()
+    item.run()
+  }
 
   if (!open) return null
 
   return createPortal(
-    <div
-      role="dialog"
+    <dialog
+      ref={dialogRef}
+      className="bf-command-palette bf-page-overlay"
       aria-label="Command palette"
+      onCancel={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onClose()
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 200,
+        width: '100%',
+        height: '100%',
+        maxWidth: 'none',
+        maxHeight: 'none',
+        margin: 0,
+        border: 'none',
+        boxSizing: 'border-box',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
-        paddingTop: '12vh',
+        padding: '12vh 0 16px',
         background: 'rgba(4, 6, 10, 0.55)',
+        color: C.text,
+        overflow: 'auto',
         fontFamily: UI
       }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
     >
+      <style>{`
+        .bf-command-palette:not([open]) { display: none !important; }
+        .bf-command-palette::backdrop { background: transparent; }
+        .bf-command-palette input:focus-visible {
+          outline-offset: -3px !important;
+          box-shadow: none !important;
+        }
+      `}</style>
       <div
         style={{
           width: 480,
           maxWidth: '92vw',
+          maxHeight: '100%',
+          display: 'flex',
+          flexDirection: 'column',
           background: '#232322',
           border: `1px solid ${C.cardBorder}`,
           borderRadius: 12,
@@ -111,14 +123,42 @@ export default function CommandPalette({ open, items, onClose }: Props) {
       >
         <input
           ref={inputRef}
+          role="combobox"
+          aria-label="Search commands"
+          aria-autocomplete="list"
+          aria-expanded={true}
+          aria-controls={listId}
+          aria-activedescendant={filtered.length ? `${listId}-${activeIndex}` : undefined}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setIndex(0)
+          }}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return
+            if (e.key === 'ArrowDown') {
+              e.preventDefault()
+              setIndex(Math.min(activeIndex + 1, Math.max(filtered.length - 1, 0)))
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault()
+              setIndex(Math.max(activeIndex - 1, 0))
+            } else if (e.key === 'Enter') {
+              e.preventDefault()
+              const item = filtered[activeIndex]
+              if (item) runItem(item)
+            } else if (e.key === 'Tab') {
+              e.preventDefault()
+            }
+          }}
           placeholder="Search pipelines, views, actions…"
-          className="bf-focus"
+          className="bf-input bf-focus"
           style={{
             width: '100%',
+            boxSizing: 'border-box',
+            flexShrink: 0,
             border: 'none',
             outline: 'none',
+            outlineOffset: -3,
             background: 'transparent',
             color: C.text,
             fontSize: 14,
@@ -126,27 +166,29 @@ export default function CommandPalette({ open, items, onClose }: Props) {
             borderBottom: '1px solid #3E3E3A'
           }}
         />
-        <div style={{ maxHeight: 320, overflow: 'auto', padding: 6 }}>
-          {!filtered.length && (
-            <div style={{ padding: '14px 10px', fontSize: 12.5, color: C.textMuted }}>
-              No matches
-            </div>
-          )}
+        <div
+          id={listId}
+          role="listbox"
+          aria-label="Commands"
+          tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
+          style={{ maxHeight: 320, minHeight: 0, overflow: 'auto', padding: 6 }}
+        >
           {filtered.map((item, i) => {
-            const on = i === index
+            const on = i === activeIndex
             return (
-              <button
+              <div
                 key={item.id}
-                type="button"
-                className="bf-focus"
+                id={`${listId}-${i}`}
+                ref={on ? activeRef : undefined}
+                role="option"
+                aria-selected={on}
                 onMouseEnter={() => setIndex(i)}
-                onClick={() => {
-                  onClose()
-                  item.run()
-                }}
+                onClick={() => runItem(item)}
                 style={{
                   display: 'flex',
                   width: '100%',
+                  boxSizing: 'border-box',
                   alignItems: 'center',
                   gap: 10,
                   textAlign: 'left',
@@ -159,7 +201,7 @@ export default function CommandPalette({ open, items, onClose }: Props) {
                 }}
               >
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>{item.label}</span>
+                  <span style={{ display: 'block', fontSize: 13, fontWeight: 600, overflowWrap: 'anywhere' }}>{item.label}</span>
                   {(item.detail || item.group) && (
                     <span
                       style={{
@@ -177,12 +219,15 @@ export default function CommandPalette({ open, items, onClose }: Props) {
                     </span>
                   )}
                 </span>
-              </button>
+              </div>
             )
           })}
         </div>
+        <div role="status" style={filtered.length ? { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)' } : { padding: '14px 16px', fontSize: 12.5, color: C.textMuted }}>
+          {filtered.length ? `${filtered.length} commands available` : 'No matches'}
+        </div>
       </div>
-    </div>,
+    </dialog>,
     document.body
   )
 }

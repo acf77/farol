@@ -7,20 +7,26 @@
  * question tool_use in the NDJSON stream — and Farol shows the UI itself.
  */
 
-export const QUESTIONS_MARKER = 'FAROL_QUESTIONS:'
-export const PIPELINES_MARKER = 'FAROL_PIPELINES:'
-export const BLOCK_MARKER = 'FAROL_BLOCKED:'
-export const PLAN_MARKER = 'FAROL_PLAN:'
-export const FINISHED_PLAN = `${PLAN_MARKER} finished`
-export const CONTROL_MARKERS = [PIPELINES_MARKER, QUESTIONS_MARKER, BLOCK_MARKER, PLAN_MARKER] as const
+import { CONTROL_MARKERS, FINISHED_PLAN, QUESTIONS_MARKER, lastControlLine, lastNonEmptyLine } from './control-line'
+
+export {
+  BLOCK_MARKER,
+  CONTROL_MARKERS,
+  FINISHED_PLAN,
+  PIPELINES_MARKER,
+  PLAN_MARKER,
+  QUESTIONS_MARKER
+} from './control-line'
 
 /** Only the exact final control line makes a response executable. */
 export function isFinishedPlan(text: string): boolean {
-  return text.trimEnd().split(/\r?\n/).at(-1)?.trim() === FINISHED_PLAN
+  const last = lastNonEmptyLine(text)
+  return last?.fenced === false && last.line.trim() === FINISHED_PLAN
 }
 
 /** Drop the trailing marker line so the plan body can be replayed to the agent. */
 export function stripFinishedPlan(text: string): string {
+  if (!isFinishedPlan(text)) return text
   const lines = text.trimEnd().split(/\r?\n/)
   if (lines.at(-1)?.trim() === FINISHED_PLAN) lines.pop()
   return lines.join('\n').trimEnd()
@@ -136,12 +142,8 @@ export function normalizeQuestions(value: unknown): { questions: AgentQuestion[]
 export function parseQuestionsMarker(
   output: string
 ): { questions: AgentQuestion[] } | { error: string } | null {
-  const marker = output.lastIndexOf(QUESTIONS_MARKER)
-  if (marker < 0) return null
-  const raw = output
-    .slice(marker + QUESTIONS_MARKER.length)
-    .split(/\r?\n/, 1)[0]
-    .trim()
+  const raw = lastControlLine(output, QUESTIONS_MARKER)
+  if (raw === undefined) return null
   let value: unknown
   try {
     value = JSON.parse(raw)
