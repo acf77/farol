@@ -326,11 +326,6 @@ export function CliModelMenu({
   const selectedModel = normalizeModel(model)
   const all = pickerProviders(settings?.openrouter)
   const providers = only ? all.filter(only) : all
-  /** Cursor lists Auto explicitly; other CLIs keep an omit-model Default row. */
-  const defaultLabel = page === 'cursor' ? 'Auto' : 'Default'
-  const defaultModel = page === 'cursor' ? 'auto' : undefined
-  const defaultSelected =
-    page === current && (page === 'cursor' ? selectedModel === 'auto' || !selectedModel : !selectedModel)
 
   const place: React.CSSProperties =
     'bottom' in pos ? { left: pos.left, bottom: pos.bottom } : { left: pos.left, top: pos.top }
@@ -407,52 +402,60 @@ export function CliModelMenu({
                 <CaretLeft size={12} />
                 <span>{AI_LABELS[page]}</span>
               </button>,
-              <button
-                key="default"
-                type="button"
-                role="menuitem"
-                className="bf-focus bf-menu-item"
-                onClick={() => onPick(page, defaultModel)}
-                style={{
-                  display: 'flex',
-                  width: '100%',
-                  justifyContent: 'space-between',
-                  border: 'none',
-                  background: 'transparent',
-                  color: defaultSelected ? C.textStrong : C.textMuted,
-                  cursor: 'pointer'
-                }}
-              >
-                <span>{defaultLabel}</span>
-                {defaultSelected && <CheckIcon size={12} />}
-              </button>,
+              /** Cursor's Auto row comes from its model catalog; other CLIs keep an omit-model Default row. */
+              ...(page === 'cursor'
+                ? []
+                : [
+                    <button
+                      key="default"
+                      type="button"
+                      role="menuitem"
+                      className="bf-focus bf-menu-item"
+                      onClick={() => onPick(page, undefined)}
+                      style={{
+                        display: 'flex',
+                        width: '100%',
+                        justifyContent: 'space-between',
+                        border: 'none',
+                        background: 'transparent',
+                        color: page === current && !selectedModel ? C.textStrong : C.textMuted,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <span>Default</span>
+                      {page === current && !selectedModel && <CheckIcon size={12} />}
+                    </button>
+                  ]),
               ...providerModels(
                 page,
                 page === current ? selectedModel : undefined,
                 settings?.openrouter
-              )
-                .filter((m) => !(page === 'cursor' && m.id === 'auto'))
-                .map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  role="menuitem"
-                  className="bf-focus bf-menu-item"
-                  onClick={() => onPick(page, m.id)}
-                  style={{
-                    display: 'flex',
-                    width: '100%',
-                    justifyContent: 'space-between',
-                    border: 'none',
-                    background: 'transparent',
-                    color: page === current && selectedModel === m.id ? C.textStrong : C.textMuted,
-                    cursor: 'pointer'
-                  }}
-                >
-                  <span>{m.label}</span>
-                  {page === current && selectedModel === m.id && <CheckIcon size={12} />}
-                </button>
-              ))
+              ).map((m) => {
+                const isSelected =
+                  page === current &&
+                  (page === 'cursor' ? (selectedModel ?? 'auto') === m.id : selectedModel === m.id)
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    role="menuitem"
+                    className="bf-focus bf-menu-item"
+                    onClick={() => onPick(page, m.id)}
+                    style={{
+                      display: 'flex',
+                      width: '100%',
+                      justifyContent: 'space-between',
+                      border: 'none',
+                      background: 'transparent',
+                      color: isSelected ? C.textStrong : C.textMuted,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <span>{m.label}</span>
+                    {isSelected && <CheckIcon size={12} />}
+                  </button>
+                )
+              })
             ]}
       </div>
     </>
