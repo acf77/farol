@@ -24,11 +24,6 @@ export interface TodoStore {
   forget(checkout: string): Promise<void>
 }
 
-const MAX_TODOS = 100
-const MAX_CONTENT = 200
-
-export const MAX_TODOS_MARKER_LENGTH = TODOS_MARKER.length + MAX_TODOS * (MAX_CONTENT + 64)
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
@@ -45,7 +40,7 @@ function todoFrom(value: unknown): Todo | null {
   const record = isRecord(value) ? value : {}
   const status = TODO_STATUSES.find((s) => s === String(record.status)) ?? 'pending'
   const priority = TODO_PRIORITIES.find((p) => p === String(record.priority)) ?? 'medium'
-  return { content: text.slice(0, MAX_CONTENT), status, priority }
+  return { content: text, status, priority }
 }
 
 export function sanitizeTodos(raw: unknown): Todo[] {
@@ -53,7 +48,6 @@ export function sanitizeTodos(raw: unknown): Todo[] {
   return raw
     .map(todoFrom)
     .filter((todo): todo is Todo => todo !== null)
-    .slice(0, MAX_TODOS)
 }
 
 function strictTodo(value: unknown): Todo | null {
@@ -62,7 +56,7 @@ function strictTodo(value: unknown): Todo | null {
   const status = TODO_STATUSES.find((s) => s === value.status)
   const priority = TODO_PRIORITIES.find((p) => p === value.priority)
   if (!content || !status || !priority) return null
-  return { content: content.slice(0, MAX_CONTENT), status, priority }
+  return { content, status, priority }
 }
 
 export function parseTodosMarker(output: string): Todo[] | null {
@@ -71,7 +65,7 @@ export function parseTodosMarker(output: string): Todo[] | null {
   if (lastControlMarkerLine(output)?.marker === TODOS_MARKER) return null
   try {
     const value = JSON.parse(raw) as unknown
-    if (!Array.isArray(value) || value.length > MAX_TODOS) return null
+    if (!Array.isArray(value)) return null
     const todos = value.map(strictTodo)
     return todos.some((todo) => todo === null) ? null : (todos as Todo[])
   } catch {

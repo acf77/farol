@@ -95,4 +95,15 @@ describe('todoSummary', () => {
   it('names a cleared list', () => {
     expect(todoSummary([])).toBe('Todo list cleared')
   })
+
+  it('preserves full replacements without arbitrary item or content caps', () => {
+    const todos = Array.from({ length: 101 }, (_, index) => ({
+      content: `item ${index} ${'x'.repeat(250)}`,
+      status: 'pending' as const,
+      priority: 'low' as const
+    }))
+    const marker = `${TODOS_MARKER} ${JSON.stringify(todos)}\nFAROL_PIPELINES: []`
+
+    expect(parseTodosMarker(marker)).toEqual(todos)
+  })
 })

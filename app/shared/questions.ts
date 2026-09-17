@@ -7,7 +7,7 @@
  * question tool_use in the NDJSON stream — and Farol shows the UI itself.
  */
 
-import { CONTROL_MARKERS, FINISHED_PLAN, QUESTIONS_MARKER, lastControlLine } from './control-line'
+import { CONTROL_MARKERS, FINISHED_PLAN, QUESTIONS_MARKER, lastControlLine, lastNonEmptyLine } from './control-line'
 
 export {
   BLOCK_MARKER,
@@ -20,11 +20,13 @@ export {
 
 /** Only the exact final control line makes a response executable. */
 export function isFinishedPlan(text: string): boolean {
-  return text.trimEnd().split(/\r?\n/).at(-1)?.trim() === FINISHED_PLAN
+  const last = lastNonEmptyLine(text)
+  return last?.fenced === false && last.line.trim() === FINISHED_PLAN
 }
 
 /** Drop the trailing marker line so the plan body can be replayed to the agent. */
 export function stripFinishedPlan(text: string): string {
+  if (!isFinishedPlan(text)) return text
   const lines = text.trimEnd().split(/\r?\n/)
   if (lines.at(-1)?.trim() === FINISHED_PLAN) lines.pop()
   return lines.join('\n').trimEnd()

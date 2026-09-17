@@ -66,4 +66,13 @@ describe('createTodoStore', () => {
     await failing.save('/repo', ['retry'])
     expect((await failing.load('/repo')).map((todo) => todo.content)).toEqual(['retry'])
   })
+
+  it('does not overwrite corrupted storage while saving another checkout', async () => {
+    const storage = path.join(dir, 'todos.json')
+    await fs.writeFile(storage, 'not json')
+
+    await expect(store.load(path.join(dir, 'repo'))).rejects.toThrow()
+    await expect(store.save(path.join(dir, 'other'), ['retry'])).rejects.toThrow()
+    await expect(fs.readFile(storage, 'utf8')).resolves.toBe('not json')
+  })
 })

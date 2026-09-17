@@ -21,15 +21,50 @@ export const CONTROL_MARKERS = [
 
 type ControlMarker = (typeof CONTROL_MARKERS)[number]
 
-/** A ``` or ~~~ fence line opens or closes an example block. */
-const FENCE = /^(?:`{3,}|~{3,})/
+export interface ControlLineState {
+  control: string
+  buffer: string
+  fenced: boolean
+}
+
+export function isFenceLine(line: string): boolean {
+  return /^(?:`{3,}|~{3,})/.test(line.trimStart())
+}
+
+export function isControlLine(line: string): boolean {
+  const trimmed = line.trimStart()
+  return CONTROL_MARKERS.some((marker) => trimmed.startsWith(marker))
+}
+
+export function appendControlLines(state: ControlLineState, chunk: string): void {
+  const lines = `${state.buffer}${chunk}`.split(/\r?\n/)
+  state.buffer = lines.pop() ?? ''
+  for (const line of lines) {
+    if (!state.fenced && isControlLine(line)) state.control += `${line}\n`
+    if (isFenceLine(line)) state.fenced = !state.fenced
+  }
+}
+
+export function flushControlLines(state: ControlLineState): void {
+  if (!state.buffer) return
+  if (!state.fenced && isControlLine(state.buffer)) state.control += state.buffer
+  state.buffer = ''
+}
+
+export function lastNonEmptyLine(text: string): { line: string; fenced: boolean } | undefined {
+  let last: { line: string; fenced: boolean } | undefined
+  for (const entry of fencedLines(text)) {
+    if (entry.line.trim()) last = entry
+  }
+  return last
+}
 
 /** Every line tagged with whether it sits inside a fenced code example. */
 function fencedLines(text: string): { line: string; fenced: boolean }[] {
   const out: { line: string; fenced: boolean }[] = []
   let fenced = false
   for (const line of text.split(/\r?\n/)) {
-    const fence = FENCE.test(line.trimStart())
+    const fence = isFenceLine(line)
     out.push({ line, fenced: fenced || fence })
     if (fence) fenced = !fenced
   }
@@ -37,7 +72,7 @@ function fencedLines(text: string): { line: string; fenced: boolean }[] {
 }
 
 /** Lines outside fenced code blocks, where a marker is an instruction rather than an example. */
-function controlLines(text: string): string[] {
+export function controlLines(text: string): string[] {
   return fencedLines(text)
     .filter(({ fenced }) => !fenced)
     .map(({ line }) => line)
@@ -48,7 +83,7 @@ export function lastControlLine(text: string, marker: string): string | undefine
   let value: string | undefined
   for (const line of controlLines(text)) {
     const trimmed = line.trimStart()
-    if (trimmed.startsWith(marker)) value = trimmed.slice(marker.length).trim()
+    if (isControlLine(line) && trimmed.startsWith(marker)) value = trimmed.slice(marker.length).trim()
   }
   return value
 }
@@ -60,7 +95,9 @@ export function lastControlMarkerLine(
   let found: { marker: ControlMarker; value: string } | null = null
   for (const line of controlLines(text)) {
     const trimmed = line.trimStart()
-    const marker = CONTROL_MARKERS.find((candidate) => trimmed.startsWith(candidate))
+    const marker = isControlLine(line)
+      ? CONTROL_MARKERS.find((candidate) => trimmed.startsWith(candidate))
+      : undefined
     if (marker) found = { marker, value: trimmed.slice(marker.length).trim() }
   }
   return found
@@ -71,7 +108,7 @@ export function stripControlMarkerLines(text: string): string {
   return fencedLines(text)
     .filter(
       ({ line, fenced }) =>
-        fenced || !CONTROL_MARKERS.some((marker) => line.trimStart().startsWith(marker))
+        fenced || !isControlLine(line)
     )
     .map(({ line }) => line)
     .join('\n')

@@ -1,5 +1,6 @@
 import fs from 'fs/promises'
 import path from 'path'
+import { randomUUID } from 'crypto'
 import { sanitizeTodos, type Todo, type TodoStore } from '../shared/todos'
 
 /** Persisted in userData, keyed by checkout. `userDataDir` is a thunk so this can be built before Electron is ready. */
@@ -7,19 +8,35 @@ export function createTodoStore(userDataDir: () => string): TodoStore {
   let queue: Promise<unknown> = Promise.resolve()
   const file = (): string => path.join(userDataDir(), 'todos.json')
 
+  function isMissing(error: unknown): boolean {
+    return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'ENOENT'
+  }
+
   async function readAll(): Promise<Record<string, Todo[]>> {
+    let raw: string
     try {
-      const raw = JSON.parse(await fs.readFile(file(), 'utf8')) as unknown
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
-      const all: Record<string, Todo[]> = {}
-      for (const [checkout, value] of Object.entries(raw as Record<string, unknown>)) {
-        const todos = sanitizeTodos(value)
-        if (todos.length) all[checkout] = todos
-      }
-      return all
-    } catch {
-      return {}
+      raw = await fs.readFile(file(), 'utf8')
+    } catch (error) {
+      if (isMissing(error)) return {}
+      throw error
     }
+
+    let value: unknown
+    try {
+      value = JSON.parse(raw) as unknown
+    } catch (error) {
+      throw new Error('Could not read the todo list', { cause: error })
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Todo list storage is invalid')
+    }
+
+    const all: Record<string, Todo[]> = {}
+    for (const [checkout, todos] of Object.entries(value as Record<string, unknown>)) {
+      const sanitized = sanitizeTodos(todos)
+      if (sanitized.length) all[checkout] = sanitized
+    }
+    return all
   }
 
   /** Serialize work, but let a failed operation settle so later ones still run. */
@@ -38,8 +55,17 @@ export function createTodoStore(userDataDir: () => string): TodoStore {
       const all = await readAll()
       if (todos.length) all[key] = todos
       else delete all[key]
-      await fs.mkdir(path.dirname(file()), { recursive: true })
-      await fs.writeFile(file(), JSON.stringify(all, null, 2) + '\n', 'utf8')
+
+      const target = file()
+      const temp = `${target}.${process.pid}.${randomUUID()}.tmp`
+      try {
+        await fs.mkdir(path.dirname(target), { recursive: true })
+        await fs.writeFile(temp, JSON.stringify(all, null, 2) + '\n', 'utf8')
+        await fs.rename(temp, target)
+      } catch (error) {
+        await fs.rm(temp, { force: true }).catch(() => {})
+        throw error
+      }
     })
   }
 

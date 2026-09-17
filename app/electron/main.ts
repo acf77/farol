@@ -701,8 +701,10 @@ function registerTaskIpc(): void {
       pipelines?: AgentTaskRequest['pipelines'],
       model?: string,
       mode?: AgentTaskRequest['mode'],
-      fallbacks?: AgentTaskRequest['fallbacks']
-    ) => agents.message(taskId, text, provider, pipelines, model, mode, fallbacks)
+      fallbacks?: AgentTaskRequest['fallbacks'],
+      cwd?: string,
+      checkout?: string
+    ) => agents.message(taskId, text, provider, pipelines, model, mode, fallbacks, cwd, checkout)
   )
   ipcMain.handle(
     'agent:setProvider',

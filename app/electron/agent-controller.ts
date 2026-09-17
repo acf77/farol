@@ -20,7 +20,7 @@ import {
   normalizeModel
 } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
-import { lastControlLine } from '../shared/control-line'
+import { appendControlLines, flushControlLines, lastControlLine, type ControlLineState } from '../shared/control-line'
 import {
   BLOCK_MARKER,
   FINISHED_PLAN,
@@ -39,7 +39,6 @@ import {
   pipelinesForCatalogCmds
 } from '../shared/catalog-shell'
 import {
-  MAX_TODOS_MARKER_LENGTH,
   TODOS_MARKER,
   formatTodos,
   parseTodosMarker,
@@ -129,7 +128,7 @@ interface PipelineActivity {
   runId?: string
 }
 
-type CycleScan = {
+type CycleScan = ControlLineState & {
   assistant: string
   output: string
   blocked: string | null
@@ -141,11 +140,14 @@ type CycleScan = {
   questionId?: string
 }
 
-type CycleAttemptResult = { kind: 'done' } | { kind: 'retry'; prompt: string; rewindAttempt?: boolean }
+type CycleAttemptResult =
+  | { kind: 'done' }
+  | { kind: 'retry'; opening: string; rewindAttempt?: boolean }
+  | { kind: 'retry'; prompt: string; rewindAttempt: true }
 
 const DEFAULT_MAX_ATTEMPTS = 5
 /** How much trailing output the marker and failure scans keep in memory. */
-const SCAN_WINDOW = Math.max(16_384, MAX_TODOS_MARKER_LENGTH)
+const SCAN_WINDOW = 16_384
 /** Cap stored prompt history so long chats cannot retain unbounded text. */
 const MAX_PROMPT_CHARS = 100_000
 /** Cap pipeline activity retained for prompt context. */
@@ -378,13 +380,17 @@ export class AgentController {
     pipelines?: Pipeline[],
     model?: string,
     mode?: AgentTaskRequest['mode'],
-    fallbacks?: ModelChoice[]
+    fallbacks?: ModelChoice[],
+    cwd?: string,
+    checkout?: string
   ): { ok: boolean; message?: string } {
     const task = this.tasks.get(taskId)
     const clean = text.trim()
     if (!task) return { ok: false, message: 'This agent task is no longer available.' }
     if (!clean) return { ok: false, message: 'Enter a message.' }
     this.applyMessageOverrides(task, provider, model, mode, pipelines, fallbacks)
+    if (cwd) task.request.cwd = cwd
+    if (checkout) task.request.checkout = checkout
     this.emit({ kind: 'user', taskId, text: clean })
     if (task.pendingQuestions) {
       this.dismissPendingQuestions(task)
@@ -600,13 +606,10 @@ export class AgentController {
   }
 
   /** If the user typed while a cycle was finishing, run their message next. */
-  private continueIfGuidance(task: Task): string | null {
+  private continueIfGuidanceOpening(task: Task): string | null {
     const guidance = task.guidance.splice(0).join('\n')
     if (!guidance) return null
-    return this.prompt(
-      task,
-      `Continue the original task: ${task.request.prompt}\n\nUser request:\n${guidance}`
-    )
+    return `Continue the original task: ${task.request.prompt}\n\nUser request:\n${guidance}`
   }
 
   private cycleSink(task: Task, scan: CycleScan): AgentSink {
@@ -624,12 +627,14 @@ export class AgentController {
         this.emit({ kind: 'output', taskId: task.request.id, chunk })
         scan.assistant = (scan.assistant + chunk).slice(-SCAN_WINDOW)
         scan.output = (scan.output + chunk).slice(-SCAN_WINDOW)
+        appendControlLines(scan, chunk)
         check()
       },
       turn: (text) => {
         this.emit({ kind: 'assistant', taskId: task.request.id, text })
         scan.assistant = (`${scan.assistant}\n${text}`).slice(-SCAN_WINDOW)
         scan.output = (`${scan.output}\n${text}`).slice(-SCAN_WINDOW)
+        appendControlLines(scan, `${text}\n`)
         check()
       },
       tool: (event) => {
@@ -673,6 +678,7 @@ export class AgentController {
   }
 
   private async applyTodos(task: Task, assistant: string): Promise<void> {
+    if (task.disposeWhenIdle) return
     const todos = parseTodosMarker(assistant)
     if (!todos) return
     const previous = task.todos
@@ -761,8 +767,8 @@ export class AgentController {
   }
 
   private completeCycle(task: Task, attempt: number, message: string): CycleAttemptResult {
-    const next = this.continueIfGuidance(task)
-    if (next) return { kind: 'retry', prompt: next }
+    const next = this.continueIfGuidanceOpening(task)
+    if (next) return { kind: 'retry', opening: next }
     task.running = false
     this.status(task, 'completed', attempt, message)
     this.releaseIfDisposed(task)
@@ -776,13 +782,10 @@ export class AgentController {
     scan: CycleScan
   ): Promise<CycleAttemptResult> {
     if (task.request.mode === 'plan') return this.finishPlanCycleAttempt(task, attempt, scan)
-    const selection = selectedPipelines(scan.assistant, task.request.pipelines)
+    const selection = selectedPipelines(scan.control, task.request.pipelines)
     const retryInvalid = (reason: string): CycleAttemptResult => ({
       kind: 'retry',
-      prompt: this.prompt(
-        task,
-        `Continue the original task: ${task.request.prompt}\n\nFarol could not validate because ${reason}`
-      )
+      opening: `Continue the original task: ${task.request.prompt}\n\nFarol could not validate because ${reason}`
     })
     if (selection.error) {
       return retryInvalid(`your pipeline selection was invalid: ${selection.error}`)
@@ -830,10 +833,7 @@ export class AgentController {
     const guidance = task.guidance.splice(0).join('\n')
     return {
       kind: 'retry',
-      prompt: this.prompt(
-        task,
-        repairPromptOpening(task.request.prompt, attempt, outcome.failures, guidance)
-      )
+      opening: repairPromptOpening(task.request.prompt, attempt, outcome.failures, guidance)
     }
   }
 
@@ -842,14 +842,11 @@ export class AgentController {
     if (isFinishedPlan(scan.assistant)) {
       return this.completeCycle(task, attempt, 'Plan ready to execute')
     }
-    const marker = parsePipelineIds(scan.assistant)
+    const marker = parsePipelineIds(scan.control)
     if ('error' in marker) {
       return {
         kind: 'retry',
-        prompt: this.prompt(
-          task,
-          `Continue the original task: ${task.request.prompt}\n\nEnd this Plan response with ${FINISHED_PLAN}, ${QUESTIONS_MARKER} if you need a decision, or ${PIPELINES_MARKER} [] when it is not yet a finished plan.`
-        )
+        opening: `Continue the original task: ${task.request.prompt}\n\nEnd this Plan response with ${FINISHED_PLAN}, ${QUESTIONS_MARKER} if you need a decision, or ${PIPELINES_MARKER} [] when it is not yet a finished plan.`
       }
     }
     return this.completeCycle(task, attempt, 'Plan response complete')
@@ -888,14 +885,11 @@ export class AgentController {
     attempt: number,
     scan: CycleScan
   ): CycleAttemptResult | null {
-    const marked = scan.questions ? null : parseQuestionsMarker(scan.assistant)
+    const marked = scan.questions ? null : parseQuestionsMarker(scan.control)
     if (marked && 'error' in marked) {
       return {
         kind: 'retry',
-        prompt: this.prompt(
-          task,
-          `Continue the original task: ${task.request.prompt}\n\nFarol could not show your questions because ${marked.error}`
-        )
+        opening: `Continue the original task: ${task.request.prompt}\n\nFarol could not show your questions because ${marked.error}`
       }
     }
     const questions = scan.questions ?? (marked && 'questions' in marked ? marked.questions : undefined)
@@ -915,14 +909,15 @@ export class AgentController {
       this.settleCancel(task)
       return { kind: 'done' }
     }
-    await this.applyTodos(task, scan.assistant)
+    flushControlLines(scan)
+    await this.applyTodos(task, scan.control)
     const asked = this.questionsAfterRun(task, attempt, scan)
     if (asked) return asked
     if (scan.blocked) {
       // The same turn, on the next model down the chain — nothing was produced
       // to repair, so the attempt counter does not move.
       if (scan.blockedByProvider && this.switchToFallback(task, scan.blocked)) {
-        return { kind: 'retry', rewindAttempt: true, prompt }
+        return { kind: 'retry', prompt, rewindAttempt: true }
       }
       // A follow-up may already be queued with a switched provider (e.g. after
       // a usage limit). Surface the stop, then continue that message.
@@ -931,7 +926,7 @@ export class AgentController {
     }
     if (code !== 0) {
       if (this.switchToFallback(task, `exit code ${code}`)) {
-        return { kind: 'retry', rewindAttempt: true, prompt }
+        return { kind: 'retry', prompt, rewindAttempt: true }
       }
       this.finishOrContinue(task, attempt, 'needs-attention', `Agent exited with code ${code}`)
       return { kind: 'done' }
@@ -941,10 +936,7 @@ export class AgentController {
       return {
         kind: 'retry',
         rewindAttempt: true,
-        prompt: this.prompt(
-          task,
-          `Continue the original task: ${task.request.prompt}\n\nAdditional user guidance:\n${guidance}`
-        )
+        opening: `Continue the original task: ${task.request.prompt}\n\nAdditional user guidance:\n${guidance}`
       }
     }
     return this.finishCycleAttempt(task, attempt, scan)
@@ -965,6 +957,9 @@ export class AgentController {
     // everything it printed, which is where provider failures show up.
     const scan: CycleScan = {
       assistant: '',
+      buffer: '',
+      fenced: false,
+      control: '',
       output: '',
       blocked: null,
       blockedByProvider: false,
@@ -980,16 +975,36 @@ export class AgentController {
     return await this.cycleAfterRun(task, attempt, scan, code, prompt)
   }
 
+  private handleCycleError(task: Task, attempt: number, error: unknown): void {
+    if (task.cancelled) {
+      this.settleCancel(task)
+      return
+    }
+    task.running = false
+    if (task.process?.pid) killPidTree(task.process.pid)
+    this.status(
+      task,
+      'failed',
+      attempt,
+      `Agent stopped: ${error instanceof Error ? error.message : String(error)}`
+    )
+    this.releaseIfDisposed(task)
+  }
+
   private async cycle(task: Task, opening: string): Promise<void> {
     const maxAttempts = Math.max(1, Math.min(20, task.request.maxAttempts ?? DEFAULT_MAX_ATTEMPTS))
-    await this.loadTodos(task)
-    let prompt = this.prompt(task, opening)
+    let openingText = opening
+    let prompt: string | undefined
     let attempt = 0
     try {
       for (attempt = 1; attempt <= maxAttempts && !task.cancelled; attempt++) {
-        const result = await this.runCycleAttempt(task, prompt, attempt)
+        await this.loadTodos(task)
+        const currentPrompt = prompt ?? this.prompt(task, openingText)
+        prompt = undefined
+        const result = await this.runCycleAttempt(task, currentPrompt, attempt)
         if (result.kind === 'done') return
-        prompt = result.prompt
+        if ('prompt' in result) prompt = result.prompt
+        else openingText = result.opening
         if (result.rewindAttempt) attempt--
       }
 
@@ -1001,19 +1016,7 @@ export class AgentController {
       this.status(task, 'needs-attention', maxAttempts, `Validation still fails after ${maxAttempts} attempts`)
       this.releaseIfDisposed(task)
     } catch (error) {
-      if (task.cancelled) {
-        this.settleCancel(task)
-        return
-      }
-      task.running = false
-      if (task.process?.pid) killPidTree(task.process.pid)
-      this.status(
-        task,
-        'failed',
-        attempt,
-        `Agent stopped: ${error instanceof Error ? error.message : String(error)}`
-      )
-      this.releaseIfDisposed(task)
+      this.handleCycleError(task, attempt, error)
     }
   }
 

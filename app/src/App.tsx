@@ -1946,10 +1946,35 @@ function ProjectWorkspace({
   // xterm panes stream their own data; the app only follows `cd` for titles.
   useEffect(
     () =>
-      api.shell.onCwd(({ paneId, cwd }) =>
-        patchPane(paneId, (p) => (p.kind === 'shell' ? { ...p, cwd } : p))
-      ),
-    [patchPane]
+      api.shell.onCwd(({ paneId, cwd }) => {
+        setTabs((prev) => {
+          const shell = prev.find((tab) => tab.kind === 'shell' && tab.panes[paneId]?.kind === 'shell')
+          if (!shell) return prev
+          const shellPane = shell.panes[paneId]
+          if (shellPane?.kind !== 'shell') return prev
+          const nextPanes = {
+            ...shell.panes,
+            [paneId]: { ...shellPane, cwd }
+          }
+          const agentTab = chatTabFor(prev, shell.id)
+          const agent = agentPaneFor(agentTab)
+          const syncAgent = shell.focus === paneId && agent?.cwd !== cwd
+          return prev.map((tab) => {
+            if (tab.id === shell.id) return { ...shell, panes: nextPanes }
+            if (syncAgent && agentTab?.id === tab.id && agent) {
+              return {
+                ...tab,
+                panes: {
+                  ...tab.panes,
+                  [agent.id]: { ...agent, cwd }
+                }
+              }
+            }
+            return tab
+          })
+        })
+      }),
+    [setTabs]
   )
 
   const applyAgentEventToPane = useCallback((pane: AgentPane, event: AgentTaskEvent): AgentPane => {
@@ -2095,8 +2120,12 @@ function ProjectWorkspace({
         return
       }
 
+      const ownerPane = owner.panes[owner.focus]
+      const ownerCwd =
+        ownerPane && (ownerPane.kind === 'shell' || ownerPane.kind === 'run') ? ownerPane.cwd : undefined
+      const cwd = cwdOverride || ownerCwd || pane.cwd || project.path
+      const checkout = owningWorktree(cwd, git.worktrees ?? [])?.path ?? project.path
       const branch = branchForTab(owner, project.path, git)
-      const cwd = cwdOverride || pane.cwd
       const startRequest = {
         id: pane.taskId,
         prompt: clean,
@@ -2106,7 +2135,7 @@ function ProjectWorkspace({
         ...(fallbacks.length ? { fallbacks } : {}),
         pipelines: availablePipelines,
         cwd,
-        checkout: owningWorktree(cwd, git.worktrees ?? [])?.path ?? project.path,
+        checkout,
         branch
       }
       const runAgent = (operation: 'message' | 'start'): void => {
@@ -2114,7 +2143,7 @@ function ProjectWorkspace({
           // Prefer start when the task is gone (e.g. after a restart).
           // Pass current pipelines so mid-chat edits (AI provider, steps) stick.
           void api.agent
-            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks)
+            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks, cwd, checkout)
             .then((result) => {
               if (result.ok) return
               runAgent('start')
@@ -2125,7 +2154,7 @@ function ProjectWorkspace({
           if (result.ok) return
           // Still winding down after Stop — queue with the selected provider.
           void api.agent
-            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks)
+            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks, cwd, checkout)
             .then((queued) => {
               if (queued.ok) return
               failStart(result.message || queued.message)
@@ -2139,6 +2168,7 @@ function ProjectWorkspace({
             ? {
                 ...current,
                 status: 'working',
+                cwd,
                 attempt: 1,
                 provider,
                 ...(model ? { model } : { model: undefined }),
@@ -2165,6 +2195,7 @@ function ProjectWorkspace({
           ? {
               ...current,
               status: 'working',
+              cwd,
               provider,
               model,
               mode,

@@ -86,6 +86,14 @@ describe('isFinishedPlan', () => {
     expect(isFinishedPlan('FAROL_PLAN: finished\nOne more thing')).toBe(false)
     expect(isFinishedPlan('FAROL_PLAN: draft')).toBe(false)
   })
+
+  it('ignores a finished marker inside an unclosed fenced example', () => {
+    expect(isFinishedPlan('Example:\n```\nFAROL_PLAN: finished')).toBe(false)
+  })
+
+  it('requires the finished marker to remain the final response line', () => {
+    expect(isFinishedPlan('FAROL_PLAN: finished\n```\nconst plan = true')).toBe(false)
+  })
 })
 
 describe('stripFinishedPlan', () => {
@@ -97,6 +105,11 @@ describe('stripFinishedPlan', () => {
 
   it('leaves text unchanged when there is no marker to strip', () => {
     expect(stripFinishedPlan('Just some text')).toBe('Just some text')
+  })
+
+  it('does not strip a finished marker followed by fenced content', () => {
+    const text = 'FAROL_PLAN: finished\n```\nconst plan = true'
+    expect(stripFinishedPlan(text)).toBe(text)
   })
 })
 

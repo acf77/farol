@@ -450,7 +450,9 @@ export interface FarolApi {
       pipelines?: Pipeline[],
       model?: string,
       mode?: AgentMode,
-      fallbacks?: ModelChoice[]
+      fallbacks?: ModelChoice[],
+      cwd?: string,
+      checkout?: string
     ): Promise<{ ok: boolean; message?: string }>
     setProvider(
       taskId: string,
