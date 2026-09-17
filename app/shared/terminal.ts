@@ -1,7 +1,9 @@
 /** Turning captured terminal bytes into text a person or an agent can read. */
 
-const ANSI_OSC = /\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g
-const ANSI_CSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g
+const ESC = String.fromCharCode(0x1b)
+const BEL = String.fromCharCode(0x07)
+const ANSI_OSC = new RegExp(`${ESC}\\][^${BEL}${ESC}]*(?:${BEL}|${ESC}\\\\)`, 'g')
+const ANSI_CSI = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, 'g')
 
 export function stripAnsi(s: string): string {
   return s.replace(ANSI_OSC, '').replace(ANSI_CSI, '')

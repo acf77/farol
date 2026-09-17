@@ -14,7 +14,9 @@ import { defaultShell, shellEnv } from './session'
  */
 
 /** OSC 7 — how a shell announces its working directory to its terminal. */
-const OSC7 = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*)(?:\x07|\x1b\\)/g
+const ESC = String.fromCharCode(0x1b)
+const BEL = String.fromCharCode(0x07)
+const OSC7 = new RegExp(`${ESC}\\]7;file:\\/\\/[^/]*([^${BEL}${ESC}]*)(?:${BEL}|${ESC}\\\\)`, 'g')
 
 function terminalSize(cols: number, rows: number): { cols: number; rows: number } {
   return {
@@ -147,6 +149,6 @@ export class ShellManager {
   }
 
   disposeAll(): void {
-    for (const paneId of [...this.sessions.keys()]) this.dispose(paneId)
+    for (const paneId of this.sessions.keys()) this.dispose(paneId)
   }
 }

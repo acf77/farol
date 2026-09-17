@@ -231,7 +231,7 @@ describe('managedAiCommand', () => {
     expect(interactiveAiCommand('openrouter')).toBe('opencode')
   })
 
-  it('shows OpenRouter after a key and catalog exist, with pins first', () => {
+  it('shows OpenRouter after a key and catalog exist, listing only its pins', () => {
     expect(pickerProviders().includes('openrouter')).toBe(false)
     expect(pickerProviders({ hasKey: true, pinned: [] }).includes('openrouter')).toBe(false)
     expect(pickerProviders({ hasKey: true, pinned: ['openai/gpt-4o'] }).includes('openrouter')).toBe(
@@ -240,13 +240,24 @@ describe('managedAiCommand', () => {
     expect(
       pickerProviders({ hasKey: true, pinned: [], catalog: [{ id: 'openai/gpt-4o', label: 'GPT-4o' }] })
     ).toContain('openrouter')
+    const catalog = [
+      { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' },
+      { id: 'openai/gpt-4o', label: 'GPT-4o' }
+    ]
     expect(
-      providerModels('openrouter', undefined, {
+      providerModels('openrouter', undefined, { pinned: ['openai/gpt-4o'], catalog }).map(
+        (model) => model.id
+      )
+    ).toEqual(['openai/gpt-4o'])
+    // Nothing pinned yet — the whole catalog, so the menu is never empty.
+    expect(
+      providerModels('openrouter', undefined, { pinned: [], catalog }).map((model) => model.id)
+    ).toEqual(['anthropic/claude-sonnet-4', 'openai/gpt-4o'])
+    // An unpinned id already in use stays selectable.
+    expect(
+      providerModels('openrouter', 'anthropic/claude-sonnet-4', {
         pinned: ['openai/gpt-4o'],
-        catalog: [
-          { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' },
-          { id: 'openai/gpt-4o', label: 'GPT-4o' }
-        ]
+        catalog
       }).map((model) => model.id)
     ).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
   })
@@ -259,6 +270,7 @@ describe('managedAiCommand', () => {
       '--verbose',
       '--permission-mode',
       'bypassPermissions',
+      '--strict-mcp-config',
       '--model',
       'opus',
       'fix this'

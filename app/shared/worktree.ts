@@ -38,6 +38,28 @@ export function primaryWorktreePath(entries: WorktreeEntry[]): string | null {
   return entries[0]?.path ?? null
 }
 
+/**
+ * Deepest worktree whose path contains `cwd` — the checkout that owns it, so a
+ * chat opened in a subdirectory shares that checkout's state. Null when the
+ * path sits outside every listed worktree.
+ */
+export function owningWorktree<T extends { path: string }>(cwd: string, worktrees: T[]): T | null {
+  const target = cwd.replace(/[/\\]+$/, '')
+  let best: T | null = null
+  let bestLen = -1
+  for (const worktree of worktrees) {
+    const dir = worktree.path.replace(/[/\\]+$/, '')
+    if (
+      (target === dir || target.startsWith(dir + '/') || target.startsWith(dir + '\\')) &&
+      dir.length > bestLen
+    ) {
+      best = worktree
+      bestLen = dir.length
+    }
+  }
+  return best
+}
+
 function isAbsolutePath(p: string): boolean {
   return p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p)
 }

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { defaultSettings, sanitizeSettings, withAgentModel, withCommitMessageModel } from './settings'
+import {
+  defaultSettings,
+  modeDefault,
+  modeFallbacks,
+  sanitizeSettings,
+  withAgentModel,
+  withCommitMessageModel,
+  withModeChain
+} from './settings'
 
 describe('sanitizeSettings', () => {
   it('keeps a per-agent model map and drops unknown providers', () => {
@@ -12,7 +20,8 @@ describe('sanitizeSettings', () => {
       agent: 'cursor',
       models: { claude: 'opus', cursor: 'grok-4.6' },
       commitMessage: { agent: 'cursor', model: 'grok-4.6' },
-      autoFix: false
+      autoFix: false,
+      modeDefaults: { plan: [], build: [] }
     })
   })
 
@@ -32,7 +41,8 @@ describe('sanitizeSettings', () => {
       agent: 'cursor',
       models: {},
       commitMessage: { agent: 'cursor' },
-      autoFix: true
+      autoFix: true,
+      modeDefaults: { plan: [], build: [] }
     })
   })
 
@@ -60,6 +70,7 @@ describe('sanitizeSettings', () => {
       models: {},
       commitMessage: { agent: 'openrouter' },
       autoFix: true,
+      modeDefaults: { plan: [], build: [] },
       openrouter: {
         autoPinned: true,
         pinned: ['openai/gpt-4o'],
@@ -116,5 +127,55 @@ describe('withAgentModel', () => {
     const base = sanitizeSettings({ agent: 'claude', models: { claude: 'opus' } })
     expect(withAgentModel(base, 'claude').models).toEqual({})
     expect(withAgentModel(base, 'claude', '  ').models).toEqual({})
+  })
+})
+
+describe('mode defaults', () => {
+  const base = sanitizeSettings({ agent: 'claude', models: { claude: 'opus' } })
+
+  it('keeps the chain in order and drops rungs it cannot honour', () => {
+    const s = sanitizeSettings({
+      agent: 'claude',
+      modeDefaults: {
+        build: [
+          { agent: 'codex', model: ' gpt-5.6-sol ' },
+          { agent: 'nope', model: 'x' },
+          { agent: 'codex', model: 'gpt-5.6-sol' },
+          { agent: 'claude' }
+        ],
+        // Plan needs a review gate; Claude and OpenCode cannot enforce read-only.
+        plan: [{ agent: 'claude' }, { agent: 'cursor', model: 'composer-2.5' }, { agent: 'omp' }]
+      }
+    })
+    expect(s.modeDefaults.build).toEqual([
+      { agent: 'codex', model: 'gpt-5.6-sol' },
+      { agent: 'claude' }
+    ])
+    expect(s.modeDefaults.plan).toEqual([{ agent: 'cursor', model: 'composer-2.5' }, { agent: 'omp' }])
+  })
+
+  it('opens a mode on its first rung, or the plain agent default without one', () => {
+    expect(modeDefault(base, 'build')).toEqual({ agent: 'claude', model: 'opus' })
+    const chained = withModeChain(base, 'build', [{ agent: 'omp' }, { agent: 'codex' }])
+    expect(modeDefault(chained, 'build')).toEqual({ agent: 'omp' })
+    // The other mode is untouched.
+    expect(modeDefault(chained, 'plan')).toEqual({ agent: 'claude', model: 'opus' })
+  })
+
+  it('falls back only down the rest of the chain', () => {
+    const s = withModeChain(base, 'build', [
+      { agent: 'omp' },
+      { agent: 'codex', model: 'gpt-5.6-sol' },
+      { agent: 'claude' }
+    ])
+    expect(modeFallbacks(s, 'build', 'omp')).toEqual([
+      { agent: 'codex', model: 'gpt-5.6-sol' },
+      { agent: 'claude' }
+    ])
+    expect(modeFallbacks(s, 'build', 'claude')).toEqual([])
+    // A pick outside the chain has consumed none of it.
+    expect(modeFallbacks(s, 'build', 'cursor', 'composer-2.5')).toHaveLength(3)
+    // No chain configured means no fallback at all.
+    expect(modeFallbacks(base, 'build', 'claude', 'opus')).toEqual([])
   })
 })

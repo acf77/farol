@@ -5,10 +5,12 @@ import type {
   AgentTaskRequest,
   AgentTaskStatus,
   AiProvider,
+  ModelChoice,
   Pipeline,
   PipelineRunResult
 } from '../shared/types'
 import {
+  aiSelectionLabel,
   cliFor,
   isAiProvider,
   isUnknownJsonFormatError,
@@ -18,6 +20,7 @@ import {
   normalizeModel
 } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
+import { appendControlLines, flushControlLines, lastControlLine, type ControlLineState } from '../shared/control-line'
 import {
   BLOCK_MARKER,
   FINISHED_PLAN,
@@ -35,6 +38,14 @@ import {
   matchedCatalogShells,
   pipelinesForCatalogCmds
 } from '../shared/catalog-shell'
+import {
+  TODOS_MARKER,
+  formatTodos,
+  parseTodosMarker,
+  todoSummary,
+  type Todo,
+  type TodoStore
+} from '../shared/todos'
 import {
   isWriteToolName,
   mandatoryOptOutError,
@@ -94,12 +105,16 @@ interface Task {
   disposeWhenIdle: boolean
   guidance: string[]
   pipelineRuns: PipelineActivity[]
+  todos: Todo[]
   abort: AbortController
   /** Set on file writes / failed mandatory runs; cleared when they pass. */
   mandatoryOutstanding: boolean
+  /** Rungs of the mode's chain not yet tried; refilled when a turn begins. */
+  fallbacks: ModelChoice[]
   /** Bumped when a follow-up starts so a dying cycle cannot clobber it. */
   askEpoch: number
   questionSeq: number
+  todoSeq: number
   pendingQuestions?: { requestId: string; questions: AgentQuestion[] }
 }
 
@@ -113,17 +128,22 @@ interface PipelineActivity {
   runId?: string
 }
 
-type CycleScan = {
+type CycleScan = ControlLineState & {
   assistant: string
   output: string
   blocked: string | null
+  /** The stop came from the CLI itself (quota, auth, context), not the agent. */
+  blockedByProvider: boolean
   shellInvocations: string[]
   filesChanged: boolean
   questions?: AgentQuestion[]
   questionId?: string
 }
 
-type CycleAttemptResult = { kind: 'done' } | { kind: 'retry'; prompt: string; rewindAttempt?: boolean }
+type CycleAttemptResult =
+  | { kind: 'done' }
+  | { kind: 'retry'; opening: string; rewindAttempt?: boolean }
+  | { kind: 'retry'; prompt: string; rewindAttempt: true }
 
 const DEFAULT_MAX_ATTEMPTS = 5
 /** How much trailing output the marker and failure scans keep in memory. */
@@ -236,14 +256,10 @@ function catalogShellBypassError(
 }
 
 function parsePipelineIds(output: string): { ids: string[] } | { error: string } {
-  const marker = output.lastIndexOf(PIPELINES_MARKER)
-  if (marker < 0) {
+  const raw = lastControlLine(output, PIPELINES_MARKER)
+  if (raw === undefined) {
     return { error: `End your response with ${PIPELINES_MARKER} followed by a JSON array of pipeline ids.` }
   }
-  const raw = output
-    .slice(marker + PIPELINES_MARKER.length)
-    .split(/\r?\n/, 1)[0]
-    .trim()
   try {
     const ids = JSON.parse(raw) as unknown
     if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) {
@@ -304,7 +320,8 @@ export class AgentController {
   constructor(
     private runner: ValidationRunner,
     private emit: (event: AgentTaskEvent) => void,
-    private executor?: AgentExecutor
+    private executor?: AgentExecutor,
+    private todoStore?: TodoStore
   ) {}
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
@@ -321,6 +338,7 @@ export class AgentController {
         mode,
         pipelines: request.pipelines.filter((pipeline) => pipeline.nodes.length)
       }
+      existing.fallbacks = [...(request.fallbacks ?? [])]
       this.emit({ kind: 'user', taskId: request.id, text: clean })
       this.followUp(existing, clean)
       return { ok: true }
@@ -341,10 +359,13 @@ export class AgentController {
       disposeWhenIdle: false,
       guidance: [],
       pipelineRuns: [],
+      todos: [],
       abort: new AbortController(),
       mandatoryOutstanding: false,
+      fallbacks: [...(request.fallbacks ?? [])],
       askEpoch: 0,
-      questionSeq: 0
+      questionSeq: 0,
+      todoSeq: 0
     }
     this.tasks.set(request.id, task)
     this.emit({ kind: 'user', taskId: request.id, text: clean })
@@ -358,13 +379,18 @@ export class AgentController {
     provider?: AiProvider,
     pipelines?: Pipeline[],
     model?: string,
-    mode?: AgentTaskRequest['mode']
+    mode?: AgentTaskRequest['mode'],
+    fallbacks?: ModelChoice[],
+    cwd?: string,
+    checkout?: string
   ): { ok: boolean; message?: string } {
     const task = this.tasks.get(taskId)
     const clean = text.trim()
     if (!task) return { ok: false, message: 'This agent task is no longer available.' }
     if (!clean) return { ok: false, message: 'Enter a message.' }
-    this.applyMessageOverrides(task, provider, model, mode, pipelines)
+    this.applyMessageOverrides(task, provider, model, mode, pipelines, fallbacks)
+    if (cwd) task.request.cwd = cwd
+    if (checkout) task.request.checkout = checkout
     this.emit({ kind: 'user', taskId, text: clean })
     if (task.pendingQuestions) {
       this.dismissPendingQuestions(task)
@@ -392,12 +418,14 @@ export class AgentController {
     provider: AiProvider | undefined,
     model: string | undefined,
     mode: AgentTaskRequest['mode'] | undefined,
-    pipelines: Pipeline[] | undefined
+    pipelines: Pipeline[] | undefined,
+    fallbacks: ModelChoice[] | undefined
   ): void {
     if (isAiProvider(provider)) {
       task.request.provider = provider
       task.request.model = normalizeModel(model)
     }
+    if (fallbacks) task.fallbacks = [...fallbacks]
     task.request.mode = normalizeMode(mode ?? task.request.mode, task.request.provider)
     if (pipelines) {
       const next = pipelines.filter((pipeline) => pipeline.nodes.length)
@@ -578,20 +606,19 @@ export class AgentController {
   }
 
   /** If the user typed while a cycle was finishing, run their message next. */
-  private continueIfGuidance(task: Task): string | null {
+  private continueIfGuidanceOpening(task: Task): string | null {
     const guidance = task.guidance.splice(0).join('\n')
     if (!guidance) return null
-    return this.prompt(
-      task,
-      `Continue the original task: ${task.request.prompt}\n\nUser request:\n${guidance}`
-    )
+    return `Continue the original task: ${task.request.prompt}\n\nUser request:\n${guidance}`
   }
 
   private cycleSink(task: Task, scan: CycleScan): AgentSink {
     const check = (): void => {
-      const reason = blockedMarker(scan.assistant) ?? providerFailure(scan.output)
+      const agentStop = blockedMarker(scan.assistant)
+      const reason = agentStop ?? providerFailure(scan.output)
       if (!scan.blocked && reason) {
         scan.blocked = reason
+        scan.blockedByProvider = !agentStop
         if (task.process?.pid) killPidTree(task.process.pid)
       }
     }
@@ -600,12 +627,14 @@ export class AgentController {
         this.emit({ kind: 'output', taskId: task.request.id, chunk })
         scan.assistant = (scan.assistant + chunk).slice(-SCAN_WINDOW)
         scan.output = (scan.output + chunk).slice(-SCAN_WINDOW)
+        appendControlLines(scan, chunk)
         check()
       },
       turn: (text) => {
         this.emit({ kind: 'assistant', taskId: task.request.id, text })
         scan.assistant = (`${scan.assistant}\n${text}`).slice(-SCAN_WINDOW)
         scan.output = (`${scan.output}\n${text}`).slice(-SCAN_WINDOW)
+        appendControlLines(scan, `${text}\n`)
         check()
       },
       tool: (event) => {
@@ -640,6 +669,42 @@ export class AgentController {
         scan.output = (scan.output + chunk).slice(-SCAN_WINDOW)
         check()
       }
+    }
+  }
+
+  private async loadTodos(task: Task): Promise<void> {
+    if (!this.todoStore) return
+    task.todos = await this.todoStore.load(task.request.checkout).catch(() => task.todos)
+  }
+
+  private async applyTodos(task: Task, assistant: string): Promise<void> {
+    if (task.disposeWhenIdle) return
+    const todos = parseTodosMarker(assistant)
+    if (!todos) return
+    const previous = task.todos
+    task.todos = todos
+    task.todoSeq += 1
+    const toolId = `${task.request.id}:todos:${task.todoSeq}`
+    try {
+      await this.todoStore?.save(task.request.checkout, todos)
+      this.emit({
+        kind: 'tool',
+        taskId: task.request.id,
+        toolId,
+        name: 'todo',
+        detail: todoSummary(todos),
+        state: 'done'
+      })
+    } catch (error) {
+      task.todos = previous
+      this.emit({
+        kind: 'tool',
+        taskId: task.request.id,
+        toolId,
+        name: 'todo',
+        detail: error instanceof Error ? error.message : 'Could not save the todo list',
+        state: 'error'
+      })
     }
   }
 
@@ -702,8 +767,8 @@ export class AgentController {
   }
 
   private completeCycle(task: Task, attempt: number, message: string): CycleAttemptResult {
-    const next = this.continueIfGuidance(task)
-    if (next) return { kind: 'retry', prompt: next }
+    const next = this.continueIfGuidanceOpening(task)
+    if (next) return { kind: 'retry', opening: next }
     task.running = false
     this.status(task, 'completed', attempt, message)
     this.releaseIfDisposed(task)
@@ -717,13 +782,10 @@ export class AgentController {
     scan: CycleScan
   ): Promise<CycleAttemptResult> {
     if (task.request.mode === 'plan') return this.finishPlanCycleAttempt(task, attempt, scan)
-    const selection = selectedPipelines(scan.assistant, task.request.pipelines)
+    const selection = selectedPipelines(scan.control, task.request.pipelines)
     const retryInvalid = (reason: string): CycleAttemptResult => ({
       kind: 'retry',
-      prompt: this.prompt(
-        task,
-        `Continue the original task: ${task.request.prompt}\n\nFarol could not validate because ${reason}`
-      )
+      opening: `Continue the original task: ${task.request.prompt}\n\nFarol could not validate because ${reason}`
     })
     if (selection.error) {
       return retryInvalid(`your pipeline selection was invalid: ${selection.error}`)
@@ -771,10 +833,7 @@ export class AgentController {
     const guidance = task.guidance.splice(0).join('\n')
     return {
       kind: 'retry',
-      prompt: this.prompt(
-        task,
-        repairPromptOpening(task.request.prompt, attempt, outcome.failures, guidance)
-      )
+      opening: repairPromptOpening(task.request.prompt, attempt, outcome.failures, guidance)
     }
   }
 
@@ -783,51 +842,92 @@ export class AgentController {
     if (isFinishedPlan(scan.assistant)) {
       return this.completeCycle(task, attempt, 'Plan ready to execute')
     }
-    const marker = parsePipelineIds(scan.assistant)
+    const marker = parsePipelineIds(scan.control)
     if ('error' in marker) {
       return {
         kind: 'retry',
-        prompt: this.prompt(
-          task,
-          `Continue the original task: ${task.request.prompt}\n\nEnd this Plan response with ${FINISHED_PLAN}, ${QUESTIONS_MARKER} if you need a decision, or ${PIPELINES_MARKER} [] when it is not yet a finished plan.`
-        )
+        opening: `Continue the original task: ${task.request.prompt}\n\nEnd this Plan response with ${FINISHED_PLAN}, ${QUESTIONS_MARKER} if you need a decision, or ${PIPELINES_MARKER} [] when it is not yet a finished plan.`
       }
     }
     return this.completeCycle(task, attempt, 'Plan response complete')
+  }
+
+  /**
+   * Step down the mode's fallback chain after a provider-side failure — a
+   * missing CLI, a non-zero exit, or a quota/auth banner. The agent's own
+   * FAROL_BLOCKED is excluded: that is a judgement about the task, and every
+   * other model would reach it too. Returns false once the chain is spent.
+   */
+  private switchToFallback(task: Task, reason: string): boolean {
+    const next = task.fallbacks.shift()
+    if (!next) return false
+    const from = aiSelectionLabel(task.request.provider, task.request.model)
+    task.request.provider = next.agent
+    task.request.model = normalizeModel(next.model)
+    task.request.mode = normalizeMode(task.request.mode, next.agent)
+    this.emit({
+      kind: 'provider',
+      taskId: task.request.id,
+      provider: task.request.provider,
+      model: task.request.model,
+      mode: task.request.mode,
+      reason: `${from} failed (${reason}) — retrying with ${aiSelectionLabel(next.agent, next.model)}.`
+    })
+    return true
+  }
+
+  /**
+   * Questions reach us either scanned from the stream or as a marker in the
+   * final text. Returns null when the turn asked nothing.
+   */
+  private questionsAfterRun(
+    task: Task,
+    attempt: number,
+    scan: CycleScan
+  ): CycleAttemptResult | null {
+    const marked = scan.questions ? null : parseQuestionsMarker(scan.control)
+    if (marked && 'error' in marked) {
+      return {
+        kind: 'retry',
+        opening: `Continue the original task: ${task.request.prompt}\n\nFarol could not show your questions because ${marked.error}`
+      }
+    }
+    const questions = scan.questions ?? (marked && 'questions' in marked ? marked.questions : undefined)
+    if (!questions?.length) return null
+    this.pauseForQuestions(task, attempt, questions, scan.questionId)
+    return { kind: 'done' }
   }
 
   private async cycleAfterRun(
     task: Task,
     attempt: number,
     scan: CycleScan,
-    code: number
+    code: number,
+    prompt: string
   ): Promise<CycleAttemptResult> {
     if (task.cancelled) {
       this.settleCancel(task)
       return { kind: 'done' }
     }
-    const marked = scan.questions ? null : parseQuestionsMarker(scan.assistant)
-    if (marked && 'error' in marked) {
-      return {
-        kind: 'retry',
-        prompt: this.prompt(
-          task,
-          `Continue the original task: ${task.request.prompt}\n\nFarol could not show your questions because ${marked.error}`
-        )
-      }
-    }
-    const questions = scan.questions ?? (marked && 'questions' in marked ? marked.questions : undefined)
-    if (questions?.length) {
-      this.pauseForQuestions(task, attempt, questions, scan.questionId)
-      return { kind: 'done' }
-    }
+    flushControlLines(scan)
+    await this.applyTodos(task, scan.control)
+    const asked = this.questionsAfterRun(task, attempt, scan)
+    if (asked) return asked
     if (scan.blocked) {
+      // The same turn, on the next model down the chain — nothing was produced
+      // to repair, so the attempt counter does not move.
+      if (scan.blockedByProvider && this.switchToFallback(task, scan.blocked)) {
+        return { kind: 'retry', prompt, rewindAttempt: true }
+      }
       // A follow-up may already be queued with a switched provider (e.g. after
       // a usage limit). Surface the stop, then continue that message.
       this.finishOrContinue(task, attempt, 'needs-attention', `Agent stopped: ${scan.blocked}`)
       return { kind: 'done' }
     }
     if (code !== 0) {
+      if (this.switchToFallback(task, `exit code ${code}`)) {
+        return { kind: 'retry', prompt, rewindAttempt: true }
+      }
       this.finishOrContinue(task, attempt, 'needs-attention', `Agent exited with code ${code}`)
       return { kind: 'done' }
     }
@@ -836,10 +936,7 @@ export class AgentController {
       return {
         kind: 'retry',
         rewindAttempt: true,
-        prompt: this.prompt(
-          task,
-          `Continue the original task: ${task.request.prompt}\n\nAdditional user guidance:\n${guidance}`
-        )
+        opening: `Continue the original task: ${task.request.prompt}\n\nAdditional user guidance:\n${guidance}`
       }
     }
     return this.finishCycleAttempt(task, attempt, scan)
@@ -860,8 +957,12 @@ export class AgentController {
     // everything it printed, which is where provider failures show up.
     const scan: CycleScan = {
       assistant: '',
+      buffer: '',
+      fenced: false,
+      control: '',
       output: '',
       blocked: null,
+      blockedByProvider: false,
       shellInvocations: [],
       filesChanged: false
     }
@@ -871,18 +972,39 @@ export class AgentController {
       ? await this.executor(task.request, prompt, sink.text, sink.tool)
       : await this.runAgent(task, prompt, sink)
     if (task.askEpoch !== epoch) return { kind: 'done' }
-    return await this.cycleAfterRun(task, attempt, scan, code)
+    return await this.cycleAfterRun(task, attempt, scan, code, prompt)
+  }
+
+  private handleCycleError(task: Task, attempt: number, error: unknown): void {
+    if (task.cancelled) {
+      this.settleCancel(task)
+      return
+    }
+    task.running = false
+    if (task.process?.pid) killPidTree(task.process.pid)
+    this.status(
+      task,
+      'failed',
+      attempt,
+      `Agent stopped: ${error instanceof Error ? error.message : String(error)}`
+    )
+    this.releaseIfDisposed(task)
   }
 
   private async cycle(task: Task, opening: string): Promise<void> {
     const maxAttempts = Math.max(1, Math.min(20, task.request.maxAttempts ?? DEFAULT_MAX_ATTEMPTS))
-    let prompt = this.prompt(task, opening)
+    let openingText = opening
+    let prompt: string | undefined
     let attempt = 0
     try {
       for (attempt = 1; attempt <= maxAttempts && !task.cancelled; attempt++) {
-        const result = await this.runCycleAttempt(task, prompt, attempt)
+        await this.loadTodos(task)
+        const currentPrompt = prompt ?? this.prompt(task, openingText)
+        prompt = undefined
+        const result = await this.runCycleAttempt(task, currentPrompt, attempt)
         if (result.kind === 'done') return
-        prompt = result.prompt
+        if ('prompt' in result) prompt = result.prompt
+        else openingText = result.opening
         if (result.rewindAttempt) attempt--
       }
 
@@ -894,19 +1016,7 @@ export class AgentController {
       this.status(task, 'needs-attention', maxAttempts, `Validation still fails after ${maxAttempts} attempts`)
       this.releaseIfDisposed(task)
     } catch (error) {
-      if (task.cancelled) {
-        this.settleCancel(task)
-        return
-      }
-      task.running = false
-      if (task.process?.pid) killPidTree(task.process.pid)
-      this.status(
-        task,
-        'failed',
-        attempt,
-        `Agent stopped: ${error instanceof Error ? error.message : String(error)}`
-      )
-      this.releaseIfDisposed(task)
+      this.handleCycleError(task, attempt, error)
     }
   }
 
@@ -926,19 +1036,29 @@ export class AgentController {
         ? `Plan mode is read-only. You may inspect the project, ask clarifying questions, and propose a plan, but must not change project files or modify external systems. A finished plan ends with exactly one final line: ${FINISHED_PLAN}. If you need a decision, end with ${QUESTIONS_MARKER}. For an ordinary non-final response, end with ${PIPELINES_MARKER} []. Do not emit ${FINISHED_PLAN} until the plan is complete and ready for the developer to execute. Farol will never run pipelines from a Plan response.`
         : `When the requested file change is complete, select every relevant validation pipeline from the catalog below. If you made no file changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
       plan ? '' : mandatoryNote,
+      this.todoContext(task),
       plan
         ? `Do not run validation pipelines in Plan mode.`
         : `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
       `Do not call the Farol MCP tools in this managed Chat session. They are not available here — they require approval in some providers, and the managed harness executes your selected pipelines directly.`,
       plan
-        ? `End every response with exactly one line: ${QUESTIONS_MARKER} [...] when you need a decision, ${FINISHED_PLAN} when the plan is complete, or ${PIPELINES_MARKER} [] for an ordinary response.`
-        : `End every response with exactly one line: either ${QUESTIONS_MARKER} [...] when you need a user decision, or ${PIPELINES_MARKER} ["pipeline-id"] when the file-change work for this turn is done — ${PIPELINES_MARKER} [] if no validation is needed. Use a JSON array and only catalog ids for pipelines.`,
+        ? `End every response with exactly one final line: ${QUESTIONS_MARKER} [...] when you need a decision, ${FINISHED_PLAN} when the plan is complete, or ${PIPELINES_MARKER} [] for an ordinary response.`
+        : `End every response with exactly one final line: either ${QUESTIONS_MARKER} [...] when you need a user decision, or ${PIPELINES_MARKER} ["pipeline-id"] when the file-change work for this turn is done — ${PIPELINES_MARKER} [] if no validation is needed. Use a JSON array and only catalog ids for pipelines.`,
       '',
       plan ? '' : `Available Farol pipelines:\n${pipelineCatalog(task.request.pipelines)}`,
       `If a block or error prevents you from completing the task, stop immediately and end your response with “${BLOCK_MARKER} <reason>”. Do not keep trying.`
     ]
       .filter(Boolean)
       .join('\n')
+  }
+
+  private todoContext(task: Task): string {
+    return (
+      `Todo list (shared by every chat in this checkout): put one line ` +
+      `${TODOS_MARKER} [{"content":"...","status":"pending|in_progress|completed|cancelled","priority":"high|medium|low"}] ` +
+      `just before your final marker to replace the whole list, or ${TODOS_MARKER} [] to clear it. ` +
+      `Keep exactly one todo in_progress while work remains.\n${formatTodos(task.todos)}`
+    )
   }
 
   private pipelineHistory(task: Task): string {

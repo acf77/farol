@@ -27,8 +27,15 @@ import type {
 } from '@shared/types'
 import { AI_LABELS, aiFixPrompt, normalizeMode } from '@shared/ai'
 import { isFinishedPlan, sanitizePlan } from '@shared/questions'
-import { defaultSettings, withAgentModel, withCommitMessageModel } from '@shared/settings'
+import {
+  defaultSettings,
+  modeDefault,
+  modeFallbacks,
+  withAgentModel,
+  withCommitMessageModel
+} from '@shared/settings'
 import { sessionSeq } from '@shared/session'
+import { owningWorktree } from '@shared/worktree'
 import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
 import { topoSort } from '@shared/graph'
 import { clearIndent, emptyTerm, ensureNewline, setIndent, trimTo, write, writeLine } from './ansi'
@@ -390,22 +397,12 @@ function displayPath(p: string, project: Project | null): string {
 function branchForTab(tab: Tab | undefined, projectPath: string, git: GitInfo): string {
   if (tab?.branch) return tab.branch
   const cwd = tab?.panes[tab.focus]?.cwd ?? projectPath
-  const n = normPath(cwd)
-  let best: { path: string; branch: string } | undefined
-  for (const w of git.worktrees ?? []) {
-    if (!w.branch) continue
-    const wp = normPath(w.path)
-    if (n === wp || n.startsWith(wp + '/') || n.startsWith(wp + '\\')) {
-      if (!best || wp.length > normPath(best.path).length) best = w
-    }
-  }
-  if (best) return best.branch
-  return git.branch || '—'
+  return owningWorktree(cwd, git.worktrees ?? [])?.branch || git.branch || '—'
 }
 
 function agentChatTab(owner: Tab, project: Project, branch: string, settings: AppSettings): Tab {
   const cwd = owner.panes[owner.focus]?.cwd || project.path
-  const model = settings.models[settings.agent]
+  const { agent, model } = modeDefault(settings, 'build')
   const taskId = scopedRuntimeId(project.path, `agent:${owner.id}:${Date.now()}`)
   const paneId = `ap:${taskId}`
   return {
@@ -426,7 +423,7 @@ function agentChatTab(owner: Tab, project: Project, branch: string, settings: Ap
         taskId,
         status: 'idle',
         attempt: 0,
-        provider: settings.agent,
+        provider: agent,
         mode: 'build',
         ...(model ? { model } : {}),
         messages: []
@@ -617,6 +614,12 @@ function applyAgentEvent(
       ...pane.messages,
       { role: 'user', text: asText(event.text), at: Date.now() }
     ])
+  }
+  if (event.kind === 'provider') {
+    return appendAgentMessages(
+      { ...pane, provider: event.provider, model: event.model, mode: event.mode },
+      [...pane.messages, { role: 'system', text: asText(event.reason) }]
+    )
   }
   if (event.kind === 'pipeline') {
     // Runner start/end owns the card. Only start-failed pipelines (error:) never emit a RunEvent.
@@ -1847,7 +1850,7 @@ function ProjectWorkspace({
         setActiveTab('sh1')
       }
 
-      void loadGit(project.path)
+      await loadGit(project.path)
       const loaded = await api.pipelines.load(project.path)
       setPipelines(loaded)
       const keep =
@@ -1943,10 +1946,35 @@ function ProjectWorkspace({
   // xterm panes stream their own data; the app only follows `cd` for titles.
   useEffect(
     () =>
-      api.shell.onCwd(({ paneId, cwd }) =>
-        patchPane(paneId, (p) => (p.kind === 'shell' ? { ...p, cwd } : p))
-      ),
-    [patchPane]
+      api.shell.onCwd(({ paneId, cwd }) => {
+        setTabs((prev) => {
+          const shell = prev.find((tab) => tab.kind === 'shell' && tab.panes[paneId]?.kind === 'shell')
+          if (!shell) return prev
+          const shellPane = shell.panes[paneId]
+          if (shellPane?.kind !== 'shell') return prev
+          const nextPanes = {
+            ...shell.panes,
+            [paneId]: { ...shellPane, cwd }
+          }
+          const agentTab = chatTabFor(prev, shell.id)
+          const agent = agentPaneFor(agentTab)
+          const syncAgent = shell.focus === paneId && agent?.cwd !== cwd
+          return prev.map((tab) => {
+            if (tab.id === shell.id) return { ...shell, panes: nextPanes }
+            if (syncAgent && agentTab?.id === tab.id && agent) {
+              return {
+                ...tab,
+                panes: {
+                  ...tab.panes,
+                  [agent.id]: { ...agent, cwd }
+                }
+              }
+            }
+            return tab
+          })
+        })
+      }),
+    [setTabs]
   )
 
   const applyAgentEventToPane = useCallback((pane: AgentPane, event: AgentTaskEvent): AgentPane => {
@@ -2068,6 +2096,7 @@ function ProjectWorkspace({
       const model = modelOverride === null ? undefined : (modelOverride ?? pane.model)
       const requestedMode = modeOverride ?? pane.mode
       const mode = normalizeMode(requestedMode, provider)
+      const fallbacks = modeFallbacks(settingsRef.current, mode, provider, model)
 
       const failStart = (message?: string): void => {
         patchPane(pane.id, (current) =>
@@ -2091,6 +2120,11 @@ function ProjectWorkspace({
         return
       }
 
+      const ownerPane = owner.panes[owner.focus]
+      const ownerCwd =
+        ownerPane && (ownerPane.kind === 'shell' || ownerPane.kind === 'run') ? ownerPane.cwd : undefined
+      const cwd = cwdOverride || ownerCwd || pane.cwd || project.path
+      const checkout = owningWorktree(cwd, git.worktrees ?? [])?.path ?? project.path
       const branch = branchForTab(owner, project.path, git)
       const startRequest = {
         id: pane.taskId,
@@ -2098,25 +2132,29 @@ function ProjectWorkspace({
         provider,
         ...(model ? { model } : {}),
         mode,
+        ...(fallbacks.length ? { fallbacks } : {}),
         pipelines: availablePipelines,
-        cwd: cwdOverride || pane.cwd,
+        cwd,
+        checkout,
         branch
       }
       const runAgent = (operation: 'message' | 'start'): void => {
         if (operation === 'message') {
           // Prefer start when the task is gone (e.g. after a restart).
           // Pass current pipelines so mid-chat edits (AI provider, steps) stick.
-          void api.agent.message(pane.taskId, clean, provider, availablePipelines, model, mode).then((result) => {
-            if (result.ok) return
-            runAgent('start')
-          })
+          void api.agent
+            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks, cwd, checkout)
+            .then((result) => {
+              if (result.ok) return
+              runAgent('start')
+            })
           return
         }
         void api.agent.start(startRequest).then((result) => {
           if (result.ok) return
           // Still winding down after Stop — queue with the selected provider.
           void api.agent
-            .message(pane.taskId, clean, provider, availablePipelines, model, mode)
+            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks, cwd, checkout)
             .then((queued) => {
               if (queued.ok) return
               failStart(result.message || queued.message)
@@ -2130,6 +2168,7 @@ function ProjectWorkspace({
             ? {
                 ...current,
                 status: 'working',
+                cwd,
                 attempt: 1,
                 provider,
                 ...(model ? { model } : { model: undefined }),
@@ -2156,6 +2195,7 @@ function ProjectWorkspace({
           ? {
               ...current,
               status: 'working',
+              cwd,
               provider,
               model,
               mode,
@@ -2218,9 +2258,16 @@ function ProjectWorkspace({
     (mode: AgentMode) => {
       const pane = chatPane ?? ensureChat()?.pane
       if (!pane) return
-      const next = normalizeMode(mode, pane.provider)
-      patchPane(pane.id, (current) => (current.kind === 'agent' ? { ...current, mode: next } : current))
-      void api.agent.setProvider(pane.taskId, pane.provider, pane.model, next)
+      // A mode with its own chain configured switches model with the mode;
+      // without one, the pane keeps whatever is already selected.
+      const head = settingsRef.current.modeDefaults[mode][0]
+      const provider = head?.agent ?? pane.provider
+      const model = head ? head.model : pane.model
+      const next = normalizeMode(mode, provider)
+      patchPane(pane.id, (current) =>
+        current.kind === 'agent' ? { ...current, mode: next, provider, model } : current
+      )
+      void api.agent.setProvider(pane.taskId, provider, model, next)
     },
     [chatPane, ensureChat, patchPane]
   )

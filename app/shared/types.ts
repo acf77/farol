@@ -5,13 +5,21 @@ import type { AgentQuestion } from './questions'
 import type { ProjectSession } from './session'
 import type { AgentSkill } from './skills'
 import type { WorktreeRequest } from './worktree'
-import type { AppSettings, OpenRouterSettings } from './settings'
+import type { AppSettings, ModelChoice, OpenRouterSettings } from './settings'
 import type { ProviderUsage } from './usage'
 
 export type { AgentQuestion, AgentSkill, ProviderUsage }
 
 export type { AiModel } from './ai'
-export type { AgentMode, AiProvider, AppSettings, OpenRouterSettings, ProjectSession, WorktreeRequest }
+export type {
+  AgentMode,
+  AiProvider,
+  AppSettings,
+  ModelChoice,
+  OpenRouterSettings,
+  ProjectSession,
+  WorktreeRequest
+}
 export { aiFixCommand } from './ai'
 export { FAILURE_REPORT_REL } from './failure'
 export { parseVerdict, VERDICT_MARKER, verdictPromptSuffix } from './verdict'
@@ -80,7 +88,7 @@ export interface GitInfo {
   /** True when this path is a bare hub — open worktrees as projects instead of checking out. */
   bare?: boolean
   /** Other checkouts of this repo — closing a tab does not remove these. */
-  worktrees?: { path: string; branch: string }[]
+  worktrees?: { path: string; branch: string | null }[]
 }
 
 export interface GitChanged {
@@ -218,9 +226,14 @@ export interface AgentTaskRequest {
   mode?: AgentMode
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
+  /** Rungs to try, in order, if `provider`/`model` fails for provider-side reasons. */
+  fallbacks?: ModelChoice[]
   /** Snapshot of every pipeline the agent may select for validation. */
   pipelines: Pipeline[]
+  /** Execution directory; may be a subdirectory of the checkout. */
   cwd: string
+  /** Checkout that owns the task, so todos are shared across its subdirectories. */
+  checkout: string
   branch: string
   maxAttempts?: number
 }
@@ -258,6 +271,15 @@ export type AgentTaskEvent =
       state: 'running' | 'done' | 'error'
     }
   | { kind: 'user'; taskId: string; text: string }
+  /** The task moved down its fallback chain after a provider-side failure. */
+  | {
+      kind: 'provider'
+      taskId: string
+      provider: AiProvider
+      model?: string
+      mode: AgentMode
+      reason: string
+    }
   /** Agent asked the user; `answers` is set when they reply or dismiss. */
   | {
       kind: 'question'
@@ -427,7 +449,10 @@ export interface FarolApi {
       provider?: AiProvider,
       pipelines?: Pipeline[],
       model?: string,
-      mode?: AgentMode
+      mode?: AgentMode,
+      fallbacks?: ModelChoice[],
+      cwd?: string,
+      checkout?: string
     ): Promise<{ ok: boolean; message?: string }>
     setProvider(
       taskId: string,

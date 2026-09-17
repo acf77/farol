@@ -63,9 +63,9 @@ export async function info(cwd: string): Promise<GitInfo> {
     git(cwd, ['worktree', 'list', '--porcelain'])
   ])
 
-  const worktrees = parseWorktreeList(trees.out).flatMap((t) =>
-    t.branch ? [{ path: t.path, branch: t.branch }] : []
-  )
+  // Keep detached worktrees too: they are still checkouts a project can open into,
+  // so todo sharing must resolve them to their root.
+  const worktrees = parseWorktreeList(trees.out)
 
   const branch = head.out.trim()
   const branches = list.out
