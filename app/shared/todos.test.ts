@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   TODOS_MARKER,
   formatTodos,
+  parseTodos,
   parseTodosMarker,
   sanitizeTodos,
   todoSummary
@@ -28,6 +29,31 @@ describe('sanitizeTodos', () => {
 
   it('is empty for a non-array', () => {
     expect(sanitizeTodos({ content: 'x' })).toEqual([])
+  })
+})
+
+describe('parseTodos', () => {
+  it('accepts an empty list and normalizes valid entries', () => {
+    expect(parseTodos([])).toEqual([])
+    expect(parseTodos([{ content: '  Ship it  ', status: 'pending', priority: 'high' }])).toEqual([
+      { content: 'Ship it', status: 'pending', priority: 'high' }
+    ])
+  })
+
+  it.each([
+    null,
+    undefined,
+    {},
+    '[]',
+    ['Ship it'],
+    [{ content: 'Ship it' }],
+    [{ content: ' ', status: 'pending', priority: 'high' }],
+    [{ content: 'Ship it', status: 'unknown', priority: 'high' }],
+    [{ content: 'Ship it', status: 'pending', priority: 'unknown' }],
+    [{ content: 'Ship it', status: 'pending', priority: 'high' }, null],
+    Array(1)
+  ].map((value) => [value]))('rejects malformed input without clearing or partially accepting it: %j', (value) => {
+    expect(parseTodos(value)).toBeNull()
   })
 })
 

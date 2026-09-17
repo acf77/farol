@@ -34,6 +34,7 @@ import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
 import { appendTail, plainText } from '../shared/terminal'
 import { AgentController } from './agent-controller'
 import { createTodoStore } from './todos'
+import { parseTodos } from '../shared/todos'
 import { closedProjects } from '../shared/session'
 import { owningWorktree } from '../shared/worktree'
 import { scopedRuntimeId } from '../shared/runtime'
@@ -57,7 +58,10 @@ const runner = new PipelineRunner((e: RunEvent) => {
   send('run:event', e)
   for (const run of agentRuns) run.onEvent(e)
 })
-const todos = createTodoStore(() => app.getPath('userData'))
+const todos = createTodoStore(
+  () => app.getPath('userData'),
+  (event) => send('todos:changed', event)
+)
 const agents = new AgentController(runner, (event) => send('agent:event', event), undefined, todos)
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
@@ -554,6 +558,12 @@ function registerProjectIpc(): void {
   )
 }
 
+async function checkoutOf(projectPath: string): Promise<string> {
+  const resolved = path.resolve(projectPath)
+  const info = await gitInfo(resolved)
+  return path.resolve(owningWorktree(resolved, info.worktrees ?? [])?.path ?? resolved)
+}
+
 function registerSessionIpc(): void {
   ipcMain.handle('session:last', () => lastProjectPath())
   ipcMain.handle('session:openProjects', () => loadOpenProjects())
@@ -568,10 +578,6 @@ function registerSessionIpc(): void {
       // Todos are keyed by the checkout a chat resolves to, not the opened path —
       // a subdirectory project still shares its repo root's list. Only forget a
       // checkout once no remaining project points at it.
-      const checkoutOf = async (projectPath: string): Promise<string> => {
-        const info = await gitInfo(projectPath)
-        return path.resolve(owningWorktree(projectPath, info.worktrees ?? [])?.path ?? projectPath)
-      }
       const openCheckouts = new Set(await Promise.all(next.map(checkoutOf)))
       await Promise.all(
         closed.map(async (projectPath) => {
@@ -593,6 +599,26 @@ function registerSessionIpc(): void {
     )
   })
   ipcMain.handle('session:clearLast', () => clearLastProject())
+  ipcMain.handle('todos:load', async (_e, projectPath: unknown) => {
+    if (typeof projectPath !== 'string' || !projectPath.trim()) {
+      throw new Error('Invalid project path')
+    }
+    const checkout = await checkoutOf(projectPath)
+    return { checkout, todos: await todos.load(checkout) }
+  })
+  ipcMain.handle('todos:save', async (_e, checkout: unknown, value: unknown, expected: unknown) => {
+    if (typeof checkout !== 'string' || !checkout.trim()) {
+      throw new Error('Invalid checkout path')
+    }
+    const next = parseTodos(value)
+    const previous = parseTodos(expected)
+    if (!next || !previous) throw new Error('Invalid todo list')
+    const key = path.resolve(checkout)
+    const { paths } = await loadOpenProjects()
+    const checkouts = await Promise.all(paths.map(checkoutOf))
+    if (!checkouts.includes(key)) throw new Error('Not an open checkout')
+    await todos.save(key, next, previous)
+  })
   ipcMain.handle('pipelines:load', async (_e, projectPath: string) => {
     void pipelineFiles.watch(projectPath)
     return loadPipelines(projectPath)

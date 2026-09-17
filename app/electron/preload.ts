@@ -44,6 +44,11 @@ const api: FarolApi = {
       ipcRenderer.invoke('session:save', projectPath, session, last),
     clearLast: () => ipcRenderer.invoke('session:clearLast')
   },
+  todos: {
+    load: (projectPath) => ipcRenderer.invoke('todos:load', projectPath),
+    save: (checkout, todos, expected) => ipcRenderer.invoke('todos:save', checkout, todos, expected),
+    onChanged: (cb) => on('todos:changed', cb)
+  },
   pipelines: {
     load: (projectPath: string) => ipcRenderer.invoke('pipelines:load', projectPath),
     save: (projectPath: string, pipelines: Pipeline[]) =>

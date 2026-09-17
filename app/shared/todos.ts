@@ -20,7 +20,7 @@ export interface Todo {
 
 export interface TodoStore {
   load(checkout: string): Promise<Todo[]>
-  save(checkout: string, todos: unknown): Promise<void>
+  save(checkout: string, todos: unknown, expected?: Todo[]): Promise<void>
   forget(checkout: string): Promise<void>
 }
 
@@ -59,15 +59,23 @@ function strictTodo(value: unknown): Todo | null {
   return { content, status, priority }
 }
 
+export function parseTodos(value: unknown): Todo[] | null {
+  if (!Array.isArray(value)) return null
+  const todos: Todo[] = []
+  for (const entry of value) {
+    const todo = strictTodo(entry)
+    if (!todo) return null
+    todos.push(todo)
+  }
+  return todos
+}
+
 export function parseTodosMarker(output: string): Todo[] | null {
   const raw = lastControlLine(output, TODOS_MARKER)
   if (raw === undefined) return null
   if (lastControlMarkerLine(output)?.marker === TODOS_MARKER) return null
   try {
-    const value = JSON.parse(raw) as unknown
-    if (!Array.isArray(value)) return null
-    const todos = value.map(strictTodo)
-    return todos.some((todo) => todo === null) ? null : (todos as Todo[])
+    return parseTodos(JSON.parse(raw) as unknown)
   } catch {
     return null
   }
