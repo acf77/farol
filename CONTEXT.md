@@ -81,6 +81,12 @@ A proposed implementation plan that the agent explicitly marks as complete and r
 The existing read-only enforcement a provider already uses for pipeline reviews. Prompt-only instructions are not a **Review gate**.
 _Avoid_: sandbox (as the product name for this rule), ask mode (except as Cursor’s review mechanism)
 
+### Todo list
+
+**Todo list**:
+The task list a managed agent maintains with a hidden `FAROL_TODOS:` control line — Farol's stand-in for OpenCode's `todowrite`, because managed Chat runs every CLI with project MCP disabled. One line carries the whole list as JSON; a valid line replaces it and `FAROL_TODOS: []` clears it. It belongs to a checkout, so every chat in that checkout reads and writes the same list.
+_Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo tool, partial updates or per-item edits, storing the list in `.farol` or committing it
+
 ## Relationships
 
 ### Source Control page
@@ -140,6 +146,17 @@ _Avoid_: sandbox (as the product name for this rule), ask mode (except as Cursor
 - Reopening a Chat or restarting Farol restores the Execute button for its latest unexecuted **Finished plan**, provided no follow-up message has invalidated it.
 - Selecting **Execute plan** consumes that plan's Execute button permanently, even if implementation fails or is canceled; the Chat stays in **Build mode** until the developer selects **Plan mode** again.
 - Selecting **Build mode** manually does not consume the latest **Finished plan**'s Execute button; **Execute plan** remains available until a follow-up is sent or **Execute plan** is selected, and it starts implementation even if the Chat is already in **Build mode**.
+
+### Todo list
+
+- A **Todo list** belongs to one checkout; every chat in that checkout shares it, and a linked worktree has its own.
+- Both **Plan mode** and **Build mode** may update the **Todo list**.
+- An update is a full replace through a single `FAROL_TODOS:` line placed before the turn's final marker; an empty array clears the list, and a missing or malformed line leaves the list unchanged.
+- The line is stripped from the visible Chat, and the update appears as a `todo` tool card.
+- The current list is injected into every agent turn, so a fresh chat in the same checkout sees it.
+- The **Todo list** is saved per checkout in application data, not in the repository, so it survives restarts and cleared chats and never joins a commit.
+- Closing a checkout (removing the project from the workspace) deletes its **Todo list**; the checkout's saved chat session is unaffected.
+- Clearing a chat does not clear the **Todo list**.
 
 ## Example dialogue
 
@@ -303,6 +320,32 @@ _Avoid_: sandbox (as the product name for this rule), ask mode (except as Cursor
 > **Developer:** "If I type Execute the plan in the composer myself, does that start implementation?"
 > **Domain expert:** "No. Only the Execute button does. Those words are an ordinary follow-up, so the earlier plan also loses its Execute button."
 
+### Todo list
+
+> **Developer:** "Which chat owns a todo list?"
+> **Domain expert:** "The checkout. Every chat on that checkout shares one list, and a worktree has its own."
+
+> **Developer:** "Can a Plan-mode chat update it?"
+> **Domain expert:** "Yes. Plan and Build both may, though Plan still cannot change files."
+
+> **Developer:** "How does the agent update it?"
+> **Domain expert:** "With a single `FAROL_TODOS:` line before its final marker. It replaces the whole list; `FAROL_TODOS: []` clears it."
+
+> **Developer:** "What if the line is malformed?"
+> **Domain expert:** "Ignore it and keep the list. It is not worth retrying the turn."
+
+> **Developer:** "Does clearing a chat clear its todos?"
+> **Domain expert:** "No. The list belongs to the checkout, so a new chat sees the same list."
+
+> **Developer:** "Do todos survive a restart?"
+> **Domain expert:** "Yes. They are saved per checkout in application data."
+
+> **Developer:** "If I close and reopen the checkout, is the list still there?"
+> **Domain expert:** "No. Closing the checkout drops its todo list. Reopening starts empty."
+
+> **Developer:** "Would the list show up in Source Control?"
+> **Domain expert:** "No. It is not stored in the repository, so it is never a committable file."
+
 ## Flagged ambiguities
 
 ### Source Control page
@@ -364,3 +407,14 @@ _Avoid_: sandbox (as the product name for this rule), ask mode (except as Cursor
 - Resolved: That explanation lives in a tooltip on the disabled Plan side, not in a banner, toast, status line, or other Chat surface.
 - Resolved: That tooltip names the current provider and the reason Plan is unavailable, rather than a generic unavailable message.
 - Resolved: That reason’s exact wording is “Cannot enforce read-only”, not a mention of **Review gate** or a longer explanation.
+
+### Todo list
+
+- The **Todo list** could hang off a chat, a repository, or a checkout — resolved: per checkout, so a linked worktree keeps its own list and every chat on a checkout shares one.
+- OpenCode exposes `todowrite` as an MCP tool, but managed Chat runs each CLI with project MCP disabled (see `managedAiCommand`), so a tool call is not available — resolved: a `FAROL_TODOS:` control line, the same channel as questions and pipeline selection.
+- An update could be a patch or a full replace — resolved: full replace, like OpenCode's `todowrite`; an empty array clears the list.
+- A malformed update could fail the turn the way an invalid pipeline selection does — resolved: ignore it and keep the previous list. A todo typo is not worth a repair cycle.
+- The list could live in `.farol/todos.json` with the pipelines — resolved: application data keyed by checkout, so it is not committed and cannot appear as a **committable file**.
+- “Delete checkout” as the removal trigger could mean the folder disappearing — resolved: closing the checkout (removing the project from the workspace) deletes its list, while the checkout's saved chat session is left alone.
+- A cleared chat is a new **Chat** — resolved: it does not clear the **Todo list**, which belongs to the checkout.
+- The list could be shown only to the agent — resolved: each update also appears as a `todo` tool card, and the current list is injected into every turn.
