@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { TODO_PRIORITIES, TODO_STATUSES, todoSummary, type Todo } from '@shared/todos'
 import { C } from '../theme'
 import { Button, ConfirmButton } from './controls'
-import { ChevronDown } from './icons'
+import { CancelIcon, CheckIcon, ChevronDown, CircleIcon, DeleteIcon, EditIcon, Spinner } from './icons'
 
 const STATUS_LABELS = {
   pending: 'Pending',
@@ -23,34 +23,39 @@ const fieldStyle: React.CSSProperties = {
 
 function TodoEditor({
   todos,
+  index: editIndex,
   saving,
   onSave,
   onCancel
 }: {
   todos: Todo[]
+  index: number
   saving: boolean
   onSave: (next: Todo[], expected: Todo[]) => Promise<void>
   onCancel: () => void
 }) {
   const [original] = useState(todos)
-  const [draft, setDraft] = useState(todos)
-  const changed = JSON.stringify(todos) !== JSON.stringify(original)
+  const [draft, setDraft] = useState<Todo[]>(() => editIndex === todos.length
+    ? [...todos, { content: '', status: 'pending', priority: 'medium' }]
+    : todos)
+  const listChangedSinceEdit = JSON.stringify(todos) !== JSON.stringify(original)
+  const canSave = !saving && !listChangedSinceEdit && draft.every((todo) => todo.content.trim())
   const update = (index: number, patch: Partial<Todo>): void => {
     setDraft((items) => items.map((item, i) => i === index ? { ...item, ...patch } : item))
   }
   return (
     <form onSubmit={(event) => {
       event.preventDefault()
-      if (!saving && !changed) void onSave(draft, original)
+      if (canSave) void onSave(draft, original)
     }}>
-      {changed && (
+      {listChangedSinceEdit && (
         <p role="status" style={{ color: C.textMuted }}>
           The shared list changed. Cancel and edit the latest list before saving.
         </p>
       )}
       <fieldset disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
         <ol style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-          {draft.map((todo, index) => (
+          {draft.map((todo, index) => index === editIndex && (
             <li key={index} style={{ padding: '10px 0', borderBottom: `1px solid ${C.cardBorder}` }}>
               <textarea
                 className="bf-focus"
@@ -80,19 +85,15 @@ function TodoEditor({
                 >
                   {TODO_PRIORITIES.map((priority) => <option key={priority} value={priority}>{priority} priority</option>)}
                 </select>
-                <Button type="button" variant="danger" aria-label={`Remove todo ${index + 1}`} onClick={() => setDraft((items) => items.filter((_, i) => i !== index))}>
-                  Remove
-                </Button>
               </div>
             </li>
           ))}
         </ol>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, paddingTop: 12 }}>
-          <Button type="button" onClick={() => setDraft((items) => [...items, { content: '', status: 'pending', priority: 'medium' }])}>Add todo</Button>
           <span style={{ flex: 1 }} />
-          <Button type="button" onClick={onCancel}>Cancel</Button>
-          <Button type="submit" variant="primary" disabled={saving || changed || draft.some((todo) => !todo.content.trim())}>
-            {saving ? 'Saving…' : 'Save list'}
+          <Button type="button" variant="ghost" aria-label="Cancel editing" title="Cancel editing" onClick={onCancel} style={{ padding: '0 6px' }}><CancelIcon /></Button>
+          <Button type="submit" variant="primary" disabled={!canSave}>
+            {saving ? 'Saving…' : 'Save todo'}
           </Button>
         </div>
       </fieldset>
@@ -104,7 +105,7 @@ export default function TodoList({ projectPath }: { projectPath: string }) {
   const [snapshot, setSnapshot] = useState<{ checkout: string; todos: Todo[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
-  const [editing, setEditing] = useState(false)
+  const [editing, setEditing] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [reload, setReload] = useState(0)
   const mounted = useRef(false)
@@ -146,7 +147,7 @@ export default function TodoList({ projectPath }: { projectPath: string }) {
     try {
       await window.farol.todos.save(snapshot.checkout, next, expected)
       if (mounted.current) {
-        setEditing(false)
+        setEditing(null)
         trigger.current?.focus()
       }
     } catch (reason) {
@@ -199,24 +200,54 @@ export default function TodoList({ projectPath }: { projectPath: string }) {
             </div>
           )}
           {!snapshot && !error && <p role="status">Loading todos…</p>}
-          {snapshot && (editing ? (
-            <TodoEditor todos={snapshot.todos} saving={saving} onSave={save} onCancel={() => { setEditing(false); setError(null) }} />
+          {snapshot && (editing !== null ? (
+            <TodoEditor todos={snapshot.todos} index={editing} saving={saving} onSave={save} onCancel={() => { setEditing(null); setError(null) }} />
           ) : (
             <>
               {!snapshot.todos.length && <p style={{ color: C.textMuted }}>No todos yet. Add one or ask the agent to plan the work.</p>}
               <ol style={{ margin: 0, padding: 0, listStyle: 'none' }}>
                 {snapshot.todos.map((todo, index) => (
-                  <li key={index} style={{ padding: '10px 0', borderBottom: `1px solid ${C.cardBorder}` }}>
-                    <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.5 }}>{todo.content}</div>
-                    <div style={{ color: C.textMuted, marginTop: 4, fontSize: 11.5 }}>{STATUS_LABELS[todo.status]} · {todo.priority} priority</div>
+                  <li key={index} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 0', borderBottom: `1px solid ${C.cardBorder}` }}>
+                    <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0, paddingTop: 3 }}>
+                      {todo.status === 'pending' && <CircleIcon size={14} color={C.textMuted} />}
+                      {todo.status === 'in_progress' && <Spinner size={14} color={C.accent} />}
+                      {todo.status === 'completed' && <CheckIcon size={14} color={C.green} />}
+                      {todo.status === 'cancelled' && <CancelIcon size={14} color={C.textMuted} />}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.5 }}>{todo.content}</div>
+                      <div style={{ color: C.textMuted, marginTop: 4, fontSize: 11.5 }}>{STATUS_LABELS[todo.status]} · {todo.priority} priority</div>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 2, flexShrink: 0 }}>
+                      <Button type="button" variant="ghost" disabled={saving} aria-label={`Edit todo ${index + 1}`} title="Edit todo" onClick={() => setEditing(index)} style={{ padding: '0 6px' }}>
+                        <EditIcon />
+                      </Button>
+                      {!saving && (
+                        <ConfirmButton
+                          label={<span role="img" aria-label={`Delete todo ${index + 1}`}><DeleteIcon /></span>}
+                          confirmLabel="Delete todo?"
+                          title="Delete todo from every chat in this checkout"
+                          style={{ padding: '0 6px' }}
+                          onConfirm={() => void save(snapshot.todos.filter((_, i) => i !== index), snapshot.todos)}
+                        />
+                      )}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={saving || todo.status === 'completed' || todo.status === 'cancelled'}
+                        aria-label={`Cancel todo ${index + 1}`}
+                        title="Mark todo as cancelled"
+                        onClick={() => void save(snapshot.todos.map((item, i) => i === index ? { ...item, status: 'cancelled' } : item), snapshot.todos)}
+                        style={{ padding: '0 6px' }}
+                      >
+                        <CancelIcon />
+                      </Button>
+                    </div>
                   </li>
                 ))}
               </ol>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-                <Button type="button" disabled={saving} onClick={() => setEditing(true)}>Edit list</Button>
-                {snapshot.todos.length > 0 && !saving && (
-                  <ConfirmButton label="Clear list" confirmLabel="Confirm clear" title="Remove all todos from every chat in this checkout" onConfirm={() => void save([], snapshot.todos)} />
-                )}
+                <Button type="button" disabled={saving} onClick={() => setEditing(snapshot.todos.length)}>Add todo</Button>
                 {saving && <span role="status">Saving…</span>}
                 <span style={{ flex: 1 }} />
                 <Button type="button" variant="ghost" onClick={dismiss}>Dismiss</Button>

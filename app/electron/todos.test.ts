@@ -114,6 +114,24 @@ describe('createTodoStore', () => {
     expect(notify).toHaveBeenCalledExactlyOnceWith({ checkout, todos: sanitizeTodos(['Retry']) })
   })
 
+  it('saves local edits and additions against the unchanged baseline', async () => {
+    const checkout = path.join(dir, 'repo')
+    await store.save(checkout, ['Original', 'Untouched'])
+    const original = await store.load(checkout)
+    const edited = original.map((todo, index) => index === 0
+      ? { ...todo, content: 'Edited', status: 'completed' as const, priority: 'high' as const }
+      : todo)
+
+    await store.save(checkout, edited, original)
+    expect(await store.load(checkout)).toEqual(edited)
+    expect(original).toEqual(sanitizeTodos(['Original', 'Untouched']))
+
+    const added = [...edited, ...sanitizeTodos(['New todo'])]
+    await store.save(checkout, added, edited)
+    expect(await store.load(checkout)).toEqual(added)
+    expect(edited).toHaveLength(2)
+  })
+
   it('rejects a stale expected list without persisting or notifying', async () => {
     const checkout = path.join(dir, 'repo')
     const notify = vi.fn()

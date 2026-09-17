@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Pipeline } from '../shared/types'
 
 const { peekSecret, evaluate } = vi.hoisted(() => ({
@@ -9,16 +9,86 @@ vi.mock('./secrets', () => ({ peekSecret, setSecret: vi.fn(), clearSecret: vi.fn
 vi.mock('ai', () => ({ experimental_evaluate: evaluate }))
 vi.mock('./store', () => ({ loadSettings: vi.fn() }))
 
-import { selectPipelines, verdictFromOutput } from './jev'
+import { checkJev, selectPipelines, verdictFromOutput } from './jev'
 
 beforeEach(() => {
   peekSecret.mockReset()
   evaluate.mockReset()
+  vi.spyOn(console, 'info').mockImplementation(() => {})
 })
+
+afterEach(() => vi.restoreAllMocks())
 
 function pipeline(id: string, mandatory?: boolean): Pipeline {
   return { id, name: id, nodes: [], ...(mandatory ? { mandatory } : {}) }
 }
+
+describe('Jev decision logs', () => {
+  it('records each requested decision without logging keys, state, or unexpected answers', async () => {
+    peekSecret.mockReturnValue('secret-key')
+    evaluate.mockResolvedValue({
+      answers: {
+        yes: { type: 'boolean', probability: 0.99 },
+        no: { type: 'boolean', probability: 0.01 },
+        unsure: { type: 'boolean', probability: 0.5 },
+        unexpected: { type: 'boolean', probability: 1 }
+      }
+    })
+    expect(await selectPipelines(['yes', 'no', 'unsure', 'missing'].map((id) => pipeline(id)), 'private-state'))
+      .toEqual(['yes'])
+    expect(console.info).toHaveBeenCalledExactlyOnceWith('[farol] Jev', expect.objectContaining({
+      purpose: 'pipeline-selection',
+      status: 'evaluated',
+      confidence: 0.85,
+      durationMs: expect.any(Number),
+      decisions: [
+        { id: 'yes', probability: 0.99, decision: true, reason: 'confident' },
+        { id: 'no', probability: 0.01, decision: false, reason: 'confident' },
+        { id: 'unsure', probability: 0.5, decision: null, reason: 'inconclusive' },
+        { id: 'missing', probability: null, decision: null, reason: 'missing-answer' }
+      ]
+    }))
+    const logged = JSON.stringify(vi.mocked(console.info).mock.calls)
+    for (const text of ['secret-key', 'private-state', 'unexpected']) expect(logged).not.toContain(text)
+  })
+
+  it.each([
+    ['no-key', null, undefined],
+    ['evaluation-error', 'secret-key', new Error('private-state secret-key')],
+    ['timeout', 'secret-key', new DOMException('private-state', 'TimeoutError')]
+  ])('records the %s fallback without leaking error details', async (reason, key, error) => {
+    peekSecret.mockReturnValue(key)
+    evaluate.mockRejectedValue(error)
+    expect(await verdictFromOutput('private-state')).toBe(null)
+    expect(console.info).toHaveBeenCalledExactlyOnceWith('[farol] Jev', expect.objectContaining({
+      purpose: 'step-verdict',
+      reason
+    }))
+    const logged = JSON.stringify(vi.mocked(console.info).mock.calls)
+    expect(logged).not.toContain('private-state')
+    expect(logged).not.toContain('secret-key')
+  })
+
+  it('records a skipped selection when no optional candidates remain', async () => {
+    await selectPipelines([pipeline('lint', true)], 'private-state')
+    expect(console.info).toHaveBeenCalledExactlyOnceWith('[farol] Jev', expect.objectContaining({
+      purpose: 'pipeline-selection',
+      status: 'skipped',
+      reason: 'no-candidates'
+    }))
+  })
+
+  it('identifies Settings probe decisions', async () => {
+    peekSecret.mockReturnValue('secret-key')
+    evaluate.mockResolvedValue({ answers: { failed: { type: 'boolean', probability: 0.99 } } })
+    await checkJev()
+    expect(console.info).toHaveBeenCalledExactlyOnceWith('[farol] Jev', expect.objectContaining({
+      purpose: 'settings-probe',
+      status: 'evaluated',
+      decisions: [{ id: 'failed', probability: 0.99, decision: true, reason: 'confident' }]
+    }))
+  })
+})
 
 describe('verdictFromOutput', () => {
   it('falls back to null when no key is stored, so the runner keeps the exit code', async () => {

@@ -14,6 +14,7 @@ import { createGateway } from '@ai-sdk/gateway'
 import { experimental_evaluate as evaluate } from 'ai'
 import {
   decide,
+  JEV_CONFIDENCE,
   JEV_MODEL_ID,
   JEV_PROBE,
   pipelineSelectionQuestions,
@@ -34,17 +35,54 @@ const NO_KEY = 'Save a Vercel AI Gateway API key first.'
 export async function askJev(
   state: string,
   questions: Record<string, JevBooleanQuestion>,
-  opts: { timeoutMs?: number } = {}
+  opts: { timeoutMs?: number; purpose?: string } = {}
 ): Promise<Record<string, boolean | null>> {
+  const started = Date.now()
+  const context = {
+    timestamp: new Date(started).toISOString(),
+    purpose: opts.purpose ?? 'evaluation',
+    model: JEV_MODEL_ID,
+    confidence: JEV_CONFIDENCE,
+    questionIds: Object.keys(questions)
+  }
   const key = peekSecret('aiGatewayApiKey')
-  if (!key) throw new Error(NO_KEY)
-  const { answers } = await evaluate({
-    model: createGateway({ apiKey: key }).evaluationModel(JEV_MODEL_ID),
-    state,
-    questions,
-    abortSignal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined
-  })
-  return Object.fromEntries(Object.entries(answers).map(([id, a]) => [id, decide(a)]))
+  if (!key) {
+    console.info('[farol] Jev', { ...context, status: 'skipped', reason: 'no-key' })
+    throw new Error(NO_KEY)
+  }
+  try {
+    const { answers } = await evaluate({
+      model: createGateway({ apiKey: key }).evaluationModel(JEV_MODEL_ID),
+      state,
+      questions,
+      abortSignal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined
+    })
+    const decisions = Object.fromEntries(
+      Object.keys(questions).map((id) => [id, answers[id] ? decide(answers[id]) : null])
+    )
+    console.info('[farol] Jev', {
+      ...context,
+      status: 'evaluated',
+      durationMs: Date.now() - started,
+      decisions: Object.entries(decisions).map(([id, decision]) => ({
+        id,
+        probability: answers[id]?.probability ?? null,
+        decision,
+        reason: !answers[id] ? 'missing-answer' : decision === null ? 'inconclusive' : 'confident'
+      }))
+    })
+    return decisions
+  } catch (err) {
+    console.info('[farol] Jev', {
+      ...context,
+      status: 'fallback',
+      reason: err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+        ? 'timeout'
+        : 'evaluation-error',
+      durationMs: Date.now() - started
+    })
+    throw err
+  }
 }
 
 const VERDICT_TIMEOUT_MS = 2000
@@ -66,7 +104,10 @@ const VERDICT_QUESTION: JevBooleanQuestion = {
  */
 export async function verdictFromOutput(output: string): Promise<StepVerdict | null> {
   try {
-    const { passed } = await askJev(output, { passed: VERDICT_QUESTION }, { timeoutMs: VERDICT_TIMEOUT_MS })
+    const { passed } = await askJev(output, { passed: VERDICT_QUESTION }, {
+      timeoutMs: VERDICT_TIMEOUT_MS,
+      purpose: 'step-verdict'
+    })
     return passed === true ? 'pass' : passed === false ? 'fail' : null
   } catch {
     return null
@@ -85,9 +126,20 @@ const SELECTION_TIMEOUT_MS = 2000
 export async function selectPipelines(candidates: Pipeline[], state: string): Promise<string[] | null> {
   const questions = pipelineSelectionQuestions(candidates)
   const ids = Object.keys(questions)
-  if (!ids.length) return null
+  if (!ids.length) {
+    console.info('[farol] Jev', {
+      timestamp: new Date().toISOString(),
+      purpose: 'pipeline-selection',
+      status: 'skipped',
+      reason: 'no-candidates'
+    })
+    return null
+  }
   try {
-    const answers = await askJev(state, questions, { timeoutMs: SELECTION_TIMEOUT_MS })
+    const answers = await askJev(state, questions, {
+      timeoutMs: SELECTION_TIMEOUT_MS,
+      purpose: 'pipeline-selection'
+    })
     return ids.filter((id) => answers[id] === true)
   } catch {
     return null
@@ -104,7 +156,7 @@ const message = (err: unknown): string => (err instanceof Error ? err.message : 
 /** Run the known-answer probe. No error means the key works and Jev agreed. */
 export async function checkJev(): Promise<SettingsResult> {
   try {
-    const answers = await askJev(JEV_PROBE.state, JEV_PROBE.questions)
+    const answers = await askJev(JEV_PROBE.state, JEV_PROBE.questions, { purpose: 'settings-probe' })
     return result(
       answers.failed === true ? undefined : 'Jev answered the check question wrong. Try again.'
     )

@@ -200,6 +200,31 @@ export function Spinner({ size = 13, color = '#E3F86C', style }: IconProps) {
   )
 }
 
+export function EditIcon({ size = 14, color = 'currentColor' }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.4} aria-hidden="true">
+      <path d="m10.5 2.5 3 3-7.5 7.5-4 1 1-4ZM8.5 4.5l3 3" />
+    </svg>
+  )
+}
+
+export function DeleteIcon({ size = 14, color = 'currentColor' }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.4} aria-hidden="true">
+      <path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.5 7v4M9.5 7v4" />
+    </svg>
+  )
+}
+
+export function CancelIcon({ size = 14, color = 'currentColor' }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth={1.4} aria-hidden="true">
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="m4 4 8 8" />
+    </svg>
+  )
+}
+
 export function CircleIcon({ size = 13, color = 'currentColor' }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.3}>

@@ -1384,7 +1384,6 @@ function ComposerBox({
   onCancel,
   onProviderChange,
   onModeChange,
-  onProviderLocal,
   sendTextRef,
   showFade
 }: {
@@ -1403,7 +1402,6 @@ function ComposerBox({
   onCancel: () => void
   onProviderChange: (provider: AiProvider, model?: string) => void
   onModeChange: (mode: AgentMode) => void
-  onProviderLocal: (provider: AiProvider, model?: string) => void
   /** Lets the parent fire the same send path suggestions used before (incl. history). */
   sendTextRef: React.MutableRefObject<(clean: string) => void>
   showFade: boolean
@@ -1755,7 +1753,6 @@ function ComposerBox({
           settings={settings}
           pos={{ ...agentMenuPos, width: 188 }}
           onPick={(p, m) => {
-            onProviderLocal(p, m)
             onProviderChange(p, m)
             setModelOpen(false)
             window.setTimeout(() => textareaRef.current?.focus(), 0)
@@ -1792,8 +1789,8 @@ export default function ChatPane({
   onDismissChatCleared,
   composerRef
 }: Props) {
-  const [provider, setProvider] = useState<AiProvider>(normalizeAi(pane?.provider ?? defaultProvider))
-  const [model, setModel] = useState<string | undefined>(normalizeModel(pane?.model ?? defaultModel))
+  const provider = normalizeAi(pane ? pane.provider : defaultProvider)
+  const model = normalizeModel(pane ? pane.model : defaultModel)
   const [showFade, setShowFade] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
@@ -1815,11 +1812,6 @@ export default function ChatPane({
   const messages = pane?.messages ?? []
   const availableCount = pipelines.filter((p) => p.nodes.length).length
   const showSuggestions = availableCount > 0 && mode === 'build'
-
-  useEffect(() => {
-    setProvider(normalizeAi(pane?.provider ?? defaultProvider))
-    setModel(normalizeModel(pane?.model ?? defaultModel))
-  }, [pane?.provider, pane?.model, defaultProvider, defaultModel])
 
   // Follow the stream only while the reader is already at the bottom, so
   // scrolling up to read something does not get yanked back by the next event.
@@ -1913,10 +1905,6 @@ export default function ChatPane({
         onCancel={onCancel}
         onProviderChange={onProviderChange}
         onModeChange={onModeChange}
-        onProviderLocal={(p, m) => {
-          setProvider(p)
-          setModel(m)
-        }}
         sendTextRef={sendTextRef}
         showFade={showFade}
       />

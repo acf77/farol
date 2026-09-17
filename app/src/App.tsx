@@ -1105,6 +1105,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     editor,
     saveEditor
   } = props
+  const defaultChoice = modeDefault(settings, 'build')
 
   return (
     <div
@@ -1159,8 +1160,8 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                 pipelines={pipelines}
                 view={view}
                 projectPath={project.path}
-                defaultProvider={settings.agent}
-                defaultModel={settings.models[settings.agent]}
+                defaultProvider={defaultChoice.agent}
+                defaultModel={defaultChoice.model}
                 settings={settings}
                 usage={usage}
                 onRefreshUsage={onRefreshUsage}
@@ -1347,7 +1348,7 @@ interface ProjectWorkspaceProps {
   onAgentUnreadChange?: (projectPath: string, unread: boolean) => void
 }
 
-function ProjectWorkspace({
+export function ProjectWorkspace({
   project,
   visible,
   branchDialogNonce,
@@ -2242,16 +2243,17 @@ function ProjectWorkspace({
         void api.settings.save(next)
         return next
       })
-      if (!chatPane) return
+      const pane = chatPane ?? ensureChat()?.pane
+      if (!pane) return
       // Always record the choice on the pane so the next start/message uses it,
       // including when the user switches after a usage/session limit mid-chat.
-      const mode = normalizeMode(chatPane.mode, provider)
-      patchPane(chatPane.id, (pane) =>
-        pane.kind === 'agent' ? { ...pane, provider, model, mode } : pane
+      const mode = normalizeMode(pane.mode, provider)
+      patchPane(pane.id, (current) =>
+        current.kind === 'agent' ? { ...current, provider, model, mode } : current
       )
-      void api.agent.setProvider(chatPane.taskId, provider, model, mode)
+      void api.agent.setProvider(pane.taskId, provider, model, mode)
     },
-    [chatPane, patchPane]
+    [chatPane, ensureChat, patchPane]
   )
 
   const setAgentMode = useCallback(

@@ -84,7 +84,7 @@
         "id": "n1",
         "name": "Update version (SEMVER)",
         "type": "ai",
-        "cmd": "Your job is to update the the version on the package.json according to the git diff changes. Use SEMVER as base, and judge accordingly to the modifications.\n\nYOU ONLY JOB IS:\n1 - Analyze the differences to judge whats the version bump (minor, major, fix).\n2 - Run the npm command to upgrade the version\n\nDONT BE VERBOSE, DONT RESPOND NOTHING, ONLY THE COMMANDS 1 AND 2.",
+        "cmd": "Update app/package.json and app/package-lock.json according to the git diff using SEMVER. The repository root has no package.json.\n\n1 - Analyze the differences against HEAD to choose major, minor, or patch. If app/package.json already has the appropriate bump relative to HEAD, do not bump it again.\n2 - If a bump is needed, run npm version with --no-git-tag-version from the app directory. Do not commit or tag.\n\nBe concise.",
         "ai": "openrouter",
         "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "after": [],
@@ -96,13 +96,13 @@
         "id": "n2",
         "name": "Build",
         "type": "shell",
-        "cmd": "npm run dist",
+        "cmd": "cd app && npm run dist",
         "after": [
           "n1"
         ],
         "gate": false,
         "x": -140,
-        "y": 443
+        "y": 442
       }
     ]
   }
