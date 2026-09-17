@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AgentTaskEvent, AgentTaskRequest, PipelineRunResult } from '../shared/types'
 import { failureReport } from '../shared/failure'
 import { TODOS_MARKER, type TodoStore } from '../shared/todos'
+
+const { selectPipelines } = vi.hoisted(() => ({ selectPipelines: vi.fn().mockResolvedValue(null) }))
+vi.mock('./jev', () => ({ selectPipelines }))
+
 import { AgentController, type AgentExecutor } from './agent-controller'
 
 const request: AgentTaskRequest = {
@@ -60,6 +64,13 @@ const lintMandatory = {
   name: 'Lint',
   mandatory: true,
   nodes: [{ ...request.pipelines[0].nodes[0], id: 'lint-step', cmd: 'npm run lint' }]
+}
+
+const securityScan = {
+  ...request.pipelines[0],
+  id: 'security',
+  name: 'Security Scan',
+  nodes: [{ ...request.pipelines[0].nodes[0], id: 'security-step', cmd: 'npm run security' }]
 }
 
 describe('AgentController', () => {
@@ -1188,6 +1199,83 @@ describe('AgentController', () => {
     expect(execute).toHaveBeenCalledTimes(2)
     expect(execute.mock.calls[1][1]).toContain('skipped mandatory pipelines')
     expect(run.mock.calls.map((call) => call[0].id)).toEqual(['lint', 'validate'])
+  })
+
+  it('runs a pipeline Jev advises even though the agent did not select it', async () => {
+    selectPipelines.mockClear()
+    selectPipelines.mockResolvedValueOnce(['security'])
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = vi.fn<AgentExecutor>().mockImplementation(async (_request, _prompt, output, onTool) => {
+      onTool?.({ toolId: 'edit-1', name: 'apply_patch', detail: 'src/app.ts', state: 'done' })
+      output('FAROL_PIPELINES: ["validate"]\n')
+      return 0
+    })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, pipelines: [request.pipelines[0], securityScan] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(selectPipelines).toHaveBeenCalledTimes(1)
+    // Only the pipeline the agent did not already pick is offered to Jev.
+    expect(selectPipelines.mock.calls[0][0].map((pipeline: { id: string }) => pipeline.id)).toEqual(['security'])
+    expect(run.mock.calls.map((call) => call[0].id).sort()).toEqual(['security', 'validate'])
+  })
+
+  it('keeps the agent’s own selection when Jev fails soft', async () => {
+    selectPipelines.mockClear()
+    selectPipelines.mockResolvedValueOnce(null)
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = vi.fn<AgentExecutor>().mockImplementation(async (_request, _prompt, output, onTool) => {
+      onTool?.({ toolId: 'edit-1', name: 'apply_patch', detail: 'src/app.ts', state: 'done' })
+      output('FAROL_PIPELINES: ["validate"]\n')
+      return 0
+    })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, pipelines: [request.pipelines[0], securityScan] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate'])
+  })
+
+  it('never asks Jev when no files changed', async () => {
+    selectPipelines.mockClear()
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = selecting('validate')
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, pipelines: [request.pipelines[0], securityScan] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(selectPipelines).not.toHaveBeenCalled()
+    expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate'])
+  })
+
+  it('never asks Jev in Plan mode', async () => {
+    selectPipelines.mockClear()
+    const events: AgentTaskEvent[] = []
+    const execute = vi.fn<AgentExecutor>().mockImplementation(async (_request, _prompt, output, onTool) => {
+      onTool?.({ toolId: 'edit-1', name: 'apply_patch', detail: 'src/app.ts', state: 'done' })
+      output('FAROL_PLAN: finished\n')
+      return 0
+    })
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, mode: 'plan', provider: 'codex', pipelines: [request.pipelines[0], securityScan] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(selectPipelines).not.toHaveBeenCalled()
   })
 
   it('does not treat CreateGoal as a code change', async () => {

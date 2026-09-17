@@ -55,6 +55,7 @@ import {
 import { plainText } from '../shared/terminal'
 import { aiEnv, resolveBinFrom } from './bin'
 import { killPidTree } from './kill'
+import { selectPipelines } from './jev'
 
 interface ValidationRunner {
   run(
@@ -806,9 +807,17 @@ export class AgentController {
     )
     if (mandatoryBypass) return retryInvalid(`you skipped mandatory pipelines: ${mandatoryBypass}`)
 
+    // Jev may only add to what the agent already picked, never drop from it —
+    // it has no say when there is nothing to validate (no file change, no
+    // outstanding mandatory retry).
+    const advised = mustRunMandatory
+      ? await this.jevAdvisedPipelines(task, scan, selection.pipelines)
+      : []
+    const withJev = advised.length ? [...selection.pipelines, ...advised] : selection.pipelines
+
     const pipelines = mustRunMandatory
-      ? mergeWithMandatory(task.request.pipelines, selection.pipelines)
-      : selection.pipelines.filter((pipeline) => pipeline.mandatory !== true)
+      ? mergeWithMandatory(task.request.pipelines, withJev)
+      : withJev.filter((pipeline) => pipeline.mandatory !== true)
 
     // Mandatory pipelines do not run unless files changed (or a previous
     // mandatory run is still waiting to pass).
@@ -817,6 +826,15 @@ export class AgentController {
     const names = pipelines.map((pipeline) => pipeline.name).join(', ')
     this.status(task, 'validating', attempt, `Running ${names}`)
     const outcome = await this.runValidationPipelines(task, pipelines, attempt)
+    return this.handleValidationOutcome(task, attempt, outcome, names)
+  }
+
+  private handleValidationOutcome(
+    task: Task,
+    attempt: number,
+    outcome: Awaited<ReturnType<AgentController['runValidationPipelines']>>,
+    names: string
+  ): CycleAttemptResult {
     if (outcome.kind === 'cancelled') {
       this.settleCancel(task)
       return { kind: 'done' }
@@ -827,14 +845,28 @@ export class AgentController {
       return this.completeCycle(task, attempt, `${names} passed`)
     }
 
-    if (outcome.failures.some(({ pipeline }) => pipeline.mandatory === true)) {
-      task.mandatoryOutstanding = true
-    }
+    if (outcome.failures.some(({ pipeline }) => pipeline.mandatory === true)) task.mandatoryOutstanding = true
     const guidance = task.guidance.splice(0).join('\n')
     return {
       kind: 'retry',
       opening: repairPromptOpening(task.request.prompt, attempt, outcome.failures, guidance)
     }
+  }
+
+  /**
+   * Pipelines the agent did not select but Jev is confident belong in this
+   * turn's run. Runs only for pipelines already excluded from `selected` —
+   * Jev is never asked about one the agent (or `mergeWithMandatory` later)
+   * already covers. Any failure — no key, a slow gateway, a bad answer —
+   * yields `[]`, leaving the agent's own selection exactly as it was.
+   */
+  private async jevAdvisedPipelines(task: Task, scan: CycleScan, selected: Pipeline[]): Promise<Pipeline[]> {
+    const candidates = task.request.pipelines.filter(
+      (pipeline) => pipeline.mandatory !== true && !selected.includes(pipeline)
+    )
+    if (!candidates.length) return []
+    const ids = await selectPipelines(candidates, `Task: ${task.request.prompt}\n\nAssistant: ${scan.assistant}`)
+    return candidates.filter((pipeline) => ids?.includes(pipeline.id))
   }
 
   /** Plan mode never validates — it only recognizes the finished-plan marker. */

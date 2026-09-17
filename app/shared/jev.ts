@@ -8,6 +8,8 @@
  * entry, nothing in Chat, nothing a pipeline step can select.
  */
 
+import type { Pipeline } from './types'
+
 export const JEV_MODEL_ID = 'typesafe-ai/jev'
 export const AI_GATEWAY_API_URL = 'https://ai-gateway.vercel.sh/v1'
 
@@ -55,3 +57,28 @@ export const JEV_PROBE = {
     }
   }
 } satisfies { state: string; questions: Record<string, JevBooleanQuestion> }
+
+/**
+ * One boolean Noul per non-mandatory pipeline — mandatory ones always run and
+ * are never asked about, which also keeps Jev from ever being the reason a
+ * mandatory pipeline is skipped. Keyed by pipeline id, so a `true` answer maps
+ * straight back to a catalog id with no room to invent one.
+ */
+export function pipelineSelectionQuestions(candidates: Pipeline[]): Record<string, JevBooleanQuestion> {
+  return Object.fromEntries(
+    candidates
+      .filter((pipeline) => pipeline.mandatory !== true)
+      .map((pipeline) => [
+        pipeline.id,
+        {
+          type: 'boolean',
+          instructions: `Should Farol run pipeline "${pipeline.name}" (${pipeline.id}) now to validate this turn?`,
+          criteria: {
+            true: "this turn's change is the kind of thing this pipeline is meant to catch",
+            false: 'this pipeline is unrelated to what changed, or redundant with pipelines already selected'
+          }
+        } satisfies JevBooleanQuestion
+      ])
+  )
+}
+

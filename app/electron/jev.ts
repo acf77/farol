@@ -12,8 +12,15 @@
 
 import { createGateway } from '@ai-sdk/gateway'
 import { experimental_evaluate as evaluate } from 'ai'
-import { decide, JEV_MODEL_ID, JEV_PROBE, type JevBooleanQuestion } from '../shared/jev'
-import type { SettingsResult } from '../shared/types'
+import {
+  decide,
+  JEV_MODEL_ID,
+  JEV_PROBE,
+  pipelineSelectionQuestions,
+  type JevBooleanQuestion
+} from '../shared/jev'
+import type { Pipeline, SettingsResult } from '../shared/types'
+import type { StepVerdict } from '../shared/verdict'
 import { clearSecret, peekSecret, setSecret } from './secrets'
 import { loadSettings } from './store'
 
@@ -26,16 +33,65 @@ const NO_KEY = 'Save a Vercel AI Gateway API key first.'
  */
 export async function askJev(
   state: string,
-  questions: Record<string, JevBooleanQuestion>
+  questions: Record<string, JevBooleanQuestion>,
+  opts: { timeoutMs?: number } = {}
 ): Promise<Record<string, boolean | null>> {
   const key = peekSecret('aiGatewayApiKey')
   if (!key) throw new Error(NO_KEY)
   const { answers } = await evaluate({
     model: createGateway({ apiKey: key }).evaluationModel(JEV_MODEL_ID),
     state,
-    questions
+    questions,
+    abortSignal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined
   })
   return Object.fromEntries(Object.entries(answers).map(([id, a]) => [id, decide(a)]))
+}
+
+const VERDICT_TIMEOUT_MS = 2000
+
+const VERDICT_QUESTION: JevBooleanQuestion = {
+  type: 'boolean',
+  instructions: "Given this pipeline step's output, did the check pass?",
+  criteria: {
+    true: 'the output reports success with no unresolved errors',
+    false: 'the output reports a failure, error, or unresolved issue'
+  }
+}
+
+/**
+ * Runner's fallback for an AI pipeline step that exits without a
+ * `FAROL_VERDICT` line. Fails soft to `null` — no key, a slow gateway, or an
+ * inconclusive read all fall through to it — so the runner keeps using the
+ * process's raw exit code exactly as it did before Jev existed.
+ */
+export async function verdictFromOutput(output: string): Promise<StepVerdict | null> {
+  try {
+    const { passed } = await askJev(output, { passed: VERDICT_QUESTION }, { timeoutMs: VERDICT_TIMEOUT_MS })
+    return passed === true ? 'pass' : passed === false ? 'fail' : null
+  } catch {
+    return null
+  }
+}
+
+const SELECTION_TIMEOUT_MS = 2000
+
+/**
+ * Ask Jev which of the non-mandatory `candidates` should run this turn.
+ * Additive and soft-fail only: `null` on no key, a slow gateway, or an error
+ * means "Jev added nothing," never "run none of these" — the agent's own
+ * `FAROL_PIPELINES` selection and the mandatory merge are unaffected either
+ * way. Ids come back only from `candidates`, so an invented id is impossible.
+ */
+export async function selectPipelines(candidates: Pipeline[], state: string): Promise<string[] | null> {
+  const questions = pipelineSelectionQuestions(candidates)
+  const ids = Object.keys(questions)
+  if (!ids.length) return null
+  try {
+    const answers = await askJev(state, questions, { timeoutMs: SELECTION_TIMEOUT_MS })
+    return ids.filter((id) => answers[id] === true)
+  } catch {
+    return null
+  }
 }
 
 /** `loadSettings` re-reads the key store, so it already carries the new flag. */

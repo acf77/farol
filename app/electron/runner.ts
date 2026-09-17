@@ -15,7 +15,7 @@ import { FAILURE_REPORT_REL, failureReport, gitignoreWithEntry } from '../shared
 import { REPORT_OUTPUT_LIMIT } from '../shared/failure'
 import { appendTail, plainText } from '../shared/terminal'
 import { exitCodeFromSignal } from '../shared/exit-code'
-import { parseVerdict, verdictPromptSuffix } from '../shared/verdict'
+import { parseVerdict, verdictPromptSuffix, type StepVerdict } from '../shared/verdict'
 import {
   ancestors,
   descendants,
@@ -27,6 +27,7 @@ import {
 import { aiEnv, resolveBinFrom } from './bin'
 import { defaultShell, pipelineEnv, PtySession } from './session'
 import { killPidTree, killPty } from './kill'
+import { verdictFromOutput } from './jev'
 import { shellFamily } from './protocol'
 
 /**
@@ -668,10 +669,16 @@ export class PipelineRunner {
       })
       proc.onExit(({ exitCode, signal }) => {
         const exit = exitCode === 0 ? (exitCodeFromSignal(signal) ?? 0) : exitCode
+        const exitFromVerdict = (verdict: StepVerdict | null): number =>
+          verdict === 'pass' ? 0 : verdict === 'fail' ? 1 : exit
         const verdict = parseVerdict(collected)
-        if (verdict === 'pass') done(0)
-        else if (verdict === 'fail') done(1)
-        else done(exit)
+        if (verdict) done(exitFromVerdict(verdict))
+        else {
+          // No FAROL_VERDICT line — ask Jev to read the transcript before
+          // falling back to the CLI's own exit code, which is often 0 even
+          // when the review it printed found a failure.
+          void verdictFromOutput(collected).then((jevVerdict) => done(exitFromVerdict(jevVerdict)))
+        }
       })
       if (state.cancelled) {
         killPty(proc)
