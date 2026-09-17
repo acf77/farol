@@ -95,7 +95,7 @@ describe('AgentController', () => {
 
     expect(store.save).toHaveBeenCalledWith(request.checkout, [
       { content: 'Ship it', status: 'in_progress', priority: 'high' }
-    ])
+    ], [])
     expect(events.some((event) => event.kind === 'tool' && event.name === 'todo')).toBe(true)
   })
 
@@ -1489,6 +1489,6 @@ describe('AgentController', () => {
 
     expect(store.save).toHaveBeenCalledWith(request.checkout, [
       { content: 'late', status: 'pending', priority: 'low' }
-    ])
+    ], [])
   })
 })

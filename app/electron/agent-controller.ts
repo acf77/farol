@@ -687,7 +687,7 @@ export class AgentController {
     task.todoSeq += 1
     const toolId = `${task.request.id}:todos:${task.todoSeq}`
     try {
-      await this.todoStore?.save(task.request.checkout, todos)
+      await this.todoStore?.save(task.request.checkout, todos, previous)
       this.emit({
         kind: 'tool',
         taskId: task.request.id,
