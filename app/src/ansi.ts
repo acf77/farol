@@ -421,14 +421,12 @@ export function writeLine(state: TermState, text: string, style: Omit<Segment, '
   if (!last) rows.push([])
   else if (last.length > 0) rows.push([])
 
-  rows[rows.length - 1] = text
-    ? Array.from(text.slice(0, MAX_COLS), (ch) => ({
-        ch,
-        color: style.color,
-        bold: style.bold,
-        dim: style.dim
-      }))
-    : []
+  rows[rows.length - 1] = Array.from(text.slice(0, MAX_COLS)).map((ch) => ({
+    ch,
+    color: style.color,
+    bold: style.bold,
+    dim: style.dim
+  }))
   rows.push([])
   return { ...state, rows, sgr: {}, col: 0 }
 }
