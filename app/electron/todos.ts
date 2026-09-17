@@ -4,7 +4,10 @@ import { randomUUID } from 'crypto'
 import { sanitizeTodos, type Todo, type TodoStore } from '../shared/todos'
 
 /** Persisted in userData, keyed by checkout. `userDataDir` is a thunk so this can be built before Electron is ready. */
-export function createTodoStore(userDataDir: () => string): TodoStore {
+export function createTodoStore(
+  userDataDir: () => string,
+  notify?: (event: { checkout: string; todos: Todo[] }) => void
+): TodoStore {
   let queue: Promise<unknown> = Promise.resolve()
   const file = (): string => path.join(userDataDir(), 'todos.json')
 
@@ -49,10 +52,16 @@ export function createTodoStore(userDataDir: () => string): TodoStore {
     return result
   }
 
-  function update(checkout: string, todos: Todo[]): Promise<void> {
+  function update(checkout: string, todos: Todo[], expected?: Todo[]): Promise<void> {
     const key = path.resolve(checkout)
+    const baseline = expected === undefined
+      ? undefined
+      : JSON.stringify(expected.map(({ content, status, priority }) => ({ content, status, priority })))
     return enqueue(async () => {
       const all = await readAll()
+      if (baseline !== undefined && JSON.stringify(all[key] ?? []) !== baseline) {
+        throw new Error('Todo list changed. Reload it before saving again.')
+      }
       if (todos.length) all[key] = todos
       else delete all[key]
 
@@ -66,12 +75,17 @@ export function createTodoStore(userDataDir: () => string): TodoStore {
         await fs.rm(temp, { force: true }).catch(() => {})
         throw error
       }
+      try {
+        notify?.({ checkout: key, todos })
+      } catch {
+        return
+      }
     })
   }
 
   return {
     load: (checkout) => enqueue(async () => (await readAll())[path.resolve(checkout)] ?? []),
-    save: (checkout, todos) => update(checkout, sanitizeTodos(todos)),
+    save: (checkout, todos, expected) => update(checkout, sanitizeTodos(todos), expected),
     forget: (checkout) => update(checkout, [])
   }
 }

@@ -15,6 +15,7 @@ import { MarkdownBody, stripControlMarkers } from '../markdown'
 import { MessageErrorBoundary } from '../ErrorBoundary'
 import { Button, CliModelMenu } from './controls'
 import UsageBar from './UsageBar'
+import TodoList from './TodoList'
 import {
   AttachmentIcon,
   CheckIcon,
@@ -1617,6 +1618,7 @@ function ComposerBox({
       }}
     >
       <div className={showFade ? 'bf-chat-fade is-on' : 'bf-chat-fade'} aria-hidden="true" />
+      <TodoList key={projectPath} projectPath={projectPath} />
       <div
         ref={composerBoxRef}
         onDragOver={(e) => {

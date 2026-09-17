@@ -13,6 +13,7 @@ import type {
   SettingsResult
 } from './settings'
 import type { ProviderUsage } from './usage'
+import type { Todo } from './todos'
 
 export type { AgentQuestion, AgentSkill, ProviderUsage }
 
@@ -366,6 +367,11 @@ export interface FarolApi {
     load(projectPath: string): Promise<ProjectSession | null>
     save(projectPath: string, session: ProjectSession, last: boolean): Promise<void>
     clearLast(): Promise<void>
+  }
+  todos: {
+    load(projectPath: string): Promise<{ checkout: string; todos: Todo[] }>
+    save(checkout: string, todos: Todo[], expected: Todo[]): Promise<void>
+    onChanged(cb: (event: { checkout: string; todos: Todo[] }) => void): () => void
   }
   pipelines: {
     load(projectPath: string): Promise<Pipeline[]>
