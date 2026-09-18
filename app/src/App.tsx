@@ -37,7 +37,7 @@ import {
 import { sessionSeq } from '@shared/session'
 import { owningWorktree } from '@shared/worktree'
 import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
-import { topoSort } from '@shared/graph'
+import { parallelAsClashIds, sanitizeAs, topoSort } from '@shared/graph'
 import { clearIndent, emptyTerm, ensureNewline, setIndent, trimTo, write, writeLine } from './ansi'
 import { agentPaneFor, chatOwnerFor, chatTabFor, trimAgentMessages } from './chat-context'
 import { fmtDuration, pipelineActivityText, projectRunChat } from './pipeline-chat'
@@ -2494,11 +2494,13 @@ export function ProjectWorkspace({
 
   const saveEditor = useCallback(() => {
     if (!editor || !editor.name.trim() || !editor.nodes.length) return
+    if (parallelAsClashIds(editor.nodes).size) return
     const ids = new Set(editor.nodes.map((n) => n.id))
     const nodes = editor.nodes.map((n) => ({
       ...n,
       name: n.name.trim() || n.cmd.trim() || 'Step',
-      after: n.after.filter((a) => ids.has(a))
+      after: n.after.filter((a) => ids.has(a)),
+      as: sanitizeAs(n.as)
     }))
     const saved = (id: string): Pipeline => ({
       id,
