@@ -201,6 +201,8 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 - The **Todo list** is saved per checkout in application data, not in the repository, so it survives restarts and cleared chats and never joins a commit.
 - Closing a checkout (removing the project from the workspace) deletes its **Todo list**; the checkout's saved chat session is unaffected.
 - Clearing a chat does not clear the **Todo list**.
+- Chat shows the list as a collapsible dock **above the composer** (not in the transcript): collapsed state shows completed/total progress plus the active item (in-progress, else pending, else latest completed); expanded state is a compact checklist with strikethrough for completed and cancelled items. Manual add, edit, run, cancel, and delete remain available there.
+- **Execute plan** does not reset or re-own the list; Plan-to-Build keeps the same checkout list.
 
 ## Example dialogue
 

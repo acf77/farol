@@ -146,3 +146,49 @@ describe('ChatModeSwitch', () => {
     expect(html.match(/disabled=""/g)).toHaveLength(2)
   })
 })
+
+describe('Execute plan handoff', () => {
+  it('shows Execute plan under a finished, unconsumed plan message', () => {
+    const pane: AgentPane = {
+      id: 'agent-pane',
+      kind: 'agent',
+      title: 'Chat',
+      cwd: '/repo',
+      taskId: 'agent:sh1',
+      status: 'idle',
+      attempt: 0,
+      provider: 'codex',
+      mode: 'plan',
+      messages: [
+        {
+          role: 'assistant',
+          text: '## Plan\n\n1. Do the work.',
+          plan: { finished: true }
+        }
+      ]
+    }
+    expect(renderChat(pane)).toContain('Execute plan')
+  })
+
+  it('hides Execute plan once the finished plan is consumed', () => {
+    const pane: AgentPane = {
+      id: 'agent-pane',
+      kind: 'agent',
+      title: 'Chat',
+      cwd: '/repo',
+      taskId: 'agent:sh1',
+      status: 'idle',
+      attempt: 0,
+      provider: 'codex',
+      mode: 'build',
+      messages: [
+        {
+          role: 'assistant',
+          text: '## Plan\n\n1. Do the work.',
+          plan: { finished: true, consumed: true }
+        }
+      ]
+    }
+    expect(renderChat(pane)).not.toContain('Execute plan')
+  })
+})

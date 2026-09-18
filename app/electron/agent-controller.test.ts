@@ -119,6 +119,45 @@ describe('AgentController', () => {
     expect(execute.mock.calls[0][1]).toContain('- [pending] (low) Existing')
   })
 
+  it('injects the checkout list into Plan mode and reloads it on follow-up', async () => {
+    const events: AgentTaskEvent[] = []
+    const store: TodoStore = {
+      load: vi
+        .fn()
+        .mockResolvedValueOnce([{ content: 'Plan work', status: 'pending', priority: 'high' }])
+        .mockResolvedValueOnce([{ content: 'Build work', status: 'in_progress', priority: 'high' }]),
+      save: vi.fn().mockResolvedValue(undefined),
+      forget: vi.fn()
+    }
+    const execute = vi.fn()
+      .mockImplementationOnce(async (_request, _prompt, output: (chunk: string) => void) => {
+        output('Drafting.\nFAROL_PIPELINES: []\n')
+        return 0
+      })
+      .mockImplementationOnce(async (_request, _prompt, output: (chunk: string) => void) => {
+        output('## Plan\n\nFAROL_PLAN: finished\n')
+        return 0
+      })
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute, store)
+
+    controller.start({ ...request, provider: 'codex', mode: 'plan' })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+    expect(execute.mock.calls[0][1]).toContain('- [pending] (high) Plan work')
+    expect(execute.mock.calls[0][1]).toContain('shared by every chat in this checkout')
+
+    expect(controller.start({ ...request, provider: 'codex', mode: 'plan', prompt: 'Execute the plan' })).toEqual({
+      ok: true
+    })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.message === 'Plan ready to execute')).toBe(true)
+    )
+
+    expect(store.load).toHaveBeenCalledTimes(2)
+    expect(execute.mock.calls[1][1]).toContain('- [in_progress] (high) Build work')
+  })
+
   it('walks the fallback chain when a provider fails, then gives up on the last rung', async () => {
     const events: AgentTaskEvent[] = []
     const run = vi.fn().mockResolvedValue(result(true))

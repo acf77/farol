@@ -91,6 +91,26 @@ export function todoSummary(todos: Todo[]): string {
   )
 }
 
+/** OpenCode-style collapsed header: completed count over total length. */
+export function todoProgress(todos: Todo[]): { done: number; total: number; label: string } {
+  const done = todos.filter((todo) => todo.status === 'completed').length
+  const total = todos.length
+  return { done, total, label: `${done} of ${total} todos completed` }
+}
+
+/**
+ * Preview pick for the collapsed dock: in-progress, else pending, else last
+ * completed, else the first item.
+ */
+export function activeTodo(todos: Todo[]): Todo | undefined {
+  return (
+    todos.find((todo) => todo.status === 'in_progress') ??
+    todos.find((todo) => todo.status === 'pending') ??
+    [...todos].reverse().find((todo) => todo.status === 'completed') ??
+    todos[0]
+  )
+}
+
 export function formatTodos(todos: Todo[]): string {
   if (!todos.length) return 'No todos yet.'
   return todos.map((todo) => `- [${todo.status}] (${todo.priority}) ${todo.content}`).join('\n')

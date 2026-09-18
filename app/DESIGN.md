@@ -278,6 +278,13 @@ Titlebar tabs, not a boxed segmented control. They sit on Terminal Pitch and rea
 ### Action tiles
 Empty chat pins a 2-column grid of equal tiles above the composer, sampled from the reference window. Icon, short label, one muted line. They are the only identical card grid in the app; they do not appear once a transcript exists.
 
+### Todo dock
+The checkout-shared todo list sits in a collapsible dock immediately above the chat composer.
+- **Collapsed:** completed/total progress (`N of M todos completed`) plus a one-line preview of the active item (in-progress, else pending, else latest completed). Chevron discloses the list.
+- **Expanded:** compact checklist rows with status glyphs; completed and cancelled text is struck through and muted. Priority stays in the editor, not on every row. Hover reveals run, edit, delete, and cancel actions. Empty, loading, and unavailable states stay reachable so the first todo can be added manually.
+- **Motion:** disclosure, opacity, and chevron rotation only; honor `prefers-reduced-motion`.
+- **Ownership:** presentation only — the list itself remains checkout-scoped and is not session- or transcript-owned.
+
 ### Status chips
 Completed work is a 18 to 22px Signal Lime circle with Charcoal Ink check. Pending is the same circle in `#2A2A28` with no glyph. Running is the spinner; failed is a coral mark. Dots and mint fills are not a substitute for this chip.
 

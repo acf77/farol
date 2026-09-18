@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   TODOS_MARKER,
+  activeTodo,
   formatTodos,
   parseTodos,
   parseTodosMarker,
   sanitizeTodos,
+  todoProgress,
   todoSummary
 } from './todos'
 
@@ -131,5 +133,35 @@ describe('todoSummary', () => {
     const marker = `${TODOS_MARKER} ${JSON.stringify(todos)}\nFAROL_PIPELINES: []`
 
     expect(parseTodosMarker(marker)).toEqual(todos)
+  })
+})
+
+describe('todoProgress', () => {
+  it('counts completed items over the full list length', () => {
+    expect(
+      todoProgress([
+        { content: 'a', status: 'completed', priority: 'low' },
+        { content: 'b', status: 'in_progress', priority: 'high' },
+        { content: 'c', status: 'cancelled', priority: 'low' }
+      ])
+    ).toEqual({ done: 1, total: 3, label: '1 of 3 todos completed' })
+  })
+})
+
+describe('activeTodo', () => {
+  const sample = [
+    { content: 'done', status: 'completed' as const, priority: 'low' as const },
+    { content: 'waiting', status: 'pending' as const, priority: 'medium' as const },
+    { content: 'now', status: 'in_progress' as const, priority: 'high' as const }
+  ]
+
+  it('prefers in_progress, then pending, then the latest completed', () => {
+    expect(activeTodo(sample)?.content).toBe('now')
+    expect(activeTodo(sample.filter((todo) => todo.status !== 'in_progress'))?.content).toBe('waiting')
+    expect(activeTodo(sample.filter((todo) => todo.status === 'completed'))?.content).toBe('done')
+  })
+
+  it('is undefined for an empty list', () => {
+    expect(activeTodo([])).toBeUndefined()
   })
 })
