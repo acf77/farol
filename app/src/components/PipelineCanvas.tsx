@@ -264,6 +264,12 @@ export default function PipelineCanvas({
         >
           Mandatory in Chat
         </Checkbox>
+        <Checkbox
+          checked={editor.autoSelectable === true}
+          onChange={(v) => updateEditor((current) => ({ ...current, autoSelectable: v }))}
+        >
+          Allow Chat to auto-select
+        </Checkbox>
         <button type="button" className="bf-hover-fill" onClick={() => addNode('shell')} style={toolBtn}>
           + Shell
         </button>

@@ -129,4 +129,6 @@ export interface EditorState {
   name: string
   nodes: PipelineNode[]
   mandatory?: boolean
+  /** When true, Jev may auto-add this pipeline in Chat. */
+  autoSelectable?: boolean
 }

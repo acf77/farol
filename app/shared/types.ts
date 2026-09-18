@@ -84,6 +84,11 @@ export interface Pipeline {
   nodes: PipelineNode[]
   /** When true, managed Chat always runs this pipeline after code-changing turns. */
   mandatory?: boolean
+  /**
+   * When true, Jev may add this non-mandatory pipeline to a Chat turn's run.
+   * Defaults to off so release/mutation pipelines stay manual until opted in.
+   */
+  autoSelectable?: boolean
 }
 
 export type StepState = 'pending' | 'running' | 'pass' | 'fail' | 'skip'
