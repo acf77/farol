@@ -1242,7 +1242,8 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               id: p.id,
               name: p.name,
               nodes: p.nodes.map((n) => ({ ...n })),
-              ...(p.mandatory === true ? { mandatory: true } : {})
+              ...(p.mandatory === true ? { mandatory: true } : {}),
+              ...(p.autoSelectable === true ? { autoSelectable: true } : {})
             })
           }
           onDelete={deletePipeline}
@@ -2506,7 +2507,8 @@ export function ProjectWorkspace({
       id,
       name: editor.name.trim(),
       nodes,
-      ...(editor.mandatory === true ? { mandatory: true } : {})
+      ...(editor.mandatory === true ? { mandatory: true } : {}),
+      ...(editor.autoSelectable === true ? { autoSelectable: true } : {})
     })
     if (editor.id) {
       persist(pipelines.map((p) => (p.id === editor.id ? saved(p.id) : p)))

@@ -1,9 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import { decide, JEV_CONFIDENCE, JEV_PROBE, pipelineSelectionQuestions } from './jev'
+import {
+  decide,
+  decideSelection,
+  describePipeline,
+  JEV_CONFIDENCE,
+  JEV_PROBE,
+  JEV_SELECTION_THRESHOLD,
+  pipelineSelectionQuestions,
+  pipelineSelectionState
+} from './jev'
 import type { Pipeline } from './types'
 
-function pipeline(id: string, mandatory?: boolean): Pipeline {
-  return { id, name: id, nodes: [], ...(mandatory ? { mandatory } : {}) }
+function pipeline(
+  id: string,
+  opts: { mandatory?: boolean; autoSelectable?: boolean; cmd?: string; name?: string } = {}
+): Pipeline {
+  return {
+    id,
+    name: opts.name ?? id,
+    nodes: [
+      {
+        id: `${id}-n`,
+        name: 'Step',
+        type: 'shell',
+        cmd: opts.cmd ?? `run ${id}`,
+        after: [],
+        x: 0,
+        y: 0
+      }
+    ],
+    ...(opts.mandatory ? { mandatory: true } : {}),
+    ...(opts.autoSelectable ? { autoSelectable: true } : {})
+  }
 }
 
 const answer = (probability: number) => ({ type: 'boolean' as const, probability })
@@ -33,6 +61,48 @@ describe('decide', () => {
   })
 })
 
+describe('decideSelection', () => {
+  it('adds only at or above the selection threshold', () => {
+    expect(decideSelection(answer(JEV_SELECTION_THRESHOLD))).toBe(true)
+    expect(decideSelection(answer(0.99))).toBe(true)
+    expect(decideSelection(answer(0.84))).toBe(false)
+    expect(decideSelection(answer(0.3))).toBe(false)
+    expect(decideSelection(answer(0.01))).toBe(false)
+  })
+
+  it('treats non-finite probabilities as do-not-add', () => {
+    expect(decideSelection(answer(NaN))).toBe(false)
+  })
+})
+
+describe('describePipeline', () => {
+  it('includes name, id, step type, and a truncated command', () => {
+    const long = 'x'.repeat(200)
+    const text = describePipeline(pipeline('sec', { name: 'Security', cmd: long }))
+    expect(text).toContain('Security (sec)')
+    expect(text).toContain('[shell]')
+    expect(text.length).toBeLessThanOrEqual(600)
+    expect(text).toContain('…')
+  })
+})
+
+describe('pipelineSelectionState', () => {
+  it('includes task, changed targets, and coverage already scheduled', () => {
+    const state = pipelineSelectionState({
+      task: 'Harden auth',
+      assistant: 'Patched login.ts',
+      changedTargets: ['src/login.ts'],
+      selected: [pipeline('docs', { autoSelectable: true, name: 'Docs' })],
+      mandatory: [pipeline('lint', { mandatory: true, name: 'Lint' })]
+    })
+    expect(state).toContain('Task: Harden auth')
+    expect(state).toContain('src/login.ts')
+    expect(state).toContain('Docs (docs)')
+    expect(state).toContain('Lint (lint)')
+    expect(state).toContain('Patched login.ts')
+  })
+})
+
 describe('JEV_PROBE', () => {
   it('asks one boolean question whose true case is the failing one', () => {
     expect(Object.keys(JEV_PROBE.questions)).toEqual(['failed'])
@@ -42,18 +112,22 @@ describe('JEV_PROBE', () => {
 })
 
 describe('pipelineSelectionQuestions', () => {
-  it('asks one question per candidate, keyed by its id', () => {
-    const questions = pipelineSelectionQuestions([pipeline('lint'), pipeline('security')])
-    expect(Object.keys(questions)).toEqual(['lint', 'security'])
-    expect(questions.lint.instructions).toContain('"lint" (lint)')
-  })
-
-  it('never asks about a mandatory pipeline', () => {
-    const questions = pipelineSelectionQuestions([pipeline('lint', true), pipeline('security')])
+  it('asks only about opted-in, non-mandatory candidates', () => {
+    const questions = pipelineSelectionQuestions([
+      pipeline('lint', { mandatory: true, autoSelectable: true }),
+      pipeline('security', { autoSelectable: true, name: 'Security Scan' }),
+      pipeline('release')
+    ])
     expect(Object.keys(questions)).toEqual(['security'])
+    expect(questions.security.instructions).toContain('Security Scan (security)')
+    expect(questions.security.instructions).toContain('[shell]')
+    expect(questions.security.criteria?.true).toMatch(/material coverage/i)
+    expect(questions.security.criteria?.false).toMatch(/release|mutations/i)
   })
 
-  it('asks nothing when every candidate is mandatory', () => {
-    expect(pipelineSelectionQuestions([pipeline('lint', true)])).toEqual({})
+  it('asks nothing when no candidate is auto-selectable', () => {
+    expect(pipelineSelectionQuestions([pipeline('release'), pipeline('lint', { mandatory: true })])).toEqual(
+      {}
+    )
   })
 })

@@ -14,9 +14,11 @@ import { createGateway } from '@ai-sdk/gateway'
 import { experimental_evaluate as evaluate } from 'ai'
 import {
   decide,
+  decideSelection,
   JEV_CONFIDENCE,
   JEV_MODEL_ID,
   JEV_PROBE,
+  JEV_SELECTION_THRESHOLD,
   pipelineSelectionQuestions,
   type JevBooleanQuestion
 } from '../shared/jev'
@@ -118,31 +120,81 @@ export async function verdictFromOutput(output: string): Promise<StepVerdict | n
 const SELECTION_TIMEOUT_MS = 2000
 
 /**
- * Ask Jev which of the non-mandatory `candidates` should run this turn.
- * Additive and soft-fail only: `null` on no key, a slow gateway, or an error
- * means "Jev added nothing," never "run none of these" — the agent's own
+ * Ask Jev which of the opted-in, non-mandatory `candidates` should run this
+ * turn. Additive and soft-fail only: `null` on no key, a slow gateway, or an
+ * error means "Jev added nothing," never "run none of these" — the agent's own
  * `FAROL_PIPELINES` selection and the mandatory merge are unaffected either
  * way. Ids come back only from `candidates`, so an invented id is impossible.
  */
-export async function selectPipelines(candidates: Pipeline[], state: string): Promise<string[] | null> {
+export async function selectPipelines(
+  candidates: Pipeline[],
+  state: string,
+  opts: { attempt?: number } = {}
+): Promise<string[] | null> {
   const questions = pipelineSelectionQuestions(candidates)
   const ids = Object.keys(questions)
+  const started = Date.now()
+  const base = {
+    timestamp: new Date(started).toISOString(),
+    purpose: 'pipeline-selection' as const,
+    model: JEV_MODEL_ID,
+    threshold: JEV_SELECTION_THRESHOLD,
+    candidateCount: ids.length,
+    candidates: ids.map((id) => {
+      const pipeline = candidates.find((p) => p.id === id)
+      return { id, name: pipeline?.name ?? id }
+    }),
+    stateChars: state.length,
+    ...(opts.attempt !== undefined ? { attempt: opts.attempt } : {})
+  }
   if (!ids.length) {
-    logJev({
-      timestamp: new Date().toISOString(),
-      purpose: 'pipeline-selection',
-      status: 'skipped',
-      reason: 'no-candidates'
-    })
+    logJev({ ...base, status: 'skipped', reason: 'no-candidates' })
+    return null
+  }
+  const key = peekSecret('aiGatewayApiKey')
+  if (!key) {
+    logJev({ ...base, status: 'skipped', reason: 'no-key' })
     return null
   }
   try {
-    const answers = await askJev(state, questions, {
-      timeoutMs: SELECTION_TIMEOUT_MS,
-      purpose: 'pipeline-selection'
+    const { answers } = await evaluate({
+      model: createGateway({ apiKey: key }).evaluationModel(JEV_MODEL_ID),
+      state,
+      questions,
+      abortSignal: AbortSignal.timeout(SELECTION_TIMEOUT_MS)
     })
-    return ids.filter((id) => answers[id] === true)
-  } catch {
+    const selected: string[] = []
+    const decisions = ids.map((id) => {
+      const answer = answers[id]
+      if (!answer) {
+        return { id, probability: null, decision: false, reason: 'missing-answer' as const }
+      }
+      const decision = decideSelection(answer)
+      if (decision) selected.push(id)
+      return {
+        id,
+        probability: answer.probability,
+        decision,
+        reason: decision ? ('selected' as const) : ('not-selected' as const)
+      }
+    })
+    logJev({
+      ...base,
+      status: 'evaluated',
+      durationMs: Date.now() - started,
+      selected,
+      decisions
+    })
+    return selected
+  } catch (err) {
+    logJev({
+      ...base,
+      status: 'fallback',
+      reason: err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+        ? 'timeout'
+        : 'evaluation-error',
+      durationMs: Date.now() - started
+    })
     return null
   }
 }

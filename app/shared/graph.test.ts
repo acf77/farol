@@ -267,6 +267,16 @@ describe('sanitizePipeline', () => {
     expect(sanitizePipeline({ id: 'x', name: 'X', mandatory: false, nodes })?.mandatory).toBeUndefined()
     expect(sanitizePipeline({ id: 'e', name: 'E', mandatory: true, nodes: [] })?.mandatory).toBe(true)
   })
+
+  it('persists autoSelectable only when true', () => {
+    const nodes = [{ id: 'a', name: 'A', type: 'shell', cmd: 'a', after: [], x: 0, y: 0 }]
+    expect(
+      sanitizePipeline({ id: 'sec', name: 'Sec', autoSelectable: true, nodes })?.autoSelectable
+    ).toBe(true)
+    expect(
+      sanitizePipeline({ id: 'x', name: 'X', autoSelectable: false, nodes })?.autoSelectable
+    ).toBeUndefined()
+  })
 })
 
 describe('named outputs', () => {

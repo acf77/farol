@@ -70,7 +70,15 @@ const securityScan = {
   ...request.pipelines[0],
   id: 'security',
   name: 'Security Scan',
+  autoSelectable: true,
   nodes: [{ ...request.pipelines[0].nodes[0], id: 'security-step', cmd: 'npm run security' }]
+}
+
+const releaseBuild = {
+  ...request.pipelines[0],
+  id: 'release',
+  name: 'Update and Build',
+  nodes: [{ ...request.pipelines[0].nodes[0], id: 'release-step', cmd: 'npm run dist' }]
 }
 
 describe('AgentController', () => {
@@ -1260,7 +1268,30 @@ describe('AgentController', () => {
     expect(selectPipelines).toHaveBeenCalledTimes(1)
     // Only the pipeline the agent did not already pick is offered to Jev.
     expect(selectPipelines.mock.calls[0][0].map((pipeline: { id: string }) => pipeline.id)).toEqual(['security'])
+    expect(selectPipelines.mock.calls[0][1]).toContain('src/app.ts')
+    expect(selectPipelines.mock.calls[0][1]).toContain('Security Scan')
     expect(run.mock.calls.map((call) => call[0].id).sort()).toEqual(['security', 'validate'])
+  })
+
+  it('never offers a pipeline that is not auto-selectable, even when Jev would say yes', async () => {
+    selectPipelines.mockClear()
+    selectPipelines.mockResolvedValueOnce(['release'])
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const execute = vi.fn<AgentExecutor>().mockImplementation(async (_request, _prompt, output, onTool) => {
+      onTool?.({ toolId: 'edit-1', name: 'apply_patch', detail: 'src/app.ts', state: 'done' })
+      output('FAROL_PIPELINES: ["validate"]\n')
+      return 0
+    })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, pipelines: [request.pipelines[0], releaseBuild] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(selectPipelines).not.toHaveBeenCalled()
+    expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate'])
   })
 
   it('keeps the agent’s own selection when Jev fails soft', async () => {

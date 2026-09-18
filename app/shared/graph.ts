@@ -369,7 +369,8 @@ export function sanitizePipeline(raw: unknown): Pipeline | null {
     id: p.id,
     name: p.name,
     nodes: normalizeGraph(nodesFromPersisted(p)),
-    ...(p.mandatory === true ? { mandatory: true } : {})
+    ...(p.mandatory === true ? { mandatory: true } : {}),
+    ...(p.autoSelectable === true ? { autoSelectable: true } : {})
   }
 }
 

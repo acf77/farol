@@ -1,0 +1,7 @@
+# Jev may auto-select only pipelines that opt in
+
+Farol asks Jev which non-mandatory pipelines to add after a code-changing Chat turn. That decision is probabilistic and soft-fail: a low or mid-range score adds nothing. Some catalog pipelines are not pure validators — they mutate version files, build distributables, or otherwise perform release work — so a hesitant “maybe” must never be enough to run them.
+
+We decided that a pipeline is eligible for Jev auto-selection only when it sets `autoSelectable: true` (the Pipeline editor checkbox **Allow Chat to auto-select**). The flag defaults to off, persists beside `mandatory`, and is ignored for mandatory pipelines (those always run on file-changing turns). Selection uses a one-sided threshold (`probability >= JEV_SELECTION_THRESHOLD`): below the bar means do not add, not an inconclusive verdict. Questions carry a compact bounded description of each candidate’s steps, and the decision state includes changed targets plus already-selected and mandatory coverage so redundancy can be judged. Logs record `selected` / `not-selected` and a size summary of the state, never the state text itself.
+
+We rejected lowering the threshold from the observed 0.24–0.32 cluster (no labeled false negatives), asking Jev about every non-mandatory pipeline by default, and treating below-threshold selection scores as tri-state “inconclusive” the way step verdicts do.

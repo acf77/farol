@@ -52,6 +52,7 @@ import {
   mandatoryPipelines,
   mergeWithMandatory
 } from '../shared/mandatory'
+import { pipelineSelectionState } from '../shared/jev'
 import { plainText } from '../shared/terminal'
 import { aiEnv, resolveBinFrom } from './bin'
 import { killPidTree } from './kill'
@@ -137,6 +138,8 @@ type CycleScan = ControlLineState & {
   blockedByProvider: boolean
   shellInvocations: string[]
   filesChanged: boolean
+  /** Paths or targets reported by completed write tools this turn. */
+  changedTargets: string[]
   questions?: AgentQuestion[]
   questionId?: string
 }
@@ -647,6 +650,8 @@ export class AgentController {
         if (event.state === 'done' && isWriteToolName(event.name)) {
           scan.filesChanged = true
           task.mandatoryOutstanding = true
+          const target = event.detail?.trim()
+          if (target && !scan.changedTargets.includes(target)) scan.changedTargets.push(target)
         }
       },
       question: (questions) => {
@@ -811,7 +816,7 @@ export class AgentController {
     // it has no say when there is nothing to validate (no file change, no
     // outstanding mandatory retry).
     const advised = mustRunMandatory
-      ? await this.jevAdvisedPipelines(task, scan, selection.pipelines)
+      ? await this.jevAdvisedPipelines(task, scan, selection.pipelines, attempt)
       : []
     const withJev = advised.length ? [...selection.pipelines, ...advised] : selection.pipelines
 
@@ -855,17 +860,32 @@ export class AgentController {
 
   /**
    * Pipelines the agent did not select but Jev is confident belong in this
-   * turn's run. Runs only for pipelines already excluded from `selected` —
-   * Jev is never asked about one the agent (or `mergeWithMandatory` later)
-   * already covers. Any failure — no key, a slow gateway, a bad answer —
-   * yields `[]`, leaving the agent's own selection exactly as it was.
+   * turn's run. Only opted-in (`autoSelectable`) non-mandatory pipelines are
+   * offered — Jev is never asked about one the agent (or `mergeWithMandatory`
+   * later) already covers. Any failure — no key, a slow gateway, a bad answer
+   * — yields `[]`, leaving the agent's own selection exactly as it was.
    */
-  private async jevAdvisedPipelines(task: Task, scan: CycleScan, selected: Pipeline[]): Promise<Pipeline[]> {
+  private async jevAdvisedPipelines(
+    task: Task,
+    scan: CycleScan,
+    selected: Pipeline[],
+    attempt: number
+  ): Promise<Pipeline[]> {
     const candidates = task.request.pipelines.filter(
-      (pipeline) => pipeline.mandatory !== true && !selected.includes(pipeline)
+      (pipeline) =>
+        pipeline.mandatory !== true &&
+        pipeline.autoSelectable === true &&
+        !selected.includes(pipeline)
     )
     if (!candidates.length) return []
-    const ids = await selectPipelines(candidates, `Task: ${task.request.prompt}\n\nAssistant: ${scan.assistant}`)
+    const state = pipelineSelectionState({
+      task: task.request.prompt,
+      assistant: scan.assistant,
+      changedTargets: scan.changedTargets,
+      selected,
+      mandatory: mandatoryPipelines(task.request.pipelines)
+    })
+    const ids = await selectPipelines(candidates, state, { attempt })
     return candidates.filter((pipeline) => ids?.includes(pipeline.id))
   }
 
@@ -996,7 +1016,8 @@ export class AgentController {
       blocked: null,
       blockedByProvider: false,
       shellInvocations: [],
-      filesChanged: false
+      filesChanged: false,
+      changedTargets: []
     }
     const sink = this.cycleSink(task, scan)
     const epoch = task.askEpoch
