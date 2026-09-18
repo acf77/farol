@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type { AppSettings, PipelineNode, StepType } from '@shared/types'
 import { aiSelectionLabel, normalizeAi } from '@shared/types'
-import { defaultGate, newPipelineNode, nodeGate, topoSort } from '@shared/graph'
+import { defaultGate, newPipelineNode, nodeGate, parallelAsClashIds, sanitizeAs, topoSort } from '@shared/graph'
 import { C, MONO, UI } from '../theme'
 import { Checkbox, CliModelDropdown, ConfirmButton, SegmentedControl } from './controls'
 import type { EditorState } from '../types'
@@ -76,7 +76,8 @@ export default function PipelineCanvas({
         if (n.id !== id) return n
         const merged = { ...n, ...next }
         if (merged.type !== 'shell') return merged
-        return {
+        // Strip AI-only fields when switching to shell.
+        const shell: PipelineNode = {
           id: merged.id,
           name: merged.name,
           type: 'shell',
@@ -86,6 +87,8 @@ export default function PipelineCanvas({
           x: merged.x,
           y: merged.y
         }
+        if (merged.as) shell.as = merged.as
+        return shell
       })
     }))
 
@@ -214,6 +217,8 @@ export default function PipelineCanvas({
   }, [])
 
   const selected = editor.nodes.find((n) => n.id === sel) ?? null
+  const asClashIds = parallelAsClashIds(editor.nodes)
+  const saveBlocked = !editor.name.trim() || !editor.nodes.length || asClashIds.size > 0
 
   return (
     <div
@@ -272,13 +277,15 @@ export default function PipelineCanvas({
         <button
           className="bf-btn-primary"
           onClick={onSave}
-          disabled={!editor.name.trim() || !editor.nodes.length}
+          disabled={saveBlocked}
+          title={asClashIds.size ? 'Resolve duplicate output names before saving' : undefined}
           style={{
             ...toolBtn,
             border: 'none',
-            background: editor.name.trim() ? C.accent : 'rgba(214, 242, 58, 0.28)',
+            background: !saveBlocked ? C.accent : 'rgba(214, 242, 58, 0.28)',
             color: C.accentInk,
-            fontWeight: 600
+            fontWeight: 600,
+            opacity: saveBlocked ? 0.55 : 1
           }}
         >
           Save
@@ -464,6 +471,8 @@ export default function PipelineCanvas({
             const on = n.id === sel
             const ai = n.type === 'ai'
             const near = hover === n.id
+            const clash = asClashIds.has(n.id)
+            const ring = clash ? C.red : on ? C.accent : null
             return (
               <div
                 key={n.id}
@@ -491,9 +500,11 @@ export default function PipelineCanvas({
                   boxSizing: 'border-box',
                   padding: `${8 * cam.z}px ${10 * cam.z}px`,
                   borderRadius: 8,
-                  border: on ? `1px solid ${C.accent}` : '1px solid #3E3E3A',
+                  border: `1px solid ${ring ?? '#3E3E3A'}`,
                   background: ai ? 'rgba(184, 148, 255,0.15)' : '#232322',
-                  boxShadow: on ? '0 0 0 3px rgba(214, 242, 58,0.18)' : '0 8px 24px rgba(0,0,0,0.35)',
+                  boxShadow: ring
+                    ? `0 0 0 3px ${clash ? 'rgba(255, 107, 107, 0.22)' : 'rgba(214, 242, 58,0.18)'}`
+                    : '0 8px 24px rgba(0,0,0,0.35)',
                   cursor: 'grab'
                 }}
               >
@@ -539,17 +550,43 @@ export default function PipelineCanvas({
                 />
                 <div
                   style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6 * cam.z,
+                    minWidth: 0,
                     fontSize: 9 * cam.z,
                     fontWeight: 700,
                     letterSpacing: '0.4px',
-                    color: ai ? C.purpleSoft : C.dim,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
+                    color: ai ? C.purpleSoft : C.dim
                   }}
                 >
-                  {ai ? `AI · ${aiSelectionLabel(normalizeAi(n.ai), n.model)}` : 'SHELL'}
-                  {nodeGate(n) ? ' · GATE' : ''}
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    {ai ? `AI · ${aiSelectionLabel(normalizeAi(n.ai), n.model)}` : 'SHELL'}
+                    {nodeGate(n) ? ' · GATE' : ''}
+                  </span>
+                  {n.as ? (
+                    <span
+                      style={{
+                        flex: 'none',
+                        padding: `${1 * cam.z}px ${5 * cam.z}px`,
+                        borderRadius: 4 * cam.z,
+                        background: 'rgba(214, 242, 58, 0.14)',
+                        color: C.accent,
+                        fontFamily: MONO,
+                        fontSize: 10 * cam.z
+                      }}
+                    >
+                      {`\${${n.as}}`}
+                    </span>
+                  ) : null}
                 </div>
                 <div
                   style={{
@@ -574,6 +611,7 @@ export default function PipelineCanvas({
             node={selected}
             settings={settings}
             canDelete={editor.nodes.length > 1}
+            asClash={asClashIds.has(selected.id)}
             onPatch={(p) => patch(selected.id, p)}
             onDelete={() => removeNode(selected.id)}
           />
@@ -603,12 +641,14 @@ function Inspector({
   node,
   settings,
   canDelete,
+  asClash,
   onPatch,
   onDelete
 }: {
   node: PipelineNode
   settings?: AppSettings
   canDelete: boolean
+  asClash: boolean
   onPatch: (p: Partial<PipelineNode>) => void
   onDelete: () => void
 }) {
@@ -645,6 +685,27 @@ function Inspector({
         spellCheck={false}
         style={inputStyle}
       />
+      <input
+        className="bf-input"
+        value={node.as ?? ''}
+        onChange={(e) => {
+          const as = sanitizeAs(e.target.value)
+          if (as !== undefined || !e.target.value.trim()) onPatch({ as })
+        }}
+        placeholder="as (output name for ${…})"
+        spellCheck={false}
+        style={{
+          ...inputStyle,
+          fontFamily: MONO,
+          fontSize: 11,
+          borderColor: asClash ? C.red : undefined
+        }}
+      />
+      {asClash ? (
+        <div style={{ fontSize: 11, color: C.red, lineHeight: 1.35, marginTop: -4 }}>
+          Parallel step already uses this name — rename or sequence them.
+        </div>
+      ) : null}
       {ai && (
         <CliModelDropdown
           label="Provider and model"

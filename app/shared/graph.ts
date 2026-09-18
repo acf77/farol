@@ -1,10 +1,30 @@
-import type { Pipeline, PipelineNode, Step, StepType } from './types'
+import type { Pipeline, PipelineNode, PipelineStepResult, Step, StepType } from './types'
 import { normalizeAi, normalizeModel, type AiProvider } from './ai'
+
+const AS_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+const VAR_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g
 
 function aiFields(raw: { ai?: unknown; model?: unknown }): { ai: AiProvider; model?: string } {
   const ai = normalizeAi(raw.ai)
   const model = normalizeModel(raw.model)
   return model ? { ai, model } : { ai }
+}
+
+/** Keep a valid simple id; clear anything else. */
+export function sanitizeAs(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const name = raw.trim()
+  return name && AS_NAME_RE.test(name) ? name : undefined
+}
+
+function withAs<T extends object>(base: T, raw: unknown): T & { as?: string } {
+  const as = sanitizeAs(raw)
+  return as ? { ...base, as } : base
+}
+
+/** Expand `${name}` from `vars`; missing → `""`. Non-id `${…}` unchanged. */
+export function expandVars(text: string, vars: Readonly<Record<string, string>>): string {
+  return text.replace(VAR_REF_RE, (_, name: string) => vars[name] ?? '')
 }
 
 export function defaultGate(type: StepType): boolean {
@@ -16,17 +36,22 @@ export function nodeGate(n: PipelineNode): boolean {
 }
 
 export function chainToNodes(steps: Step[]): PipelineNode[] {
-  return steps.map((s, i) => ({
-    id: `n${i + 1}`,
-    name: s.name,
-    type: s.type,
-    cmd: s.cmd,
-    ...(s.type === 'ai' ? aiFields(s) : {}),
-    after: i === 0 ? [] : [`n${i}`],
-    gate: defaultGate(s.type),
-    x: 72,
-    y: 48 + i * 112
-  }))
+  return steps.map((s, i) =>
+    withAs(
+      {
+        id: `n${i + 1}`,
+        name: s.name,
+        type: s.type,
+        cmd: s.cmd,
+        ...(s.type === 'ai' ? aiFields(s) : {}),
+        after: i === 0 ? [] : [`n${i}`],
+        gate: defaultGate(s.type),
+        x: 72,
+        y: 48 + i * 112
+      },
+      s.as
+    )
+  )
 }
 
 export function nextNodeId(nodes: PipelineNode[]): string {
@@ -145,6 +170,44 @@ export function ancestors(nodes: PipelineNode[], id: string): string[] {
   return [...seen]
 }
 
+/** Ancestor named outputs for `consumerId` (topo last-wins; fail/skip → `""`). */
+export function ancestorVars(
+  nodes: PipelineNode[],
+  consumerId: string,
+  outputsById: Readonly<Record<string, string>>,
+  stepResults: ReadonlyMap<string, Pick<PipelineStepResult, 'ok' | 'skipped'>>
+): Record<string, string> {
+  const ancestorIds = new Set(ancestors(nodes, consumerId))
+  const vars: Record<string, string> = {}
+  for (const n of topoSort(nodes) ?? nodes) {
+    if (!ancestorIds.has(n.id) || !n.as) continue
+    vars[n.as] = stepResults.get(n.id)?.ok ? outputsById[n.id] || '' : ''
+  }
+  return vars
+}
+
+/** True when neither id is an ancestor of the other (they can run concurrently). */
+function concurrentPair(anc: Map<string, Set<string>>, a: string, b: string): boolean {
+  return !anc.get(a)?.has(b) && !anc.get(b)?.has(a)
+}
+
+/** Ids that share an `as` with a concurrent sibling (neither is an ancestor). */
+export function parallelAsClashIds(nodes: PipelineNode[]): Set<string> {
+  const anc = new Map(nodes.map((n) => [n.id, new Set(ancestors(nodes, n.id))]))
+  const clash = new Set<string>()
+  for (let i = 0; i < nodes.length; i++) {
+    const a = nodes[i]
+    if (!a.as) continue
+    for (let j = i + 1; j < nodes.length; j++) {
+      const b = nodes[j]
+      if (b.as !== a.as || !concurrentPair(anc, a.id, b.id)) continue
+      clash.add(a.id)
+      clash.add(b.id)
+    }
+  }
+  return clash
+}
+
 /** Connector above a node in topo order: `and` when it shares parents with the previous node. */
 export function connectorKind(topo: PipelineNode[], index: number): 'then' | 'and' {
   if (index <= 0) return 'then'
@@ -232,29 +295,35 @@ function sanitizeNode(raw: unknown, fallbackId: string): PipelineNode | null {
   const x = typeof n.x === 'number' && Number.isFinite(n.x) ? n.x : 72
   const y = typeof n.y === 'number' && Number.isFinite(n.y) ? n.y : 48
   const gate = typeof n.gate === 'boolean' ? n.gate : defaultGate(type)
-  return {
-    id,
-    name: typeof n.name === 'string' ? n.name : '',
-    type,
-    cmd: typeof n.cmd === 'string' ? n.cmd : '',
-    ...(type === 'ai' ? aiFields(n) : {}),
-    after,
-    gate,
-    x,
-    y
-  }
+  return withAs(
+    {
+      id,
+      name: typeof n.name === 'string' ? n.name : '',
+      type,
+      cmd: typeof n.cmd === 'string' ? n.cmd : '',
+      ...(type === 'ai' ? aiFields(n) : {}),
+      after,
+      gate,
+      x,
+      y
+    },
+    n.as
+  )
 }
 
 function sanitizeStep(raw: unknown): Step | null {
   if (!raw || typeof raw !== 'object') return null
   const s = raw as Record<string, unknown>
   const type: StepType = s.type === 'ai' ? 'ai' : 'shell'
-  return {
-    name: typeof s.name === 'string' ? s.name : '',
-    type,
-    cmd: typeof s.cmd === 'string' ? s.cmd : '',
-    ...(type === 'ai' ? aiFields(s) : {})
-  }
+  return withAs(
+    {
+      name: typeof s.name === 'string' ? s.name : '',
+      type,
+      cmd: typeof s.cmd === 'string' ? s.cmd : '',
+      ...(type === 'ai' ? aiFields(s) : {})
+    },
+    s.as
+  )
 }
 
 function nodesFromPersisted(p: Record<string, unknown>): PipelineNode[] {
@@ -304,11 +373,14 @@ export function sanitizePipeline(raw: unknown): Pipeline | null {
   }
 }
 
-/** Reject graphs the runner cannot execute safely (cycles or duplicate ids). */
+/** Reject graphs the runner cannot execute safely (cycles, dup ids, parallel `as`). */
 export function validateRunnable(nodes: PipelineNode[]): string | null {
   const ids = nodes.map((n) => n.id)
   if (new Set(ids).size !== ids.length) return 'Pipeline has duplicate node ids'
   if (!topoSort(nodes)) return 'Pipeline has a dependency cycle'
+  if (parallelAsClashIds(nodes).size) {
+    return 'Pipeline has parallel steps with the same output name (as)'
+  }
   return null
 }
 

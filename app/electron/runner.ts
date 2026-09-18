@@ -11,14 +11,14 @@ import type {
   RunOrigin
 } from '../shared/types'
 import { aiCommand, normalizeAi } from '../shared/ai'
-import { FAILURE_REPORT_REL, failureReport, gitignoreWithEntry } from '../shared/failure'
-import { REPORT_OUTPUT_LIMIT } from '../shared/failure'
+import { FAILURE_REPORT_REL, failureReport, gitignoreWithEntry, REPORT_OUTPUT_LIMIT } from '../shared/failure'
 import { appendTail, plainText } from '../shared/terminal'
 import { exitCodeFromSignal } from '../shared/exit-code'
 import { parseVerdict, verdictPromptSuffix, type StepVerdict } from '../shared/verdict'
 import {
-  ancestors,
+  ancestorVars,
   descendants,
+  expandVars,
   nodeGate,
   readyIds,
   topoSort,
@@ -33,11 +33,11 @@ import { shellFamily } from './protocol'
 /**
  * Runs a pipeline DAG. Ready nodes start together; a gated shell failure
  * skips its descendants, while AI nodes finish without blocking siblings.
+ * Shell cmds and AI prompts expand `${name}` from ancestor named outputs.
  */
 
-const CONTEXT_LIMIT = 12000
-/** Live per-step stdout kept for context, failure reports, and settled results. */
-const LIVE_OUTPUT_LIMIT = Math.max(CONTEXT_LIMIT, REPORT_OUTPUT_LIMIT)
+/** Live per-step stdout kept for named vars, failure reports, and settled results. */
+const LIVE_OUTPUT_LIMIT = Math.max(12_000, REPORT_OUTPUT_LIMIT)
 /** Trailing window for AI verdict parsing — only the end of the stream matters. */
 const VERDICT_SCAN_LIMIT = 16_384
 const STEP_RESULT_LIMIT = 4000
@@ -465,16 +465,10 @@ export class PipelineRunner {
       index,
       nodeId: node.id
     })
-    const ancestorIds = new Set(ancestors(graph.nodes, node.id))
-    const context = graph.nodes
-      .filter((n) => ancestorIds.has(n.id))
-      .map((n) => graph.outputs[n.id] || '')
-      .join('')
-      .trim()
-      .slice(-CONTEXT_LIMIT)
+    const vars = ancestorVars(graph.nodes, node.id, graph.outputs, graph.stepResults)
     const onChunk = (chunk: string): void => this.emitOut(state, graph, node.id, chunk)
     const startedAt = Date.now()
-    const code = await this.runStep(node, cwd, context, state, onChunk)
+    const code = await this.runStep(node, cwd, state, onChunk, vars)
     const durationMs = Date.now() - startedAt
     const ok = code === 0 && !state.cancelled
     graph.stepResults.set(node.id, {
@@ -598,10 +592,11 @@ export class PipelineRunner {
   private async runStep(
     node: PipelineNode,
     cwd: string,
-    context: string,
     state: Active,
-    onChunk: (chunk: string) => void
+    onChunk: (chunk: string) => void,
+    vars: Readonly<Record<string, string>>
   ): Promise<number> {
+    const cmd = expandVars(node.cmd, vars)
     if (node.type === 'shell') {
       if (state.cancelled) return 130
       const takeSession = !!state.session && !state.sessionBusy
@@ -609,20 +604,17 @@ export class PipelineRunner {
         state.sessionBusy = true
         state.currentShellId = node.id
         try {
-          const { code } = await state.session.exec(node.cmd)
+          const { code } = await state.session.exec(cmd)
           return code
         } finally {
           if (state.currentShellId === node.id) state.currentShellId = null
           state.sessionBusy = false
         }
       }
-      return this.runOneshot(node.id, node.cmd, cwd, state, onChunk)
+      return this.runOneshot(node.id, cmd, cwd, state, onChunk)
     }
 
-    const prompt = [
-      context ? `${node.cmd}\n\n--- Pipeline output so far ---\n${context}` : node.cmd,
-      verdictPromptSuffix()
-    ].join('\n')
+    const prompt = [cmd, verdictPromptSuffix()].join('\n')
     const spec = aiCommand(normalizeAi(node.ai), prompt, node.model)
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {

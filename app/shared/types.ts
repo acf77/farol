@@ -57,6 +57,8 @@ export interface Step {
   type: StepType
   /** Shell command for `shell` steps, prompt text for `ai` steps. */
   cmd: string
+  /** Named stdout for later `${as}` expansion (simple id). */
+  as?: string
   /** Which CLI to invoke for `ai` steps. Omitted AI steps run Claude. */
   ai?: AiProvider
   /** Model id for that CLI. Omitted AI steps use the CLI's own default. */

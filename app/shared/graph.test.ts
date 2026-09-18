@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ancestorVars,
   ancestors,
   chainLevels,
   chainToNodes,
   connectorKind,
   descendants,
+  expandVars,
   newPipelineNode,
+  parallelAsClashIds,
   readyIds,
+  sanitizeAs,
   sanitizePipeline,
   topoSort,
   validateRunnable
@@ -242,6 +246,21 @@ describe('sanitizePipeline', () => {
     expect(p?.nodes[0].name).toBe('A')
   })
 
+  it('keeps a valid as and clears an invalid one', () => {
+    const ok = sanitizePipeline({
+      id: 'x',
+      name: 'X',
+      nodes: [{ id: 'a', name: 'A', type: 'shell', cmd: 'a', as: 'diff_1', after: [], x: 0, y: 0 }]
+    })
+    expect(ok?.nodes[0].as).toBe('diff_1')
+    const bad = sanitizePipeline({
+      id: 'x',
+      name: 'X',
+      nodes: [{ id: 'a', name: 'A', type: 'shell', cmd: 'a', as: 'bad-name', after: [], x: 0, y: 0 }]
+    })
+    expect(bad?.nodes[0].as).toBeUndefined()
+  })
+
   it('persists mandatory only when true', () => {
     const nodes = [{ id: 'a', name: 'A', type: 'shell', cmd: 'a', after: [], x: 0, y: 0 }]
     expect(sanitizePipeline({ id: 'lint', name: 'Lint', mandatory: true, nodes })?.mandatory).toBe(true)
@@ -250,10 +269,78 @@ describe('sanitizePipeline', () => {
   })
 })
 
+describe('named outputs', () => {
+  it('sanitizes as ids and expands ${name}', () => {
+    expect(sanitizeAs('diff')).toBe('diff')
+    expect(sanitizeAs('_out')).toBe('_out')
+    expect(sanitizeAs('foo-bar')).toBeUndefined()
+    expect(expandVars('see ${diff} end', { diff: 'abc' })).toBe('see abc end')
+    expect(expandVars('${missing}', {})).toBe('')
+    expect(expandVars('keep ${not-id}', {})).toBe('keep ${not-id}')
+  })
+
+  it('builds ancestor vars: last-wins, fail→empty, siblings ignored', () => {
+    const chain = [
+      n('a', [], { as: 'diff', type: 'shell' }),
+      n('b', ['a'], { as: 'diff' }),
+      n('c', ['b'])
+    ]
+    const results = new Map([
+      ['a', { ok: true }],
+      ['b', { ok: true }]
+    ])
+    expect(ancestorVars(chain, 'c', { a: 'first', b: 'second' }, results)).toEqual({
+      diff: 'second'
+    })
+    results.set('b', { ok: false })
+    expect(ancestorVars(chain, 'c', { a: 'first', b: 'second' }, results)).toEqual({
+      diff: ''
+    })
+
+    const fork = [
+      n('a', [], { as: 'x', type: 'shell' }),
+      n('b', [], { as: 'y', type: 'shell' }),
+      n('c', ['a'])
+    ]
+    expect(
+      ancestorVars(
+        fork,
+        'c',
+        { a: 'A', b: 'B' },
+        new Map([
+          ['a', { ok: true }],
+          ['b', { ok: true }]
+        ])
+      )
+    ).toEqual({ x: 'A' })
+  })
+
+  it('flags parallel as clashes and allows chained last-wins', () => {
+    expect(
+      [...parallelAsClashIds([n('a', [], { as: 'out', type: 'shell' }), n('b', [], { as: 'out', type: 'shell' })])].sort()
+    ).toEqual(['a', 'b'])
+    expect(
+      parallelAsClashIds([
+        n('a', [], { as: 'out', type: 'shell' }),
+        n('b', ['a'], { as: 'out' })
+      ]).size
+    ).toBe(0)
+  })
+})
+
 describe('validateRunnable', () => {
   it('rejects cycles and duplicate ids', () => {
     expect(validateRunnable([n('a', ['b']), n('b', ['a'])])).toMatch(/cycle/i)
     expect(validateRunnable([n('a', []), n('a', [])])).toMatch(/duplicate/i)
     expect(validateRunnable([n('a', []), n('b', ['a'])])).toBeNull()
+  })
+
+  it('rejects parallel as clashes', () => {
+    expect(
+      validateRunnable([
+        n('a', [], { as: 'x', type: 'shell' }),
+        n('b', [], { as: 'x', type: 'shell' })
+      ])
+    ).toMatch(/parallel/i)
   })
 })
