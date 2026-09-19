@@ -84,13 +84,14 @@
         "id": "n1",
         "name": "Update version (SEMVER)",
         "type": "ai",
-        "cmd": "Update app/package.json and app/package-lock.json according to the git diff using SEMVER. The repository root has no package.json.\n\n1 - Analyze the differences against HEAD to choose major, minor, or patch. If app/package.json already has the appropriate bump relative to HEAD, do not bump it again.\n2 - If a bump is needed, run npm version with --no-git-tag-version from the app directory. Do not commit or tag.\n\nBe concise.",
+        "cmd": "Analyze the git diff and choose a SEMVER bump for app/package.json (repo root has no package.json).\n\nRules:\n1 - Compare app/package.json to HEAD. If it is already bumped appropriately for this diff, return exactly: none\n2 - Otherwise return exactly one of: patch, minor, major\n3 - Do not edit files or run npm version — the next shell step applies the bump.\n\nRETURN ONLY one word: patch, minor, major, or none.",
         "ai": "openrouter",
         "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "after": [],
         "gate": true,
         "x": -141,
-        "y": 342
+        "y": 342,
+        "as": "version"
       },
       {
         "id": "n2",
@@ -98,11 +99,23 @@
         "type": "shell",
         "cmd": "cd app && npm run dist",
         "after": [
-          "n1"
+          "n3"
         ],
         "gate": false,
-        "x": -140,
-        "y": 442
+        "x": -130,
+        "y": 557
+      },
+      {
+        "id": "n3",
+        "name": "Version Bump",
+        "type": "shell",
+        "cmd": "cd app && cur=$(node -p \"require('./package.json').version\") && head=$(git show HEAD:app/package.json 2>/dev/null | node -p \"JSON.parse(require('fs').readFileSync(0,'utf8')).version\" 2>/dev/null || printf %s \"$cur\") && if [ \"$cur\" != \"$head\" ]; then echo \"already bumped $head -> $cur\"; exit 0; fi && bump=$(printf %s ${version} | tr '[:upper:]' '[:lower:]' | grep -oE '(patch|minor|major)' | head -1) && if [ -n \"$bump\" ]; then npm version \"$bump\" --no-git-tag-version; else echo \"no version bump\"; fi",
+        "after": [
+          "n1"
+        ],
+        "gate": true,
+        "x": -136,
+        "y": 454
       }
     ]
   }

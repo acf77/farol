@@ -7,14 +7,17 @@ import {
   connectorKind,
   descendants,
   expandVars,
+  namedStepOutput,
   newPipelineNode,
   parallelAsClashIds,
+  quoteShellArg,
   readyIds,
   sanitizeAs,
   sanitizePipeline,
   topoSort,
   validateRunnable
 } from './graph'
+import { VERDICT_MARKER } from './verdict'
 import type { PipelineNode } from './types'
 
 const n = (
@@ -287,6 +290,20 @@ describe('named outputs', () => {
     expect(expandVars('see ${diff} end', { diff: 'abc' })).toBe('see abc end')
     expect(expandVars('${missing}', {})).toBe('')
     expect(expandVars('keep ${not-id}', {})).toBe('keep ${not-id}')
+    expect(expandVars('npm version ${version}', { version: 'minor' }, { quote: quoteShellArg })).toBe(
+      "npm version 'minor'"
+    )
+    expect(
+      expandVars('npm version ${version} --flag', { version: "a\nFAROL\n'x'" }, { quote: quoteShellArg })
+    ).toBe("npm version 'a\nFAROL\n'\\''x'\\''' --flag")
+  })
+
+  it('strips verdict lines from named step outputs used as vars', () => {
+    expect(namedStepOutput(`minor\n${VERDICT_MARKER} pass\n`)).toBe('minor')
+    const chain = [n('a', [], { as: 'version', type: 'shell' }), n('b', ['a'])]
+    expect(
+      ancestorVars(chain, 'b', { a: `minor\n${VERDICT_MARKER} pass\n` }, new Map([['a', { ok: true }]]))
+    ).toEqual({ version: 'minor' })
   })
 
   it('builds ancestor vars: last-wins, fail→empty, siblings ignored', () => {

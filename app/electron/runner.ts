@@ -20,6 +20,7 @@ import {
   descendants,
   expandVars,
   nodeGate,
+  quoteShellArg,
   readyIds,
   topoSort,
   validateRunnable
@@ -596,7 +597,8 @@ export class PipelineRunner {
     onChunk: (chunk: string) => void,
     vars: Readonly<Record<string, string>>
   ): Promise<number> {
-    const cmd = expandVars(node.cmd, vars)
+    const cmd =
+      node.type === 'shell' ? expandVars(node.cmd, vars, { quote: quoteShellArg }) : expandVars(node.cmd, vars)
     if (node.type === 'shell') {
       if (state.cancelled) return 130
       const takeSession = !!state.session && !state.sessionBusy

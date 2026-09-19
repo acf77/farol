@@ -3,6 +3,7 @@ import {
   defaultSettings,
   modeDefault,
   modeFallbacks,
+  modeSelectionForPane,
   sanitizeSettings,
   withAgentModel,
   withCommitMessageModel,
@@ -177,5 +178,21 @@ describe('mode defaults', () => {
     expect(modeFallbacks(s, 'build', 'cursor', 'composer-2.5')).toHaveLength(3)
     // No chain configured means no fallback at all.
     expect(modeFallbacks(base, 'build', 'claude', 'opus')).toEqual([])
+  })
+
+  it('switches a live pane onto the mode chain head, else keeps its selection', () => {
+    const pane = { provider: 'codex' as const, model: 'gpt-plan' }
+    const chained = withModeChain(base, 'build', [{ agent: 'cursor', model: 'composer-2.5' }])
+    expect(modeSelectionForPane(chained, 'build', pane)).toEqual({
+      mode: 'build',
+      provider: 'cursor',
+      model: 'composer-2.5'
+    })
+    // No Build chain → keep whatever Plan was using.
+    expect(modeSelectionForPane(base, 'build', pane)).toEqual({
+      mode: 'build',
+      provider: 'codex',
+      model: 'gpt-plan'
+    })
   })
 })

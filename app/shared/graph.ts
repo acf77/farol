@@ -1,5 +1,6 @@
 import type { Pipeline, PipelineNode, PipelineStepResult, Step, StepType } from './types'
 import { normalizeAi, normalizeModel, type AiProvider } from './ai'
+import { stripVerdictLine } from './verdict'
 
 const AS_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 const VAR_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g
@@ -22,9 +23,26 @@ function withAs<T extends object>(base: T, raw: unknown): T & { as?: string } {
   return as ? { ...base, as } : base
 }
 
+/** Named step stdout for `${as}` — drop verdict control lines and trim. */
+export function namedStepOutput(raw: string): string {
+  return stripVerdictLine(raw).trim()
+}
+
+/** POSIX single-quote so substituted values stay one shell word under `eval`. */
+export function quoteShellArg(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
 /** Expand `${name}` from `vars`; missing → `""`. Non-id `${…}` unchanged. */
-export function expandVars(text: string, vars: Readonly<Record<string, string>>): string {
-  return text.replace(VAR_REF_RE, (_, name: string) => vars[name] ?? '')
+export function expandVars(
+  text: string,
+  vars: Readonly<Record<string, string>>,
+  opts?: { quote?: (value: string) => string }
+): string {
+  return text.replace(VAR_REF_RE, (_, name: string) => {
+    const value = vars[name] ?? ''
+    return opts?.quote ? opts.quote(value) : value
+  })
 }
 
 export function defaultGate(type: StepType): boolean {
@@ -181,7 +199,7 @@ export function ancestorVars(
   const vars: Record<string, string> = {}
   for (const n of topoSort(nodes) ?? nodes) {
     if (!ancestorIds.has(n.id) || !n.as) continue
-    vars[n.as] = stepResults.get(n.id)?.ok ? outputsById[n.id] || '' : ''
+    vars[n.as] = stepResults.get(n.id)?.ok ? namedStepOutput(outputsById[n.id] || '') : ''
   }
   return vars
 }

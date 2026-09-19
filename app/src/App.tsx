@@ -31,6 +31,7 @@ import {
   defaultSettings,
   modeDefault,
   modeFallbacks,
+  modeSelectionForPane,
   withAgentModel,
   withCommitMessageModel
 } from '@shared/settings'
@@ -2261,12 +2262,7 @@ export function ProjectWorkspace({
     (mode: AgentMode) => {
       const pane = chatPane ?? ensureChat()?.pane
       if (!pane) return
-      // A mode with its own chain configured switches model with the mode;
-      // without one, the pane keeps whatever is already selected.
-      const head = settingsRef.current.modeDefaults[mode][0]
-      const provider = head?.agent ?? pane.provider
-      const model = head ? head.model : pane.model
-      const next = normalizeMode(mode, provider)
+      const { mode: next, provider, model } = modeSelectionForPane(settingsRef.current, mode, pane)
       patchPane(pane.id, (current) =>
         current.kind === 'agent' ? { ...current, mode: next, provider, model } : current
       )
@@ -2280,10 +2276,22 @@ export function ProjectWorkspace({
       if (!chatPane) return
       const target = chatPane.messages[index]
       if (!target?.plan?.finished || target.plan.consumed) return
+      // Same handoff as switching Plan→Build manually: apply Build modeDefaults,
+      // then send the fixed Execute message (plan stays in chat history).
+      const { mode, provider, model } = modeSelectionForPane(settingsRef.current, 'build', chatPane)
       patchPane(chatPane.id, (pane) =>
-        pane.kind === 'agent' ? { ...pane, mode: 'build', messages: consumePlans(pane.messages, index) } : pane
+        pane.kind === 'agent'
+          ? {
+              ...pane,
+              mode,
+              provider,
+              model,
+              messages: consumePlans(pane.messages, index)
+            }
+          : pane
       )
-      sendAgentMessage('Execute the plan', undefined, undefined, undefined, undefined, 'build')
+      void api.agent.setProvider(chatPane.taskId, provider, model, mode)
+      sendAgentMessage('Execute the plan', provider, undefined, undefined, model ?? null, mode)
     },
     [chatPane, patchPane, sendAgentMessage]
   )

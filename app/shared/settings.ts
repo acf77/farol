@@ -3,6 +3,7 @@
 import {
   hasReviewGate,
   isAiProvider,
+  normalizeMode,
   normalizeModel,
   type AgentMode,
   type AiModel,
@@ -111,6 +112,22 @@ export function modeDefault(settings: AppSettings, mode: AgentMode): ModelChoice
   if (head) return head
   const model = settings.models[settings.agent]
   return { agent: settings.agent, ...(model ? { model } : {}) }
+}
+
+/**
+ * Provider/model a live pane should use when switching to `mode` — chain head when
+ * configured, otherwise keep the pane's current selection. Used by the Plan|Build
+ * switch and by Execute plan (which must land on Build the same way).
+ */
+export function modeSelectionForPane(
+  settings: AppSettings,
+  mode: AgentMode,
+  pane: { provider: AiProvider; model?: string }
+): { mode: AgentMode; provider: AiProvider; model?: string } {
+  const head = settings.modeDefaults[mode][0]
+  const provider = head?.agent ?? pane.provider
+  const model = head ? head.model : pane.model
+  return { mode: normalizeMode(mode, provider), provider, model }
 }
 
 /**
