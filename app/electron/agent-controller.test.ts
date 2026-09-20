@@ -5,6 +5,11 @@ import { TODOS_MARKER, type TodoStore } from '../shared/todos'
 
 const { selectPipelines } = vi.hoisted(() => ({ selectPipelines: vi.fn().mockResolvedValue(null) }))
 vi.mock('./jev', () => ({ selectPipelines }))
+// Real backoff would add ~1–20s per retry and blow past waitFor budgets.
+vi.mock('./backoff', () => ({
+  backoffDelayMs: () => 0,
+  backoffWait: () => Promise.resolve()
+}))
 
 import { AgentController, type AgentExecutor } from './agent-controller'
 

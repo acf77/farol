@@ -55,7 +55,9 @@ import {
 import { pipelineSelectionState } from '../shared/jev'
 import { plainText } from '../shared/terminal'
 import { aiEnv, resolveBinFrom } from './bin'
+import { backoffWait } from './backoff'
 import { killPidTree } from './kill'
+import { logAgentFailure } from './agent-failure-log'
 import { selectPipelines } from './jev'
 
 interface ValidationRunner {
@@ -926,8 +928,10 @@ export class AgentController {
    * provider-side error before the fallback chain is consulted. A queued
    * user message takes priority over an automatic retry — returning false
    * here lets `finishOrContinue` drain it instead of silently retrying.
+   * Every attempt is logged to disk and waits out a backoff delay first, so
+   * a rate limit is not immediately hammered again.
    */
-  private shouldRetryAfterError(task: Task, attempt: number, reason: string): boolean {
+  private async shouldRetryAfterError(task: Task, attempt: number, reason: string): Promise<boolean> {
     if (!task.guidance.length) {
       task.sameModelAttempts += 1
       if (task.sameModelAttempts <= SAME_MODEL_RETRIES) {
@@ -937,11 +941,22 @@ export class AgentController {
           attempt,
           `${reason} — retrying with ${aiSelectionLabel(task.request.provider, task.request.model)} (${task.sameModelAttempts}/${SAME_MODEL_RETRIES})`
         )
+        logAgentFailure({
+          ts: Date.now(),
+          taskId: task.request.id,
+          attempt,
+          provider: task.request.provider,
+          model: task.request.model,
+          reason,
+          outcome: 'retry-same-model',
+          sameModelAttempt: task.sameModelAttempts
+        })
+        await backoffWait(task.sameModelAttempts, task.abort.signal)
         return true
       }
     }
     task.sameModelAttempts = 0
-    return this.switchToFallback(task, reason)
+    return this.switchToFallback(task, attempt, reason)
   }
 
   /**
@@ -951,13 +966,34 @@ export class AgentController {
    * task, and every other model would reach it too. Returns false once the
    * chain is spent.
    */
-  private switchToFallback(task: Task, reason: string): boolean {
+  private async switchToFallback(task: Task, attempt: number, reason: string): Promise<boolean> {
     const next = task.fallbacks.shift()
-    if (!next) return false
+    if (!next) {
+      logAgentFailure({
+        ts: Date.now(),
+        taskId: task.request.id,
+        attempt,
+        provider: task.request.provider,
+        model: task.request.model,
+        reason,
+        outcome: 'exhausted'
+      })
+      return false
+    }
     const from = aiSelectionLabel(task.request.provider, task.request.model)
     task.request.provider = next.agent
     task.request.model = normalizeModel(next.model)
     task.request.mode = normalizeMode(task.request.mode, next.agent)
+    logAgentFailure({
+      ts: Date.now(),
+      taskId: task.request.id,
+      attempt,
+      provider: next.agent,
+      model: task.request.model,
+      reason,
+      outcome: 'fallback',
+      from
+    })
     this.emit({
       kind: 'provider',
       taskId: task.request.id,
@@ -966,6 +1002,7 @@ export class AgentController {
       mode: task.request.mode,
       reason: `${from} failed (${reason}) — retrying with ${aiSelectionLabel(next.agent, next.model)}.`
     })
+    await backoffWait(1, task.abort.signal)
     return true
   }
 
@@ -1010,7 +1047,7 @@ export class AgentController {
       // Same model first (up to SAME_MODEL_RETRIES), then the next rung down
       // the chain — nothing was produced to repair, so the attempt counter
       // does not move either way.
-      if (scan.blockedByProvider && this.shouldRetryAfterError(task, attempt, scan.blocked)) {
+      if (scan.blockedByProvider && (await this.shouldRetryAfterError(task, attempt, scan.blocked))) {
         return { kind: 'retry', prompt, rewindAttempt: true }
       }
       // A follow-up may already be queued with a switched provider (e.g. after
@@ -1019,7 +1056,7 @@ export class AgentController {
       return { kind: 'done' }
     }
     if (code !== 0) {
-      if (this.shouldRetryAfterError(task, attempt, `exit code ${code}`)) {
+      if (await this.shouldRetryAfterError(task, attempt, `exit code ${code}`)) {
         return { kind: 'retry', prompt, rewindAttempt: true }
       }
       this.finishOrContinue(task, attempt, 'needs-attention', `Agent exited with code ${code}`)
