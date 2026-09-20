@@ -112,6 +112,9 @@ const api: FarolApi = {
     refresh: () => ipcRenderer.invoke('openrouter:refresh'),
     setPinned: (ids) => ipcRenderer.invoke('openrouter:setPinned', ids)
   },
+  agentModels: {
+    refresh: (force) => ipcRenderer.invoke('agentModels:refresh', force === true)
+  },
   jev: {
     saveKey: (key) => ipcRenderer.invoke('jev:saveKey', key),
     clearKey: () => ipcRenderer.invoke('jev:clearKey'),

@@ -217,7 +217,7 @@ function ModelRow({
         style={{ ...field, flex: 1, minWidth: 0 }}
       >
         {provider !== 'cursor' && <option value="">Default — the CLI decides</option>}
-        {providerModels(provider, current, settings.openrouter).map((m) => (
+        {providerModels(provider, current, settings).map((m) => (
           <option key={m.id} value={m.id}>
             {m.label}
           </option>
@@ -450,7 +450,7 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
               <Section
                 title="Default model"
-                hint="Each agent starts new chats with the model picked here. Pipeline steps keep their own."
+                hint="Each agent starts new chats with the model picked here. Pipeline steps keep their own. Lists refresh from the installed CLIs."
               >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {providers.map((p) => (
@@ -461,6 +461,18 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
                       onChange={(model) => onSettings(withAgentModel(settings, p, model))}
                     />
                   ))}
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  <Button
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => {
+                      setBusy(true)
+                      void api.agentModels.refresh(true).then(apply)
+                    }}
+                  >
+                    Refresh model lists
+                  </Button>
                 </div>
               </Section>
 

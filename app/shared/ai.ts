@@ -24,6 +24,10 @@ export interface AiModel {
   label: string
 }
 
+/**
+ * Built-in fallback lists used when a live catalog has not been discovered yet
+ * (CLI missing, empty cache, or Claude — which has no machine-readable list).
+ */
 export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
   claude: [
     { id: 'sonnet', label: 'Sonnet 5' },
@@ -116,7 +120,7 @@ export function aiModelLabel(
   const id = normalizeModel(model)
   // Cursor's CLI default is Auto; show it even when the model id was omitted.
   if (!id) return provider === 'cursor' ? 'Auto' : undefined
-  return (listed ?? AI_MODELS[provider]).find((m) => m.id === id)?.label ?? id
+  return (listed?.length ? listed : AI_MODELS[provider]).find((m) => m.id === id)?.label ?? id
 }
 
 /** `Claude` or `Claude · Sonnet 5`. */
@@ -136,7 +140,7 @@ export function modelsFor(
   current?: string,
   listed?: readonly AiModel[]
 ): readonly AiModel[] {
-  const base = listed ?? AI_MODELS[provider]
+  const base = listed?.length ? listed : AI_MODELS[provider]
   const id = normalizeModel(current)
   if (id && !base.some((m) => m.id === id)) return [...base, { id, label: id }]
   return base
@@ -167,15 +171,22 @@ export function openrouterModels(
   return modelsFor('openrouter', current, listed)
 }
 
-/** Picker options for one provider — OpenRouter narrows to its pins. */
+/** Picker options for one provider — live catalogs when present, else built-ins. */
 export function providerModels(
   provider: AiProvider,
   current?: string,
-  openrouter?: { catalog: readonly AiModel[]; pinned: readonly string[] }
+  settings?: {
+    openrouter?: { catalog: readonly AiModel[]; pinned: readonly string[] }
+    catalogs?: Partial<Record<AiProvider, readonly AiModel[]>>
+  }
 ): readonly AiModel[] {
   return provider === 'openrouter'
-    ? openrouterModels(openrouter?.catalog ?? [], openrouter?.pinned ?? [], current)
-    : modelsFor(provider, current)
+    ? openrouterModels(
+        settings?.openrouter?.catalog ?? [],
+        settings?.openrouter?.pinned ?? [],
+        current
+      )
+    : modelsFor(provider, current, settings?.catalogs?.[provider])
 }
 
 /** Insert `--model <id>` before the trailing prompt. */

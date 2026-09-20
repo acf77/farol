@@ -257,21 +257,30 @@ describe('managedAiCommand', () => {
       { id: 'openai/gpt-4o', label: 'GPT-4o' }
     ]
     expect(
-      providerModels('openrouter', undefined, { pinned: ['openai/gpt-4o'], catalog }).map(
-        (model) => model.id
-      )
+      providerModels('openrouter', undefined, {
+        openrouter: { pinned: ['openai/gpt-4o'], catalog }
+      }).map((model) => model.id)
     ).toEqual(['openai/gpt-4o'])
     // Nothing pinned yet — the whole catalog, so the menu is never empty.
     expect(
-      providerModels('openrouter', undefined, { pinned: [], catalog }).map((model) => model.id)
+      providerModels('openrouter', undefined, { openrouter: { pinned: [], catalog } }).map(
+        (model) => model.id
+      )
     ).toEqual(['anthropic/claude-sonnet-4', 'openai/gpt-4o'])
     // An unpinned id already in use stays selectable.
     expect(
       providerModels('openrouter', 'anthropic/claude-sonnet-4', {
-        pinned: ['openai/gpt-4o'],
-        catalog
+        openrouter: { pinned: ['openai/gpt-4o'], catalog }
       }).map((model) => model.id)
     ).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
+  })
+
+  it('prefers a discovered catalog over the built-in fallback list', () => {
+    expect(
+      providerModels('codex', undefined, {
+        catalogs: { codex: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }] }
+      }).map((m) => m.id)
+    ).toEqual(['gpt-6-astra'])
   })
 
   it('passes --model through on managed commands', () => {

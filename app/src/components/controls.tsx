@@ -429,7 +429,7 @@ export function CliModelMenu({
               ...providerModels(
                 page,
                 page === current ? selectedModel : undefined,
-                settings?.openrouter
+                settings
               ).map((m) => {
                 const isSelected =
                   page === current &&
@@ -535,7 +535,7 @@ export function CliModelDropdown({
             whiteSpace: 'nowrap'
           }}
         >
-          {aiSelectionLabel(provider, model, providerModels(provider, model, settings?.openrouter))}
+          {aiSelectionLabel(provider, model, providerModels(provider, model, settings))}
         </span>
         <ChevronDown size={10} color={C.textMuted} />
       </button>

@@ -1881,6 +1881,12 @@ export function ProjectWorkspace({
       if (cancelled) return
       await loadProject()
       persistEnabled.current = true
+      // Live CLI catalogs — fail soft so a missing binary never blocks startup.
+      void api.agentModels.refresh().then((result) => {
+        if (!cancelled && result.settings.catalogs) {
+          setSettings((prev) => ({ ...prev, catalogs: result.settings.catalogs }))
+        }
+      })
     })()
     return () => {
       cancelled = true

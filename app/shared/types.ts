@@ -502,6 +502,10 @@ export interface FarolApi {
     refresh(): Promise<SettingsResult>
     setPinned(ids: string[]): Promise<SettingsResult>
   }
+  /** Refresh live `--model` lists from each installed coding CLI. */
+  agentModels: {
+    refresh(force?: boolean): Promise<SettingsResult>
+  }
   /** Jev is internal-only: a key to store and a probe to prove it works. */
   jev: {
     saveKey(key: string): Promise<SettingsResult>

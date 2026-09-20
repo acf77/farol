@@ -9,6 +9,11 @@ import {
   type AiModel,
   type AiProvider
 } from './ai'
+import {
+  DISCOVERABLE_PROVIDERS,
+  type AgentCatalogs,
+  type DiscoverableProvider
+} from './agent-models'
 import { uniqueIds } from './openrouter'
 
 export interface OpenRouterSettings {
@@ -59,6 +64,8 @@ export interface AppSettings {
    */
   modeDefaults: ModeDefaults
   openrouter?: OpenRouterSettings
+  /** Live `--model` catalogs discovered from each local CLI. */
+  catalogs?: AgentCatalogs
   /** Absent until an AI Gateway key is stored. */
   jev?: JevSettings
 }
@@ -235,6 +242,21 @@ function sanitizeModeDefaults(raw: unknown): ModeDefaults {
   return { plan: sanitizeModeChain(o.plan, 'plan'), build: sanitizeModeChain(o.build, 'build') }
 }
 
+function isDiscoverableProvider(value: string): value is DiscoverableProvider {
+  return (DISCOVERABLE_PROVIDERS as readonly string[]).includes(value)
+}
+
+function sanitizeCatalogs(raw: unknown): AgentCatalogs | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const out: AgentCatalogs = {}
+  for (const [provider, value] of Object.entries(raw)) {
+    if (!isDiscoverableProvider(provider)) continue
+    const catalog = sanitizeCatalog(value)
+    if (catalog.length) out[provider] = catalog
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
 export function sanitizeSettings(raw: unknown): AppSettings {
   const d = defaultSettings()
   if (!raw || typeof raw !== 'object') return d
@@ -253,6 +275,7 @@ export function sanitizeSettings(raw: unknown): AppSettings {
   // (same convention as `models`), even if the user cleared it deliberately.
   const commitModel = normalizeModel(commit.model) ?? (hasCommitMessage ? undefined : models[commitAgent])
   const openrouter = sanitizeOpenRouter(s.openrouter)
+  const catalogs = sanitizeCatalogs(s.catalogs)
   return {
     agent,
     models,
@@ -262,6 +285,7 @@ export function sanitizeSettings(raw: unknown): AppSettings {
     },
     autoFix: typeof s.autoFix === 'boolean' ? s.autoFix : d.autoFix,
     modeDefaults: sanitizeModeDefaults(s.modeDefaults),
-    ...(openrouter ? { openrouter } : {})
+    ...(openrouter ? { openrouter } : {}),
+    ...(catalogs ? { catalogs } : {})
   }
 }

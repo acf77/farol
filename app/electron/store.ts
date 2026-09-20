@@ -478,7 +478,11 @@ export async function loadSettings(): Promise<AppSettings> {
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
   await updateWorkspace((ws) => {
-    ws.settings = sanitizeSettings(settings)
+    const next = sanitizeSettings(settings)
+    const prev = sanitizeSettings(ws.settings)
+    // Keep discovered catalogs if the renderer has not adopted them yet.
+    if (!next.catalogs && prev.catalogs) next.catalogs = prev.catalogs
+    ws.settings = next
   })
 }
 
