@@ -112,6 +112,21 @@ describe('commit message selection', () => {
       ]
     })
   })
+
+  it('keeps discovered per-agent catalogs', () => {
+    const settings = sanitizeSettings({
+      agent: 'codex',
+      catalogs: {
+        codex: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }],
+        cursor: [{ id: 'auto', label: 'Auto' }],
+        openrouter: [{ id: 'ignored', label: 'Ignored' }]
+      }
+    })
+    expect(settings.catalogs).toEqual({
+      codex: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }],
+      cursor: [{ id: 'auto', label: 'Auto' }]
+    })
+  })
 })
 
 describe('withAgentModel', () => {

@@ -22,6 +22,7 @@ import {
   saveOpenRouterKey,
   setOpenRouterPinned
 } from './openrouter'
+import { refreshAgentCatalogs } from './agent-models'
 import { checkJev, clearJev, saveJevKey } from './jev'
 import { configureJevLogs } from './jev-log'
 import { listProjectFiles, saveChatAttachment } from './files'
@@ -755,6 +756,9 @@ function registerAppIpc(): void {
   ipcMain.handle('openrouter:clearKey', () => clearOpenRouter())
   ipcMain.handle('openrouter:refresh', () => refreshOpenRouterCatalog())
   ipcMain.handle('openrouter:setPinned', (_e, ids: string[]) => setOpenRouterPinned(ids))
+  ipcMain.handle('agentModels:refresh', (_e, force?: boolean) =>
+    refreshAgentCatalogs({ forceRefresh: force === true })
+  )
   ipcMain.handle('jev:saveKey', (_e, key: string) => saveJevKey(key))
   ipcMain.handle('jev:clearKey', () => clearJev())
   ipcMain.handle('jev:check', () => checkJev())
