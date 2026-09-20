@@ -90,12 +90,26 @@ export async function askJev(
 
 const VERDICT_TIMEOUT_MS = 2000
 
+/**
+ * Step-verdict question. Logs at JEV_CONFIDENCE=0.85 clustered mid-band
+ * (~0.20–0.83) under a vague pass/fail ask; this wording pushes clear
+ * outcomes toward the extremes so Farol can override the exit code, and
+ * reserves middling scores for transcripts with no usable signal.
+ */
 const VERDICT_QUESTION: JevBooleanQuestion = {
   type: 'boolean',
-  instructions: "Given this pipeline step's output, did the check pass?",
+  instructions:
+    'Did this Farol pipeline step pass? Judge only the step transcript. ' +
+    'AI steps often exit 0 even when the review failed — ignore process/exit framing. ' +
+    'When the transcript clearly passes or clearly fails, answer near 1.0 or near 0.0. ' +
+    'Use a mid probability only when there is no usable pass/fail signal.',
   criteria: {
-    true: 'the output reports success with no unresolved errors',
-    false: 'the output reports a failure, error, or unresolved issue'
+    true:
+      'explicit pass/success/ok/approved, or clean results with no blocking findings ' +
+      'and no required fixes',
+    false:
+      'explicit fail/error/rejected, blocking findings, unresolved issues the step was ' +
+      'meant to catch, or required fixes before the change can proceed'
   }
 }
 

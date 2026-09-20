@@ -140,6 +140,20 @@ describe('verdictFromOutput', () => {
     peekSecret.mockReturnValue('a-key')
     evaluate.mockResolvedValue({ answers: { passed: { type: 'boolean', probability: 0.99 } } })
     expect(await verdictFromOutput('all checks succeeded')).toBe('pass')
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        questions: {
+          passed: expect.objectContaining({
+            type: 'boolean',
+            instructions: expect.stringContaining('near 1.0 or near 0.0'),
+            criteria: expect.objectContaining({
+              true: expect.stringContaining('blocking findings'),
+              false: expect.stringContaining('required fixes')
+            })
+          })
+        }
+      })
+    )
   })
 
   it('reads a confident fail', async () => {
