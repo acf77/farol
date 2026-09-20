@@ -113,6 +113,12 @@ interface Task {
   mandatoryOutstanding: boolean
   /** Rungs of the mode's chain not yet tried; refilled when a turn begins. */
   fallbacks: ModelChoice[]
+  /**
+   * Consecutive provider-side failures (rate limit, exit code, ...) on the
+   * current provider/model. Reset on success or whenever the provider
+   * changes; drives same-model retries before `fallbacks` is consulted.
+   */
+  sameModelAttempts: number
   /** Bumped when a follow-up starts so a dying cycle cannot clobber it. */
   askEpoch: number
   questionSeq: number
@@ -150,6 +156,13 @@ type CycleAttemptResult =
   | { kind: 'retry'; prompt: string; rewindAttempt: true }
 
 const DEFAULT_MAX_ATTEMPTS = 5
+/**
+ * Extra tries on the same provider/model after an error before Farol steps
+ * down the fallback chain. A rate limit or a flaky exit often clears on its
+ * own — falling back on the first hiccup burned through every fallback rung
+ * on transient errors, leaving chats "needs-attention" too early.
+ */
+const SAME_MODEL_RETRIES = 3
 /** How much trailing output the marker and failure scans keep in memory. */
 const SCAN_WINDOW = 16_384
 /** Cap stored prompt history so long chats cannot retain unbounded text. */
@@ -343,6 +356,7 @@ export class AgentController {
         pipelines: request.pipelines.filter((pipeline) => pipeline.nodes.length)
       }
       existing.fallbacks = [...(request.fallbacks ?? [])]
+      existing.sameModelAttempts = 0
       this.emit({ kind: 'user', taskId: request.id, text: clean })
       this.followUp(existing, clean)
       return { ok: true }
@@ -367,6 +381,7 @@ export class AgentController {
       abort: new AbortController(),
       mandatoryOutstanding: false,
       fallbacks: [...(request.fallbacks ?? [])],
+      sameModelAttempts: 0,
       askEpoch: 0,
       questionSeq: 0,
       todoSeq: 0
@@ -428,6 +443,7 @@ export class AgentController {
     if (isAiProvider(provider)) {
       task.request.provider = provider
       task.request.model = normalizeModel(model)
+      task.sameModelAttempts = 0
     }
     if (fallbacks) task.fallbacks = [...fallbacks]
     task.request.mode = normalizeMode(mode ?? task.request.mode, task.request.provider)
@@ -464,6 +480,7 @@ export class AgentController {
     task.request.provider = provider
     task.request.model = normalizeModel(model)
     task.request.mode = normalizeMode(mode ?? task.request.mode, provider)
+    task.sameModelAttempts = 0
     return { ok: true }
   }
 
@@ -905,10 +922,34 @@ export class AgentController {
   }
 
   /**
-   * Step down the mode's fallback chain after a provider-side failure — a
-   * missing CLI, a non-zero exit, or a quota/auth banner. The agent's own
-   * FAROL_BLOCKED is excluded: that is a judgement about the task, and every
-   * other model would reach it too. Returns false once the chain is spent.
+   * The current provider/model gets `SAME_MODEL_RETRIES` extra tries after a
+   * provider-side error before the fallback chain is consulted. A queued
+   * user message takes priority over an automatic retry — returning false
+   * here lets `finishOrContinue` drain it instead of silently retrying.
+   */
+  private shouldRetryAfterError(task: Task, attempt: number, reason: string): boolean {
+    if (!task.guidance.length) {
+      task.sameModelAttempts += 1
+      if (task.sameModelAttempts <= SAME_MODEL_RETRIES) {
+        this.status(
+          task,
+          'working',
+          attempt,
+          `${reason} — retrying with ${aiSelectionLabel(task.request.provider, task.request.model)} (${task.sameModelAttempts}/${SAME_MODEL_RETRIES})`
+        )
+        return true
+      }
+    }
+    task.sameModelAttempts = 0
+    return this.switchToFallback(task, reason)
+  }
+
+  /**
+   * Step down the mode's fallback chain once the same-model retry budget is
+   * spent — a missing CLI, a non-zero exit, or a quota/auth banner. The
+   * agent's own FAROL_BLOCKED is excluded: that is a judgement about the
+   * task, and every other model would reach it too. Returns false once the
+   * chain is spent.
    */
   private switchToFallback(task: Task, reason: string): boolean {
     const next = task.fallbacks.shift()
@@ -966,9 +1007,10 @@ export class AgentController {
     const asked = this.questionsAfterRun(task, attempt, scan)
     if (asked) return asked
     if (scan.blocked) {
-      // The same turn, on the next model down the chain — nothing was produced
-      // to repair, so the attempt counter does not move.
-      if (scan.blockedByProvider && this.switchToFallback(task, scan.blocked)) {
+      // Same model first (up to SAME_MODEL_RETRIES), then the next rung down
+      // the chain — nothing was produced to repair, so the attempt counter
+      // does not move either way.
+      if (scan.blockedByProvider && this.shouldRetryAfterError(task, attempt, scan.blocked)) {
         return { kind: 'retry', prompt, rewindAttempt: true }
       }
       // A follow-up may already be queued with a switched provider (e.g. after
@@ -977,12 +1019,13 @@ export class AgentController {
       return { kind: 'done' }
     }
     if (code !== 0) {
-      if (this.switchToFallback(task, `exit code ${code}`)) {
+      if (this.shouldRetryAfterError(task, attempt, `exit code ${code}`)) {
         return { kind: 'retry', prompt, rewindAttempt: true }
       }
       this.finishOrContinue(task, attempt, 'needs-attention', `Agent exited with code ${code}`)
       return { kind: 'done' }
     }
+    task.sameModelAttempts = 0
     if (task.guidance.length) {
       const guidance = task.guidance.splice(0).join('\n')
       return {
