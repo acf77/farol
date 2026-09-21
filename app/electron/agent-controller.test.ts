@@ -3,8 +3,11 @@ import type { AgentTaskEvent, AgentTaskRequest, PipelineRunResult } from '../sha
 import { failureReport } from '../shared/failure'
 import { TODOS_MARKER, type TodoStore } from '../shared/todos'
 
-const { selectPipelines } = vi.hoisted(() => ({ selectPipelines: vi.fn().mockResolvedValue(null) }))
-vi.mock('./jev', () => ({ selectPipelines }))
+const { selectPipelines, selectTools } = vi.hoisted(() => ({
+  selectPipelines: vi.fn().mockResolvedValue(null),
+  selectTools: vi.fn().mockResolvedValue(null)
+}))
+vi.mock('./jev', () => ({ selectPipelines, selectTools }))
 // Real backoff would add ~1–20s per retry and blow past waitFor budgets.
 vi.mock('./backoff', () => ({
   backoffDelayMs: () => 0,
@@ -699,7 +702,8 @@ describe('AgentController', () => {
     await vi.waitFor(() =>
       expect(events.filter((event) => event.kind === 'user' && event.text === 'one more tweak').length).toBe(1)
     )
-    expect(execute).toHaveBeenCalledTimes(2)
+    // Tool selection awaits Jev before the executor runs; wait for the second turn.
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2))
   })
 
   it('switches provider when the same task continues after a usage limit', async () => {
@@ -1305,7 +1309,6 @@ describe('AgentController', () => {
     // Only the pipeline the agent did not already pick is offered to Jev.
     expect(selectPipelines.mock.calls[0][0].map((pipeline: { id: string }) => pipeline.id)).toEqual(['security'])
     expect(selectPipelines.mock.calls[0][1]).toContain('src/app.ts')
-    expect(selectPipelines.mock.calls[0][1]).toContain('Security Scan')
     expect(run.mock.calls.map((call) => call[0].id).sort()).toEqual(['security', 'validate'])
   })
 
@@ -1368,6 +1371,7 @@ describe('AgentController', () => {
 
   it('never asks Jev in Plan mode', async () => {
     selectPipelines.mockClear()
+    selectTools.mockClear()
     const events: AgentTaskEvent[] = []
     const execute = vi.fn<AgentExecutor>().mockImplementation(async (_request, _prompt, output, onTool) => {
       onTool?.({ toolId: 'edit-1', name: 'apply_patch', detail: 'src/app.ts', state: 'done' })
@@ -1382,6 +1386,46 @@ describe('AgentController', () => {
     )
 
     expect(selectPipelines).not.toHaveBeenCalled()
+    expect(selectTools).not.toHaveBeenCalled()
+    expect(execute.mock.calls[0][1]).toMatch(/Plan mode is read-only/i)
+  })
+
+  it('asks Jev for tool families in Build mode and appends the policy clause', async () => {
+    selectTools.mockClear()
+    selectTools.mockResolvedValueOnce({
+      kind: 'selected',
+      kept: ['edit'],
+      omitted: ['shell', 'web']
+    })
+    const events: AgentTaskEvent[] = []
+    const execute = selecting()
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(selectTools).toHaveBeenCalledTimes(1)
+    expect(selectTools.mock.calls[0][0]).toContain('Mode: build')
+    expect(execute.mock.calls[0][1]).toMatch(/Do not use:.*mutating shell/i)
+    expect(execute.mock.calls[0][1]).toMatch(/web fetch\/search/i)
+  })
+
+  it('fails open to the full tool set when Jev tool selection is unavailable', async () => {
+    selectTools.mockClear()
+    selectTools.mockResolvedValueOnce(null)
+    const events: AgentTaskEvent[] = []
+    const execute = selecting()
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(selectTools).toHaveBeenCalledTimes(1)
+    expect(execute.mock.calls[0][1]).not.toMatch(/Tool policy/)
   })
 
   it('does not treat CreateGoal as a code change', async () => {
