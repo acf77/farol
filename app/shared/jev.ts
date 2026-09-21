@@ -87,7 +87,7 @@ export interface PipelineSelectionContext {
   mandatory: Pipeline[]
 }
 
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
   const trimmed = text.trim()
   return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed
 }
