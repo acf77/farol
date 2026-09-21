@@ -53,12 +53,22 @@ import {
   mergeWithMandatory
 } from '../shared/mandatory'
 import { pipelineSelectionState } from '../shared/jev'
+import {
+  observeToolUse,
+  planToolPolicy,
+  toolPolicyFor,
+  toolPolicyPrompt,
+  toolSelectionState,
+  type ToolPolicy,
+  type ToolSelection
+} from '../shared/tool-policy'
 import { plainText } from '../shared/terminal'
 import { aiEnv, resolveBinFrom } from './bin'
 import { backoffWait } from './backoff'
 import { killPidTree } from './kill'
 import { logAgentFailure } from './agent-failure-log'
-import { selectPipelines } from './jev'
+import { logJev } from './jev-log'
+import { selectPipelines, selectTools } from './jev'
 
 interface ValidationRunner {
   run(
@@ -121,6 +131,13 @@ interface Task {
    * changes; drives same-model retries before `fallbacks` is consulted.
    */
   sameModelAttempts: number
+  /**
+   * Jev's tool-family selection for the current attempt. Remapped onto each
+   * provider via `toolPolicyFor` without a new Jev call; cleared when the
+   * attempt number advances (repair turns re-ask).
+   */
+  toolSelection?: ToolSelection
+  toolSelectionAttempt?: number
   /** Bumped when a follow-up starts so a dying cycle cannot clobber it. */
   askEpoch: number
   questionSeq: number
@@ -148,6 +165,8 @@ type CycleScan = ControlLineState & {
   filesChanged: boolean
   /** Paths or targets reported by completed write tools this turn. */
   changedTargets: string[]
+  /** Tool card names observed this turn — for policy violation diagnostics. */
+  toolNames: string[]
   questions?: AgentQuestion[]
   questionId?: string
 }
@@ -662,6 +681,7 @@ export class AgentController {
       },
       tool: (event) => {
         this.emit({ kind: 'tool', taskId: task.request.id, ...event })
+        scan.toolNames.push(event.name)
         // Codex sometimes only fills command on item.completed; accept either.
         if (event.detail && isShellToolName(event.name) && event.state !== 'error') {
           scan.shellInvocations.push(event.detail)
@@ -908,6 +928,51 @@ export class AgentController {
     return candidates.filter((pipeline) => ids?.includes(pipeline.id))
   }
 
+  /**
+   * Resolve the turn's tool policy. Plan mode never asks Jev. Build mode asks
+   * once per attempt and remaps the cached selection onto the current provider
+   * (native `--tools` vs prompt clause) across same-model retries and fallbacks.
+   */
+  private async resolveToolPolicy(
+    task: Task,
+    opening: string,
+    attempt: number
+  ): Promise<ToolPolicy> {
+    if (task.request.mode === 'plan') return planToolPolicy(task.request.provider)
+    if (task.toolSelection && task.toolSelectionAttempt === attempt) {
+      return toolPolicyFor(task.request.provider, task.toolSelection)
+    }
+    const state = toolSelectionState({
+      task: task.request.prompt,
+      opening,
+      mode: 'build',
+      attempt
+    })
+    const selected = await selectTools(state, { attempt })
+    const resolved: ToolSelection =
+      selected ?? { kind: 'fallback-full', reason: 'jev-unavailable' }
+    task.toolSelection = resolved
+    task.toolSelectionAttempt = attempt
+    return toolPolicyFor(task.request.provider, resolved)
+  }
+
+  /** Diagnostic-only: log omitted-family tool cards without killing the run. */
+  private observeTools(task: Task, policy: ToolPolicy, toolNames: string[], attempt: number): void {
+    const observation = observeToolUse(policy, toolNames)
+    if (!observation.violations.length && !observation.unknownCount) return
+    logJev({
+      timestamp: new Date().toISOString(),
+      purpose: 'tool-observation',
+      taskId: task.request.id,
+      attempt,
+      provider: task.request.provider,
+      selection: policy.selection.kind,
+      used: observation.used,
+      violations: observation.violations,
+      unknownCount: observation.unknownCount
+    })
+  }
+
   /** Plan mode never validates — it only recognizes the finished-plan marker. */
   private finishPlanCycleAttempt(task: Task, attempt: number, scan: CycleScan): CycleAttemptResult {
     if (isFinishedPlan(scan.assistant)) {
@@ -1077,7 +1142,8 @@ export class AgentController {
   private async runCycleAttempt(
     task: Task,
     prompt: string,
-    attempt: number
+    attempt: number,
+    opening: string
   ): Promise<CycleAttemptResult> {
     this.status(
       task,
@@ -1097,13 +1163,18 @@ export class AgentController {
       blockedByProvider: false,
       shellInvocations: [],
       filesChanged: false,
-      changedTargets: []
+      changedTargets: [],
+      toolNames: []
     }
+    const policy = await this.resolveToolPolicy(task, opening, attempt)
+    const clause = toolPolicyPrompt(policy)
+    const effective = clause ? `${prompt}\n\n${clause}` : prompt
     const sink = this.cycleSink(task, scan)
     const epoch = task.askEpoch
     const code = this.executor
-      ? await this.executor(task.request, prompt, sink.text, sink.tool)
-      : await this.runAgent(task, prompt, sink)
+      ? await this.executor(task.request, effective, sink.text, sink.tool)
+      : await this.runAgent(task, effective, sink, false, policy.nativeTools)
+    this.observeTools(task, policy, scan.toolNames, attempt)
     if (task.askEpoch !== epoch) return { kind: 'done' }
     return await this.cycleAfterRun(task, attempt, scan, code, prompt)
   }
@@ -1129,12 +1200,15 @@ export class AgentController {
     let openingText = opening
     let prompt: string | undefined
     let attempt = 0
+    // Fresh cycle → fresh tool ask; within the cycle, same-attempt retries remap.
+    task.toolSelection = undefined
+    task.toolSelectionAttempt = undefined
     try {
       for (attempt = 1; attempt <= maxAttempts && !task.cancelled; attempt++) {
         await this.loadTodos(task)
         const currentPrompt = prompt ?? this.prompt(task, openingText)
         prompt = undefined
-        const result = await this.runCycleAttempt(task, currentPrompt, attempt)
+        const result = await this.runCycleAttempt(task, currentPrompt, attempt, openingText)
         if (result.kind === 'done') return
         if ('prompt' in result) prompt = result.prompt
         else openingText = result.opening
@@ -1209,11 +1283,18 @@ export class AgentController {
     return `Farol pipeline activity for this chat:\n${lines.join('\n')}`
   }
 
-  private runAgent(task: Task, prompt: string, sink: AgentSink, plain = false): Promise<number> {
+  private runAgent(
+    task: Task,
+    prompt: string,
+    sink: AgentSink,
+    plain = false,
+    tools?: string[]
+  ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
     const spec = managedAiCommand(task.request.provider, prompt, task.request.model, {
       jsonFormat: !plain,
-      mode: task.request.mode
+      mode: task.request.mode,
+      ...(tools?.length ? { tools } : {})
     })
     const env = aiEnv(task.request.provider)
     const bin = resolveBinFrom(spec.bins)
