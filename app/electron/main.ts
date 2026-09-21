@@ -26,6 +26,7 @@ import {
 import { refreshAgentCatalogs } from './agent-models'
 import { checkJev, clearJev, saveJevKey } from './jev'
 import { configureJevLogs } from './jev-log'
+import { configureAgentFailureLogs } from './agent-failure-log'
 import { listProjectFiles, saveChatAttachment } from './files'
 import { listAgentSkills } from './skills'
 import { AppUpdater } from './update'
@@ -831,7 +832,9 @@ function applyBrandIcon(): void {
 }
 
 app.whenReady().then(() => {
-  configureJevLogs(() => app.getPath('userData'))
+  const userData = () => app.getPath('userData')
+  configureJevLogs(userData)
+  configureAgentFailureLogs(userData)
   applyBrandIcon()
   registerIpc()
   buildMenu()
