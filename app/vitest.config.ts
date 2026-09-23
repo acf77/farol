@@ -4,5 +4,6 @@ import { resolve } from 'path'
 export default defineConfig({
   resolve: {
     alias: { '@shared': resolve(__dirname, 'shared') }
-  }
+  },
+  setupFiles: ['./src/test-setup.ts']
 })

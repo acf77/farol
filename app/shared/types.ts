@@ -346,6 +346,35 @@ export type UpdateStatus =
 
 export type Platform = 'darwin' | 'win32' | 'linux' | (string & {})
 
+/** One child of a project directory, relative to the project root. */
+export interface ProjectDirEntry {
+  name: string
+  path: string
+  kind: 'file' | 'dir'
+}
+
+export type ProjectLineEnding = 'lf' | 'crlf'
+
+export interface ProjectFileRead {
+  path: string
+  content: string
+  mtimeMs: number
+  lineEnding: ProjectLineEnding
+}
+
+export interface ProjectFileWrite {
+  mtimeMs: number
+}
+
+export interface ProjectWriteOpts {
+  expectedMtimeMs?: number
+  overwrite?: boolean
+}
+
+export type ProjectFsFailure = { ok: false; error: string; conflict?: boolean }
+export type ProjectFsSuccess<T> = { ok: true } & T
+export type ProjectFsResult<T> = ProjectFsSuccess<T> | ProjectFsFailure
+
 export interface FarolApi {
   platform: Platform
   /** The machine's default shell, e.g. `zsh` — used to label terminal tabs. */
@@ -356,6 +385,17 @@ export interface FarolApi {
     openPath(path: string): Promise<Project | null>
     /** Relative paths under the project root, filtered by an optional query. */
     listFiles(projectPath: string, query?: string): Promise<string[]>
+    /** Immediate children of one directory under the project root. */
+    listDir(projectPath: string, relDir?: string): Promise<ProjectFsResult<{ entries: ProjectDirEntry[] }>>
+    /** UTF-8 text of an existing project file. */
+    readFile(projectPath: string, relPath: string): Promise<ProjectFsResult<ProjectFileRead>>
+    /** Overwrite a file previously read in this session. */
+    writeFile(
+      projectPath: string,
+      relPath: string,
+      content: string,
+      opts?: ProjectWriteOpts
+    ): Promise<ProjectFsResult<ProjectFileWrite>>
     /** User-invocable skills for the selected agent, from its native scopes. */
     listSkills(projectPath: string, provider: AiProvider): Promise<AgentSkill[]>
     /** Persist a dropped chat image; returns the absolute path on disk. */

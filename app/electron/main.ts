@@ -5,6 +5,7 @@ import type {
   AgentTaskRequest,
   AppSettings,
   Pipeline,
+  ProjectWriteOpts,
   RunEvent,
   ShellCwd,
   ShellData,
@@ -25,7 +26,7 @@ import {
 import { refreshAgentCatalogs } from './agent-models'
 import { checkJev, clearJev, saveJevKey } from './jev'
 import { configureJevLogs } from './jev-log'
-import { listProjectFiles, saveChatAttachment } from './files'
+import { listProjectDir, listProjectFiles, readProjectFile, saveChatAttachment, writeProjectFile } from './files'
 import { listAgentSkills } from './skills'
 import { AppUpdater } from './update'
 import { applyGlass, glassAvailable } from './glass'
@@ -546,6 +547,23 @@ function registerProjectIpc(): void {
   ipcMain.handle('project:recents', () => readRecents())
   ipcMain.handle('project:listFiles', (_e, projectPath: string, query?: string) =>
     listProjectFiles(projectPath, typeof query === 'string' ? query : '')
+  )
+  ipcMain.handle('project:listDir', (_e, projectPath: string, relDir?: string) =>
+    typeof projectPath === 'string'
+      ? listProjectDir(projectPath, typeof relDir === 'string' ? relDir : '')
+      : { ok: false, error: 'Path is outside the project.' }
+  )
+  ipcMain.handle('project:readFile', (_e, projectPath: string, relPath: string) =>
+    typeof projectPath === 'string' && typeof relPath === 'string'
+      ? readProjectFile(projectPath, relPath)
+      : { ok: false, error: 'Path is outside the project.' }
+  )
+  ipcMain.handle(
+    'project:writeFile',
+    (_e, projectPath: string, relPath: string, content: string, opts?: ProjectWriteOpts) =>
+      typeof projectPath === 'string' && typeof relPath === 'string' && typeof content === 'string'
+        ? writeProjectFile(projectPath, relPath, content, opts ?? {})
+        : { ok: false, error: 'Path is outside the project.' }
   )
   ipcMain.handle('project:listSkills', (_e, projectPath: string, provider: unknown) =>
     typeof projectPath === 'string' && isAiProvider(provider)
