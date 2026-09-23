@@ -277,6 +277,8 @@ describe('AgentController', () => {
     )
 
     expect(execute.mock.calls[0][1]).toContain('Plan mode is read-only')
+    expect(execute.mock.calls[0][1]).toContain('```mermaid')
+    expect(execute.mock.calls[0][1]).toContain('intended approach')
     expect(run).not.toHaveBeenCalled()
   })
 
@@ -340,6 +342,8 @@ describe('AgentController', () => {
     expect(execute.mock.calls[0][1]).toContain('npm run lint')
     expect(execute.mock.calls[0][1]).toContain('Do not call the Farol MCP tools')
     expect(execute.mock.calls[0][1]).toContain('Never run the catalog\'s shell commands yourself')
+    expect(execute.mock.calls[0][1]).toContain('```mermaid')
+    expect(execute.mock.calls[0][1]).toContain('After changing files in Build mode')
     expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate', 'lint'])
   })
 

@@ -112,8 +112,12 @@ The master, machine-scoped switch in Settings that decides whether Farol perform
 _Avoid_: per-project or per-action switches, off by default
 
 **Managed-chat contract**:
-The standing rules Farol gives a managed Chat agent — work only in the project, never run the catalog's commands, end each Build turn with `FAROL_QUESTIONS` or `FAROL_PIPELINES`, and, when the turn changed files, commit them through `FAROL_GIT`.
+The standing rules Farol gives a managed Chat agent — work only in the project, never run the catalog's commands, explain a proposed or completed change with a **Chat diagram**, end each Build turn with `FAROL_QUESTIONS` or `FAROL_PIPELINES`, and, when the turn changed files, commit them through `FAROL_GIT`.
 _Avoid_: relying on the agent to remember to commit, a per-turn reminder to commit
+
+**Chat diagram**:
+A Mermaid flowchart or sequence diagram the agent puts in a ` ```mermaid ` fenced block. Chat renders it as SVG in the message. A finished plan includes one for the intended approach; a Build turn that changed files includes one for what changed and why. Four to twelve well-labeled steps, detailed but not crowded.
+_Avoid_: a new control line, a remote image URL, a 20-node map, a diagram on a questions-only or status-only reply
 ### Todo list
 
 **Todo list**:
@@ -199,6 +203,14 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 - Status is read-only; commit, push, and create pull request change the checkout or the remote.
 - **Plan mode** never performs a **Git action**; a `FAROL_GIT` line in Plan mode is ignored the way a non-empty `FAROL_PIPELINES` list is, and the reply is still accepted.
 - The **Git actions toggle** is machine-scoped and is not saved per project.
+
+### Chat diagram
+
+- A **Chat diagram** is a ` ```mermaid ` fenced block in an assistant message; Chat renders it as SVG in `MarkdownBody`.
+- The **Managed-chat contract** asks for one when the agent proposes a plan and again after a Build turn that changed files.
+- Plan mode diagrams the intended approach; a post-change Build diagram shows what changed and why.
+- Questions-only and status-only replies skip a **Chat diagram**.
+- There is no `FAROL_DIAGRAM` line and no remote image; the source stays in the message so copy still gets the Mermaid text.
 ### Todo list
 
 - A **Todo list** belongs to one checkout; every chat in that checkout shares it, and a linked worktree has its own.
@@ -408,6 +420,17 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 
 > **Dev:** "Can an agent in a terminal pane use these too?"
 > **Domain expert:** "Yes, through the **Git tools** — `git_status`, `git_commit`, `git_push`, `git_create_pr` — over the bridge to the running app."
+
+### Chat diagram
+
+> **Developer:** "When does Chat show a diagram of the work?"
+> **Domain expert:** "When the agent proposes a plan, and again after it changes files. Both are **Chat diagrams** — Mermaid in the message, rendered in place."
+
+> **Developer:** "Does every reply need one?"
+> **Domain expert:** "No. Skip questions-only and status-only turns. The diagram is for the approach and for what changed."
+
+> **Developer:** "Is that a new control line?"
+> **Domain expert:** "No. It is a ` ```mermaid ` fence. Copy still gets the source."
 ### Todo list
 
 > **Developer:** "Which chat owns a todo list?"
@@ -508,6 +531,10 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 - A **Git action** and the turn's `FAROL_PIPELINES` validation could be conflated — resolved: the hook pipeline is chosen by `.farol` per action, the agent does not select it, and ordinary validation still runs.
 - The agent's **Git action** could be invisible to the UI — resolved: it appears on the existing **Git panel**, and the **Git log** records its outcome.
 - Plan mode could still allow status (read-only) — resolved: **Plan mode** performs no **Git action**; a `FAROL_GIT` line there is ignored the way a non-empty `FAROL_PIPELINES` list is.
+
+### Chat diagram
+
+- Explaining a change could mean a new control line or a remote image — resolved: a **Chat diagram** is a ` ```mermaid ` fence in the message; Chat renders it, and the contract asks for one before implementation and after file changes.
 ### Todo list
 
 - The **Todo list** could hang off a chat, a repository, or a checkout — resolved: per checkout, so a linked worktree keeps its own list and every chat on a checkout shares one.
