@@ -43,8 +43,8 @@ The always-visible recent-commit list on the **Source Control page**.
 _Avoid_: collapsed Recent commits details
 
 **Pull request**:
-The Compare, Base, **Merge status**, **Check conflicts**, title, and Create pull request block on the **Source Control page**. Compare is the current branch. Base is a selector over the known merge/PR base, local branches, and remote-tracking branches, minus the current branch; it defaults to the known base, else a conventional base (`staging`, `main`, `master`, `develop`), else the repository default. The title is an optional input. Create pull request stays hold-to-confirm and runs `gh pr create --fill`, adding `--base` for the chosen base and `--title` when the title is non-empty. Working-tree conflict paths and predicted GitHub conflict paths stay as lists on this block; **Merge status** text stays.
-_Avoid_: Compare as a checkout picker, defaulting Base to the current or most recent feature branch, offering the current branch as its own base, hiding remote-only bases, Base as a fixed read-only field, dropping the title input, moving conflict paths off this block, hiding those paths
+The Compare, Base, **Merge status**, **Check conflicts**, title, description, **Generate with AI**, Create pull request, GitHub Actions checks, merge-strategy, and Merge block on the **Source Control page**. Compare is the current branch. Base is a selector over the known merge/PR base, local branches, and remote-tracking branches, minus the current branch; it defaults to the known base, else a conventional base (`staging`, `main`, `master`, `develop`), else the repository default. Title and description are optional inputs kept on the **Git panel** for the project session (they survive closing the page, reset on project switch, and are not saved to disk). **Generate with AI** replaces both from the commits and diff against the chosen base. Create pull request stays hold-to-confirm and runs `gh pr create --fill`, adding `--base`, `--title`, and `--body` when those fields are non-empty. When a PR is already open, the block shows Actions summary and check rows, a merge-strategy selector that must be chosen each time, and a hold-to-confirm Merge that stays disabled while the PR is draft, conflicting, or waiting on required checks. Working-tree conflict paths and predicted GitHub conflict paths stay as lists on this block; **Merge status** text stays.
+_Avoid_: Compare as a checkout picker, defaulting Base to the current or most recent feature branch, offering the current branch as its own base, hiding remote-only bases, Base as a fixed read-only field, dropping the title or description inputs, moving conflict paths off this block, hiding those paths, merging without an explicit strategy, merging while required checks are pending or failing, merging drafts or conflicting PRs
 
 **Check conflicts**:
 The always-visible **Pull request** action that is today's Resolve with AI: two-click confirm, same block reasons, then merge the PR or base and send files to Chat.
@@ -55,8 +55,12 @@ The **Pull request** line that reports GitHub or base-merge conflict state. Unti
 _Avoid_: hiding merge status when the tree is clean, a second status source
 
 **Git log**:
-The activity transcript on the **Source Control page**. Each line is a timed outcome of commit, push, create pull request, **Check conflicts**, a **Generate with AI** failure, or a status refresh failure. It replaces the single success and error banners. A successful generate is not a line — the **Commit message** box is the success. Refresh failures use one line per streak: append when a refresh fails after a success or on the first fail; stay quiet while it keeps failing; do not log successful polls. It lives on the **Git panel** for the session: it survives closing the **Source Control page**, resets when the project switches, and is not saved to disk. It is not a fetch log and does not add a fetch action.
+The activity transcript on the **Source Control page**. Each line is a timed outcome of commit, push, create pull request, merge pull request, **Check conflicts**, a **Generate with AI** failure (commit or pull request), or a status refresh failure. It replaces the single success and error banners. A successful generate is not a line — the **Commit message** or **Pull request** draft fields are the success. Refresh failures use one line per streak: append when a refresh fails after a success or on the first fail; stay quiet while it keeps failing; do not log successful polls. It lives on the **Git panel** for the session: it survives closing the **Source Control page**, resets when the project switches, and is not saved to disk. It is not a fetch log and does not add a fetch action.
 _Avoid_: a single success/error banner as the only history, fetch lines, treating this as **Latest commits**, persisting the transcript to disk, keeping lastMessage/error as a second history, a line for every failed poll, logging successful refreshes, logging a successful generate, a silent generate failure
+
+**Source Control refresh**:
+The always-visible header control that reloads git status, recent commits, and GitHub PR/check state. It uses the existing refresh icon, stays disabled while an update is active, and surfaces the latest refresh error in its tooltip (and still in **Git log**). It replaces the error-only Retry control.
+_Avoid_: showing Retry only after failure, a second refresh path, hiding refresh while clean
 
 ### Plan mode
 
@@ -141,12 +145,16 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 - If that commit fails, unchecked files that were staged before the attempt are restored to staged with a whole-file `git add`; files this attempt newly staged are still unstaged
 - An empty or whitespace-only **Commit message** still cannot commit
 - The **Commit message** lives on the **Git panel** like today's draft: it survives close, resets on project switch, clears after a successful commit, and is not saved to disk
-- **Pull request** Compare is the current branch; Base and title are real create inputs: Base picks the `--base` target and title passes `--title` when non-empty to `--fill`; create still does not check out a branch
+- **Pull request** Compare is the current branch; Base, title, and description are real create inputs: Base picks the `--base` target and title/body pass `--title`/`--body` when non-empty to `--fill`; create still does not check out a branch
+- **Pull request** title and description live on the **Git panel** for the session: they survive close, reset on project switch, and are not saved to disk
+- **Generate with AI** on **Pull request** replaces both title and description from the chosen base's commit log and diff, omitting secret-looking paths
+- An open **Pull request** shows GitHub Actions summary and per-check rows; Merge requires an explicit strategy each time and stays blocked while draft, conflicting, or waiting on required checks
 - **Check conflicts** is always on the **Pull request** block and is the same **Git panel** resolve action
 - **Merge status** is Merge status unknown until GitHub or base-merge status has loaded
 - Working-tree and predicted conflict paths stay listed on the **Pull request** block; they are not **Changes** rows
-- **Git log** appends timed outcomes for commit, push, create pull request, **Check conflicts**, **Generate with AI** failures, and refresh failures; it does not add fetch
-- A successful **Generate with AI** is not a **Git log** line; the **Commit message** box is the success
+- **Source Control refresh** is always in the header; it replaces the error-only Retry control and keeps refresh errors in the tooltip and **Git log**
+- **Git log** appends timed outcomes for commit, push, create pull request, merge pull request, **Check conflicts**, **Generate with AI** failures, and refresh failures; it does not add fetch
+- A successful **Generate with AI** is not a **Git log** line; the **Commit message** or **Pull request** draft fields are the success
 - A refresh-failure **Git log** line is one per streak: append on the first fail or after a success, stay quiet while failures continue, and do not log successful polls
 - **Git log** lives on the **Git panel** for the session: it survives close, resets on project switch, and is not saved to disk
 

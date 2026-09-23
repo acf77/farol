@@ -8,14 +8,16 @@ import {
   conflictSignals,
   conflictStatusItems,
   isSecretPath,
+  mergePullRequestBlockReason,
   parseAheadBehind,
   parseGitStatus,
   parseMergeTreeConflictPaths,
   pickPushRemote,
   pullRequestBlockReason,
-  pushBlockReason
+  pushBlockReason,
+  summarizePrChecks
 } from './git-status'
-import type { GitStatus } from './types'
+import type { GitStatus, PullRequest } from './types'
 
 function status(partial: Partial<GitStatus>): GitStatus {
   return {
@@ -329,5 +331,87 @@ describe('conflictResolvePrompt', () => {
     expect(text).toMatch(/staging/)
     expect(text).toMatch(/src\/a\.ts/)
     expect(text).toMatch(/working tree/)
+  })
+})
+
+describe('summarizePrChecks', () => {
+  it('reports none when there are no checks', () => {
+    expect(summarizePrChecks([])).toMatchObject({ state: 'none', checks: [] })
+  })
+
+  it('aggregates required checks and ignores unmarked when known empty', () => {
+    const checks = [
+      { name: 'build', state: 'passed' as const, required: true },
+      { name: 'optional', state: 'failed' as const }
+    ]
+    expect(summarizePrChecks(checks)).toMatchObject({
+      state: 'passed',
+      passed: 1,
+      failed: 1
+    })
+    expect(
+      summarizePrChecks(
+        [
+          { name: 'optional', state: 'failed' },
+          { name: 'extra', state: 'pending' }
+        ],
+        { requireAllWhenUnmarked: false }
+      )
+    ).toMatchObject({ state: 'passed' })
+  })
+
+  it('treats unmarked checks as required when protection list is unknown', () => {
+    expect(
+      summarizePrChecks([{ name: 'build', state: 'pending' }], { requireAllWhenUnmarked: true })
+    ).toMatchObject({ state: 'pending', pending: 1 })
+    expect(
+      summarizePrChecks([{ name: 'build', state: 'failed' }])
+    ).toMatchObject({ state: 'failed', failed: 1 })
+  })
+})
+
+describe('mergePullRequestBlockReason', () => {
+  function pr(partial: Partial<PullRequest>): PullRequest {
+    return {
+      number: 1,
+      hasConflicts: false,
+      checks: { state: 'passed', pending: 0, passed: 1, failed: 0, skipped: 0, neutral: 0, checks: [] },
+      ...partial
+    }
+  }
+
+  it('blocks drafts, conflicts, pending/failed checks, and missing strategy', () => {
+    expect(mergePullRequestBlockReason(null, 'merge')).toBe(
+      'No open pull request from this branch.'
+    )
+    expect(mergePullRequestBlockReason(pr({ isDraft: true }), 'merge')).toMatch(/ready for review/)
+    expect(mergePullRequestBlockReason(pr({ hasConflicts: true, base: 'main' }), 'squash')).toMatch(
+      /conflicts with main/
+    )
+    expect(
+      mergePullRequestBlockReason(
+        pr({ checks: { state: 'pending', pending: 1, passed: 0, failed: 0, skipped: 0, neutral: 0, checks: [] } }),
+        'merge'
+      )
+    ).toMatch(/required checks/)
+    expect(
+      mergePullRequestBlockReason(
+        pr({ checks: { state: 'failed', pending: 0, passed: 0, failed: 1, skipped: 0, neutral: 0, checks: [] } }),
+        'merge'
+      )
+    ).toMatch(/failing/)
+    expect(mergePullRequestBlockReason(pr({}), null)).toBe('Choose a merge strategy.')
+  })
+
+  it('allows a ready PR once a strategy is chosen', () => {
+    expect(mergePullRequestBlockReason(pr({}), 'rebase')).toBeNull()
+    expect(
+      mergePullRequestBlockReason(
+        pr({
+          checks: { state: 'none', pending: 0, passed: 0, failed: 0, skipped: 0, neutral: 0, checks: [] }
+        }),
+        'merge'
+      )
+    ).toBeNull()
   })
 })

@@ -12,7 +12,7 @@ vi.mock('./secrets', () => ({ peekSecret, setSecret: vi.fn(), clearSecret: vi.fn
 vi.mock('ai', () => ({ experimental_evaluate: evaluate }))
 vi.mock('./store', () => ({ loadSettings: vi.fn() }))
 
-import { checkJev, selectPipelines, verdictFromOutput } from './jev'
+import { checkJev, selectPipelines, selectTools, verdictFromOutput } from './jev'
 import { configureJevLogs, jevLogPath } from './jev-log'
 
 let logRoot: string
@@ -234,5 +234,35 @@ describe('selectPipelines', () => {
     peekSecret.mockReturnValue('a-key')
     evaluate.mockRejectedValue(new Error('gateway is down'))
     expect(await selectPipelines([pipeline('security', { autoSelectable: true })], 'state')).toBe(null)
+  })
+})
+
+describe('selectTools', () => {
+  it('omits only capabilities Jev confidently rejects', async () => {
+    peekSecret.mockReturnValue('a-key')
+    evaluate.mockResolvedValue({
+      answers: {
+        edit: { type: 'boolean', probability: 0.95 },
+        shell: { type: 'boolean', probability: 0.1 },
+        web: { type: 'boolean', probability: 0.4 }
+      }
+    })
+    expect(await selectTools('Mode: build\nTask: inspect only')).toEqual({
+      kind: 'selected',
+      kept: ['edit', 'web'],
+      omitted: ['shell']
+    })
+  })
+
+  it('falls back to null when no key is stored', async () => {
+    peekSecret.mockReturnValue(null)
+    expect(await selectTools('state')).toBe(null)
+    expect(evaluate).not.toHaveBeenCalled()
+  })
+
+  it('fails soft when the gateway call throws', async () => {
+    peekSecret.mockReturnValue('a-key')
+    evaluate.mockRejectedValue(new Error('gateway is down'))
+    expect(await selectTools('state')).toBe(null)
   })
 })
