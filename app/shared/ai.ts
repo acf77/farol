@@ -90,14 +90,9 @@ export function usesOpenRouterEnv(provider: AiProvider): boolean {
   return provider === 'openrouter' || provider === 'opencode'
 }
 
-/** Providers whose managed CLI can enforce Farol's read-only Plan mode. */
-export function hasReviewGate(provider: AiProvider): boolean {
-  return provider === 'codex' || provider === 'cursor' || provider === 'omp'
-}
-
-/** Plan survives only on a provider that can enforce it; everything else is Build. */
-export function normalizeMode(mode: AgentMode | undefined, provider: AiProvider): AgentMode {
-  return mode === 'plan' && hasReviewGate(provider) ? 'plan' : 'build'
+/** Any value other than `'plan'` normalizes to Build. */
+export function normalizeMode(mode: AgentMode | undefined): AgentMode {
+  return mode === 'plan' ? 'plan' : 'build'
 }
 
 /** Older pipelines omit `ai`; they keep running Claude. */
@@ -222,6 +217,9 @@ function toolsArgv(tools: string | undefined): string[] {
   return tools ? ['--tools', tools] : []
 }
 
+/** OMP has no read-only sandbox, so this allowlist — inspection only, no bash/edit/write — is the gate. */
+const OMP_READONLY_TOOLS = 'read,glob,grep,lsp'
+
 /**
  * Non-interactive argv for each CLI. Cursor runs in ask mode with plain
  * text so a review step returns a string instead of Agent "ACT" chrome.
@@ -257,10 +255,8 @@ export function aiCommand(provider: AiProvider, prompt: string, model?: string):
     case 'omp':
       return {
         bins: ['omp'],
-        // omp has no read-only sandbox, so the tool set is the gate: reading and
-        // searching only, no `bash`/`edit`/`write`. --auto-approve keeps it from
-        // waiting on an approval it can never receive.
-        args: withModel(['-p', '--auto-approve', '--tools', 'read,glob,grep,lsp', prompt], passed),
+        // --auto-approve keeps it from waiting on an approval it can never receive.
+        args: withModel(['-p', '--auto-approve', '--tools', OMP_READONLY_TOOLS, prompt], passed),
         hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to run OMP steps.'
       }
     case 'claude':
@@ -277,7 +273,9 @@ export function aiCommand(provider: AiProvider, prompt: string, model?: string):
  * stdin is ignored (see agent-controller.ts), so a mode that can still stop
  * to ask for approval — e.g. Claude's `acceptEdits`, which only auto-accepts
  * edits and leaves Bash pending — would hang forever. Every provider here
- * must therefore auto-approve *all* tool calls, including shell commands.
+ * must therefore auto-approve *all* tool calls, including shell commands,
+ * except in Plan mode (`opts.mode === 'plan'`), where the CLI's own
+ * read-only plan mode replaces full auto-approval.
  *
  * Claude and Cursor print nothing at all under `--output-format text` until
  * the whole run is over, which leaves Chat blank while the agent works, so
@@ -296,7 +294,7 @@ export function managedAiCommand(
   const cli = cliFor(provider)
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
   const jsonFormat = opts?.jsonFormat !== false
-  const plan = opts?.mode === 'plan' && hasReviewGate(provider)
+  const plan = opts?.mode === 'plan'
   const tools = opts?.tools?.length ? opts.tools.join(',') : undefined
   switch (cli) {
     case 'codex':
@@ -326,43 +324,51 @@ export function managedAiCommand(
     case 'cursor':
       return {
         bins: ['agent', 'cursor-agent'],
-        // Agent mode is the CLI default. Current Cursor releases only accept
-        // explicit `plan` and `ask` values for --mode.
+        // Agent mode is the CLI default; `plan` is Cursor's own read-only mode.
         args: withModel(
-          ['-p', '--force', ...(plan ? ['--mode=ask'] : []), '--output-format', 'stream-json', prompt],
+          ['-p', '--force', ...(plan ? ['--mode=plan'] : []), '--output-format', 'stream-json', prompt],
           passed
         ),
         hint: 'Install the Cursor CLI (https://cursor.com/docs/cli) to use managed Chat.',
         stream: 'ndjson'
       }
-    case 'opencode':
+    case 'opencode': {
+      // OpenCode's built-in `plan` agent is read-only; `--dangerously-skip-permissions`
+      // only bypasses tool-approval prompts, it does not grant plan the write tools
+      // it already lacks, so the two flags are safe to combine.
+      const planArgv = plan ? ['--agent', 'plan'] : []
       return {
         bins: ['opencode'],
         args: withModel(
           jsonFormat
-            ? ['run', '--format', 'json', '--dangerously-skip-permissions', prompt]
-            : ['run', '--dangerously-skip-permissions', prompt],
+            ? ['run', '--format', 'json', '--dangerously-skip-permissions', ...planArgv, prompt]
+            : ['run', '--dangerously-skip-permissions', ...planArgv, prompt],
           passed
         ),
         hint: 'Install OpenCode (https://opencode.ai) to use managed Chat. Farol needs a build that accepts `opencode run --format json`.',
         ...(jsonFormat ? { stream: 'ndjson' as const } : {})
       }
-    case 'omp': {
-      // Plan mode defaults to inspection-only when Jev did not supply a list;
-      // Build with an explicit allowlist uses that; otherwise omp keeps all tools.
-      const ompTools = tools ?? (plan ? 'read,glob,grep,lsp' : undefined)
+    }
+    case 'omp':
       return {
         bins: ['omp'],
         // `--mode json` is already non-interactive, so `-p` is redundant; it also
         // routes omp's own banners to stderr, leaving stdout pure NDJSON.
+        // Plan mode defaults to inspection-only when Jev did not supply a list;
+        // Build with an explicit allowlist uses that; otherwise omp keeps all tools.
         args: withModel(
-          ['--mode', 'json', '--auto-approve', ...toolsArgv(ompTools), prompt],
+          [
+            '--mode',
+            'json',
+            '--auto-approve',
+            ...toolsArgv(tools ?? (plan ? OMP_READONLY_TOOLS : undefined)),
+            prompt
+          ],
           passed
         ),
         hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to use managed Chat.',
         stream: 'ndjson'
       }
-    }
     case 'claude':
       return {
         bins: ['claude'],
@@ -380,7 +386,7 @@ export function managedAiCommand(
             'stream-json',
             '--verbose',
             '--permission-mode',
-            'bypassPermissions',
+            plan ? 'plan' : 'bypassPermissions',
             '--strict-mcp-config',
             ...toolsArgv(tools),
             prompt

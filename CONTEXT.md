@@ -160,10 +160,10 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 - A new Chat starts in **Build mode**, including after the developer clears the conversation.
 - Selecting **Plan mode** permits reading and planning; it does not authorize implementation.
 - Selecting **Build mode** authorizes implementation.
-- **Plan mode** is available only for providers that have a **Review gate**. Today that is Codex, Cursor, and OMP. Claude, OpenCode, and OpenRouter have no **Review gate**, so **Plan mode** is disabled for them. Instructions to avoid changes alone are not a **Review gate**.
+- **Plan mode** is available only for providers that have a **Review gate**. Today that is every provider — Codex, Cursor, OMP, Claude, OpenCode, and OpenRouter, which rides OpenCode's CLI and so inherits its **Review gate**. Instructions to avoid changes alone are not a **Review gate**.
 - When the current provider has no **Review gate**, the **Plan | Build** switch stays visible with both labels. The Plan side is disabled and cannot be selected; the Build side stays selected. Farol does not hide the switch, remove the Plan label, or leave Plan clickable.
 - That unavailable Plan side carries a tooltip that names the current provider and uses the exact reason “Cannot enforce read-only”. Farol does not use a generic phrase that omits the provider, a mention of **Review gate**, or a longer explanation, and it does not add a banner, toast, status line, or other Chat copy for that explanation.
-- Farol Plan uses that same **Review gate**, not a provider-specific planning mode. Cursor reviews already use ask mode; Farol Plan uses that gate rather than Cursor’s native plan mode.
+- Farol Plan uses that same **Review gate**, enforced with each provider's own read-only mode: Codex's `--sandbox read-only`, Cursor's `--mode=plan`, OMP's read-only tool allowlist, Claude's `--permission-mode plan`, and OpenCode's `--agent plan`. OpenRouter runs through the OpenCode CLI, so it uses that same `--agent plan`.
 - Selecting a provider that has no **Review gate** while **Plan mode** is selected switches the Chat to **Build mode**; **Plan mode** cannot remain selected for that provider. This does not consume **Execute plan**.
 - That forced switch still happens if the agent is working. Locking the mode selector stops the developer from picking a mode, not Farol from leaving **Plan mode** when the new provider has no **Review gate**.
 - After Farol switches the Chat to **Build mode** because the provider has no **Review gate**, later selecting a provider that has one leaves the Chat in **Build mode**; **Plan mode** is not restored automatically.
@@ -291,16 +291,16 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 > **Domain expert:** "Yes, and it can ask questions and propose changes, but it cannot apply those changes while Plan mode is selected."
 
 > **Developer:** "Can I select Plan mode with Claude?"
-> **Domain expert:** "No. Claude has no review gate, so Plan is disabled. Same for OpenCode and OpenRouter. Codex, Cursor, and OMP can use Plan."
+> **Domain expert:** "Yes. Claude, Codex, Cursor, OMP, OpenCode, and OpenRouter can all use Plan today — OpenRouter rides the OpenCode CLI, so it inherits OpenCode's review gate."
 
-> **Developer:** "If I'm on Claude, does the Plan | Build switch disappear?"
-> **Domain expert:** "No. Both sides stay. Plan is disabled — you can see it, but you cannot select it."
+> **Developer:** "If a provider had no review gate, would the Plan | Build switch disappear?"
+> **Domain expert:** "No. Both sides stay. Plan would be disabled — visible but not selectable — with a tooltip explaining why."
 
 > **Developer:** "How do I find out why Plan is unavailable?"
 > **Domain expert:** "Hover or focus the Plan side. The tooltip there names the provider and says it cannot enforce read-only. Nothing else in Chat announces it."
 
 > **Developer:** "Cursor has its own plan mode. Does Farol use that?"
-> **Domain expert:** "No. Farol Plan uses the same read-only gate as Cursor reviews — ask mode — not Cursor’s native plan mode."
+> **Domain expert:** "Yes now — Farol Plan drives each provider's own read-only mode, including Cursor's native `--mode=plan`, Claude's `--permission-mode plan`, and OpenCode's `--agent plan`."
 
 > **Developer:** "If Plan is selected and I switch to a provider that cannot enforce read-only access, what happens?"
 > **Domain expert:** "Farol switches the Chat to Build. Plan cannot stay selected. If a finished plan still has Execute, it stays."
@@ -489,7 +489,7 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 - Resolved: A non-empty `FAROL_PIPELINES` list in Plan mode does not start validation; Plan mode never runs pipelines.
 - Resolved: That reply is accepted and shown; Farol ignores the listed IDs instead of rejecting the turn or asking the agent to retry.
 - Resolved: Enforcing read-only access for **Plan mode** means a **Review gate** — the same enforcement pipeline reviews already use — not a prompt. Providers without a **Review gate** cannot use **Plan mode**.
-- Resolved: Farol Plan reuses those review gates rather than a provider-native planning mode; for Cursor that is ask mode, not Cursor’s native plan mode.
+- Resolved: Farol Plan drives each provider's own native read-only mode: Codex's `--sandbox read-only`, Cursor's `--mode=plan`, OMP's read-only tool allowlist, Claude's `--permission-mode plan`, and OpenCode's `--agent plan`.
 - Resolved: A forced switch to **Build mode** because the new provider has no **Review gate** still applies while the agent is working; the mode-selector lock does not defer it.
 - Resolved: When the current provider has no **Review gate**, Farol disables the Plan side of the **Plan | Build** switch. The switch stays visible with both labels; Plan is not hidden and is not left clickable.
 - Resolved: That explanation lives in a tooltip on the disabled Plan side, not in a banner, toast, status line, or other Chat surface.

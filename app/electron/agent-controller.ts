@@ -364,7 +364,7 @@ export class AgentController {
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
     const clean = request.prompt.trim()
-    const mode = normalizeMode(request.mode, request.provider)
+    const mode = normalizeMode(request.mode)
     if (!clean) return { ok: false, message: 'Enter a task for the agent.' }
     const existing = this.tasks.get(request.id)
     if (existing) {
@@ -467,7 +467,7 @@ export class AgentController {
       task.sameModelAttempts = 0
     }
     if (fallbacks) task.fallbacks = [...fallbacks]
-    task.request.mode = normalizeMode(mode ?? task.request.mode, task.request.provider)
+    task.request.mode = normalizeMode(mode ?? task.request.mode)
     if (pipelines) {
       const next = pipelines.filter((pipeline) => pipeline.nodes.length)
       if (next.length) task.request.pipelines = next
@@ -500,7 +500,7 @@ export class AgentController {
     if (!isAiProvider(provider)) return { ok: false, message: 'Unknown agent provider.' }
     task.request.provider = provider
     task.request.model = normalizeModel(model)
-    task.request.mode = normalizeMode(mode ?? task.request.mode, provider)
+    task.request.mode = normalizeMode(mode ?? task.request.mode)
     task.sameModelAttempts = 0
     return { ok: true }
   }
@@ -1048,7 +1048,7 @@ export class AgentController {
     const from = aiSelectionLabel(task.request.provider, task.request.model)
     task.request.provider = next.agent
     task.request.model = normalizeModel(next.model)
-    task.request.mode = normalizeMode(task.request.mode, next.agent)
+    task.request.mode = normalizeMode(task.request.mode)
     logAgentFailure({
       ts: Date.now(),
       taskId: task.request.id,

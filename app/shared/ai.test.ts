@@ -6,7 +6,6 @@ import {
   aiSelectionLabel,
   cliFor,
   interactiveAiCommand,
-  hasReviewGate,
   isAiProvider,
   isUnknownJsonFormatError,
   managedAiCommand,
@@ -32,17 +31,6 @@ describe('normalizeAi', () => {
     expect(normalizeAi(undefined)).toBe('claude')
     expect(normalizeAi('gpt')).toBe('claude')
     expect(isAiProvider('agent')).toBe(false)
-  })
-})
-
-describe('review gates', () => {
-  it('exposes Plan only where managed Chat can enforce read-only access', () => {
-    expect(hasReviewGate('codex')).toBe(true)
-    expect(hasReviewGate('cursor')).toBe(true)
-    expect(hasReviewGate('omp')).toBe(true)
-    expect(hasReviewGate('claude')).toBe(false)
-    expect(hasReviewGate('opencode')).toBe(false)
-    expect(hasReviewGate('openrouter')).toBe(false)
   })
 })
 
@@ -138,10 +126,35 @@ describe('aiCommand', () => {
 })
 
 describe('managedAiCommand', () => {
-  it('uses each provider review gate for Plan mode', () => {
+  it('switches each provider to its read-only Plan flags', () => {
     expect(managedAiCommand('codex', 'plan this', undefined, { mode: 'plan' }).args).toContain('read-only')
-    expect(managedAiCommand('cursor', 'plan this', undefined, { mode: 'plan' }).args).toContain('--mode=ask')
+    expect(managedAiCommand('cursor', 'plan this', undefined, { mode: 'plan' }).args).toContain(
+      '--mode=plan'
+    )
     expect(managedAiCommand('omp', 'plan this', undefined, { mode: 'plan' }).args).toContain('read,glob,grep,lsp')
+    expect(managedAiCommand('claude', 'plan this', undefined, { mode: 'plan' }).args).toContain('plan')
+    expect(managedAiCommand('claude', 'plan this', undefined, { mode: 'plan' }).args).not.toContain(
+      'bypassPermissions'
+    )
+    expect(managedAiCommand('opencode', 'plan this', undefined, { mode: 'plan' }).args).toEqual([
+      'run',
+      '--format',
+      'json',
+      '--dangerously-skip-permissions',
+      '--agent',
+      'plan',
+      'plan this'
+    ])
+    // OpenRouter rides OpenCode, so it gets the same read-only plan agent.
+    expect(managedAiCommand('openrouter', 'plan this', undefined, { mode: 'plan' }).args).toEqual([
+      'run',
+      '--format',
+      'json',
+      '--dangerously-skip-permissions',
+      '--agent',
+      'plan',
+      'plan this'
+    ])
   })
 
   it('auto-approves every provider so headless Chat can use shell tools', () => {

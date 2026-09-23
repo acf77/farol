@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentMode, AgentSkill, AiProvider, AppSettings, Pipeline, ProviderUsage } from '@shared/types'
-import { AI_LABELS, aiSelectionLabel, hasReviewGate, normalizeAi, normalizeModel } from '@shared/ai'
+import { AI_LABELS, aiSelectionLabel, normalizeAi, normalizeModel } from '@shared/ai'
 import {
   convertSkillDraft,
   filterSkills,
@@ -1155,17 +1155,13 @@ const COMPOSER_TEXTAREA_STYLE: React.CSSProperties = {
 
 export function ChatModeSwitch({
   mode,
-  provider,
   locked,
   onChange
 }: {
   mode: AgentMode
-  provider: AiProvider
   locked: boolean
   onChange: (mode: AgentMode) => void
 }) {
-  const planAvailable = hasReviewGate(provider)
-  const unavailablePlanTitle = `${AI_LABELS[provider]}: Cannot enforce read-only`
   return (
     <div
       role="group"
@@ -1183,16 +1179,15 @@ export function ChatModeSwitch({
       <button
         type="button"
         className="bf-focus"
-        disabled={locked || !planAvailable}
+        disabled={locked}
         onClick={() => onChange('plan')}
-        title={planAvailable ? 'Plan without making changes' : unavailablePlanTitle}
-        aria-label={planAvailable ? 'Plan mode' : unavailablePlanTitle}
+        title="Plan without making changes"
         aria-pressed={mode === 'plan'}
         style={{
           border: 'none', borderRadius: 6, padding: '3px 7px',
           background: mode === 'plan' ? C.card : 'transparent',
-          color: !planAvailable ? C.faint : mode === 'plan' ? C.text : C.textMuted,
-          fontSize: 11, fontWeight: 600, cursor: locked || !planAvailable ? 'default' : 'pointer'
+          color: mode === 'plan' ? C.text : C.textMuted,
+          fontSize: 11, fontWeight: 600, cursor: locked ? 'default' : 'pointer'
         }}
       >
         Plan
@@ -1251,7 +1246,7 @@ function ComposerToolbar({
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 14, rowGap: 8 }}>
-      <ChatModeSwitch mode={mode} provider={provider} locked={modeLocked} onChange={onModeChange} />
+      <ChatModeSwitch mode={mode} locked={modeLocked} onChange={onModeChange} />
       <span style={{ flex: 1 }} />
       <button
         ref={agentBtnRef}

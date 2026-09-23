@@ -94,7 +94,7 @@ describe('restored chat model selection', () => {
     const restored: AgentPane = {
       ...saved,
       status: 'idle',
-      mode: normalizeMode(saved.mode, saved.provider)
+      mode: normalizeMode(saved.mode)
     }
     expect(restored.model).toBe(model)
     expect(renderChat(restored)).toContain(`title="Agent: ${label}"`)
@@ -110,7 +110,6 @@ describe('ChatModeSwitch', () => {
     const html = renderToStaticMarkup(
       createElement(ChatModeSwitch, {
         mode: 'build',
-        provider: 'codex',
         locked: false,
         onChange: vi.fn()
       })
@@ -121,24 +120,10 @@ describe('ChatModeSwitch', () => {
     expect(html).toMatch(/aria-pressed="true"[^>]*>Build</)
   })
 
-  it('disables Plan with the provider-specific reason when no review gate exists', () => {
-    const html = renderToStaticMarkup(
-      createElement(ChatModeSwitch, {
-        mode: 'build',
-        provider: 'claude',
-        locked: false,
-        onChange: vi.fn()
-      })
-    )
-    expect(html).toContain('title="Claude: Cannot enforce read-only"')
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Plan<\/button>/)
-  })
-
   it('locks both sides while the agent is working', () => {
     const html = renderToStaticMarkup(
       createElement(ChatModeSwitch, {
         mode: 'plan',
-        provider: 'cursor',
         locked: true,
         onChange: vi.fn()
       })

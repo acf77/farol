@@ -247,7 +247,7 @@ function tabsFromSession(sess: ProjectSession): Tab[] {
                   : 'needs-attention') as AgentPane['status'],
               attempt: p.attempt,
               provider: p.provider,
-              mode: normalizeMode(p.mode, p.provider),
+              mode: normalizeMode(p.mode),
               ...(p.model ? { model: p.model } : {}),
               messages: trimAgentMessages(
                 [
@@ -2104,7 +2104,7 @@ export function ProjectWorkspace({
       const provider = providerOverride ?? pane.provider
       const model = modelOverride === null ? undefined : (modelOverride ?? pane.model)
       const requestedMode = modeOverride ?? pane.mode
-      const mode = normalizeMode(requestedMode, provider)
+      const mode = normalizeMode(requestedMode)
       const fallbacks = modeFallbacks(settingsRef.current, mode, provider, model)
 
       const failStart = (message?: string): void => {
@@ -2255,7 +2255,7 @@ export function ProjectWorkspace({
       if (!pane) return
       // Always record the choice on the pane so the next start/message uses it,
       // including when the user switches after a usage/session limit mid-chat.
-      const mode = normalizeMode(pane.mode, provider)
+      const mode = normalizeMode(pane.mode)
       patchPane(pane.id, (current) =>
         current.kind === 'agent' ? { ...current, provider, model, mode } : current
       )

@@ -1,7 +1,6 @@
 /** Machine-scoped preferences — which agent to hand work to, and when. */
 
 import {
-  hasReviewGate,
   isAiProvider,
   normalizeMode,
   normalizeModel,
@@ -80,19 +79,15 @@ export function defaultSettings(): AppSettings {
   }
 }
 
-/**
- * Drop rungs Farol cannot honour: unknown providers, duplicates, and — for
- * Plan — any CLI without a review gate, which `normalizeMode` would silently
- * downgrade to Build.
- */
-export function sanitizeModeChain(raw: unknown, mode: AgentMode): ModelChoice[] {
+/** Drop rungs Farol cannot honour: unknown providers and duplicates. */
+export function sanitizeModeChain(raw: unknown): ModelChoice[] {
   if (!Array.isArray(raw)) return []
   const out: ModelChoice[] = []
   const seen = new Set<string>()
   for (const row of raw) {
     if (!row || typeof row !== 'object') continue
     const { agent, model } = row as { agent?: unknown; model?: unknown }
-    if (!isAiProvider(agent) || (mode === 'plan' && !hasReviewGate(agent))) continue
+    if (!isAiProvider(agent)) continue
     const id = normalizeModel(model)
     const key = `${agent}:${id ?? ''}`
     if (seen.has(key)) continue
@@ -109,7 +104,7 @@ export function withModeChain(
 ): AppSettings {
   return {
     ...settings,
-    modeDefaults: { ...settings.modeDefaults, [mode]: sanitizeModeChain(chain, mode) }
+    modeDefaults: { ...settings.modeDefaults, [mode]: sanitizeModeChain(chain) }
   }
 }
 
@@ -134,7 +129,7 @@ export function modeSelectionForPane(
   const head = settings.modeDefaults[mode][0]
   const provider = head?.agent ?? pane.provider
   const model = head ? head.model : pane.model
-  return { mode: normalizeMode(mode, provider), provider, model }
+  return { mode: normalizeMode(mode), provider, model }
 }
 
 /**
@@ -239,7 +234,7 @@ function sanitizeModels(raw: unknown): Partial<Record<AiProvider, string>> {
 
 function sanitizeModeDefaults(raw: unknown): ModeDefaults {
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
-  return { plan: sanitizeModeChain(o.plan, 'plan'), build: sanitizeModeChain(o.build, 'build') }
+  return { plan: sanitizeModeChain(o.plan), build: sanitizeModeChain(o.build) }
 }
 
 function isDiscoverableProvider(value: string): value is DiscoverableProvider {

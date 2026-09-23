@@ -411,7 +411,6 @@ export function CliModelMenu({
   model,
   pos,
   settings,
-  only,
   locked,
   onPick,
   onClose
@@ -420,8 +419,6 @@ export function CliModelMenu({
   model?: string
   pos: MenuPos
   settings?: AppSettings
-  /** Narrows the provider page — Plan mode only offers review-gated CLIs. */
-  only?: (provider: AiProvider) => boolean
   locked?: boolean
   onPick: (provider: AiProvider, model: string | undefined) => void
   onClose: () => void
@@ -430,8 +427,7 @@ export function CliModelMenu({
   const [page, setPage] = useState<AiProvider | 'cli'>(locked ? current : 'cli')
   const [query, setQuery] = useState('')
   const selectedModel = normalizeModel(model)
-  const all = pickerProviders(settings?.openrouter)
-  const providers = only ? all.filter(only) : all
+  const providers = pickerProviders(settings?.openrouter)
 
   const place: React.CSSProperties =
     'bottom' in pos ? { left: pos.left, bottom: pos.bottom } : { left: pos.left, top: pos.top }
@@ -554,7 +550,6 @@ export function CliModelDropdown({
   provider,
   model,
   settings,
-  only,
   locked,
   onChange,
   label
@@ -562,7 +557,6 @@ export function CliModelDropdown({
   provider: AiProvider
   model?: string
   settings?: AppSettings
-  only?: (provider: AiProvider) => boolean
   locked?: boolean
   onChange: (provider: AiProvider, model: string | undefined) => void
   label?: string
@@ -637,7 +631,6 @@ export function CliModelDropdown({
           provider={provider}
           model={model}
           settings={settings}
-          only={only}
           locked={locked}
           pos={pos}
           onPick={(p, m) => {

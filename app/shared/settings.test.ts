@@ -187,15 +187,19 @@ describe('mode defaults', () => {
           { agent: 'codex', model: 'gpt-5.6-sol' },
           { agent: 'claude' }
         ],
-        // Plan needs a review gate; Claude and OpenCode cannot enforce read-only.
-        plan: [{ agent: 'claude' }, { agent: 'cursor', model: 'composer-2.5' }, { agent: 'omp' }]
+        // OpenRouter rides OpenCode's read-only agent, so it keeps a Plan rung too.
+        plan: [{ agent: 'claude' }, { agent: 'openrouter' }, { agent: 'omp' }]
       }
     })
     expect(s.modeDefaults.build).toEqual([
       { agent: 'codex', model: 'gpt-5.6-sol' },
       { agent: 'claude' }
     ])
-    expect(s.modeDefaults.plan).toEqual([{ agent: 'cursor', model: 'composer-2.5' }, { agent: 'omp' }])
+    expect(s.modeDefaults.plan).toEqual([
+      { agent: 'claude' },
+      { agent: 'openrouter' },
+      { agent: 'omp' }
+    ])
   })
 
   it('opens a mode on its first rung, or the plain agent default without one', () => {

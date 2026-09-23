@@ -1,12 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AgentMode, AppSettings, ModelChoice, SettingsResult } from '@shared/types'
-import {
-  AI_LABELS,
-  hasReviewGate,
-  pickerProviders,
-  type AiProvider
-} from '@shared/ai'
+import { AI_LABELS, pickerProviders, type AiProvider } from '@shared/ai'
 import { AI_GATEWAY_API_URL, JEV_MODEL_ID } from '@shared/jev'
 import { OPENROUTER_API_URL } from '@shared/openrouter'
 import { withAgentModel, withCommitMessageModel, withModeChain } from '@shared/settings'
@@ -236,8 +231,6 @@ function ModeChain({
   onSettings: (next: AppSettings) => void
 }) {
   const chain = settings.modeDefaults[mode]
-  // Plan is only enforceable where the CLI has a read-only review gate.
-  const only = mode === 'plan' ? hasReviewGate : undefined
   const save = (next: ModelChoice[]): void => onSettings(withModeChain(settings, mode, next))
   const move = (from: number, to: number): void => {
     const next = [...chain]
@@ -245,7 +238,7 @@ function ModeChain({
     next.splice(to, 0, rung)
     save(next)
   }
-  const fallback = pickerProviders(settings.openrouter).find((p) => !only || only(p))
+  const fallback = pickerProviders(settings.openrouter)[0]
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -258,7 +251,6 @@ function ModeChain({
               provider={rung.agent}
               model={rung.model}
               settings={settings}
-              only={only}
               onChange={(agent, model) =>
                 save(chain.map((r, at) => (at === i ? { agent, ...(model ? { model } : {}) } : r)))
               }
@@ -494,7 +486,7 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
 
               <Section
                 title="Plan mode"
-                hint="Only CLIs that can enforce a read-only gate are offered. Leave empty to keep whichever model the chat is already on."
+                hint="Leave empty to keep whichever model the chat is already on."
               >
                 <ModeChain mode="plan" settings={settings} onSettings={onSettings} />
               </Section>
