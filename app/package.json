@@ -1,6 +1,6 @@
 {
   "name": "farol",
-  "version": "1.21.3",
+  "version": "1.22.1",
   "private": true,
   "author": "Farol",
   "description": "A terminal workspace with runnable shell + AI pipelines.",
@@ -49,6 +49,7 @@
         "zip"
       ],
       "identity": "-",
+      "timestamp": "none",
       "hardenedRuntime": false,
       "gatekeeperAssess": false
     },

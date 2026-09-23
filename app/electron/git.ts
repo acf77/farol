@@ -4,14 +4,15 @@ import path from 'path'
 import { runAiOnce } from './ai-oneshot'
 import {
   commitBlockReason,
-  committableFiles,
   conflictMergeBase,
   conflictResolvePrompt,
+  isSecretPath,
   parseAheadBehind,
   parseGitStatus,
   parseMergeTreeConflictPaths,
   pickPushRemote,
-  pushBlockReason
+  pushBlockReason,
+  committableFiles
 } from '../shared/git-status'
 import type { AiProvider, GitCommit, GitHubInfo, GitInfo, GitStatus } from '../shared/types'
 import { githubInfo } from './github'
@@ -457,11 +458,15 @@ async function restoreStagedFiles(
   return removed.length ? stageFiles(cwd, removed) : unstaged
 }
 
-function selectedCommittableFiles(st: GitStatus, requested?: string[]): string[] {
-  const { files } = committableFiles(st)
+/** Keep only `files` that `requested` names, or all of them when nothing is requested. */
+function filterSelected(files: string[], requested?: string[]): string[] {
   if (!requested) return files
   const selected = new Set(requested)
   return files.filter((file) => selected.has(file))
+}
+
+function selectedCommittableFiles(st: GitStatus, requested?: string[]): string[] {
+  return filterSelected(committableFiles(st).files, requested)
 }
 
 function indexChanges(st: GitStatus, selected: string[]): { added: string[]; removed: string[] } {
@@ -518,13 +523,16 @@ async function commit(cwd: string, message: string): Promise<{ ok: boolean; mess
 
 const COMMIT_MSG_LIMIT = 24_000
 
+/** Drop a fenced code block wrapper (` ```lang … ``` `) if the reply is wrapped in one. */
+function stripCodeFence(raw: string): string {
+  const text = raw.trim()
+  if (!text.startsWith('```')) return text
+  return text.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '').trim()
+}
+
 /** Strip markdown fences and cap AI commit output to a short message. */
 export function sanitizeCommitMessage(raw: string): string {
-  let message = raw.trim()
-  if (message.startsWith('```')) {
-    message = message.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '').trim()
-  }
-  return message
+  return stripCodeFence(raw)
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
@@ -578,8 +586,7 @@ export async function draftCommit(
   if (blocked) return { ok: false, error: blocked }
 
   const { files: available, skipped } = committableFiles(st)
-  const selected = selectedFiles ? new Set(selectedFiles) : null
-  const files = selected ? available.filter((file) => selected.has(file)) : available
+  const files = filterSelected(available, selectedFiles)
   if (!files.length) return { ok: false, error: 'Select at least one file to generate a commit message.' }
   const untracked = st.untracked.map((f) => f.path).filter((p) => files.includes(p))
   const tracked = files.filter((p) => !untracked.includes(p))
@@ -593,6 +600,130 @@ export async function draftCommit(
   const message = sanitizeCommitMessage(ai.text)
   if (!message) return { ok: false, error: 'AI returned an empty commit message' }
   return { ok: true, message, files, skipped }
+}
+
+const PR_CONTEXT_LIMIT = 48_000
+const PR_TITLE_LIMIT = 120
+const PR_BODY_LIMIT = 8_000
+
+/** Strip fences and labels from an AI PR title. */
+export function sanitizePrTitle(raw: string): string {
+  const title = stripCodeFence(raw)
+    .replace(/^(?:title|pr title)\s*[:\-–]\s*/i, '')
+    .trim()
+  const line = title.split('\n').map((l) => l.trim()).find(Boolean) ?? ''
+  return line.slice(0, PR_TITLE_LIMIT)
+}
+
+/** Strip fences and a leading DESCRIPTION label from an AI PR body. */
+export function sanitizePrDescription(raw: string): string {
+  return stripCodeFence(raw)
+    .replace(/^(?:description|body|pr (?:description|body))\s*[:\-–]\s*/i, '')
+    .trim()
+    .slice(0, PR_BODY_LIMIT)
+}
+
+/** Parse a structured AI reply into title + description. */
+export function parsePrDraftResponse(raw: string): { title: string; description: string } {
+  const text = stripCodeFence(raw)
+
+  const titleMatch = text.match(/^title\s*[:\-–]\s*(.+)$/im)
+  const descMatch = text.match(/^description\s*[:\-–]\s*\n?([\s\S]*)$/im)
+  if (titleMatch || descMatch) {
+    const afterTitle = titleMatch
+      ? text.slice(titleMatch.index! + titleMatch[0].length).replace(/^\n+/, '')
+      : text
+    const description = descMatch
+      ? descMatch[1] ?? ''
+      : afterTitle.replace(/^description\s*[:\-–]\s*/im, '')
+    return {
+      title: sanitizePrTitle(titleMatch?.[1] ?? ''),
+      description: sanitizePrDescription(description)
+    }
+  }
+
+  const [first, ...rest] = text.split(/\n\n+/)
+  return {
+    title: sanitizePrTitle(first ?? ''),
+    description: sanitizePrDescription(rest.join('\n\n'))
+  }
+}
+
+function prDraftPrompt(base: string, log: string, diff: string): string {
+  return [
+    `Write a GitHub pull request title and description for merging the current branch into ${base}.`,
+    'Output exactly this shape (no markdown fences, no extra labels):',
+    'TITLE: <one-line title>',
+    'DESCRIPTION:',
+    '<markdown body with a short summary and, when useful, a test plan>',
+    '',
+    '--- Commits ---',
+    log || '(no commits listed)',
+    '',
+    '--- Diff ---',
+    (diff || '(empty diff)').slice(0, PR_CONTEXT_LIMIT)
+  ].join('\n')
+}
+
+async function prCompareContext(
+  cwd: string,
+  base: string
+): Promise<{ ok: true; log: string; diff: string } | { ok: false; error: string }> {
+  const from = await resolveBase(cwd, base)
+  if (!from) return { ok: false, error: `Unknown base branch ${base.trim()}.` }
+  const range = `${from.ref}...HEAD`
+  const [logRes, namesRes] = await Promise.all([
+    git(cwd, ['log', '--oneline', range, '--', '.'], 30_000),
+    git(cwd, ['diff', '--name-only', range], 30_000)
+  ])
+  const paths = namesRes.out
+    .split('\n')
+    .map((p) => p.trim())
+    .filter((p) => p && !isSecretPath(p))
+  const diffRes = paths.length
+    ? await git(cwd, ['diff', '--stat', '--patch', range, '--', ...paths], 60_000)
+    : { code: 0, out: '', err: '' }
+  return {
+    ok: true,
+    log: logRes.out.trim(),
+    diff: diffRes.out.trim()
+  }
+}
+
+export type PrContentDraft = {
+  ok: boolean
+  title?: string
+  description?: string
+  error?: string
+}
+
+/** Generate a PR title and description from commits + diff vs the chosen base. */
+export async function draftPullRequest(
+  cwd: string,
+  provider: AiProvider,
+  model?: string,
+  base?: string
+): Promise<PrContentDraft> {
+  const baseName = base?.trim()
+  if (!baseName) return { ok: false, error: 'Choose a base branch before generating a pull request.' }
+
+  const context = await prCompareContext(cwd, baseName)
+  if (!context.ok) return context
+  if (!context.log && !context.diff) {
+    return { ok: false, error: `No commits or changes against ${baseName}.` }
+  }
+
+  const ai = await runAiOnce(
+    provider,
+    prDraftPrompt(baseName, context.log, context.diff),
+    cwd,
+    120_000,
+    model
+  )
+  if (!ai.ok) return { ok: false, error: ai.error || 'Could not generate pull request content' }
+  const parsed = parsePrDraftResponse(ai.text)
+  if (!parsed.title) return { ok: false, error: 'AI returned an empty pull request title' }
+  return { ok: true, title: parsed.title, description: parsed.description }
 }
 
 /** Make the index match `files`, commit, and restore its prior state on failure. */

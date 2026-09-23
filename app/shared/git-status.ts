@@ -1,6 +1,16 @@
 /** Parse `git status --porcelain=v1` into structured file lists. */
 
-import type { GitFileKind, GitHubInfo, GitStatus, GitStatusFile } from './types'
+import type {
+  GitFileKind,
+  GitHubInfo,
+  GitStatus,
+  GitStatusFile,
+  MergeStrategy,
+  PrCheck,
+  PrCheckState,
+  PrCheckSummary,
+  PullRequest
+} from './types'
 
 const CONFLICT = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'])
 
@@ -113,20 +123,29 @@ export function isSecretPath(filePath: string): boolean {
   return SECRET_KEYS.has(name) || SECRET_EXT.test(name)
 }
 
+/** First occurrence of each path across the status buckets, split into safe and likely-secret. */
+function uniqueCommittable(st: GitStatus): { safe: GitStatusFile[]; skipped: string[] } {
+  const seen = new Set<string>()
+  const safe: GitStatusFile[] = []
+  const skipped: string[] = []
+  for (const file of [...st.staged, ...st.unstaged, ...st.untracked]) {
+    if (seen.has(file.path)) continue
+    seen.add(file.path)
+    if (isSecretPath(file.path)) skipped.push(file.path)
+    else safe.push(file)
+  }
+  return { safe, skipped }
+}
+
 /** One row per file that may be sent to AI and committed, minus likely secrets. */
 export function committableChanges(st: GitStatus): GitStatusFile[] {
-  const seen = new Set<string>()
-  return [...st.staged, ...st.unstaged, ...st.untracked].filter((file) => {
-    if (seen.has(file.path) || isSecretPath(file.path)) return false
-    seen.add(file.path)
-    return true
-  })
+  return uniqueCommittable(st).safe
 }
 
 /** The same paths as `committableChanges`, plus the ones withheld as likely secrets. */
 export function committableFiles(st: GitStatus): { files: string[]; skipped: string[] } {
-  const paths = [...new Set([...st.staged, ...st.unstaged, ...st.untracked].map((f) => f.path))]
-  return { files: paths.filter((p) => !isSecretPath(p)), skipped: paths.filter(isSecretPath) }
+  const { safe, skipped } = uniqueCommittable(st)
+  return { files: safe.map((file) => file.path), skipped }
 }
 
 export function commitBlockReason(st: GitStatus): string | null {
@@ -248,4 +267,69 @@ export function conflictResolvePrompt(opts: {
     `Resolve every conflict, keep this branch's intended behavior, and leave the files ready to commit.`,
     `Conflicted files:\n${listed}`
   ].join('\n\n')
+}
+
+const CHECK_COUNTS = {
+  pending: 0,
+  passed: 0,
+  failed: 0,
+  skipped: 0,
+  neutral: 0
+} as const satisfies Record<PrCheckState, number>
+
+/** Aggregate check rows into counts and a required-check readiness state. */
+export function summarizePrChecks(
+  checks: PrCheck[],
+  opts?: { requireAllWhenUnmarked?: boolean }
+): PrCheckSummary {
+  const counts = { ...CHECK_COUNTS }
+  for (const check of checks) counts[check.state] += 1
+
+  if (!checks.length) {
+    return { state: 'none', ...counts, checks }
+  }
+
+  const marked = checks.filter((check) => check.required)
+  const required = marked.length
+    ? marked
+    : opts?.requireAllWhenUnmarked === false
+      ? []
+      : checks.filter((check) => check.state !== 'skipped' && check.state !== 'neutral')
+
+  if (!required.length) {
+    return { state: 'passed', ...counts, checks }
+  }
+  if (required.some((check) => check.state === 'failed')) {
+    return { state: 'failed', ...counts, checks }
+  }
+  if (required.some((check) => check.state === 'pending')) {
+    return { state: 'pending', ...counts, checks }
+  }
+  return { state: 'passed', ...counts, checks }
+}
+
+/**
+ * Why this pull request cannot be merged yet, or null when a chosen strategy
+ * may proceed. Pass `strategy` only when the UI has an explicit selection —
+ * an empty strategy always blocks so the user must pick one each time.
+ */
+export function mergePullRequestBlockReason(
+  pr: PullRequest | undefined | null,
+  strategy?: MergeStrategy | null
+): string | null {
+  if (!pr) return 'No open pull request from this branch.'
+  if (pr.isDraft) return 'Mark the pull request as ready for review before merging.'
+  if (pr.hasConflicts) {
+    return pr.base
+      ? `Resolve merge conflicts with ${pr.base} before merging.`
+      : 'Resolve merge conflicts before merging.'
+  }
+  const checks = pr.checks
+  if (!checks || checks.state === 'unavailable') {
+    return 'GitHub Actions status is unavailable.'
+  }
+  if (checks.state === 'pending') return 'Wait for required checks to finish.'
+  if (checks.state === 'failed') return 'Required checks are failing.'
+  if (!strategy) return 'Choose a merge strategy.'
+  return null
 }

@@ -144,6 +144,38 @@ export interface GitCommit {
 }
 
 
+/** Normalized GitHub Actions / status-check outcome for Source Control. */
+export type PrCheckState = 'pending' | 'passed' | 'failed' | 'skipped' | 'neutral'
+
+export interface PrCheck {
+  name: string
+  state: PrCheckState
+  /** True when branch protection lists this check as required. */
+  required?: boolean
+  url?: string
+}
+
+/** Roll-up of check rows used for merge gating and the Actions summary. */
+export interface PrCheckSummary {
+  /** Overall required-check readiness; `none` when GitHub reported no checks. */
+  state: 'pending' | 'passed' | 'failed' | 'none' | 'unavailable'
+  pending: number
+  passed: number
+  failed: number
+  skipped: number
+  neutral: number
+  checks: PrCheck[]
+}
+
+export const MERGE_STRATEGIES = ['merge', 'squash', 'rebase'] as const
+export type MergeStrategy = (typeof MERGE_STRATEGIES)[number]
+
+/** Session draft for opening a pull request (title + description). */
+export interface PrDraft {
+  title: string
+  description: string
+}
+
 export interface PullRequest {
   number: number
   hasConflicts: boolean
@@ -151,6 +183,10 @@ export interface PullRequest {
   base?: string
   /** GitHub HTML URL for this PR, when `gh` reported it. */
   url?: string
+  /** True when the PR is still a draft on GitHub. */
+  isDraft?: boolean
+  /** GitHub Actions / status checks for this PR, when available. */
+  checks?: PrCheckSummary
 }
 
 export interface GitHubInfo {
@@ -451,7 +487,23 @@ export interface FarolApi {
     createPr(
       projectPath: string,
       base?: string,
+      title?: string,
+      body?: string
+    ): Promise<{ ok: boolean; message: string }>
+    draftPr(
+      projectPath: string,
+      provider: AiProvider,
+      model?: string,
+      base?: string
+    ): Promise<{
+      ok: boolean
       title?: string
+      description?: string
+      error?: string
+    }>
+    mergePr(
+      projectPath: string,
+      strategy: MergeStrategy
     ): Promise<{ ok: boolean; message: string }>
     bringConflicts(projectPath: string): Promise<{ ok: boolean; message: string; prompt?: string }>
     /** Fires when HEAD changes, including from outside the app. */
