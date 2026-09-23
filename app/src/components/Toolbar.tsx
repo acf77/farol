@@ -4,7 +4,7 @@ import { C, MONO, glass as G } from '../theme'
 import type { View } from '../types'
 import { Checkbox } from './controls'
 import { CHROME_ROW } from './side-panel'
-import { BellIcon, ChatIcon, FolderPlusIcon, SettingsIcon, SplitIcon, TerminalIcon } from './icons'
+import { BellIcon, ChatIcon, CodeIcon, FolderPlusIcon, SettingsIcon, SplitIcon, TerminalIcon } from './icons'
 
 interface Props {
   liquid?: boolean
@@ -45,6 +45,7 @@ const menuItem: React.CSSProperties = {
 
 const VIEWS: { key: View; label: string; Icon: (p: { size?: number }) => JSX.Element }[] = [
   { key: 'chat', label: 'Chat', Icon: ChatIcon },
+  { key: 'code', label: 'Code', Icon: CodeIcon },
   { key: 'terminal', label: 'Terminal', Icon: TerminalIcon },
   { key: 'split', label: 'Split 50/50', Icon: SplitIcon }
 ]

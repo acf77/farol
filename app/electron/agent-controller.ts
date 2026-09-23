@@ -1248,6 +1248,7 @@ export class AgentController {
         ? `Do not run validation pipelines in Plan mode.`
         : `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
       `Do not call the Farol MCP tools in this managed Chat session. They are not available here — they require approval in some providers, and the managed harness executes your selected pipelines directly.`,
+      `When you propose or complete a change, include a Mermaid diagram in a \`\`\`mermaid fenced block so Chat can render it. Prefer flowchart TD or sequenceDiagram with 4–12 well-defined steps — detailed but not crowded. In Plan mode, diagram the intended approach. After changing files in Build mode, diagram what changed and why. Keep node labels short; put extra detail in the surrounding prose. Skip a diagram for questions-only or status-only replies.`,
       plan
         ? `End every response with exactly one final line: ${QUESTIONS_MARKER} [...] when you need a decision, ${FINISHED_PLAN} when the plan is complete, or ${PIPELINES_MARKER} [] for an ordinary response.`
         : `End every response with exactly one final line: either ${QUESTIONS_MARKER} [...] when you need a user decision, or ${PIPELINES_MARKER} ["pipeline-id"] when the file-change work for this turn is done — ${PIPELINES_MARKER} [] if no validation is needed. Use a JSON array and only catalog ids for pipelines.`,

@@ -59,11 +59,15 @@ import type {
   Tab,
   View
 } from './types'
+import { showsChat, showsTerminal } from './types'
+import { fileName } from './code'
+import { handleWorkspaceKeyDown } from './workspace-keys'
 import Toolbar from './components/Toolbar'
 import ErrorBoundary from './ErrorBoundary'
 import EmptyState from './components/EmptyState'
 import NewTabDialog from './components/NewTabDialog'
 import ChatPane from './components/ChatPane'
+import CodePane from './components/CodePane'
 import TerminalPane from './components/TerminalPane'
 import ProjectRail from './components/ProjectRail'
 import Sidebar from './components/Sidebar'
@@ -72,7 +76,9 @@ import { useGitPanel, type GitLogEntry } from './hooks/useGitPanel'
 import PipelineCanvas from './components/PipelineCanvas'
 import CommandPalette, { type PaletteItem } from './components/CommandPalette'
 import SettingsPage from './components/SettingsPage'
+import { useCodeWorkspace } from './hooks/useCodeWorkspace'
 import { useUsage } from './hooks/useUsage'
+import { useQuery } from '@tanstack/react-query'
 import { FolderPlusIcon } from './components/icons'
 
 const api = window.farol
@@ -91,6 +97,8 @@ const MAX_MESSAGE_CHARS = 40_000
 /** Per-message ceiling on what a restored session carries back. */
 const MAX_SAVED_CHARS = 4_000
 const NO_GIT: GitInfo = { isRepo: false, branch: '', branches: [] }
+/** Stable empty list so palette memoization does not churn before files load. */
+const NO_CODE_FILES: string[] = []
 
 type GitControl = {
   dotColor: string
@@ -856,94 +864,6 @@ function handleRunEvent(e: RunEvent, deps: RunEventHandlerDeps): void {
   }
 }
 
-interface WorkspaceKeyCtx {
-  visible: boolean
-  newTabOpen: boolean
-  editor: EditorState | null
-  paletteOpen: boolean
-  settingsOpen: boolean
-  gitOpen: boolean
-  setSettingsOpen: Dispatch<SetStateAction<boolean>>
-  activeTab: string
-  active: Tab | undefined
-  view: View
-  termTabs: Tab[]
-  tabsRef: { current: Tab[] }
-  newShellTab: () => void
-  splitPane: (dir: 'row' | 'col') => void
-  closePane: (tabId: string, paneId: string) => void
-  closeTab: (id: string) => void
-  setView: Dispatch<SetStateAction<View>>
-  setPaletteOpen: Dispatch<SetStateAction<boolean>>
-  setActiveTab: Dispatch<SetStateAction<string>>
-}
-
-function handleSplitShortcut(e: KeyboardEvent, ctx: WorkspaceKeyCtx): void {
-  e.preventDefault()
-  // Pane splits when a shell is active; otherwise toggle chat/terminal split.
-  const tab = ctx.tabsRef.current.find((t) => t.id === ctx.activeTab)
-  if (tab?.kind === 'shell' && ctx.view !== 'chat') {
-    ctx.splitPane(e.shiftKey ? 'col' : 'row')
-  } else {
-    ctx.setView((v) => (v === 'split' ? 'chat' : 'split'))
-  }
-}
-
-function handleCloseShortcut(e: KeyboardEvent, ctx: WorkspaceKeyCtx): void {
-  e.preventDefault()
-  if (e.shiftKey && ctx.active) {
-    ctx.closePane(ctx.active.id, ctx.active.focus)
-  } else if (ctx.activeTab) {
-    ctx.closeTab(ctx.activeTab)
-  }
-}
-
-function handleDigitShortcut(e: KeyboardEvent, ctx: WorkspaceKeyCtx, digit: string): void {
-  const tab = ctx.termTabs[+digit - 1]
-  if (!tab) return
-  e.preventDefault()
-  ctx.setActiveTab(tab.id)
-  ctx.setView((v) => (v === 'chat' ? 'split' : v))
-}
-
-function handleWorkspaceKeyDown(e: KeyboardEvent, ctx: WorkspaceKeyCtx): void {
-  // The dialog is modal: let it own Escape and Return.
-  if (
-    !ctx.visible ||
-    ctx.newTabOpen ||
-    ctx.editor ||
-    ctx.paletteOpen ||
-    ctx.settingsOpen ||
-    ctx.gitOpen
-  ) return
-  if (!(e.metaKey || e.ctrlKey) || e.altKey) return
-  const k = e.key.toLowerCase()
-  if (k === ',') {
-    e.preventDefault()
-    ctx.setSettingsOpen(true)
-    return
-  }
-  if (k === 't') {
-    e.preventDefault()
-    ctx.newShellTab()
-    return
-  }
-  if (k === 'd') {
-    handleSplitShortcut(e, ctx)
-    return
-  }
-  if (k === 'k') {
-    e.preventDefault()
-    ctx.setPaletteOpen(true)
-    return
-  }
-  if (k === 'w') {
-    handleCloseShortcut(e, ctx)
-    return
-  }
-  if (k >= '1' && k <= '9') handleDigitShortcut(e, ctx, k)
-}
-
 function resolveRunBranch(project: Project | null, active: Tab | undefined, git: GitInfo): string {
   if (project) return branchForTab(active, project.path, git)
   return git.branch || '—'
@@ -1029,6 +949,7 @@ interface ProjectWorkspaceViewProps {
   createBranchProject: (req: WorktreeRequest) => void
   editor: EditorState | null
   saveEditor: () => void
+  code: ReturnType<typeof useCodeWorkspace>
 }
 
 function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
@@ -1104,7 +1025,8 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     openExistingWorktree,
     createBranchProject,
     editor,
-    saveEditor
+    saveEditor,
+    code
   } = props
   const defaultChoice = modeDefault(settings, 'build')
 
@@ -1153,7 +1075,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 8, padding: PANEL_INSET }}>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 8 }}>
-          {view !== 'terminal' && (
+          {showsChat(view) && (
             <ErrorBoundary compact>
               <ChatPane
                 key={`${project.path}:${chatOwner?.id ?? 'chat'}`}
@@ -1193,17 +1115,17 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               flex: view === 'split' ? '1 1 50%' : '1 1 100%',
               minWidth: 0,
               minHeight: 0,
-              display: view === 'chat' ? 'none' : 'flex',
+              display: showsTerminal(view) ? 'flex' : 'none',
               flexDirection: 'column'
             }}
-            aria-hidden={view === 'chat'}
+            aria-hidden={!showsTerminal(view)}
           >
             <TerminalPane
               key={project.path}
               tabs={termTabs}
               activeId={active?.id ?? ''}
-              view={view === 'chat' ? 'terminal' : view}
-              workspaceVisible={visible && view !== 'chat'}
+              view={showsTerminal(view) ? view : 'terminal'}
+              workspaceVisible={visible && showsTerminal(view)}
               branch={runBranch}
               cwd={cwdLabel}
               onSelect={setActiveTab}
@@ -1224,6 +1146,26 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               canSplit={!!active && active.kind === 'shell' && active.panes[active.focus]?.kind === 'shell'}
             />
           </div>
+          {view === 'code' && (
+            <ErrorBoundary compact>
+              <CodePane
+                projectPath={project.path}
+                tabs={code.tabs}
+                activePath={code.activePath}
+                active={code.active}
+                notice={code.notice}
+                onOpen={(path) => void code.openFile(path)}
+                onSelect={code.setActive}
+                onChange={code.updateContent}
+                onClose={code.requestClose}
+                onSave={() => void code.saveActive()}
+                onRevert={code.revertActive}
+                onDiscard={code.confirmClose}
+                onOverwrite={() => void code.overwriteSave()}
+                onCancelNotice={code.cancelNotice}
+              />
+            </ErrorBoundary>
+          )}
         </div>
 
         <Sidebar
@@ -1378,8 +1320,9 @@ export function ProjectWorkspace({
   const [newTabError, setNewTabError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
-  /** Which surfaces are on screen — the spec's Chat / Terminal / Split. */
+  /** Which surfaces are on screen — Chat / Code / Terminal / Split. */
   const [view, setView] = useState<View>('chat')
+  const code = useCodeWorkspace(project.path)
 
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [runs, setRuns] = useState<RunsByBranch>({})
@@ -1520,7 +1463,7 @@ export function ProjectWorkspace({
 
   const worktreeBusyFlag = agentBusy || pipelineBusy
   const wasWorktreeBusy = useRef(false)
-  const chatOpen = visible && view !== 'terminal'
+  const chatOpen = visible && showsChat(view)
 
   useEffect(() => {
     onAgentBusyChange?.(project.path, worktreeBusyFlag)
@@ -1547,7 +1490,7 @@ export function ProjectWorkspace({
   const showTerminal = useCallback((tabId?: string, mode: 'split' | 'terminal' = 'split') => {
     if (tabId) setActiveTab(tabId)
     if (mode === 'terminal') setView('terminal')
-    else setView((v) => (v === 'chat' ? 'split' : v))
+    else setView((v) => (showsTerminal(v) ? v : 'split'))
   }, [])
 
   /** Returns the pane that will take input, so callers can write into it. */
@@ -1783,7 +1726,7 @@ export function ProjectWorkspace({
         focus: paneId,
         panes: { ...t.panes, [paneId]: shellPane(paneId, focus.cwd) }
       }))
-      setView((v) => (v === 'chat' ? 'split' : v))
+      setView((v) => (showsTerminal(v) ? v : 'split'))
     },
     [activeTab, patchTab]
   )
@@ -2485,7 +2428,13 @@ export function ProjectWorkspace({
         closeTab,
         setView,
         setPaletteOpen,
-        setActiveTab
+        setActiveTab,
+        saveCodeFile: () => {
+          void code.saveActive()
+        },
+        closeCodeTab: () => {
+          if (code.activePath) code.requestClose(code.activePath)
+        }
       })
     }
     window.addEventListener('keydown', onKey)
@@ -2504,7 +2453,8 @@ export function ProjectWorkspace({
     newShellTab,
     splitPane,
     closeTab,
-    closePane
+    closePane,
+    code
   ])
 
   const saveEditor = useCallback(() => {
@@ -2598,6 +2548,13 @@ export function ProjectWorkspace({
   const selected = pipelines.find((p) => p.id === selId) ?? null
   const runBranch = resolveRunBranch(project, active, git)
 
+  const { data: loadedCodeFiles } = useQuery({
+    queryKey: ['project-files', project.path],
+    queryFn: () => api.project.listFiles(project.path),
+    staleTime: 30_000
+  })
+  const codeFiles = loadedCodeFiles ?? NO_CODE_FILES
+
   const openRunLogs = useCallback(() => {
     if (!selId) return
     const tab =
@@ -2614,6 +2571,12 @@ export function ProjectWorkspace({
         label: 'Chat view',
         group: 'View',
         run: () => setView('chat')
+      },
+      {
+        id: 'view-code',
+        label: 'Code view',
+        group: 'View',
+        run: () => setView('code')
       },
       {
         id: 'view-terminal',
@@ -2657,7 +2620,7 @@ export function ProjectWorkspace({
         label: 'Focus chat composer',
         group: 'Actions',
         run: () => {
-          setView((v) => (v === 'terminal' ? 'split' : v))
+          setView((v) => (showsChat(v) ? v : 'split'))
           window.setTimeout(() => composerRef.current?.focus(), 0)
         }
       }
@@ -2689,12 +2652,24 @@ export function ProjectWorkspace({
         detail: tab.kind,
         run: () => {
           setActiveTab(tab.id)
-          setView((v) => (v === 'chat' ? 'terminal' : v))
+          setView((v) => (showsTerminal(v) ? v : 'terminal'))
+        }
+      })
+    }
+    for (const file of codeFiles) {
+      items.push({
+        id: `file:${file}`,
+        label: fileName(file),
+        group: 'Files',
+        detail: file,
+        run: () => {
+          setView('code')
+          void code.openFile(file)
         }
       })
     }
     return items
-  }, [pipelines, termTabs, newShellTab, newAgentTerminal, onOpenProject, runPipeline, setSettingsOpen, settings.agent])
+  }, [pipelines, termTabs, codeFiles, code.openFile, newShellTab, newAgentTerminal, onOpenProject, runPipeline, setSettingsOpen, settings.agent])
 
   const branchRuns = useMemo(() => {
     const out: Record<string, RunState> = {}
@@ -2781,6 +2756,7 @@ export function ProjectWorkspace({
       createBranchProject={createBranchProject}
       editor={editor}
       saveEditor={saveEditor}
+      code={code}
     />
   )
 }

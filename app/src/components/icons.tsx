@@ -31,6 +31,31 @@ export function TerminalIcon({ size = 13 }: IconProps) {
   )
 }
 
+export function CodeIcon({ size = 13 }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>
+      <path d="M6.2 4.5 3.2 8l3 3.5M9.8 4.5l3 3.5-3 3.5" />
+    </svg>
+  )
+}
+
+export function FileIcon({ size = 13 }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>
+      <path d="M4.5 2.5h5l3 3v8a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1Z" />
+      <path d="M9.5 2.5v3h3" />
+    </svg>
+  )
+}
+
+export function FolderIcon({ size = 13 }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>
+      <path d="M2.5 5.2A1.2 1.2 0 0 1 3.7 4h3.2l1.4 1.6h4.2a1.2 1.2 0 0 1 1.2 1.2v5.4a1.2 1.2 0 0 1-1.2 1.2H3.7a1.2 1.2 0 0 1-1.2-1.2Z" />
+    </svg>
+  )
+}
+
 export function SplitIcon({ size = 13 }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>

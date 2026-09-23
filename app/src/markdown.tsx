@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from 'react'
 import { stripControlMarkerLines } from '@shared/control-line'
+import { isMermaidLang, MermaidDiagram } from './mermaid-diagram'
 import { C, MONO } from './theme'
 
 /**
@@ -284,7 +285,11 @@ function parseFence(lines: string[], i: number, key: string): BlockParse | null 
     j++
   }
   if (j < lines.length) j++ // closing fence
-  return { node: codeBlock(body.join('\n'), lang, key), next: j }
+  const source = body.join('\n')
+  return {
+    node: isMermaidLang(lang) ? <MermaidDiagram key={key} source={source} /> : codeBlock(source, lang, key),
+    next: j
+  }
 }
 
 function parseHeading(line: string, key: string, next: number): BlockParse | null {
@@ -393,7 +398,8 @@ function parseParagraph(lines: string[], i: number, key: string): BlockParse {
 
 /**
  * Render a subset of Markdown that coding agents commonly emit: headings,
- * fenced code, tables, lists, quotes, rules, and inline emphasis/links/code.
+ * fenced code, mermaid diagrams, tables, lists, quotes, rules, and
+ * inline emphasis/links/code.
  */
 export function renderMarkdown(source: string): ReactNode[] {
   const text = stripControlMarkers(source)
