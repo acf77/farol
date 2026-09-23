@@ -5,7 +5,6 @@ import {
   AI_LABELS,
   hasReviewGate,
   pickerProviders,
-  providerModels,
   type AiProvider
 } from '@shared/ai'
 import { AI_GATEWAY_API_URL, JEV_MODEL_ID } from '@shared/jev'
@@ -203,26 +202,21 @@ function ModelRow({
   settings: AppSettings
   onChange: (model?: string) => void
 }) {
-  const current = settings.models[provider]
-  const selectValue = provider === 'cursor' ? current || 'auto' : (current ?? '')
   return (
     <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <span style={{ width: 96, flex: 'none', fontSize: 12, color: C.textSoft }}>
         {AI_LABELS[provider]}
       </span>
-      <select
-        className="bf-input bf-focus"
-        value={selectValue}
-        onChange={(e) => onChange(e.target.value || undefined)}
-        style={{ ...field, flex: 1, minWidth: 0 }}
-      >
-        {provider !== 'cursor' && <option value="">Default — the CLI decides</option>}
-        {providerModels(provider, current, settings).map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.label}
-          </option>
-        ))}
-      </select>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <CliModelDropdown
+          label={`${AI_LABELS[provider]} default model`}
+          provider={provider}
+          model={settings.models[provider]}
+          settings={settings}
+          locked
+          onChange={(_agent, model) => onChange(model)}
+        />
+      </div>
     </label>
   )
 }
@@ -316,6 +310,8 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [listsHint, setListsHint] = useState<string | null>(null)
+  const listsRefreshed = useRef(false)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -346,6 +342,20 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
     setBusy(false)
     return !result.error
   }
+
+  const refreshLists = (): void => {
+    setBusy(true)
+    setListsHint(null)
+    void api.agentModels.refresh(true).then((result) => {
+      setListsHint(apply(result) ? 'Updated' : (result.error ?? 'Could not refresh'))
+    })
+  }
+
+  useEffect(() => {
+    if (tab !== 'models' || listsRefreshed.current) return
+    listsRefreshed.current = true
+    refreshLists()
+  }, [tab])
 
   const providers = pickerProviders(or)
   const catalog = or?.catalog ?? []
@@ -462,17 +472,16 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
                     />
                   ))}
                 </div>
-                <div style={{ marginTop: 12 }}>
-                  <Button
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => {
-                      setBusy(true)
-                      void api.agentModels.refresh(true).then(apply)
-                    }}
-                  >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                  <Button variant="secondary" disabled={busy} onClick={refreshLists}>
                     Refresh model lists
                   </Button>
+                  {busy && <span style={{ fontSize: 11.5, color: C.textMuted }}>Working…</span>}
+                  {!busy && listsHint && (
+                    <span style={{ fontSize: 11.5, color: listsHint === 'Updated' ? C.textSoft : C.red }}>
+                      {listsHint}
+                    </span>
+                  )}
                 </div>
               </Section>
 

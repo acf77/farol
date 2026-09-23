@@ -13,7 +13,7 @@ import type { AgentMessage, AgentPane, View } from '../types'
 import { C, MONO, PANE } from '../theme'
 import { MarkdownBody, stripControlMarkers } from '../markdown'
 import { MessageErrorBoundary } from '../ErrorBoundary'
-import { Button, CliModelMenu } from './controls'
+import { Button, CLI_MODEL_MENU_WIDTH, CliModelMenu } from './controls'
 import UsageBar from './UsageBar'
 import TodoList from './TodoList'
 import {
@@ -1519,9 +1519,9 @@ function ComposerBox({
     const r = agentBtnRef.current?.getBoundingClientRect()
     if (r) {
       setAgentMenuPos({
-        left: Math.min(Math.max(8, r.right - 188), window.innerWidth - 196),
+        left: Math.min(Math.max(8, r.right - CLI_MODEL_MENU_WIDTH), window.innerWidth - CLI_MODEL_MENU_WIDTH - 8),
         bottom: window.innerHeight - r.top + 6,
-        maxHeight: Math.max(96, r.top - 12)
+        maxHeight: Math.max(220, r.top - 12)
       })
     }
     setModelOpen((v) => !v)
@@ -1756,7 +1756,7 @@ function ComposerBox({
           provider={provider}
           model={model}
           settings={settings}
-          pos={{ ...agentMenuPos, width: 188 }}
+          pos={{ ...agentMenuPos, width: CLI_MODEL_MENU_WIDTH }}
           onPick={(p, m) => {
             onProviderChange(p, m)
             setModelOpen(false)

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  filterModels,
+  groupModels,
   mergeCatalogs,
+  parseClaudeHelp,
+  parseClaudeModelOptions,
   parseCodexModelsCache,
   parseCursorModels,
   parseOmpModelsJson,
@@ -39,6 +43,35 @@ describe('parseOpenCodeModels', () => {
   })
 })
 
+describe('parseClaudeHelp', () => {
+  it('reads quoted --model aliases from claude --help', () => {
+    const text = `  --model <model>                       Model for the current session. Provide
+                                        an alias for the latest model (e.g.
+                                        'fable', 'opus', or 'sonnet') or a
+                                        model's full name (e.g.
+                                        'claude-fable-5').
+  -n, --name <name>                     Set a display name
+`
+    expect(parseClaudeHelp(text)).toEqual([
+      { id: 'fable', label: 'Fable 5.1' },
+      { id: 'opus', label: 'Opus 5' },
+      { id: 'sonnet', label: 'Sonnet 5' },
+      { id: 'claude-fable-5', label: 'claude-fable-5' }
+    ])
+  })
+})
+
+describe('parseClaudeModelOptions', () => {
+  it('keeps enabled cache rows and drops disabled update stubs', () => {
+    expect(
+      parseClaudeModelOptions([
+        { value: 'claude-fable-5[1m]', label: 'Fable' },
+        { value: 'cc-update-required-1', label: 'Fable 5.1 (disabled)', disabled: true }
+      ])
+    ).toEqual([{ id: 'claude-fable-5[1m]', label: 'Fable' }])
+  })
+})
+
 describe('parseCodexModelsCache', () => {
   it('keeps list-visible models and drops hide', () => {
     expect(
@@ -61,10 +94,18 @@ describe('parseCodexModelsCache', () => {
             display_name: 'Legacy',
             visibility: 'list',
             supported_in_api: false
+          },
+          {
+            slug: 'gpt-6-listed',
+            display_name: 'GPT-6-Listed',
+            visibility: 'list'
           }
         ]
       })
-    ).toEqual([{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }])
+    ).toEqual([
+      { id: 'gpt-6-astra', label: 'GPT-6-Astra' },
+      { id: 'gpt-6-listed', label: 'GPT-6-Listed' }
+    ])
   })
 })
 
@@ -124,5 +165,42 @@ describe('mergeCatalogs', () => {
       codex: [{ id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' }],
       cursor: [{ id: 'auto', label: 'Auto' }]
     })
+  })
+})
+
+describe('filterModels', () => {
+  const rows = [
+    { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5' },
+    { id: 'openai/gpt-5.6', label: 'GPT-5.6' }
+  ]
+
+  it('matches label or id and keeps the full list when the query is empty', () => {
+    expect(filterModels(rows, '')).toEqual(rows)
+    expect(filterModels(rows, '  gpt  ').map((m) => m.id)).toEqual(['openai/gpt-5.6'])
+    expect(filterModels(rows, 'anthropic').map((m) => m.id)).toEqual(['anthropic/claude-sonnet-5'])
+  })
+})
+
+describe('groupModels', () => {
+  it('groups slash-style ids by prefix and leaves bare ids unlabeled', () => {
+    expect(
+      groupModels([
+        { id: 'auto', label: 'Auto' },
+        { id: 'anthropic/claude-sonnet-5', label: 'Sonnet 5' },
+        { id: 'anthropic/claude-opus-5', label: 'Opus 5' },
+        { id: 'openai/gpt-5.6', label: 'GPT-5.6' }
+      ])
+    ).toEqual([
+      { key: '', label: '', models: [{ id: 'auto', label: 'Auto' }] },
+      {
+        key: 'anthropic',
+        label: 'anthropic',
+        models: [
+          { id: 'anthropic/claude-sonnet-5', label: 'Sonnet 5' },
+          { id: 'anthropic/claude-opus-5', label: 'Opus 5' }
+        ]
+      },
+      { key: 'openai', label: 'openai', models: [{ id: 'openai/gpt-5.6', label: 'GPT-5.6' }] }
+    ])
   })
 })

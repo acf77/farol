@@ -9,6 +9,7 @@ import { shellEnv } from './session'
 
 export function extraBinDirs(): string[] {
   const home = os.homedir()
+  const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm')
   return [
     '/opt/homebrew/bin',
     '/usr/local/bin',
@@ -16,7 +17,11 @@ export function extraBinDirs(): string[] {
     path.join(home, '.cursor', 'bin'),
     path.join(home, '.opencode', 'bin'),
     path.join(home, '.npm-global', 'bin'),
-    path.join(home, '.bun', 'bin')
+    path.join(home, '.bun', 'bin'),
+    path.join(home, '.volta', 'bin'),
+    path.join(home, '.fnm', 'aliases', 'default', 'bin'),
+    path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'),
+    path.join(nvmDir, 'current', 'bin')
   ]
 }
 

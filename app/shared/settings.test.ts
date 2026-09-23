@@ -4,6 +4,7 @@ import {
   modeDefault,
   modeFallbacks,
   modeSelectionForPane,
+  retainCatalogs,
   sanitizeSettings,
   withAgentModel,
   withCommitMessageModel,
@@ -117,15 +118,42 @@ describe('commit message selection', () => {
     const settings = sanitizeSettings({
       agent: 'codex',
       catalogs: {
+        claude: [{ id: 'fable', label: 'Fable 5.1' }],
         codex: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }],
         cursor: [{ id: 'auto', label: 'Auto' }],
         openrouter: [{ id: 'ignored', label: 'Ignored' }]
       }
     })
     expect(settings.catalogs).toEqual({
+      claude: [{ id: 'fable', label: 'Fable 5.1' }],
       codex: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }],
       cursor: [{ id: 'auto', label: 'Auto' }]
     })
+  })
+})
+
+describe('retainCatalogs', () => {
+  it('keeps persisted catalogs when a renderer save sends a stale or empty list', () => {
+    const persisted = sanitizeSettings({
+      agent: 'codex',
+      catalogs: { codex: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }] }
+    })
+    const incoming = sanitizeSettings({
+      agent: 'claude',
+      catalogs: { codex: [{ id: 'gpt-5.5', label: 'GPT-5.5' }] }
+    })
+    expect(retainCatalogs(incoming, persisted).catalogs).toEqual(persisted.catalogs)
+    expect(retainCatalogs(sanitizeSettings({ agent: 'claude' }), persisted).catalogs).toEqual(
+      persisted.catalogs
+    )
+  })
+
+  it('does not let a renderer save invent catalogs', () => {
+    const incoming = sanitizeSettings({
+      agent: 'claude',
+      catalogs: { claude: [{ id: 'fable', label: 'Fable 5.1' }] }
+    })
+    expect(retainCatalogs(incoming, sanitizeSettings({ agent: 'claude' })).catalogs).toBeUndefined()
   })
 })
 

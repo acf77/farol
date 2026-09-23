@@ -4,19 +4,22 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import type { AiModel, SettingsResult } from '../shared/types'
+import { AI_MODELS } from '../shared/ai'
 import {
   DISCOVERABLE_PROVIDERS,
   type AgentCatalogs,
   type DiscoverableProvider,
-  mergeCatalogs,
+  parseClaudeHelp,
+  parseClaudeModelOptions,
   parseCodexModelsCache,
   parseCursorModels,
   parseOmpModelsJson,
-  parseOpenCodeModels
+  parseOpenCodeModels,
+  uniqueModels
 } from '../shared/agent-models'
 import { resolveBinFrom } from './bin'
 import { execCli } from './exec-cli'
-import { loadSettings, saveSettings } from './store'
+import { loadSettings, saveAgentCatalogs } from './store'
 
 const LIST_TIMEOUT_MS = 45_000
 
@@ -38,14 +41,49 @@ async function discoverCursor(): Promise<AiModel[]> {
   return text ? parseCursorModels(text) : []
 }
 
-async function discoverCodex(): Promise<AiModel[]> {
-  const cache = path.join(os.homedir(), '.codex', 'models_cache.json')
+function readJsonFile(file: string): unknown {
+  return JSON.parse(fs.readFileSync(file, 'utf8')) as unknown
+}
+
+function readCodexCache(): AiModel[] {
   try {
-    const raw = JSON.parse(fs.readFileSync(cache, 'utf8')) as unknown
-    return parseCodexModelsCache(raw)
+    return parseCodexModelsCache(readJsonFile(path.join(os.homedir(), '.codex', 'models_cache.json')))
   } catch {
     return []
   }
+}
+
+function readClaudeOptionsCache(): AiModel[] {
+  try {
+    const raw = readJsonFile(path.join(os.homedir(), '.claude.json'))
+    const rec = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null
+    return parseClaudeModelOptions(rec?.additionalModelOptionsCache)
+  } catch {
+    return []
+  }
+}
+
+async function discoverClaude(): Promise<AiModel[]> {
+  const text = await runBin(['claude'], ['--help'])
+  const fromHelp = text ? parseClaudeHelp(text) : []
+  return uniqueModels([...fromHelp, ...readClaudeOptionsCache(), ...AI_MODELS.claude])
+}
+
+async function discoverCodex(forceRefresh: boolean): Promise<AiModel[]> {
+  if (!forceRefresh) {
+    const cached = readCodexCache()
+    if (cached.length) return cached
+  }
+  const text = await runBin(['codex'], ['debug', 'models'])
+  if (text) {
+    try {
+      const parsed = parseCodexModelsCache(JSON.parse(text) as unknown)
+      if (parsed.length) return parsed
+    } catch {
+      /* fall through to the on-disk cache */
+    }
+  }
+  return readCodexCache()
 }
 
 async function discoverOpenCode(forceRefresh: boolean): Promise<AiModel[]> {
@@ -73,10 +111,12 @@ async function discoverOne(
   forceRefresh: boolean
 ): Promise<AiModel[]> {
   switch (provider) {
+    case 'claude':
+      return discoverClaude()
     case 'cursor':
       return discoverCursor()
     case 'codex':
-      return discoverCodex()
+      return discoverCodex(forceRefresh)
     case 'opencode':
       return discoverOpenCode(forceRefresh)
     case 'omp':
@@ -84,10 +124,9 @@ async function discoverOne(
   }
 }
 
-export async function refreshAgentCatalogs(opts?: {
-  forceRefresh?: boolean
-}): Promise<SettingsResult> {
-  const forceRefresh = opts?.forceRefresh === true
+let catalogRefresh: Promise<unknown> = Promise.resolve()
+
+async function refreshNow(forceRefresh: boolean): Promise<SettingsResult> {
   const settled = await Promise.all(
     DISCOVERABLE_PROVIDERS.map(async (provider) => {
       try {
@@ -101,9 +140,18 @@ export async function refreshAgentCatalogs(opts?: {
   for (const [provider, models] of settled) {
     if (models.length) discovered[provider] = models
   }
-
-  const settings = await loadSettings()
-  await saveSettings({ ...settings, catalogs: mergeCatalogs(settings.catalogs, discovered) })
-  // `loadSettings` re-reads the persisted catalogs and applies the key flags.
+  await saveAgentCatalogs(discovered)
   return { settings: await loadSettings() }
+}
+
+export async function refreshAgentCatalogs(opts?: {
+  forceRefresh?: boolean
+}): Promise<SettingsResult> {
+  const forceRefresh = opts?.forceRefresh === true
+  const run = catalogRefresh.then(
+    () => refreshNow(forceRefresh),
+    () => refreshNow(forceRefresh)
+  )
+  catalogRefresh = run
+  return run
 }

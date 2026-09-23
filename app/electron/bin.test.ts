@@ -20,6 +20,8 @@ describe('extraBinDirs', () => {
   it('includes OpenCode default install location', () => {
     const home = os.homedir()
     expect(extraBinDirs()).toContain(path.join(home, '.opencode', 'bin'))
+    expect(extraBinDirs()).toContain(path.join(home, '.volta', 'bin'))
+    expect(extraBinDirs()).toContain(path.join(home, '.fnm', 'aliases', 'default', 'bin'))
   })
 })
 

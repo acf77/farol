@@ -303,6 +303,11 @@ describe('managedAiCommand', () => {
         catalogs: { codex: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }] }
       }).map((m) => m.id)
     ).toEqual(['gpt-6-astra'])
+    expect(
+      providerModels('claude', undefined, {
+        catalogs: { claude: [{ id: 'fable', label: 'Fable 5.1' }, { id: 'opus', label: 'Opus 5' }] }
+      }).map((m) => m.id)
+    ).toEqual(['fable', 'opus'])
   })
 
   it('passes --model through on managed commands', () => {

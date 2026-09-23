@@ -289,3 +289,15 @@ export function sanitizeSettings(raw: unknown): AppSettings {
     ...(catalogs ? { catalogs } : {})
   }
 }
+
+/**
+ * Renderer saves never own live CLI catalogs — only `refreshAgentCatalogs`
+ * writes them. A stale in-memory list must not overwrite a just-fetched one.
+ */
+export function retainCatalogs(incoming: AppSettings, persisted: AppSettings): AppSettings {
+  if (persisted.catalogs) return { ...incoming, catalogs: persisted.catalogs }
+  if (!incoming.catalogs) return incoming
+  const next = { ...incoming }
+  delete next.catalogs
+  return next
+}
