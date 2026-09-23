@@ -217,6 +217,11 @@ export function isUnknownJsonFormatError(text: string): boolean {
   return lower.includes('format') && /unknown (option|flag|argument)/.test(lower)
 }
 
+/** `--tools a,b` argv fragment, or empty when the CLI should keep its defaults. */
+function toolsArgv(tools: string | undefined): string[] {
+  return tools ? ['--tools', tools] : []
+}
+
 /**
  * Non-interactive argv for each CLI. Cursor runs in ask mode with plain
  * text so a review step returns a string instead of Agent "ACT" chrome.
@@ -286,12 +291,13 @@ export function managedAiCommand(
   provider: AiProvider,
   prompt: string,
   model?: string,
-  opts?: { jsonFormat?: boolean; mode?: AgentMode }
+  opts?: { jsonFormat?: boolean; mode?: AgentMode; tools?: string[] }
 ): AiCommand {
   const cli = cliFor(provider)
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
   const jsonFormat = opts?.jsonFormat !== false
   const plan = opts?.mode === 'plan' && hasReviewGate(provider)
+  const tools = opts?.tools?.length ? opts.tools.join(',') : undefined
   switch (cli) {
     case 'codex':
       return {
@@ -341,20 +347,22 @@ export function managedAiCommand(
         hint: 'Install OpenCode (https://opencode.ai) to use managed Chat. Farol needs a build that accepts `opencode run --format json`.',
         ...(jsonFormat ? { stream: 'ndjson' as const } : {})
       }
-    case 'omp':
+    case 'omp': {
+      // Plan mode defaults to inspection-only when Jev did not supply a list;
+      // Build with an explicit allowlist uses that; otherwise omp keeps all tools.
+      const ompTools = tools ?? (plan ? 'read,glob,grep,lsp' : undefined)
       return {
         bins: ['omp'],
         // `--mode json` is already non-interactive, so `-p` is redundant; it also
         // routes omp's own banners to stderr, leaving stdout pure NDJSON.
         args: withModel(
-          plan
-            ? ['--mode', 'json', '--auto-approve', '--tools', 'read,glob,grep,lsp', prompt]
-            : ['--mode', 'json', '--auto-approve', prompt],
+          ['--mode', 'json', '--auto-approve', ...toolsArgv(ompTools), prompt],
           passed
         ),
         hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to use managed Chat.',
         stream: 'ndjson'
       }
+    }
     case 'claude':
       return {
         bins: ['claude'],
@@ -374,6 +382,7 @@ export function managedAiCommand(
             '--permission-mode',
             'bypassPermissions',
             '--strict-mcp-config',
+            ...toolsArgv(tools),
             prompt
           ],
           passed

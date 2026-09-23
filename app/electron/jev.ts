@@ -22,6 +22,13 @@ import {
   pipelineSelectionQuestions,
   type JevBooleanQuestion
 } from '../shared/jev'
+import {
+  JEV_TOOL_CONFIDENCE,
+  TOOL_SELECTION_TIMEOUT_MS,
+  selectionFromAnswers,
+  toolSelectionQuestions,
+  type ToolSelection
+} from '../shared/tool-policy'
 import type { Pipeline, SettingsResult } from '../shared/types'
 import type { StepVerdict } from '../shared/verdict'
 import { logJev } from './jev-log'
@@ -200,6 +207,75 @@ export async function selectPipelines(
       decisions
     })
     return selected
+  } catch (err) {
+    logJev({
+      ...base,
+      status: 'fallback',
+      reason: err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+        ? 'timeout'
+        : 'evaluation-error',
+      durationMs: Date.now() - started
+    })
+    return null
+  }
+}
+
+/**
+ * Ask Jev which optional tool families this Build-mode turn needs. Soft-fail
+ * only: `null` on no key, timeout, or error means "leave the full tool set" —
+ * the controller maps that to `fallback-full`. A family is omitted only when
+ * Jev is confidently sure the turn can finish without it.
+ */
+export async function selectTools(
+  state: string,
+  opts: { attempt?: number } = {}
+): Promise<ToolSelection | null> {
+  const questions = toolSelectionQuestions()
+  const started = Date.now()
+  const base = {
+    timestamp: new Date(started).toISOString(),
+    purpose: 'tool-selection' as const,
+    model: JEV_MODEL_ID,
+    confidence: JEV_TOOL_CONFIDENCE,
+    questionIds: Object.keys(questions),
+    stateChars: state.length,
+    ...(opts.attempt !== undefined ? { attempt: opts.attempt } : {})
+  }
+  const key = peekSecret('aiGatewayApiKey')
+  if (!key) {
+    logJev({ ...base, status: 'skipped', reason: 'no-key' })
+    return null
+  }
+  try {
+    const { answers } = await evaluate({
+      model: createGateway({ apiKey: key }).evaluationModel(JEV_MODEL_ID),
+      state,
+      questions,
+      abortSignal: AbortSignal.timeout(TOOL_SELECTION_TIMEOUT_MS)
+    })
+    const selection = selectionFromAnswers(answers)
+    const omitted = new Set<string>(selection.omitted)
+    logJev({
+      ...base,
+      status: 'evaluated',
+      durationMs: Date.now() - started,
+      kept: selection.kept,
+      omitted: selection.omitted,
+      decisions: Object.keys(questions).map((id) => {
+        const answer = answers[id]
+        return {
+          id,
+          probability: answer?.probability ?? null,
+          kept: !omitted.has(id),
+          reason: !answer
+            ? ('missing-answer' as const)
+            : omitted.has(id)
+              ? ('omitted' as const)
+              : ('kept' as const)
+        }
+      })
+    })
+    return selection
   } catch (err) {
     logJev({
       ...base,

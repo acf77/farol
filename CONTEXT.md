@@ -43,8 +43,8 @@ The always-visible recent-commit list on the **Source Control page**.
 _Avoid_: collapsed Recent commits details
 
 **Pull request**:
-The Compare, Base, **Merge status**, **Check conflicts**, title, and Create pull request block on the **Source Control page**. Compare is the current branch. Base is a selector over the known merge/PR base, local branches, and remote-tracking branches, minus the current branch; it defaults to the known base, else a conventional base (`staging`, `main`, `master`, `develop`), else the repository default. The title is an optional input. Create pull request stays hold-to-confirm and runs `gh pr create --fill`, adding `--base` for the chosen base and `--title` when the title is non-empty. Working-tree conflict paths and predicted GitHub conflict paths stay as lists on this block; **Merge status** text stays.
-_Avoid_: Compare as a checkout picker, defaulting Base to the current or most recent feature branch, offering the current branch as its own base, hiding remote-only bases, Base as a fixed read-only field, dropping the title input, moving conflict paths off this block, hiding those paths
+The Compare, Base, **Merge status**, **Check conflicts**, title, description, **Generate with AI**, Create pull request, GitHub Actions checks, merge-strategy, and Merge block on the **Source Control page**. Compare is the current branch. Base is a selector over the known merge/PR base, local branches, and remote-tracking branches, minus the current branch; it defaults to the known base, else a conventional base (`staging`, `main`, `master`, `develop`), else the repository default. Title and description are optional inputs kept on the **Git panel** for the project session (they survive closing the page, reset on project switch, and are not saved to disk). **Generate with AI** replaces both from the commits and diff against the chosen base. Create pull request stays hold-to-confirm and runs `gh pr create --fill`, adding `--base`, `--title`, and `--body` when those fields are non-empty. When a PR is already open, the block shows Actions summary and check rows, a merge-strategy selector that must be chosen each time, and a hold-to-confirm Merge that stays disabled while the PR is draft, conflicting, or waiting on required checks. Working-tree conflict paths and predicted GitHub conflict paths stay as lists on this block; **Merge status** text stays.
+_Avoid_: Compare as a checkout picker, defaulting Base to the current or most recent feature branch, offering the current branch as its own base, hiding remote-only bases, Base as a fixed read-only field, dropping the title or description inputs, moving conflict paths off this block, hiding those paths, merging without an explicit strategy, merging while required checks are pending or failing, merging drafts or conflicting PRs
 
 **Check conflicts**:
 The always-visible **Pull request** action that is today's Resolve with AI: two-click confirm, same block reasons, then merge the PR or base and send files to Chat.
@@ -55,8 +55,12 @@ The **Pull request** line that reports GitHub or base-merge conflict state. Unti
 _Avoid_: hiding merge status when the tree is clean, a second status source
 
 **Git log**:
-The activity transcript on the **Source Control page**. Each line is a timed outcome of commit, push, create pull request, **Check conflicts**, a **Generate with AI** failure, or a status refresh failure. It replaces the single success and error banners. A successful generate is not a line — the **Commit message** box is the success. Refresh failures use one line per streak: append when a refresh fails after a success or on the first fail; stay quiet while it keeps failing; do not log successful polls. It lives on the **Git panel** for the session: it survives closing the **Source Control page**, resets when the project switches, and is not saved to disk. It is not a fetch log and does not add a fetch action.
+The activity transcript on the **Source Control page**. Each line is a timed outcome of commit, push, create pull request, merge pull request, **Check conflicts**, a **Generate with AI** failure (commit or pull request), or a status refresh failure. It replaces the single success and error banners. A successful generate is not a line — the **Commit message** or **Pull request** draft fields are the success. Refresh failures use one line per streak: append when a refresh fails after a success or on the first fail; stay quiet while it keeps failing; do not log successful polls. It lives on the **Git panel** for the session: it survives closing the **Source Control page**, resets when the project switches, and is not saved to disk. It is not a fetch log and does not add a fetch action.
 _Avoid_: a single success/error banner as the only history, fetch lines, treating this as **Latest commits**, persisting the transcript to disk, keeping lastMessage/error as a second history, a line for every failed poll, logging successful refreshes, logging a successful generate, a silent generate failure
+
+**Source Control refresh**:
+The always-visible header control that reloads git status, recent commits, and GitHub PR/check state. It uses the existing refresh icon, stays disabled while an update is active, and surfaces the latest refresh error in its tooltip (and still in **Git log**). It replaces the error-only Retry control.
+_Avoid_: showing Retry only after failure, a second refresh path, hiding refresh while clean
 
 ### Plan mode
 
@@ -108,8 +112,12 @@ The master, machine-scoped switch in Settings that decides whether Farol perform
 _Avoid_: per-project or per-action switches, off by default
 
 **Managed-chat contract**:
-The standing rules Farol gives a managed Chat agent — work only in the project, never run the catalog's commands, end each Build turn with `FAROL_QUESTIONS` or `FAROL_PIPELINES`, and, when the turn changed files, commit them through `FAROL_GIT`.
+The standing rules Farol gives a managed Chat agent — work only in the project, never run the catalog's commands, explain a proposed or completed change with a **Chat diagram**, end each Build turn with `FAROL_QUESTIONS` or `FAROL_PIPELINES`, and, when the turn changed files, commit them through `FAROL_GIT`.
 _Avoid_: relying on the agent to remember to commit, a per-turn reminder to commit
+
+**Chat diagram**:
+A Mermaid flowchart or sequence diagram the agent puts in a ` ```mermaid ` fenced block. Chat renders it as SVG in the message. A finished plan includes one for the intended approach; a Build turn that changed files includes one for what changed and why. Four to twelve well-labeled steps, detailed but not crowded.
+_Avoid_: a new control line, a remote image URL, a 20-node map, a diagram on a questions-only or status-only reply
 ### Todo list
 
 **Todo list**:
@@ -137,12 +145,16 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 - If that commit fails, unchecked files that were staged before the attempt are restored to staged with a whole-file `git add`; files this attempt newly staged are still unstaged
 - An empty or whitespace-only **Commit message** still cannot commit
 - The **Commit message** lives on the **Git panel** like today's draft: it survives close, resets on project switch, clears after a successful commit, and is not saved to disk
-- **Pull request** Compare is the current branch; Base and title are real create inputs: Base picks the `--base` target and title passes `--title` when non-empty to `--fill`; create still does not check out a branch
+- **Pull request** Compare is the current branch; Base, title, and description are real create inputs: Base picks the `--base` target and title/body pass `--title`/`--body` when non-empty to `--fill`; create still does not check out a branch
+- **Pull request** title and description live on the **Git panel** for the session: they survive close, reset on project switch, and are not saved to disk
+- **Generate with AI** on **Pull request** replaces both title and description from the chosen base's commit log and diff, omitting secret-looking paths
+- An open **Pull request** shows GitHub Actions summary and per-check rows; Merge requires an explicit strategy each time and stays blocked while draft, conflicting, or waiting on required checks
 - **Check conflicts** is always on the **Pull request** block and is the same **Git panel** resolve action
 - **Merge status** is Merge status unknown until GitHub or base-merge status has loaded
 - Working-tree and predicted conflict paths stay listed on the **Pull request** block; they are not **Changes** rows
-- **Git log** appends timed outcomes for commit, push, create pull request, **Check conflicts**, **Generate with AI** failures, and refresh failures; it does not add fetch
-- A successful **Generate with AI** is not a **Git log** line; the **Commit message** box is the success
+- **Source Control refresh** is always in the header; it replaces the error-only Retry control and keeps refresh errors in the tooltip and **Git log**
+- **Git log** appends timed outcomes for commit, push, create pull request, merge pull request, **Check conflicts**, **Generate with AI** failures, and refresh failures; it does not add fetch
+- A successful **Generate with AI** is not a **Git log** line; the **Commit message** or **Pull request** draft fields are the success
 - A refresh-failure **Git log** line is one per streak: append on the first fail or after a success, stay quiet while failures continue, and do not log successful polls
 - **Git log** lives on the **Git panel** for the session: it survives close, resets on project switch, and is not saved to disk
 
@@ -191,6 +203,14 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 - Status is read-only; commit, push, and create pull request change the checkout or the remote.
 - **Plan mode** never performs a **Git action**; a `FAROL_GIT` line in Plan mode is ignored the way a non-empty `FAROL_PIPELINES` list is, and the reply is still accepted.
 - The **Git actions toggle** is machine-scoped and is not saved per project.
+
+### Chat diagram
+
+- A **Chat diagram** is a ` ```mermaid ` fenced block in an assistant message; Chat renders it as SVG in `MarkdownBody`.
+- The **Managed-chat contract** asks for one when the agent proposes a plan and again after a Build turn that changed files.
+- Plan mode diagrams the intended approach; a post-change Build diagram shows what changed and why.
+- Questions-only and status-only replies skip a **Chat diagram**.
+- There is no `FAROL_DIAGRAM` line and no remote image; the source stays in the message so copy still gets the Mermaid text.
 ### Todo list
 
 - A **Todo list** belongs to one checkout; every chat in that checkout shares it, and a linked worktree has its own.
@@ -400,6 +420,17 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 
 > **Dev:** "Can an agent in a terminal pane use these too?"
 > **Domain expert:** "Yes, through the **Git tools** — `git_status`, `git_commit`, `git_push`, `git_create_pr` — over the bridge to the running app."
+
+### Chat diagram
+
+> **Developer:** "When does Chat show a diagram of the work?"
+> **Domain expert:** "When the agent proposes a plan, and again after it changes files. Both are **Chat diagrams** — Mermaid in the message, rendered in place."
+
+> **Developer:** "Does every reply need one?"
+> **Domain expert:** "No. Skip questions-only and status-only turns. The diagram is for the approach and for what changed."
+
+> **Developer:** "Is that a new control line?"
+> **Domain expert:** "No. It is a ` ```mermaid ` fence. Copy still gets the source."
 ### Todo list
 
 > **Developer:** "Which chat owns a todo list?"
@@ -500,6 +531,10 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 - A **Git action** and the turn's `FAROL_PIPELINES` validation could be conflated — resolved: the hook pipeline is chosen by `.farol` per action, the agent does not select it, and ordinary validation still runs.
 - The agent's **Git action** could be invisible to the UI — resolved: it appears on the existing **Git panel**, and the **Git log** records its outcome.
 - Plan mode could still allow status (read-only) — resolved: **Plan mode** performs no **Git action**; a `FAROL_GIT` line there is ignored the way a non-empty `FAROL_PIPELINES` list is.
+
+### Chat diagram
+
+- Explaining a change could mean a new control line or a remote image — resolved: a **Chat diagram** is a ` ```mermaid ` fence in the message; Chat renders it, and the contract asks for one before implementation and after file changes.
 ### Todo list
 
 - The **Todo list** could hang off a chat, a repository, or a checkout — resolved: per checkout, so a linked worktree keeps its own list and every chat on a checkout shares one.

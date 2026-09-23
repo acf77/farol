@@ -3,10 +3,21 @@ import type { AgentTaskEvent, AgentTaskRequest, PipelineRunResult } from '../sha
 import { failureReport } from '../shared/failure'
 import { TODOS_MARKER, type TodoStore } from '../shared/todos'
 
-const { selectPipelines } = vi.hoisted(() => ({ selectPipelines: vi.fn().mockResolvedValue(null) }))
-vi.mock('./jev', () => ({ selectPipelines }))
+const { selectPipelines, selectTools } = vi.hoisted(() => ({
+  selectPipelines: vi.fn().mockResolvedValue(null),
+  selectTools: vi.fn().mockResolvedValue(null)
+}))
+vi.mock('./jev', () => ({ selectPipelines, selectTools }))
+// Real backoff would add ~1–20s per retry and blow past waitFor budgets.
+vi.mock('./backoff', () => ({
+  backoffDelayMs: () => 0,
+  backoffWait: () => Promise.resolve()
+}))
 
 import { AgentController, type AgentExecutor } from './agent-controller'
+
+// Keep in sync with SAME_MODEL_RETRIES in agent-controller.ts.
+const SAME_MODEL_RETRIES = 3
 
 const request: AgentTaskRequest = {
   id: 'task-1',
@@ -166,17 +177,18 @@ describe('AgentController', () => {
     expect(execute.mock.calls[1][1]).toContain('- [in_progress] (high) Build work')
   })
 
-  it('walks the fallback chain when a provider fails, then gives up on the last rung', async () => {
+  it('retries the same model before falling back, then walks the fallback chain and gives up on the last rung', async () => {
     const events: AgentTaskEvent[] = []
     const run = vi.fn().mockResolvedValue(result(true))
     const seen: string[] = []
-    // Every rung fails the same way: a usage limit on the first two, a bad
-    // exit on the third.
+    // Every rung gets 4 tries (the original attempt plus 3 retries) before
+    // Farol moves on: a usage limit on the first two rungs, a bad exit on
+    // the third.
     const execute = vi
       .fn()
       .mockImplementation(async (req: AgentTaskRequest, _prompt: string, output: (c: string) => void) => {
         seen.push(`${req.provider}:${req.model ?? ''}`)
-        if (seen.length < 3) {
+        if (seen.length <= 8) {
           output('Claude usage limit reached\n')
           return 1
         }
@@ -195,14 +207,35 @@ describe('AgentController', () => {
       ).toBe(true)
     )
 
-    expect(seen).toEqual(['claude:opus', 'codex:gpt-5.6-sol', 'omp:'])
+    expect(seen).toEqual([
+      'claude:opus',
+      'claude:opus',
+      'claude:opus',
+      'claude:opus',
+      'codex:gpt-5.6-sol',
+      'codex:gpt-5.6-sol',
+      'codex:gpt-5.6-sol',
+      'codex:gpt-5.6-sol',
+      'omp:',
+      'omp:',
+      'omp:',
+      'omp:'
+    ])
     const switches = events.filter((event) => event.kind === 'provider')
     expect(switches.map((event) => event.kind === 'provider' && event.provider)).toEqual([
       'codex',
       'omp'
     ])
     expect(switches[0].kind === 'provider' && switches[0].reason).toContain('Claude · Opus 5')
-    // Falling back burns no validation attempt.
+    // Retries on the same model are visible in the transcript before Farol
+    // ever falls back.
+    const retryStatuses = events.filter(
+      (event) => event.kind === 'status' && event.message.includes('retrying with')
+    )
+    // 3 retries per rung (SAME_MODEL_RETRIES) across all 3 rungs.
+    expect(retryStatuses).toHaveLength(9)
+    expect(retryStatuses[0].kind === 'status' && retryStatuses[0].message).toContain('(1/3)')
+    // Same-model retries and falling back both burn no validation attempt.
     const last = events.filter((event) => event.kind === 'status').at(-1)
     expect(last).toMatchObject({ attempt: 1, message: 'Agent exited with code 2' })
   })
@@ -244,6 +277,8 @@ describe('AgentController', () => {
     )
 
     expect(execute.mock.calls[0][1]).toContain('Plan mode is read-only')
+    expect(execute.mock.calls[0][1]).toContain('```mermaid')
+    expect(execute.mock.calls[0][1]).toContain('intended approach')
     expect(run).not.toHaveBeenCalled()
   })
 
@@ -307,6 +342,8 @@ describe('AgentController', () => {
     expect(execute.mock.calls[0][1]).toContain('npm run lint')
     expect(execute.mock.calls[0][1]).toContain('Do not call the Farol MCP tools')
     expect(execute.mock.calls[0][1]).toContain('Never run the catalog\'s shell commands yourself')
+    expect(execute.mock.calls[0][1]).toContain('```mermaid')
+    expect(execute.mock.calls[0][1]).toContain('After changing files in Build mode')
     expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate', 'lint'])
   })
 
@@ -669,29 +706,28 @@ describe('AgentController', () => {
     await vi.waitFor(() =>
       expect(events.filter((event) => event.kind === 'user' && event.text === 'one more tweak').length).toBe(1)
     )
-    expect(execute).toHaveBeenCalledTimes(2)
+    // Tool selection awaits Jev before the executor runs; wait for the second turn.
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2))
   })
 
   it('switches provider when the same task continues after a usage limit', async () => {
     const events: AgentTaskEvent[] = []
     const run = vi.fn()
+    let calls = 0
     const execute = vi
       .fn()
-      .mockImplementationOnce(
-        async (req: AgentTaskRequest, _prompt: string, output: (chunk: string) => void) => {
+      .mockImplementation(async (req: AgentTaskRequest, prompt: string, output: (chunk: string) => void) => {
+        calls += 1
+        if (calls <= SAME_MODEL_RETRIES + 1) {
           expect(req.provider).toBe('claude')
           output('Error: rate limit exceeded — try again later\n')
           return 1
         }
-      )
-      .mockImplementationOnce(
-        async (req: AgentTaskRequest, prompt: string, output: (chunk: string) => void) => {
-          expect(req.provider).toBe('cursor')
-          expect(prompt).toContain('continue with another agent')
-          output('FAROL_PIPELINES: []\n')
-          return 0
-        }
-      )
+        expect(req.provider).toBe('cursor')
+        expect(prompt).toContain('continue with another agent')
+        output('FAROL_PIPELINES: []\n')
+        return 0
+      })
     const controller = new AgentController({ run }, (event) => events.push(event), execute)
 
     controller.start(request)
@@ -715,20 +751,22 @@ describe('AgentController', () => {
       )
     )
 
-    expect(execute).toHaveBeenCalledTimes(2)
-    expect(execute.mock.calls[1][0].provider).toBe('cursor')
+    expect(execute).toHaveBeenCalledTimes(SAME_MODEL_RETRIES + 2)
+    expect(execute.mock.calls.at(-1)![0].provider).toBe('cursor')
   })
 
   it('treats a session limit as a provider failure so a switch can continue', async () => {
     const events: AgentTaskEvent[] = []
     const run = vi.fn()
+    let calls = 0
     const execute = vi
       .fn()
-      .mockImplementationOnce(async (_req, _prompt, output: (chunk: string) => void) => {
-        output("You've hit your session limit · resets 2pm\n")
-        return 1
-      })
-      .mockImplementationOnce(async (req: AgentTaskRequest, _prompt, output: (chunk: string) => void) => {
+      .mockImplementation(async (req: AgentTaskRequest, _prompt, output: (chunk: string) => void) => {
+        calls += 1
+        if (calls <= SAME_MODEL_RETRIES + 1) {
+          output("You've hit your session limit · resets 2pm\n")
+          return 1
+        }
         expect(req.provider).toBe('cursor')
         output('FAROL_PIPELINES: []\n')
         return 0
@@ -755,19 +793,21 @@ describe('AgentController', () => {
         true
       )
     )
-    expect(execute.mock.calls[1][0].provider).toBe('cursor')
+    expect(execute.mock.calls.at(-1)![0].provider).toBe('cursor')
   })
 
   it('applies a provider override on message follow-ups', async () => {
     const events: AgentTaskEvent[] = []
     const run = vi.fn()
+    let calls = 0
     const execute = vi
       .fn()
-      .mockImplementationOnce(async (_req, _prompt, output: (chunk: string) => void) => {
-        output('Error: usage limit reached\n')
-        return 1
-      })
-      .mockImplementationOnce(async (req: AgentTaskRequest, _prompt, output: (chunk: string) => void) => {
+      .mockImplementation(async (req: AgentTaskRequest, _prompt, output: (chunk: string) => void) => {
+        calls += 1
+        if (calls <= SAME_MODEL_RETRIES + 1) {
+          output('Error: usage limit reached\n')
+          return 1
+        }
         expect(req.provider).toBe('codex')
         output('FAROL_PIPELINES: []\n')
         return 0
@@ -785,7 +825,7 @@ describe('AgentController', () => {
     await vi.waitFor(() =>
       expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
     )
-    expect(execute.mock.calls[1][0].provider).toBe('codex')
+    expect(execute.mock.calls.at(-1)![0].provider).toBe('codex')
   })
 
   it('refreshes validation pipeline AI providers on message follow-ups', async () => {
@@ -810,13 +850,15 @@ describe('AgentController', () => {
       expect(pipeline.nodes[0]?.ai).toBe('cursor')
       return result(true)
     })
+    let calls = 0
     const execute = vi
       .fn()
-      .mockImplementationOnce(async (_req, _prompt, output: (chunk: string) => void) => {
-        output("You've hit your session limit · resets 8:20pm\n")
-        return 1
-      })
-      .mockImplementationOnce(async (req: AgentTaskRequest, prompt: string, output: (chunk: string) => void) => {
+      .mockImplementation(async (req: AgentTaskRequest, prompt: string, output: (chunk: string) => void) => {
+        calls += 1
+        if (calls <= SAME_MODEL_RETRIES + 1) {
+          output("You've hit your session limit · resets 8:20pm\n")
+          return 1
+        }
         expect(prompt).toContain('ai/cursor')
         expect(req.pipelines[0]?.nodes[0]?.ai).toBe('cursor')
         output('FAROL_PIPELINES: ["full"]\n')
@@ -885,13 +927,15 @@ describe('AgentController', () => {
   it('setProvider updates the in-memory task before the next cycle', async () => {
     const events: AgentTaskEvent[] = []
     const run = vi.fn()
+    let calls = 0
     const execute = vi
       .fn()
-      .mockImplementationOnce(async (_req, _prompt, output: (chunk: string) => void) => {
-        output('Error: rate limit reached\n')
-        return 1
-      })
-      .mockImplementationOnce(async (req: AgentTaskRequest, _prompt, output: (chunk: string) => void) => {
+      .mockImplementation(async (req: AgentTaskRequest, _prompt, output: (chunk: string) => void) => {
+        calls += 1
+        if (calls <= SAME_MODEL_RETRIES + 1) {
+          output('Error: rate limit reached\n')
+          return 1
+        }
         expect(req.provider).toBe('cursor')
         output('FAROL_PIPELINES: []\n')
         return 0
@@ -910,7 +954,7 @@ describe('AgentController', () => {
     await vi.waitFor(() =>
       expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
     )
-    expect(execute.mock.calls[1][0].provider).toBe('cursor')
+    expect(execute.mock.calls.at(-1)![0].provider).toBe('cursor')
   })
 
   it('dispose drops a finished task so cleared chats release memory', async () => {
@@ -1269,7 +1313,6 @@ describe('AgentController', () => {
     // Only the pipeline the agent did not already pick is offered to Jev.
     expect(selectPipelines.mock.calls[0][0].map((pipeline: { id: string }) => pipeline.id)).toEqual(['security'])
     expect(selectPipelines.mock.calls[0][1]).toContain('src/app.ts')
-    expect(selectPipelines.mock.calls[0][1]).toContain('Security Scan')
     expect(run.mock.calls.map((call) => call[0].id).sort()).toEqual(['security', 'validate'])
   })
 
@@ -1332,6 +1375,7 @@ describe('AgentController', () => {
 
   it('never asks Jev in Plan mode', async () => {
     selectPipelines.mockClear()
+    selectTools.mockClear()
     const events: AgentTaskEvent[] = []
     const execute = vi.fn<AgentExecutor>().mockImplementation(async (_request, _prompt, output, onTool) => {
       onTool?.({ toolId: 'edit-1', name: 'apply_patch', detail: 'src/app.ts', state: 'done' })
@@ -1346,6 +1390,46 @@ describe('AgentController', () => {
     )
 
     expect(selectPipelines).not.toHaveBeenCalled()
+    expect(selectTools).not.toHaveBeenCalled()
+    expect(execute.mock.calls[0][1]).toMatch(/Plan mode is read-only/i)
+  })
+
+  it('asks Jev for tool families in Build mode and appends the policy clause', async () => {
+    selectTools.mockClear()
+    selectTools.mockResolvedValueOnce({
+      kind: 'selected',
+      kept: ['edit'],
+      omitted: ['shell', 'web']
+    })
+    const events: AgentTaskEvent[] = []
+    const execute = selecting()
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(selectTools).toHaveBeenCalledTimes(1)
+    expect(selectTools.mock.calls[0][0]).toContain('Mode: build')
+    expect(execute.mock.calls[0][1]).toMatch(/Do not use:.*mutating shell/i)
+    expect(execute.mock.calls[0][1]).toMatch(/web fetch\/search/i)
+  })
+
+  it('fails open to the full tool set when Jev tool selection is unavailable', async () => {
+    selectTools.mockClear()
+    selectTools.mockResolvedValueOnce(null)
+    const events: AgentTaskEvent[] = []
+    const execute = selecting()
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(selectTools).toHaveBeenCalledTimes(1)
+    expect(execute.mock.calls[0][1]).not.toMatch(/Tool policy/)
   })
 
   it('does not treat CreateGoal as a code change', async () => {

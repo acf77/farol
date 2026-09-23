@@ -4,6 +4,7 @@ import fs from 'fs'
 import type {
   AgentTaskRequest,
   AppSettings,
+  MergeStrategy,
   Pipeline,
   ProjectWriteOpts,
   RunEvent,
@@ -13,8 +14,8 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, githubStatus, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus } from './git'
-import { createPullRequest } from './github'
+import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus } from './git'
+import { createPullRequest, mergePullRequest } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, flushWorkspace, PipelineWatcher } from './store'
 import {
@@ -26,6 +27,7 @@ import {
 import { refreshAgentCatalogs } from './agent-models'
 import { checkJev, clearJev, saveJevKey } from './jev'
 import { configureJevLogs } from './jev-log'
+import { configureAgentFailureLogs } from './agent-failure-log'
 import { listProjectDir, listProjectFiles, readProjectFile, saveChatAttachment, writeProjectFile } from './files'
 import { listAgentSkills } from './skills'
 import { AppUpdater } from './update'
@@ -720,10 +722,42 @@ function registerGitIpc(): void {
     return gitPull(cwd.path)
   })
   ipcMain.handle('git:github', (_e, projectPath: string) => githubStatus(projectPath))
-  ipcMain.handle('git:createPr', async (_e, projectPath: string, base?: string, title?: string) => {
+  ipcMain.handle(
+    'git:createPr',
+    async (_e, projectPath: string, base?: string, title?: string, body?: string) => {
+      const cwd = await openProjectCwd(projectPath)
+      if ('error' in cwd) return { ok: false, message: cwd.error }
+      return createPullRequest(
+        cwd.path,
+        typeof base === 'string' ? base : undefined,
+        typeof title === 'string' ? title : undefined,
+        typeof body === 'string' ? body : undefined
+      )
+    }
+  )
+  ipcMain.handle(
+    'git:draftPr',
+    async (
+      _e,
+      projectPath: string,
+      provider: AgentTaskRequest['provider'],
+      model?: string,
+      base?: string
+    ) => {
+      const cwd = await openProjectCwd(projectPath)
+      if ('error' in cwd) return cwd
+      return draftPullRequest(
+        cwd.path,
+        provider,
+        typeof model === 'string' ? model : undefined,
+        typeof base === 'string' ? base : undefined
+      )
+    }
+  )
+  ipcMain.handle('git:mergePr', async (_e, projectPath: string, strategy: MergeStrategy) => {
     const cwd = await openProjectCwd(projectPath)
     if ('error' in cwd) return { ok: false, message: cwd.error }
-    return createPullRequest(cwd.path, base, title)
+    return mergePullRequest(cwd.path, strategy)
   })
   ipcMain.handle('git:bringConflicts', async (_e, projectPath: string) => {
     const cwd = await openProjectCwd(projectPath)
@@ -816,7 +850,9 @@ function applyBrandIcon(): void {
 }
 
 app.whenReady().then(() => {
-  configureJevLogs(() => app.getPath('userData'))
+  const userData = () => app.getPath('userData')
+  configureJevLogs(userData)
+  configureAgentFailureLogs(userData)
   applyBrandIcon()
   registerIpc()
   buildMenu()

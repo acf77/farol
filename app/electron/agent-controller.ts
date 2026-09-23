@@ -53,10 +53,22 @@ import {
   mergeWithMandatory
 } from '../shared/mandatory'
 import { pipelineSelectionState } from '../shared/jev'
+import {
+  observeToolUse,
+  planToolPolicy,
+  toolPolicyFor,
+  toolPolicyPrompt,
+  toolSelectionState,
+  type ToolPolicy,
+  type ToolSelection
+} from '../shared/tool-policy'
 import { plainText } from '../shared/terminal'
 import { aiEnv, resolveBinFrom } from './bin'
+import { backoffWait } from './backoff'
 import { killPidTree } from './kill'
-import { selectPipelines } from './jev'
+import { logAgentFailure } from './agent-failure-log'
+import { logJev } from './jev-log'
+import { selectPipelines, selectTools } from './jev'
 
 interface ValidationRunner {
   run(
@@ -113,6 +125,19 @@ interface Task {
   mandatoryOutstanding: boolean
   /** Rungs of the mode's chain not yet tried; refilled when a turn begins. */
   fallbacks: ModelChoice[]
+  /**
+   * Consecutive provider-side failures (rate limit, exit code, ...) on the
+   * current provider/model. Reset on success or whenever the provider
+   * changes; drives same-model retries before `fallbacks` is consulted.
+   */
+  sameModelAttempts: number
+  /**
+   * Jev's tool-family selection for the current attempt. Remapped onto each
+   * provider via `toolPolicyFor` without a new Jev call; cleared when the
+   * attempt number advances (repair turns re-ask).
+   */
+  toolSelection?: ToolSelection
+  toolSelectionAttempt?: number
   /** Bumped when a follow-up starts so a dying cycle cannot clobber it. */
   askEpoch: number
   questionSeq: number
@@ -140,6 +165,8 @@ type CycleScan = ControlLineState & {
   filesChanged: boolean
   /** Paths or targets reported by completed write tools this turn. */
   changedTargets: string[]
+  /** Tool card names observed this turn — for policy violation diagnostics. */
+  toolNames: string[]
   questions?: AgentQuestion[]
   questionId?: string
 }
@@ -150,6 +177,13 @@ type CycleAttemptResult =
   | { kind: 'retry'; prompt: string; rewindAttempt: true }
 
 const DEFAULT_MAX_ATTEMPTS = 5
+/**
+ * Extra tries on the same provider/model after an error before Farol steps
+ * down the fallback chain. A rate limit or a flaky exit often clears on its
+ * own — falling back on the first hiccup burned through every fallback rung
+ * on transient errors, leaving chats "needs-attention" too early.
+ */
+const SAME_MODEL_RETRIES = 3
 /** How much trailing output the marker and failure scans keep in memory. */
 const SCAN_WINDOW = 16_384
 /** Cap stored prompt history so long chats cannot retain unbounded text. */
@@ -343,6 +377,7 @@ export class AgentController {
         pipelines: request.pipelines.filter((pipeline) => pipeline.nodes.length)
       }
       existing.fallbacks = [...(request.fallbacks ?? [])]
+      existing.sameModelAttempts = 0
       this.emit({ kind: 'user', taskId: request.id, text: clean })
       this.followUp(existing, clean)
       return { ok: true }
@@ -367,6 +402,7 @@ export class AgentController {
       abort: new AbortController(),
       mandatoryOutstanding: false,
       fallbacks: [...(request.fallbacks ?? [])],
+      sameModelAttempts: 0,
       askEpoch: 0,
       questionSeq: 0,
       todoSeq: 0
@@ -428,6 +464,7 @@ export class AgentController {
     if (isAiProvider(provider)) {
       task.request.provider = provider
       task.request.model = normalizeModel(model)
+      task.sameModelAttempts = 0
     }
     if (fallbacks) task.fallbacks = [...fallbacks]
     task.request.mode = normalizeMode(mode ?? task.request.mode, task.request.provider)
@@ -464,6 +501,7 @@ export class AgentController {
     task.request.provider = provider
     task.request.model = normalizeModel(model)
     task.request.mode = normalizeMode(mode ?? task.request.mode, provider)
+    task.sameModelAttempts = 0
     return { ok: true }
   }
 
@@ -643,6 +681,7 @@ export class AgentController {
       },
       tool: (event) => {
         this.emit({ kind: 'tool', taskId: task.request.id, ...event })
+        scan.toolNames.push(event.name)
         // Codex sometimes only fills command on item.completed; accept either.
         if (event.detail && isShellToolName(event.name) && event.state !== 'error') {
           scan.shellInvocations.push(event.detail)
@@ -889,6 +928,51 @@ export class AgentController {
     return candidates.filter((pipeline) => ids?.includes(pipeline.id))
   }
 
+  /**
+   * Resolve the turn's tool policy. Plan mode never asks Jev. Build mode asks
+   * once per attempt and remaps the cached selection onto the current provider
+   * (native `--tools` vs prompt clause) across same-model retries and fallbacks.
+   */
+  private async resolveToolPolicy(
+    task: Task,
+    opening: string,
+    attempt: number
+  ): Promise<ToolPolicy> {
+    if (task.request.mode === 'plan') return planToolPolicy(task.request.provider)
+    if (task.toolSelection && task.toolSelectionAttempt === attempt) {
+      return toolPolicyFor(task.request.provider, task.toolSelection)
+    }
+    const state = toolSelectionState({
+      task: task.request.prompt,
+      opening,
+      mode: 'build',
+      attempt
+    })
+    const selected = await selectTools(state, { attempt })
+    const resolved: ToolSelection =
+      selected ?? { kind: 'fallback-full', reason: 'jev-unavailable' }
+    task.toolSelection = resolved
+    task.toolSelectionAttempt = attempt
+    return toolPolicyFor(task.request.provider, resolved)
+  }
+
+  /** Diagnostic-only: log omitted-family tool cards without killing the run. */
+  private observeTools(task: Task, policy: ToolPolicy, toolNames: string[], attempt: number): void {
+    const observation = observeToolUse(policy, toolNames)
+    if (!observation.violations.length && !observation.unknownCount) return
+    logJev({
+      timestamp: new Date().toISOString(),
+      purpose: 'tool-observation',
+      taskId: task.request.id,
+      attempt,
+      provider: task.request.provider,
+      selection: policy.selection.kind,
+      used: observation.used,
+      violations: observation.violations,
+      unknownCount: observation.unknownCount
+    })
+  }
+
   /** Plan mode never validates — it only recognizes the finished-plan marker. */
   private finishPlanCycleAttempt(task: Task, attempt: number, scan: CycleScan): CycleAttemptResult {
     if (isFinishedPlan(scan.assistant)) {
@@ -905,18 +989,76 @@ export class AgentController {
   }
 
   /**
-   * Step down the mode's fallback chain after a provider-side failure — a
-   * missing CLI, a non-zero exit, or a quota/auth banner. The agent's own
-   * FAROL_BLOCKED is excluded: that is a judgement about the task, and every
-   * other model would reach it too. Returns false once the chain is spent.
+   * The current provider/model gets `SAME_MODEL_RETRIES` extra tries after a
+   * provider-side error before the fallback chain is consulted. A queued
+   * user message takes priority over an automatic retry — returning false
+   * here lets `finishOrContinue` drain it instead of silently retrying.
+   * Every attempt is logged to disk and waits out a backoff delay first, so
+   * a rate limit is not immediately hammered again.
    */
-  private switchToFallback(task: Task, reason: string): boolean {
+  private async shouldRetryAfterError(task: Task, attempt: number, reason: string): Promise<boolean> {
+    if (!task.guidance.length) {
+      task.sameModelAttempts += 1
+      if (task.sameModelAttempts <= SAME_MODEL_RETRIES) {
+        this.status(
+          task,
+          'working',
+          attempt,
+          `${reason} — retrying with ${aiSelectionLabel(task.request.provider, task.request.model)} (${task.sameModelAttempts}/${SAME_MODEL_RETRIES})`
+        )
+        logAgentFailure({
+          ts: Date.now(),
+          taskId: task.request.id,
+          attempt,
+          provider: task.request.provider,
+          model: task.request.model,
+          reason,
+          outcome: 'retry-same-model',
+          sameModelAttempt: task.sameModelAttempts
+        })
+        await backoffWait(task.sameModelAttempts, task.abort.signal)
+        return true
+      }
+    }
+    task.sameModelAttempts = 0
+    return this.switchToFallback(task, attempt, reason)
+  }
+
+  /**
+   * Step down the mode's fallback chain once the same-model retry budget is
+   * spent — a missing CLI, a non-zero exit, or a quota/auth banner. The
+   * agent's own FAROL_BLOCKED is excluded: that is a judgement about the
+   * task, and every other model would reach it too. Returns false once the
+   * chain is spent.
+   */
+  private async switchToFallback(task: Task, attempt: number, reason: string): Promise<boolean> {
     const next = task.fallbacks.shift()
-    if (!next) return false
+    if (!next) {
+      logAgentFailure({
+        ts: Date.now(),
+        taskId: task.request.id,
+        attempt,
+        provider: task.request.provider,
+        model: task.request.model,
+        reason,
+        outcome: 'exhausted'
+      })
+      return false
+    }
     const from = aiSelectionLabel(task.request.provider, task.request.model)
     task.request.provider = next.agent
     task.request.model = normalizeModel(next.model)
     task.request.mode = normalizeMode(task.request.mode, next.agent)
+    logAgentFailure({
+      ts: Date.now(),
+      taskId: task.request.id,
+      attempt,
+      provider: next.agent,
+      model: task.request.model,
+      reason,
+      outcome: 'fallback',
+      from
+    })
     this.emit({
       kind: 'provider',
       taskId: task.request.id,
@@ -925,6 +1067,7 @@ export class AgentController {
       mode: task.request.mode,
       reason: `${from} failed (${reason}) — retrying with ${aiSelectionLabel(next.agent, next.model)}.`
     })
+    await backoffWait(1, task.abort.signal)
     return true
   }
 
@@ -966,9 +1109,10 @@ export class AgentController {
     const asked = this.questionsAfterRun(task, attempt, scan)
     if (asked) return asked
     if (scan.blocked) {
-      // The same turn, on the next model down the chain — nothing was produced
-      // to repair, so the attempt counter does not move.
-      if (scan.blockedByProvider && this.switchToFallback(task, scan.blocked)) {
+      // Same model first (up to SAME_MODEL_RETRIES), then the next rung down
+      // the chain — nothing was produced to repair, so the attempt counter
+      // does not move either way.
+      if (scan.blockedByProvider && (await this.shouldRetryAfterError(task, attempt, scan.blocked))) {
         return { kind: 'retry', prompt, rewindAttempt: true }
       }
       // A follow-up may already be queued with a switched provider (e.g. after
@@ -977,12 +1121,13 @@ export class AgentController {
       return { kind: 'done' }
     }
     if (code !== 0) {
-      if (this.switchToFallback(task, `exit code ${code}`)) {
+      if (await this.shouldRetryAfterError(task, attempt, `exit code ${code}`)) {
         return { kind: 'retry', prompt, rewindAttempt: true }
       }
       this.finishOrContinue(task, attempt, 'needs-attention', `Agent exited with code ${code}`)
       return { kind: 'done' }
     }
+    task.sameModelAttempts = 0
     if (task.guidance.length) {
       const guidance = task.guidance.splice(0).join('\n')
       return {
@@ -997,7 +1142,8 @@ export class AgentController {
   private async runCycleAttempt(
     task: Task,
     prompt: string,
-    attempt: number
+    attempt: number,
+    opening: string
   ): Promise<CycleAttemptResult> {
     this.status(
       task,
@@ -1017,13 +1163,18 @@ export class AgentController {
       blockedByProvider: false,
       shellInvocations: [],
       filesChanged: false,
-      changedTargets: []
+      changedTargets: [],
+      toolNames: []
     }
+    const policy = await this.resolveToolPolicy(task, opening, attempt)
+    const clause = toolPolicyPrompt(policy)
+    const effective = clause ? `${prompt}\n\n${clause}` : prompt
     const sink = this.cycleSink(task, scan)
     const epoch = task.askEpoch
     const code = this.executor
-      ? await this.executor(task.request, prompt, sink.text, sink.tool)
-      : await this.runAgent(task, prompt, sink)
+      ? await this.executor(task.request, effective, sink.text, sink.tool)
+      : await this.runAgent(task, effective, sink, false, policy.nativeTools)
+    this.observeTools(task, policy, scan.toolNames, attempt)
     if (task.askEpoch !== epoch) return { kind: 'done' }
     return await this.cycleAfterRun(task, attempt, scan, code, prompt)
   }
@@ -1049,12 +1200,15 @@ export class AgentController {
     let openingText = opening
     let prompt: string | undefined
     let attempt = 0
+    // Fresh cycle → fresh tool ask; within the cycle, same-attempt retries remap.
+    task.toolSelection = undefined
+    task.toolSelectionAttempt = undefined
     try {
       for (attempt = 1; attempt <= maxAttempts && !task.cancelled; attempt++) {
         await this.loadTodos(task)
         const currentPrompt = prompt ?? this.prompt(task, openingText)
         prompt = undefined
-        const result = await this.runCycleAttempt(task, currentPrompt, attempt)
+        const result = await this.runCycleAttempt(task, currentPrompt, attempt, openingText)
         if (result.kind === 'done') return
         if ('prompt' in result) prompt = result.prompt
         else openingText = result.opening
@@ -1094,6 +1248,7 @@ export class AgentController {
         ? `Do not run validation pipelines in Plan mode.`
         : `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
       `Do not call the Farol MCP tools in this managed Chat session. They are not available here — they require approval in some providers, and the managed harness executes your selected pipelines directly.`,
+      `When you propose or complete a change, include a Mermaid diagram in a \`\`\`mermaid fenced block so Chat can render it. Prefer flowchart TD or sequenceDiagram with 4–12 well-defined steps — detailed but not crowded. In Plan mode, diagram the intended approach. After changing files in Build mode, diagram what changed and why. Keep node labels short; put extra detail in the surrounding prose. Skip a diagram for questions-only or status-only replies.`,
       plan
         ? `End every response with exactly one final line: ${QUESTIONS_MARKER} [...] when you need a decision, ${FINISHED_PLAN} when the plan is complete, or ${PIPELINES_MARKER} [] for an ordinary response.`
         : `End every response with exactly one final line: either ${QUESTIONS_MARKER} [...] when you need a user decision, or ${PIPELINES_MARKER} ["pipeline-id"] when the file-change work for this turn is done — ${PIPELINES_MARKER} [] if no validation is needed. Use a JSON array and only catalog ids for pipelines.`,
@@ -1129,11 +1284,18 @@ export class AgentController {
     return `Farol pipeline activity for this chat:\n${lines.join('\n')}`
   }
 
-  private runAgent(task: Task, prompt: string, sink: AgentSink, plain = false): Promise<number> {
+  private runAgent(
+    task: Task,
+    prompt: string,
+    sink: AgentSink,
+    plain = false,
+    tools?: string[]
+  ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
     const spec = managedAiCommand(task.request.provider, prompt, task.request.model, {
       jsonFormat: !plain,
-      mode: task.request.mode
+      mode: task.request.mode,
+      ...(tools?.length ? { tools } : {})
     })
     const env = aiEnv(task.request.provider)
     const bin = resolveBinFrom(spec.bins)

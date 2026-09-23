@@ -196,6 +196,28 @@ describe('managedAiCommand', () => {
     ])
   })
 
+  it('passes a native --tools allowlist for Claude and OMP when supplied', () => {
+    expect(
+      managedAiCommand('claude', 'fix this', undefined, {
+        tools: ['Read', 'Glob', 'Grep', 'AskUserQuestion', 'Edit']
+      }).args
+    ).toContain('--tools')
+    expect(
+      managedAiCommand('claude', 'fix this', undefined, {
+        tools: ['Read', 'Edit']
+      }).args
+    ).toContain('Read,Edit')
+    expect(
+      managedAiCommand('omp', 'fix this', undefined, {
+        tools: ['read', 'glob', 'grep', 'lsp', 'edit']
+      }).args
+    ).toEqual(['--mode', 'json', '--auto-approve', '--tools', 'read,glob,grep,lsp,edit', 'fix this'])
+    // Prompt-only providers ignore the allowlist in argv.
+    expect(
+      managedAiCommand('cursor', 'fix this', undefined, { tools: ['Read', 'Edit'] }).args
+    ).not.toContain('--tools')
+  })
+
   it('marks the providers whose stdout has to be decoded as NDJSON', () => {
     // Claude and Cursor print nothing under `text` until the run ends, so
     // Chat would sit blank; OpenCode's default format is formatted prose.
