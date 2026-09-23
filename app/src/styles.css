@@ -591,3 +591,22 @@ button:disabled {
 .bf-md-table tbody tr:last-child td {
   border-bottom: 0;
 }
+
+/* Agent Mermaid diagrams: same pitch well as code, scroll if a graph is wide. */
+.bf-md-mermaid {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  margin: 4px 0;
+  padding: 12px 14px;
+  background: #181817;
+  border: 1px solid #3E3E3A;
+  border-radius: 8px;
+}
+
+.bf-md-mermaid-svg svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
