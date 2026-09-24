@@ -4,7 +4,9 @@ import fs from 'fs'
 import type {
   AgentTaskRequest,
   AppSettings,
+  MergeStrategy,
   Pipeline,
+  ProjectWriteOpts,
   RunEvent,
   ShellCwd,
   ShellData,
@@ -12,8 +14,8 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, githubStatus, hooksInfo, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus } from './git'
-import { createPullRequest } from './github'
+import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus } from './git'
+import { createPullRequest, mergePullRequest } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, flushWorkspace, PipelineWatcher } from './store'
 import {
@@ -26,7 +28,7 @@ import { refreshAgentCatalogs } from './agent-models'
 import { checkJev, clearJev, saveJevKey } from './jev'
 import { configureJevLogs } from './jev-log'
 import { configureAgentFailureLogs } from './agent-failure-log'
-import { listProjectFiles, saveChatAttachment } from './files'
+import { listProjectDir, listProjectFiles, readProjectFile, saveChatAttachment, writeProjectFile } from './files'
 import { listAgentSkills } from './skills'
 import { AppUpdater } from './update'
 import { applyGlass, glassAvailable } from './glass'
@@ -548,6 +550,23 @@ function registerProjectIpc(): void {
   ipcMain.handle('project:listFiles', (_e, projectPath: string, query?: string) =>
     listProjectFiles(projectPath, typeof query === 'string' ? query : '')
   )
+  ipcMain.handle('project:listDir', (_e, projectPath: string, relDir?: string) =>
+    typeof projectPath === 'string'
+      ? listProjectDir(projectPath, typeof relDir === 'string' ? relDir : '')
+      : { ok: false, error: 'Path is outside the project.' }
+  )
+  ipcMain.handle('project:readFile', (_e, projectPath: string, relPath: string) =>
+    typeof projectPath === 'string' && typeof relPath === 'string'
+      ? readProjectFile(projectPath, relPath)
+      : { ok: false, error: 'Path is outside the project.' }
+  )
+  ipcMain.handle(
+    'project:writeFile',
+    (_e, projectPath: string, relPath: string, content: string, opts?: ProjectWriteOpts) =>
+      typeof projectPath === 'string' && typeof relPath === 'string' && typeof content === 'string'
+        ? writeProjectFile(projectPath, relPath, content, opts ?? {})
+        : { ok: false, error: 'Path is outside the project.' }
+  )
   ipcMain.handle('project:listSkills', (_e, projectPath: string, provider: unknown) =>
     typeof projectPath === 'string' && isAiProvider(provider)
       ? listAgentSkills(projectPath, provider)
@@ -704,10 +723,42 @@ function registerGitIpc(): void {
   })
   ipcMain.handle('git:hooks', (_e, projectPath: string) => hooksInfo(projectPath))
   ipcMain.handle('git:github', (_e, projectPath: string) => githubStatus(projectPath))
-  ipcMain.handle('git:createPr', async (_e, projectPath: string, base?: string, title?: string) => {
+  ipcMain.handle(
+    'git:createPr',
+    async (_e, projectPath: string, base?: string, title?: string, body?: string) => {
+      const cwd = await openProjectCwd(projectPath)
+      if ('error' in cwd) return { ok: false, message: cwd.error }
+      return createPullRequest(
+        cwd.path,
+        typeof base === 'string' ? base : undefined,
+        typeof title === 'string' ? title : undefined,
+        typeof body === 'string' ? body : undefined
+      )
+    }
+  )
+  ipcMain.handle(
+    'git:draftPr',
+    async (
+      _e,
+      projectPath: string,
+      provider: AgentTaskRequest['provider'],
+      model?: string,
+      base?: string
+    ) => {
+      const cwd = await openProjectCwd(projectPath)
+      if ('error' in cwd) return cwd
+      return draftPullRequest(
+        cwd.path,
+        provider,
+        typeof model === 'string' ? model : undefined,
+        typeof base === 'string' ? base : undefined
+      )
+    }
+  )
+  ipcMain.handle('git:mergePr', async (_e, projectPath: string, strategy: MergeStrategy) => {
     const cwd = await openProjectCwd(projectPath)
     if ('error' in cwd) return { ok: false, message: cwd.error }
-    return createPullRequest(cwd.path, base, title)
+    return mergePullRequest(cwd.path, strategy)
   })
   ipcMain.handle('git:bringConflicts', async (_e, projectPath: string) => {
     const cwd = await openProjectCwd(projectPath)

@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -9,7 +8,17 @@ import {
   type SetStateAction
 } from 'react'
 import { activeHooks, committableFiles, gitHookFailurePrompt } from '@shared/git-status'
-import type { AiProvider, GitCommit, GitHookInfo, GitHookRun, GitHubInfo, GitInfo, GitStatus } from '@shared/types'
+import type {
+  AiProvider,
+  GitCommit,
+  GitHookInfo,
+  GitHookRun,
+  GitHubInfo,
+  GitInfo,
+  GitStatus,
+  MergeStrategy,
+  PrDraft
+} from '@shared/types'
 
 const api = window.farol
 
@@ -142,7 +151,15 @@ function startGitPolling(params: GitPollingParams): () => void {
   return () => cleanups.forEach((cleanup) => cleanup())
 }
 
-export type GitAction = 'generate' | 'commit' | 'push' | 'pull' | 'pr' | 'conflicts'
+export type GitAction =
+  | 'generate'
+  | 'commit'
+  | 'push'
+  | 'pull'
+  | 'pr'
+  | 'generatePr'
+  | 'merge'
+  | 'conflicts'
 
 export type GitCommitDraft = {
   message: string
@@ -168,6 +185,58 @@ type UseGitPanelOptions = {
 }
 
 const EMPTY_DRAFT: GitCommitDraft = { message: '', skipped: [] }
+const EMPTY_PR_DRAFT: PrDraft = { title: '', description: '' }
+
+type PanelSetters = {
+  setDraft: Dispatch<SetStateAction<GitCommitDraft>>
+  setPrDraft: Dispatch<SetStateAction<PrDraft>>
+  setSelectedFiles: Dispatch<SetStateAction<string[]>>
+}
+
+function createPanelUpdaters({ setDraft, setPrDraft, setSelectedFiles }: PanelSetters) {
+  return {
+    setDraftMessage: (message: string) => setDraft((current) => ({ ...current, message })),
+    setPrTitle: (title: string) => setPrDraft((current) => ({ ...current, title })),
+    setPrDescription: (description: string) =>
+      setPrDraft((current) => ({ ...current, description })),
+    setFileSelected: (file: string, selected: boolean) =>
+      setSelectedFiles((files) => {
+        if (!selected) return files.filter((path) => path !== file)
+        return files.includes(file) ? files : [...files, file]
+      }),
+    selectAllFiles: (files: string[]) => setSelectedFiles(files)
+  }
+}
+
+type RemoteResult = { ok: boolean; message: string; prompt?: string; hookRun?: GitHookRun }
+
+type RunRemote = (
+  kind: GitAction,
+  action: string,
+  op: () => Promise<RemoteResult>,
+  failed: string
+) => Promise<RemoteResult | undefined>
+
+function createRemoteActions(projectPath: string, runRemote: RunRemote) {
+  return {
+    push: () => runRemote('push', 'Push', () => api.git.push(projectPath), 'Push failed'),
+    pull: () => runRemote('pull', 'Pull', () => api.git.pull(projectPath), 'Pull failed'),
+    createPr: (base?: string, title?: string, body?: string) =>
+      runRemote(
+        'pr',
+        'Create pull request',
+        () => api.git.createPr(projectPath, base, title, body),
+        'Could not create the pull request'
+      ),
+    mergePr: (strategy: MergeStrategy) =>
+      runRemote(
+        'merge',
+        'Merge pull request',
+        () => api.git.mergePr(projectPath, strategy),
+        'Could not merge the pull request'
+      )
+  }
+}
 
 export function useGitPanel(
   projectPath: string,
@@ -181,6 +250,7 @@ export function useGitPanel(
   const [loading, setLoading] = useState(false)
   const [gitAction, setGitAction] = useState<GitAction | null>(null)
   const [draft, setDraft] = useState<GitCommitDraft>(EMPTY_DRAFT)
+  const [prDraft, setPrDraft] = useState<PrDraft>(EMPTY_PR_DRAFT)
   const [selectedFiles, setSelectedFiles] = useState<string[]>([])
   const [log, setLog] = useState<GitLogEntry[]>([])
   const [refreshError, setRefreshError] = useState<string | null>(null)
@@ -197,8 +267,10 @@ export function useGitPanel(
       hour12: false
     })
     logId.current += 1
-    const entry = { id: logId.current, time, action, message, ok }
-    setLog((entries) => [...entries, entry])
+    setLog((entries) => [
+      ...entries,
+      { id: logId.current, time, action, message, ok }
+    ])
   }, [])
 
   useEffect(() => {
@@ -207,6 +279,7 @@ export function useGitPanel(
     setGithub(null)
     setHooks(null)
     setDraft(EMPTY_DRAFT)
+    setPrDraft(EMPTY_PR_DRAFT)
     setSelectedFiles([])
     setLog([])
     setRefreshError(null)
@@ -307,13 +380,8 @@ export function useGitPanel(
   }, [announceHooks, appendLog, draft.message, gitAction, projectPath, refresh, reportHookRun, selectedFiles])
 
   /** Run a remote action and append its outcome to the session transcript. */
-  const runRemote = useCallback(
-    async (
-      kind: GitAction,
-      action: string,
-      op: () => Promise<{ ok: boolean; message: string; prompt?: string; hookRun?: GitHookRun }>,
-      failed: string
-    ) => {
+  const runRemote = useCallback<RunRemote>(
+    async (kind, action, op, failed) => {
       if (gitAction) return
       setGitAction(kind)
       if (kind === 'push') announceHooks('push')
@@ -332,30 +400,42 @@ export function useGitPanel(
     [announceHooks, appendLog, gitAction, refresh, reportHookRun]
   )
 
-  /** Remote actions grouped in one memo so they share a single nesting level. */
-  const { push, pull, createPr, resolveConflicts } = useMemo(
-    () => ({
-      push: () => runRemote('push', 'Push', () => api.git.push(projectPath), 'Push failed'),
-      pull: () => runRemote('pull', 'Pull', () => api.git.pull(projectPath), 'Pull failed'),
-      createPr: (base?: string, title?: string) =>
-        runRemote(
-          'pr',
-          'Create pull request',
-          () => api.git.createPr(projectPath, base, title),
-          'Could not create the pull request'
-        ),
-      resolveConflicts: async () => {
-        const res = await runRemote(
-          'conflicts',
-          'Check conflicts',
-          () => api.git.bringConflicts(projectPath),
-          'Could not bring pull request conflicts into the working tree'
+  const remotes = createRemoteActions(projectPath, runRemote)
+
+  const preparePr = useCallback(
+    async (base: string, provider?: AiProvider, model?: string) => {
+      if (gitAction || !base.trim()) return
+      setGitAction('generatePr')
+      try {
+        const selection = provider ? { agent: provider, model } : ai()
+        const res = await api.git.draftPr(projectPath, selection.agent, selection.model, base)
+        if (res.ok && res.title) {
+          setPrDraft({ title: res.title, description: res.description ?? '' })
+        } else {
+          appendLog('Generate pull request', res.error || 'Could not generate pull request', false)
+        }
+      } catch (error) {
+        appendLog(
+          'Generate pull request',
+          errorMessage(error, 'Could not generate pull request'),
+          false
         )
-        if (res?.prompt) opts?.onAskAi?.(res.prompt)
+      } finally {
+        setGitAction(null)
       }
-    }),
-    [opts?.onAskAi, projectPath, runRemote]
+    },
+    [ai, appendLog, gitAction, projectPath]
   )
+
+  const resolveConflicts = useCallback(async () => {
+    const res = await runRemote(
+      'conflicts',
+      'Check conflicts',
+      () => api.git.bringConflicts(projectPath),
+      'Could not bring pull request conflicts into the working tree'
+    )
+    if (res?.prompt) opts?.onAskAi?.(res.prompt)
+  }, [opts?.onAskAi, projectPath, runRemote])
 
   return {
     status,
@@ -365,22 +445,16 @@ export function useGitPanel(
     loading,
     gitAction,
     draft,
+    prDraft,
     selectedFiles,
     log,
     refreshError,
     refresh,
     prepareCommit,
-    setDraftMessage: (message: string) => setDraft((current) => ({ ...current, message })),
-    setFileSelected: (file: string, selected: boolean) =>
-      setSelectedFiles((files) => {
-        if (!selected) return files.filter((path) => path !== file)
-        return files.includes(file) ? files : [...files, file]
-      }),
-    selectAllFiles: (files: string[]) => setSelectedFiles(files),
+    preparePr,
+    ...createPanelUpdaters({ setDraft, setPrDraft, setSelectedFiles }),
     confirmCommit,
-    pull,
-    push,
-    createPr,
+    ...remotes,
     resolveConflicts
   }
 }

@@ -1,6 +1,17 @@
 /** Parse `git status --porcelain=v1` into structured file lists. */
 
-import type { GitFileKind, GitHookInfo, GitHubInfo, GitStatus, GitStatusFile } from './types'
+import type {
+  GitFileKind,
+  GitHookInfo,
+  GitHubInfo,
+  GitStatus,
+  GitStatusFile,
+  MergeStrategy,
+  PrCheck,
+  PrCheckState,
+  PrCheckSummary,
+  PullRequest
+} from './types'
 
 const CONFLICT = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'])
 
@@ -271,4 +282,69 @@ export function conflictResolvePrompt(opts: {
     `Resolve every conflict, keep this branch's intended behavior, and leave the files ready to commit.`,
     `Conflicted files:\n${listed}`
   ].join('\n\n')
+}
+
+const CHECK_COUNTS = {
+  pending: 0,
+  passed: 0,
+  failed: 0,
+  skipped: 0,
+  neutral: 0
+} as const satisfies Record<PrCheckState, number>
+
+/** Aggregate check rows into counts and a required-check readiness state. */
+export function summarizePrChecks(
+  checks: PrCheck[],
+  opts?: { requireAllWhenUnmarked?: boolean }
+): PrCheckSummary {
+  const counts = { ...CHECK_COUNTS }
+  for (const check of checks) counts[check.state] += 1
+
+  if (!checks.length) {
+    return { state: 'none', ...counts, checks }
+  }
+
+  const marked = checks.filter((check) => check.required)
+  const required = marked.length
+    ? marked
+    : opts?.requireAllWhenUnmarked === false
+      ? []
+      : checks.filter((check) => check.state !== 'skipped' && check.state !== 'neutral')
+
+  if (!required.length) {
+    return { state: 'passed', ...counts, checks }
+  }
+  if (required.some((check) => check.state === 'failed')) {
+    return { state: 'failed', ...counts, checks }
+  }
+  if (required.some((check) => check.state === 'pending')) {
+    return { state: 'pending', ...counts, checks }
+  }
+  return { state: 'passed', ...counts, checks }
+}
+
+/**
+ * Why this pull request cannot be merged yet, or null when a chosen strategy
+ * may proceed. Pass `strategy` only when the UI has an explicit selection —
+ * an empty strategy always blocks so the user must pick one each time.
+ */
+export function mergePullRequestBlockReason(
+  pr: PullRequest | undefined | null,
+  strategy?: MergeStrategy | null
+): string | null {
+  if (!pr) return 'No open pull request from this branch.'
+  if (pr.isDraft) return 'Mark the pull request as ready for review before merging.'
+  if (pr.hasConflicts) {
+    return pr.base
+      ? `Resolve merge conflicts with ${pr.base} before merging.`
+      : 'Resolve merge conflicts before merging.'
+  }
+  const checks = pr.checks
+  if (!checks || checks.state === 'unavailable') {
+    return 'GitHub Actions status is unavailable.'
+  }
+  if (checks.state === 'pending') return 'Wait for required checks to finish.'
+  if (checks.state === 'failed') return 'Required checks are failing.'
+  if (!strategy) return 'Choose a merge strategy.'
+  return null
 }

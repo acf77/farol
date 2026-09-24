@@ -158,6 +158,38 @@ export interface GitHookRun {
 }
 
 
+/** Normalized GitHub Actions / status-check outcome for Source Control. */
+export type PrCheckState = 'pending' | 'passed' | 'failed' | 'skipped' | 'neutral'
+
+export interface PrCheck {
+  name: string
+  state: PrCheckState
+  /** True when branch protection lists this check as required. */
+  required?: boolean
+  url?: string
+}
+
+/** Roll-up of check rows used for merge gating and the Actions summary. */
+export interface PrCheckSummary {
+  /** Overall required-check readiness; `none` when GitHub reported no checks. */
+  state: 'pending' | 'passed' | 'failed' | 'none' | 'unavailable'
+  pending: number
+  passed: number
+  failed: number
+  skipped: number
+  neutral: number
+  checks: PrCheck[]
+}
+
+export const MERGE_STRATEGIES = ['merge', 'squash', 'rebase'] as const
+export type MergeStrategy = (typeof MERGE_STRATEGIES)[number]
+
+/** Session draft for opening a pull request (title + description). */
+export interface PrDraft {
+  title: string
+  description: string
+}
+
 export interface PullRequest {
   number: number
   hasConflicts: boolean
@@ -165,6 +197,10 @@ export interface PullRequest {
   base?: string
   /** GitHub HTML URL for this PR, when `gh` reported it. */
   url?: string
+  /** True when the PR is still a draft on GitHub. */
+  isDraft?: boolean
+  /** GitHub Actions / status checks for this PR, when available. */
+  checks?: PrCheckSummary
 }
 
 export interface GitHubInfo {
@@ -360,6 +396,35 @@ export type UpdateStatus =
 
 export type Platform = 'darwin' | 'win32' | 'linux' | (string & {})
 
+/** One child of a project directory, relative to the project root. */
+export interface ProjectDirEntry {
+  name: string
+  path: string
+  kind: 'file' | 'dir'
+}
+
+export type ProjectLineEnding = 'lf' | 'crlf'
+
+export interface ProjectFileRead {
+  path: string
+  content: string
+  mtimeMs: number
+  lineEnding: ProjectLineEnding
+}
+
+export interface ProjectFileWrite {
+  mtimeMs: number
+}
+
+export interface ProjectWriteOpts {
+  expectedMtimeMs?: number
+  overwrite?: boolean
+}
+
+export type ProjectFsFailure = { ok: false; error: string; conflict?: boolean }
+export type ProjectFsSuccess<T> = { ok: true } & T
+export type ProjectFsResult<T> = ProjectFsSuccess<T> | ProjectFsFailure
+
 export interface FarolApi {
   platform: Platform
   /** The machine's default shell, e.g. `zsh` — used to label terminal tabs. */
@@ -370,6 +435,17 @@ export interface FarolApi {
     openPath(path: string): Promise<Project | null>
     /** Relative paths under the project root, filtered by an optional query. */
     listFiles(projectPath: string, query?: string): Promise<string[]>
+    /** Immediate children of one directory under the project root. */
+    listDir(projectPath: string, relDir?: string): Promise<ProjectFsResult<{ entries: ProjectDirEntry[] }>>
+    /** UTF-8 text of an existing project file. */
+    readFile(projectPath: string, relPath: string): Promise<ProjectFsResult<ProjectFileRead>>
+    /** Overwrite a file previously read in this session. */
+    writeFile(
+      projectPath: string,
+      relPath: string,
+      content: string,
+      opts?: ProjectWriteOpts
+    ): Promise<ProjectFsResult<ProjectFileWrite>>
     /** User-invocable skills for the selected agent, from its native scopes. */
     listSkills(projectPath: string, provider: AiProvider): Promise<AgentSkill[]>
     /** Persist a dropped chat image; returns the absolute path on disk. */
@@ -467,7 +543,23 @@ export interface FarolApi {
     createPr(
       projectPath: string,
       base?: string,
+      title?: string,
+      body?: string
+    ): Promise<{ ok: boolean; message: string }>
+    draftPr(
+      projectPath: string,
+      provider: AiProvider,
+      model?: string,
+      base?: string
+    ): Promise<{
+      ok: boolean
       title?: string
+      description?: string
+      error?: string
+    }>
+    mergePr(
+      projectPath: string,
+      strategy: MergeStrategy
     ): Promise<{ ok: boolean; message: string }>
     bringConflicts(projectPath: string): Promise<{ ok: boolean; message: string; prompt?: string }>
     /** Fires when HEAD changes, including from outside the app. */

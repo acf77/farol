@@ -11,7 +11,7 @@ const { runAiOnce, githubInfo } = vi.hoisted(() => ({
 vi.mock('./ai-oneshot', () => ({ runAiOnce }))
 vi.mock('./github', () => ({ githubInfo }))
 
-import { bringPrConflicts, commitAll, draftCommit, githubStatus, hooksInfo, mergeBaseConflicts, mergeForConflicts, parseCommitLog, pull, push, sanitizeCommitMessage, status } from './git'
+import { bringPrConflicts, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, mergeBaseConflicts, mergeForConflicts, parseCommitLog, parsePrDraftResponse, pull, push, sanitizeCommitMessage, sanitizePrDescription, sanitizePrTitle, status } from './git'
 
 const dirs: string[] = []
 
@@ -69,6 +69,69 @@ describe('sanitizeCommitMessage', () => {
 
   it('returns empty string for whitespace-only input', () => {
     expect(sanitizeCommitMessage('   \n\n  ')).toBe('')
+  })
+})
+
+describe('parsePrDraftResponse', () => {
+  it('reads TITLE and DESCRIPTION labels', () => {
+    expect(
+      parsePrDraftResponse('TITLE: feat: panel\nDESCRIPTION:\n## Summary\n\nAdds the panel.\n')
+    ).toEqual({
+      title: 'feat: panel',
+      description: '## Summary\n\nAdds the panel.'
+    })
+  })
+
+  it('falls back to first paragraph as the title', () => {
+    expect(parsePrDraftResponse('feat: panel\n\nBody line')).toEqual({
+      title: 'feat: panel',
+      description: 'Body line'
+    })
+  })
+
+  it('sanitizes fences and labels', () => {
+    expect(sanitizePrTitle('```\nTitle: hello world\n```')).toBe('hello world')
+    expect(sanitizePrDescription('Description: ship it')).toBe('ship it')
+  })
+})
+
+describe('draftPullRequest', () => {
+  it('builds a prompt from the base log and diff, omitting secrets', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'export const n = 1\n')
+    fs.writeFileSync(path.join(cwd, '.env'), 'SECRET=one\n')
+    git(cwd, ['add', 'app.ts', '.env'])
+    git(cwd, ['commit', '-m', 'init'])
+    git(cwd, ['branch', '-M', 'main'])
+    git(cwd, ['checkout', '-b', 'feat/panel'])
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'export const n = 2\n')
+    fs.writeFileSync(path.join(cwd, '.env'), 'SECRET=SUPER_SECRET_VALUE\n')
+    git(cwd, ['add', 'app.ts', '.env'])
+    git(cwd, ['commit', '-m', 'feat: bump'])
+
+    runAiOnce.mockResolvedValue({
+      ok: true,
+      text: 'TITLE: feat: bump n\nDESCRIPTION:\n## Summary\n\nBump n.\n'
+    })
+    const draft = await draftPullRequest(cwd, 'claude', undefined, 'main')
+    expect(draft).toEqual({
+      ok: true,
+      title: 'feat: bump n',
+      description: '## Summary\n\nBump n.'
+    })
+    const prompt = String(runAiOnce.mock.calls[0]?.[1] ?? '')
+    expect(prompt).toContain('feat: bump')
+    expect(prompt).toContain('app.ts')
+    expect(prompt).not.toContain('SUPER_SECRET_VALUE')
+    expect(prompt).not.toContain('.env')
+  })
+
+  it('requires a base branch', async () => {
+    const cwd = tmpRepo()
+    await expect(draftPullRequest(cwd, 'claude')).resolves.toEqual({
+      ok: false,
+      error: 'Choose a base branch before generating a pull request.'
+    })
   })
 })
 

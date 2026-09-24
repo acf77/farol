@@ -37,6 +37,21 @@ describe('renderMarkdown', () => {
     expect(out).toContain('<pre')
     expect(out).toContain('ts')
     expect(out).toContain('const n = 1')
+    expect(out).not.toContain('bf-md-mermaid')
+  })
+
+  it('routes mermaid fences to a diagram container instead of a plain code block', () => {
+    const out = html('```mermaid\nflowchart TD\n  Plan --> Build\n```')
+    expect(out).toContain('bf-md-mermaid')
+    expect(out).toContain('flowchart TD')
+    expect(out).toContain('Plan --&gt; Build')
+    expect(out).toContain('bf-md-mermaid-source')
+  })
+
+  it('keeps an unclosed mermaid fence as a diagram fallback while streaming', () => {
+    const out = html('```mermaid\nflowchart TD\n  A --> B')
+    expect(out).toContain('bf-md-mermaid')
+    expect(out).toContain('A --&gt; B')
   })
 
   it('renders lists and links', () => {

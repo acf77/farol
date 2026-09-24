@@ -152,7 +152,9 @@ Open Chat from the toolbar, or **New agent terminal** from the command palette (
   Farol runs every selection directly; failures are fed into another repair
   turn, and the task is only marked complete after all selected pipelines pass
   — or immediately when none were selected. This does not depend on the
-  provider granting its CLI permission to call Farol's MCP tools.
+  provider granting its CLI permission to call Farol's MCP tools. Assistant
+  replies can include Mermaid diagrams in fenced `mermaid` blocks; Chat
+  renders them in place so a plan and the later change can be read as steps.
 - **Terminal — MCP** opens Claude, Codex, Cursor, OpenCode, or OMP interactively in a
   real terminal. The Farol MCP server is available to list and run
   pipelines, but tool use is controlled by that external CLI and is therefore
