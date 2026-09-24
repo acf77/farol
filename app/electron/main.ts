@@ -12,7 +12,7 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, githubStatus, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus } from './git'
+import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, githubStatus, hooksInfo, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus } from './git'
 import { createPullRequest } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, flushWorkspace, PipelineWatcher } from './store'
@@ -702,6 +702,7 @@ function registerGitIpc(): void {
     if ('error' in cwd) return { ok: false, message: cwd.error }
     return gitPull(cwd.path)
   })
+  ipcMain.handle('git:hooks', (_e, projectPath: string) => hooksInfo(projectPath))
   ipcMain.handle('git:github', (_e, projectPath: string) => githubStatus(projectPath))
   ipcMain.handle('git:createPr', async (_e, projectPath: string, base?: string, title?: string) => {
     const cwd = await openProjectCwd(projectPath)

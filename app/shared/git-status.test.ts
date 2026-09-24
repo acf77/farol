@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  activeHooks,
   commitBlockReason,
   committableChanges,
   committableFiles,
@@ -7,6 +8,7 @@ import {
   conflictResolvePrompt,
   conflictSignals,
   conflictStatusItems,
+  gitHookFailurePrompt,
   isSecretPath,
   parseAheadBehind,
   parseGitStatus,
@@ -15,7 +17,7 @@ import {
   pullRequestBlockReason,
   pushBlockReason
 } from './git-status'
-import type { GitStatus } from './types'
+import type { GitHookInfo, GitStatus } from './types'
 
 function status(partial: Partial<GitStatus>): GitStatus {
   return {
@@ -315,6 +317,31 @@ Auto-merging file.txt
 CONFLICT (content): Merge conflict in file.txt
 `)
     ).toEqual(['file.txt'])
+  })
+})
+
+describe('activeHooks', () => {
+  function hook(name: string, enabled = true): GitHookInfo {
+    return { name, path: `/repo/.git/hooks/${name}`, enabled }
+  }
+
+  it('keeps only enabled hooks that can block a commit', () => {
+    const hooks = [hook('pre-commit'), hook('commit-msg', false), hook('pre-push'), hook('post-commit')]
+    expect(activeHooks(hooks, 'commit')).toEqual([hook('pre-commit')])
+  })
+
+  it('keeps only enabled hooks that can block a push', () => {
+    const hooks = [hook('pre-commit'), hook('pre-push')]
+    expect(activeHooks(hooks, 'push')).toEqual([hook('pre-push')])
+  })
+})
+
+describe('gitHookFailurePrompt', () => {
+  it('names the hooks and includes their output', () => {
+    const text = gitHookFailurePrompt('commit', ['pre-commit', 'commit-msg'], 'commit message too short')
+    expect(text).toMatch(/pre-commit, commit-msg/)
+    expect(text).toMatch(/commit message too short/)
+    expect(text).toMatch(/commit again/)
   })
 })
 

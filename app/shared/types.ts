@@ -143,6 +143,20 @@ export interface GitCommit {
   when: string
 }
 
+export interface GitHookInfo {
+  /** Hook filename, e.g. `pre-commit`. */
+  name: string
+  path: string
+  /** Executable and not a `.sample` template — git will actually run it. */
+  enabled: boolean
+}
+
+/** Hooks that were active for a commit/push that failed, and what they printed. */
+export interface GitHookRun {
+  hooks: string[]
+  output: string
+}
+
 
 export interface PullRequest {
   number: number
@@ -444,9 +458,11 @@ export interface FarolApi {
       projectPath: string,
       message: string,
       files?: string[]
-    ): Promise<{ ok: boolean; message?: string; error?: string }>
-    push(projectPath: string): Promise<{ ok: boolean; message: string }>
+    ): Promise<{ ok: boolean; message?: string; error?: string; hookRun?: GitHookRun }>
+    push(projectPath: string): Promise<{ ok: boolean; message: string; hookRun?: GitHookRun }>
     pull(projectPath: string): Promise<{ ok: boolean; message: string }>
+    /** Hooks installed in this repo's hooks directory (respects `core.hooksPath`). */
+    hooks(projectPath: string): Promise<GitHookInfo[]>
     github(projectPath: string): Promise<GitHubInfo>
     createPr(
       projectPath: string,

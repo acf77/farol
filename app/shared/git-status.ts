@@ -1,6 +1,6 @@
 /** Parse `git status --porcelain=v1` into structured file lists. */
 
-import type { GitFileKind, GitHubInfo, GitStatus, GitStatusFile } from './types'
+import type { GitFileKind, GitHookInfo, GitHubInfo, GitStatus, GitStatusFile } from './types'
 
 const CONFLICT = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'])
 
@@ -231,6 +231,29 @@ export function parseMergeTreeConflictPaths(out: string): string[] {
     files.push(path)
   }
   return files
+}
+
+/** Hook names git runs client-side before it lets a commit through. */
+const COMMIT_HOOK_NAMES = new Set(['pre-commit', 'commit-msg', 'prepare-commit-msg'])
+/** Hook names git runs client-side before it lets a push through. */
+const PUSH_HOOK_NAMES = new Set(['pre-push'])
+
+/** Enabled hooks that can abort `kind`, e.g. to warn before a commit/push is attempted. */
+export function activeHooks(hooks: GitHookInfo[], kind: 'commit' | 'push'): GitHookInfo[] {
+  const names = kind === 'commit' ? COMMIT_HOOK_NAMES : PUSH_HOOK_NAMES
+  return hooks.filter((hook) => hook.enabled && names.has(hook.name))
+}
+
+/** Ask the chat agent to fix whatever a git hook rejected a commit/push for. */
+export function gitHookFailurePrompt(kind: 'commit' | 'push', hooks: string[], output: string): string {
+  const list = hooks.join(', ')
+  return [
+    `\`git ${kind}\` was blocked, most likely by the ${list} hook${hooks.length > 1 ? 's' : ''} in this repository.`,
+    `Fix whatever the hook is complaining about, then ${kind === 'commit' ? 'stage the fix and commit again' : 'push again'}.`,
+    '',
+    'Hook output:',
+    output || '(no output captured)'
+  ].join('\n')
 }
 
 /** Ask the chat agent to finish a merge that already has conflict markers. */
