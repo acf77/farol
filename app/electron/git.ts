@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import { runAiOnce } from './ai-oneshot'
 import {
+  activeHooks,
   commitBlockReason,
   conflictMergeBase,
   conflictResolvePrompt,
@@ -14,7 +15,15 @@ import {
   pushBlockReason,
   committableFiles
 } from '../shared/git-status'
-import type { AiProvider, GitCommit, GitHubInfo, GitInfo, GitStatus } from '../shared/types'
+import type {
+  AiProvider,
+  GitCommit,
+  GitHookInfo,
+  GitHookRun,
+  GitHubInfo,
+  GitInfo,
+  GitStatus
+} from '../shared/types'
 import { githubInfo } from './github'
 import type { WorktreeRequest } from '../shared/worktree'
 import { parseAlreadyOpenPath, parseWorktreeList, pipelineStoreRoot, worktreeFolderName } from '../shared/worktree'
@@ -390,6 +399,45 @@ export async function bringPrConflicts(
   }
 }
 
+/** Hooks installed for `cwd`'s repo — respects `core.hooksPath`, skips `.sample` templates. */
+export async function hooksInfo(cwd: string): Promise<GitHookInfo[]> {
+  const dir = await git(cwd, ['rev-parse', '--git-path', 'hooks'])
+  if (dir.code !== 0) return []
+  const hooksPath = path.resolve(cwd, dir.out.trim())
+
+  let entries: string[]
+  try {
+    entries = fs.readdirSync(hooksPath)
+  } catch {
+    return []
+  }
+
+  return entries
+    .filter((name) => !name.startsWith('.') && !name.endsWith('.sample'))
+    .map((name) => {
+      const full = path.join(hooksPath, name)
+      let enabled: boolean
+      try {
+        fs.accessSync(full, fs.constants.X_OK)
+        enabled = fs.statSync(full).isFile()
+      } catch {
+        enabled = false
+      }
+      return { name, path: full, enabled }
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** Hooks that could have caused a failed commit/push, with the raw output they (or git) printed. */
+async function hookRunFor(
+  cwd: string,
+  kind: 'commit' | 'push',
+  output: string
+): Promise<GitHookRun | undefined> {
+  const hooks = activeHooks(await hooksInfo(cwd), kind)
+  return hooks.length ? { hooks: hooks.map((hook) => hook.name), output } : undefined
+}
+
 export async function status(cwd: string): Promise<GitStatus> {
   const [porcelain, tracking, baseMerge, remotes, unpublished] = await Promise.all([
     git(cwd, ['status', '--porcelain=v1']),
@@ -483,24 +531,28 @@ async function failedCommit(
   added: string[],
   removed: string[],
   failure: string,
-  fallback: string
-): Promise<{ ok: false; error: string }> {
+  fallback: string,
+  hookRun?: GitHookRun
+): Promise<{ ok: false; error: string; hookRun?: GitHookRun }> {
   const restored = await restoreStagedFiles(cwd, added, removed)
   const message = failure || fallback
   return {
     ok: false,
-    error: restored.ok ? message : `${message}; ${restored.message || 'Could not restore staged files'}`
+    error: restored.ok ? message : `${message}; ${restored.message || 'Could not restore staged files'}`,
+    ...(hookRun ? { hookRun } : {})
   }
 }
 
-export async function push(cwd: string): Promise<{ ok: boolean; message: string }> {
+export async function push(cwd: string): Promise<{ ok: boolean; message: string; hookRun?: GitHookRun }> {
   const st = await status(cwd)
   const blocked = pushBlockReason(st)
   if (blocked) return { ok: false, message: blocked }
   const args = !st.upstream && st.remote ? ['push', '-u', st.remote, 'HEAD'] : ['push']
   const res = await git(cwd, args, 120_000)
   const line = cliFirstLine(res)
-  return { ok: res.code === 0, message: line || (res.code === 0 ? 'Pushed' : 'Push failed') }
+  if (res.code === 0) return { ok: true, message: line || 'Pushed' }
+  const hookRun = await hookRunFor(cwd, 'push', (res.err || res.out).trim())
+  return { ok: false, message: line || 'Push failed', ...(hookRun ? { hookRun } : {}) }
 }
 
 /** Bring a clean tracking branch forward without creating a merge commit. */
@@ -513,12 +565,17 @@ export async function pull(cwd: string): Promise<{ ok: boolean; message: string 
   return { ok: res.code === 0, message: line || (res.code === 0 ? 'Already up to date' : 'Pull failed') }
 }
 
-async function commit(cwd: string, message: string): Promise<{ ok: boolean; message: string }> {
+async function commit(
+  cwd: string,
+  message: string
+): Promise<{ ok: boolean; message: string; hookRun?: GitHookRun }> {
   const trimmed = message.trim()
   if (!trimmed) return { ok: false, message: 'Commit message is empty' }
   const res = await git(cwd, ['commit', '-m', trimmed])
   const line = cliFirstLine(res)
-  return { ok: res.code === 0, message: line || (res.code === 0 ? 'Committed' : 'Commit failed') }
+  if (res.code === 0) return { ok: true, message: line || 'Committed' }
+  const hookRun = await hookRunFor(cwd, 'commit', (res.err || res.out).trim())
+  return { ok: false, message: line || 'Commit failed', ...(hookRun ? { hookRun } : {}) }
 }
 
 const COMMIT_MSG_LIMIT = 24_000
@@ -731,7 +788,7 @@ export async function commitAll(
   cwd: string,
   message: string,
   files?: string[]
-): Promise<{ ok: boolean; message?: string; error?: string }> {
+): Promise<{ ok: boolean; message?: string; error?: string; hookRun?: GitHookRun }> {
   const st = await status(cwd)
   const blocked = commitBlockReason(st)
   if (blocked) return { ok: false, error: blocked }
@@ -754,7 +811,7 @@ export async function commitAll(
   }
   const done = await commit(cwd, text)
   if (!done.ok) {
-    return failedCommit(cwd, added, removed, done.message, 'Commit failed')
+    return failedCommit(cwd, added, removed, done.message, 'Commit failed', done.hookRun)
   }
   return { ok: true, message: text }
 }

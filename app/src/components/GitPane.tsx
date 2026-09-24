@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefO
 import { createPortal } from 'react-dom'
 import { aiSelectionLabel, normalizeModel } from '@shared/ai'
 import {
+  activeHooks,
   committableChanges,
   commitBlockReason,
   conflictMergeBase,
@@ -16,6 +17,7 @@ import {
   type AiProvider,
   type AppSettings,
   type GitFileKind,
+  type GitHookInfo,
   type GitHubInfo,
   type GitStatus,
   type MergeStrategy,
@@ -839,10 +841,56 @@ function GitLogCard({ log }: { log: GitLogEntry[] }) {
           <div key={entry.id} style={{ display: 'grid', gridTemplateColumns: '58px max-content minmax(0, 1fr)', gap: 8, color: entry.ok ? C.textMuted : C.red }}>
             <span style={{ color: C.faint }}>{entry.time}</span>
             <span style={{ color: entry.ok ? C.green : C.red }}>{entry.action}</span>
-            <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{entry.message}</span>
+            <span style={{ minWidth: 0, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{entry.message}</span>
           </div>
         ))}
       </div>
+    </section>
+  )
+}
+
+function HooksCard({ hooks }: { hooks: GitHookInfo[] | null }) {
+  const list = hooks ?? []
+  const commitHooks = new Set(activeHooks(list, 'commit').map((hook) => hook.name))
+  const pushHooks = new Set(activeHooks(list, 'push').map((hook) => hook.name))
+
+  return (
+    <section style={card}>
+      <div style={{ ...sectionLabel, marginBottom: 14 }}>Git hooks</div>
+      {!hooks && <div style={{ color: C.textMuted, fontSize: 12 }}>Reading hooks…</div>}
+      {hooks && !list.length && (
+        <div style={{ color: C.textMuted, fontSize: 12 }}>No hooks installed in this repository.</div>
+      )}
+      {list.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {list.map((hook) => {
+            const blocks = [
+              ...(commitHooks.has(hook.name) ? ['commit'] : []),
+              ...(pushHooks.has(hook.name) ? ['push'] : [])
+            ]
+            return (
+              <div key={hook.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }} title={hook.path}>
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    flex: 'none',
+                    borderRadius: '50%',
+                    background: hook.enabled ? C.green : C.faint
+                  }}
+                />
+                <span style={{ fontFamily: MONO, fontSize: 12, color: C.textSoft }}>{hook.name}</span>
+                {!hook.enabled && <span style={{ color: C.textMuted, fontSize: 10.5 }}>disabled</span>}
+                {blocks.length > 0 && (
+                  <span style={{ color: C.yellow, fontSize: 10.5 }}>
+                    blocks {blocks.join(' & ')}
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 }
@@ -858,6 +906,7 @@ export default function GitPane({
   status,
   commits,
   github,
+  hooks,
   loading,
   gitAction,
   draft,
@@ -1001,6 +1050,7 @@ export default function GitPane({
                 setMergeStrategy('')
               }}
             />
+            <HooksCard hooks={hooks} />
             <GitLogCard log={log} />
           </div>
         </div>

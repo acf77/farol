@@ -11,7 +11,7 @@ const { runAiOnce, githubInfo } = vi.hoisted(() => ({
 vi.mock('./ai-oneshot', () => ({ runAiOnce }))
 vi.mock('./github', () => ({ githubInfo }))
 
-import { bringPrConflicts, commitAll, draftCommit, draftPullRequest, githubStatus, mergeBaseConflicts, mergeForConflicts, parseCommitLog, parsePrDraftResponse, pull, push, sanitizeCommitMessage, sanitizePrDescription, sanitizePrTitle, status } from './git'
+import { bringPrConflicts, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, mergeBaseConflicts, mergeForConflicts, parseCommitLog, parsePrDraftResponse, pull, push, sanitizeCommitMessage, sanitizePrDescription, sanitizePrTitle, status } from './git'
 
 const dirs: string[] = []
 
@@ -207,6 +207,7 @@ describe('commitAll', () => {
     expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('kept.ts')
     const res = await commitAll(cwd, 'feat: change')
     expect(res.ok).toBe(false)
+    expect(res.hookRun).toEqual({ hooks: ['pre-commit'], output: '' })
     expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('kept.ts')
   })
 
@@ -245,6 +246,7 @@ describe('commitAll', () => {
 
     const res = await commitAll(cwd, 'feat: change', ['selected.ts'])
     expect(res.ok).toBe(false)
+    expect(res.hookRun?.hooks).toEqual(['pre-commit'])
     expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('unchecked.ts')
     expect(git(cwd, ['diff', '--cached', '--', 'unchecked.ts'])).toContain('+d')
     expect(git(cwd, ['diff', '--', 'unchecked.ts']).trim()).toBe('')
@@ -273,6 +275,58 @@ describe('commitAll', () => {
     expect(res.ok).toBe(true)
     expect(git(cwd, ['show', '--pretty=', '--name-only', 'HEAD']).trim()).toBe('app.ts')
     expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('')
+  })
+})
+
+describe('hooksInfo', () => {
+  it('reports no hooks for a repo with only samples', async () => {
+    const cwd = tmpRepo()
+    expect(await hooksInfo(cwd)).toEqual([])
+  })
+
+  it('lists an installed executable hook as enabled', async () => {
+    const cwd = tmpRepo()
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+    fs.writeFileSync(hook, '#!/bin/sh\nexit 0\n')
+    fs.chmodSync(hook, 0o755)
+
+    expect(await hooksInfo(cwd)).toEqual([{ name: 'pre-commit', path: hook, enabled: true }])
+  })
+
+  it('lists a non-executable hook as disabled', async () => {
+    const cwd = tmpRepo()
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+    fs.writeFileSync(hook, '#!/bin/sh\nexit 0\n')
+    fs.chmodSync(hook, 0o644)
+
+    expect(await hooksInfo(cwd)).toEqual([{ name: 'pre-commit', path: hook, enabled: false }])
+  })
+})
+
+describe('push blocked by a hook', () => {
+  it('reports the pre-push hook and its output', async () => {
+    const origin = tmpRepo()
+    fs.writeFileSync(path.join(origin, 'file.txt'), 'base\n')
+    git(origin, ['add', 'file.txt'])
+    git(origin, ['commit', '-m', 'init'])
+    git(origin, ['branch', '-M', 'main'])
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'bf-git-'))
+    dirs.push(cwd)
+    execFileSync('git', ['clone', origin, cwd], { encoding: 'utf8' })
+    git(cwd, ['config', 'user.email', 'test@example.com'])
+    git(cwd, ['config', 'user.name', 'Test'])
+    fs.writeFileSync(path.join(cwd, 'feat.txt'), 'new\n')
+    git(cwd, ['add', 'feat.txt'])
+    git(cwd, ['commit', '-m', 'feat'])
+
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-push')
+    fs.writeFileSync(hook, '#!/bin/sh\necho "no pushing today" >&2\nexit 1\n')
+    fs.chmodSync(hook, 0o755)
+
+    const res = await push(cwd)
+    expect(res.ok).toBe(false)
+    expect(res.hookRun?.hooks).toEqual(['pre-push'])
+    expect(res.hookRun?.output).toContain('no pushing today')
   })
 })
 
