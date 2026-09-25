@@ -1,4 +1,4 @@
-import type { AgentMode, AgentQuestion, AgentTaskStatus, AiProvider, PipelineNode, StepState } from '@shared/types'
+import type { AgentMode, AgentQuestion, AgentTaskStatus, AiProvider, GitHookEvent, PipelineNode, StepState } from '@shared/types'
 import type { TermState } from './ansi'
 import type { PaneNode } from './layout'
 
@@ -139,4 +139,6 @@ export interface EditorState {
   mandatory?: boolean
   /** When true, Jev may auto-add this pipeline in Chat. */
   autoSelectable?: boolean
+  /** Git hook events that run this pipeline; see `Pipeline['gitHooks']`. */
+  gitHooks?: GitHookEvent[]
 }

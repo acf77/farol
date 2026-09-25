@@ -11,7 +11,8 @@ const { runAiOnce, githubInfo } = vi.hoisted(() => ({
 vi.mock('./ai-oneshot', () => ({ runAiOnce }))
 vi.mock('./github', () => ({ githubInfo }))
 
-import { bringPrConflicts, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, mergeBaseConflicts, mergeForConflicts, parseCommitLog, parsePrDraftResponse, pull, push, sanitizeCommitMessage, sanitizePrDescription, sanitizePrTitle, status } from './git'
+import { bringPrConflicts, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, mergeBaseConflicts, mergeForConflicts, parseCommitLog, parsePrDraftResponse, pull, push, sanitizeCommitMessage, sanitizePrDescription, sanitizePrTitle, status, syncManagedHooks } from './git'
+import type { Pipeline } from '../shared/types'
 
 const dirs: string[] = []
 
@@ -300,6 +301,99 @@ describe('hooksInfo', () => {
     fs.chmodSync(hook, 0o644)
 
     expect(await hooksInfo(cwd)).toEqual([{ name: 'pre-commit', path: hook, enabled: false }])
+  })
+
+  it('lists hooks under a tracked core.hooksPath (Husky/lefthook)', async () => {
+    const cwd = tmpRepo()
+    git(cwd, ['config', 'core.hooksPath', '.husky'])
+    const husky = path.join(cwd, '.husky')
+    fs.mkdirSync(husky)
+    const hook = path.join(husky, 'pre-commit')
+    fs.writeFileSync(hook, '#!/bin/sh\nexit 0\n')
+    fs.chmodSync(hook, 0o755)
+
+    expect(await hooksInfo(cwd)).toEqual([{ name: 'pre-commit', path: hook, enabled: true }])
+  })
+})
+
+describe('syncManagedHooks', () => {
+  const runtime = { execPath: '/usr/bin/farol', scriptPath: '/app/git-hook.js', socketPath: '/tmp/farol-test.sock' }
+  const pipeline = (id: string, gitHooks: Pipeline['gitHooks']): Pipeline => ({ id, name: id, nodes: [], gitHooks })
+
+  it('installs a pre-commit script for a pipeline configured with that hook', async () => {
+    const cwd = tmpRepo()
+    await syncManagedHooks(cwd, [pipeline('lint', ['pre-commit'])], runtime)
+
+    const info = await hooksInfo(cwd)
+    expect(info).toEqual([{ name: 'pre-commit', path: path.join(cwd, '.git', 'hooks', 'pre-commit'), enabled: true }])
+    const script = fs.readFileSync(info[0]!.path, 'utf8')
+    expect(script).toContain(runtime.socketPath)
+    expect(script).toContain(runtime.execPath)
+    expect(script).toContain('pre-commit')
+  })
+
+  it('does not overwrite a hand-written hook', async () => {
+    const cwd = tmpRepo()
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+    fs.writeFileSync(hook, '#!/bin/sh\necho mine\n')
+    fs.chmodSync(hook, 0o755)
+
+    await syncManagedHooks(cwd, [pipeline('lint', ['pre-commit'])], runtime)
+
+    expect(fs.readFileSync(hook, 'utf8')).toBe('#!/bin/sh\necho mine\n')
+  })
+
+  it('removes a previously managed hook once no pipeline wants it', async () => {
+    const cwd = tmpRepo()
+    await syncManagedHooks(cwd, [pipeline('lint', ['pre-commit'])], runtime)
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+    expect(fs.existsSync(hook)).toBe(true)
+
+    await syncManagedHooks(cwd, [pipeline('lint', [])], runtime)
+    expect(fs.existsSync(hook)).toBe(false)
+  })
+
+  it('refuses a core.hooksPath that points inside the tracked worktree', async () => {
+    const cwd = tmpRepo()
+    git(cwd, ['config', 'core.hooksPath', '.husky'])
+    const husky = path.join(cwd, '.husky')
+    fs.mkdirSync(husky)
+
+    await syncManagedHooks(cwd, [pipeline('lint', ['pre-commit'])], runtime)
+
+    expect(fs.existsSync(path.join(husky, 'pre-commit'))).toBe(false)
+    expect(await hooksInfo(cwd)).toEqual([])
+  })
+
+  it('does not delete a farol-managed hook that sits under a tracked hooksPath', async () => {
+    const cwd = tmpRepo()
+    git(cwd, ['config', 'core.hooksPath', '.husky'])
+    const husky = path.join(cwd, '.husky')
+    fs.mkdirSync(husky)
+    const hook = path.join(husky, 'pre-commit')
+    fs.writeFileSync(hook, '#!/bin/sh\n# farol-managed-hook\nexit 0\n')
+    fs.chmodSync(hook, 0o755)
+
+    await syncManagedHooks(cwd, [pipeline('lint', [])], runtime)
+
+    expect(fs.existsSync(hook)).toBe(true)
+  })
+
+  it('installs into the shared hooks dir when run from a linked worktree', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'file.txt'), 'a\n')
+    git(cwd, ['add', 'file.txt'])
+    git(cwd, ['commit', '-m', 'init'])
+    const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'bf-git-wt-'))
+    fs.rmdirSync(worktree)
+    dirs.push(worktree)
+    git(cwd, ['worktree', 'add', '-b', 'feat', worktree])
+
+    await syncManagedHooks(worktree, [pipeline('lint', ['pre-commit'])], runtime)
+
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+    expect(fs.existsSync(hook)).toBe(true)
+    expect(await hooksInfo(worktree)).toEqual([{ name: 'pre-commit', path: hook, enabled: true }])
   })
 })
 
