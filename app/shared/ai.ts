@@ -276,7 +276,7 @@ function managedCodexCommand(prompt: string, passed: string | undefined, plan: b
     // do not use --dangerously-bypass-approvals-and-sandbox (no sandbox at all).
     // Keep workspace-write network_access off (default): never-approve + network
     // would let model shell commands reach the internet without confirmation.
-    // Native Codex web search is `--search`, not sandbox network_access.
+    // Native Codex web search is `-c web_search=live`, not sandbox network_access.
     args: withModel(
       [
         'exec',
@@ -285,7 +285,7 @@ function managedCodexCommand(prompt: string, passed: string | undefined, plan: b
         'approval_policy=never',
         '--sandbox',
         plan ? 'read-only' : 'workspace-write',
-        ...(webSearch ? ['--search'] : []),
+        ...(webSearch ? ['-c', 'web_search=live'] : []),
         prompt
       ],
       passed
