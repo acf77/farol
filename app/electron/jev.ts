@@ -177,6 +177,29 @@ function asChoiceAnswer(raw: unknown): JevChoiceAnswer | undefined {
   }
 }
 
+type PipelineSelectionReason =
+  | 'selected'
+  | 'not-selected'
+  | 'none'
+  | 'missing-answer'
+  | 'unknown-id'
+  | 'low-confidence'
+
+/** Why Jev's pipeline choice did or didn't select a candidate, for the Jev log's `outcome` field. */
+function pipelineSelectionOutcome(
+  answer: JevChoiceAnswer | undefined,
+  selectedId: string | null,
+  preparedIds: string[],
+  probability: number | null
+): { reason: PipelineSelectionReason; selected: string[] } {
+  if (!answer) return { reason: 'missing-answer', selected: [] }
+  if (!preparedIds.includes(answer.choice)) return { reason: 'unknown-id', selected: [] }
+  if (probability !== null && probability < JEV_SELECTION_THRESHOLD) return { reason: 'low-confidence', selected: [] }
+  if (selectedId === PIPELINE_NONE_ID) return { reason: 'none', selected: [] }
+  if (selectedId) return { reason: 'selected', selected: [selectedId] }
+  return { reason: 'not-selected', selected: [] }
+}
+
 /**
  * Ask Jev which one opted-in, non-mandatory candidate to add this turn (or
  * `none`). Soft-fail only: `null` on no key, a slow gateway, or an error means
@@ -227,33 +250,7 @@ export async function selectPipelines(
       threshold: JEV_SELECTION_THRESHOLD
     })
     const probability = answer ? choiceProbability(answer) ?? null : null
-    let reason:
-      | 'selected'
-      | 'not-selected'
-      | 'none'
-      | 'missing-answer'
-      | 'unknown-id'
-      | 'low-confidence'
-      | 'stale-candidates' = 'missing-answer'
-    let selected: string[] = []
-    if (!answer) {
-      reason = 'missing-answer'
-    } else if (!prep.preparedIds.includes(answer.choice)) {
-      reason = 'unknown-id'
-    } else if (
-      probability !== undefined &&
-      probability !== null &&
-      probability < JEV_SELECTION_THRESHOLD
-    ) {
-      reason = 'low-confidence'
-    } else if (selectedId === PIPELINE_NONE_ID) {
-      reason = 'none'
-    } else if (selectedId) {
-      reason = 'selected'
-      selected = [selectedId]
-    } else {
-      reason = 'not-selected'
-    }
+    const { reason, selected } = pipelineSelectionOutcome(answer, selectedId, prep.preparedIds, probability)
     logJev({
       ...base,
       status: 'evaluated',
@@ -302,6 +299,11 @@ function toolSelectionKeptOmitted(
   return { kept: null, omitted: null }
 }
 
+/** Plan's soft-fail is the read-only inspect focus; build's soft-fail is `null` (`fallback-full`). */
+function planFallback(mode: 'plan' | 'build'): Extract<ToolSelection, { kind: 'plan' }> | null {
+  return mode === 'plan' ? defaultPlanSelection() : null
+}
+
 /**
  * Ask Jev which host-prepared tool focus this turn needs.
  *
@@ -331,7 +333,7 @@ export async function selectTools(
   const key = peekSecret('aiGatewayApiKey')
   if (!key) {
     logJev({ ...base, status: 'skipped', reason: 'no-key' })
-    return mode === 'plan' ? defaultPlanSelection() : null
+    return planFallback(mode)
   }
   try {
     const { answers } = await evaluate({
@@ -349,7 +351,7 @@ export async function selectTools(
     })
     const probability = answer ? choiceProbability(answer) ?? null : null
     if (!selection) {
-      const fallback = mode === 'plan' ? defaultPlanSelection() : null
+      const fallback = planFallback(mode)
       logJev({
         ...base,
         status: 'evaluated',
@@ -381,7 +383,7 @@ export async function selectTools(
       durationMs: Date.now() - started,
       ...(mode === 'plan' ? { softFail: 'plan-inspect' } : {})
     })
-    return mode === 'plan' ? defaultPlanSelection() : null
+    return planFallback(mode)
   }
 }
 
