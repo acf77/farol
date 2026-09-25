@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type { AppSettings, PipelineNode, StepType } from '@shared/types'
-import { aiSelectionLabel, normalizeAi } from '@shared/types'
+import { GIT_HOOK_EVENTS, aiSelectionLabel, normalizeAi } from '@shared/types'
 import { defaultGate, newPipelineNode, nodeGate, parallelAsClashIds, sanitizeAs, topoSort } from '@shared/graph'
 import { C, MONO, UI } from '../theme'
 import { Checkbox, CliModelDropdown, ConfirmButton, SegmentedControl } from './controls'
@@ -270,6 +270,23 @@ export default function PipelineCanvas({
         >
           Allow Chat to auto-select
         </Checkbox>
+        <span style={{ width: 1, alignSelf: 'stretch', background: 'rgba(255,255,255,0.08)' }} />
+        {GIT_HOOK_EVENTS.map((event) => (
+          <Checkbox
+            key={event}
+            checked={editor.gitHooks?.includes(event) === true}
+            onChange={(v) =>
+              updateEditor((current) => {
+                const rest = (current.gitHooks ?? []).filter((e) => e !== event)
+                const gitHooks = v ? [...rest, event] : rest
+                return gitHooks.length ? { ...current, gitHooks } : { ...current, gitHooks: undefined }
+              })
+            }
+            title="Runs on this event when Farol is open; skipped otherwise, so the repo stays usable without it."
+          >
+            Run on {event}
+          </Checkbox>
+        ))}
         <button type="button" className="bf-hover-fill" onClick={() => addNode('shell')} style={toolBtn}>
           + Shell
         </button>

@@ -78,6 +78,10 @@ export interface PipelineNode extends Step {
   y: number
 }
 
+/** Git hook Farol can stand in for. Kept to the two client-side checks worth blocking on. */
+export type GitHookEvent = 'pre-commit' | 'pre-push'
+export const GIT_HOOK_EVENTS: readonly GitHookEvent[] = ['pre-commit', 'pre-push']
+
 export interface Pipeline {
   id: string
   name: string
@@ -89,6 +93,12 @@ export interface Pipeline {
    * Defaults to off so release/mutation pipelines stay manual until opted in.
    */
   autoSelectable?: boolean
+  /**
+   * Git hook events that run this pipeline. Farol installs a `.git/hooks` script
+   * for each one — shared with other worktrees of this repo, not with separate
+   * clones. See `syncManagedHooks` for the no-Farol-installed fallback.
+   */
+  gitHooks?: GitHookEvent[]
 }
 
 export type StepState = 'pending' | 'running' | 'pass' | 'fail' | 'skip'

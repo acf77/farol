@@ -4,6 +4,7 @@ import fs from 'fs'
 import type {
   AgentTaskRequest,
   AppSettings,
+  GitHookEvent,
   MergeStrategy,
   Pipeline,
   ProjectWriteOpts,
@@ -14,7 +15,7 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus } from './git'
+import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus, syncManagedHooks } from './git'
 import { createPullRequest, mergePullRequest } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, flushWorkspace, PipelineWatcher } from './store'
@@ -72,9 +73,10 @@ const agents = new AgentController(runner, (event) => send('agent:event', event)
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
 )
-const pipelineFiles = new PipelineWatcher((projectPath, pipelines) =>
+const pipelineFiles = new PipelineWatcher((projectPath, pipelines) => {
   send('pipelines:changed', { projectPath, pipelines })
-)
+  void syncProjectGitHooks(projectPath, projectPath, pipelines)
+})
 const updater = new AppUpdater((s) => send('update:status', s))
 
 function brandIconCandidates(): string[] {
@@ -256,6 +258,7 @@ async function openProjectDialog() {
   await pushRecent(project)
   installMcpConfig(project.path)
   startBridge(project.path)
+  void syncProjectGitHooks(project.path)
   return project
 }
 
@@ -406,6 +409,28 @@ async function openProjectCwd(
   return { path: path.resolve(match) }
 }
 
+/** Run every pipeline configured for `event`, stopping at the first failure like a shell `&&` chain. */
+async function runHookPipelines(
+  req: { id: number; cwd: string },
+  event: GitHookEvent,
+  pipelines: Pipeline[],
+  projectPath: string
+): Promise<BridgeReply> {
+  const matches = pipelines.filter((p) => p.gitHooks?.includes(event))
+  if (!matches.length) return { id: req.id, ok: true, op: 'hook', text: '', failed: false }
+  const git = await gitInfo(req.cwd)
+  const branch = git.branch || '(no branch)'
+  const parts: string[] = []
+  let failed = false
+  for (const pipeline of matches) {
+    const result = await runForAgent(pipeline, req.cwd, branch, projectPath)
+    parts.push(result.text)
+    failed = result.failed
+    if (failed) break
+  }
+  return { id: req.id, ok: true, op: 'hook', text: parts.join('\n\n'), failed }
+}
+
 async function handleBridge(req: BridgeRequest, projectPath: string): Promise<BridgeReply> {
   if (!(await cwdAllowedForProject(projectPath, req.cwd))) {
     return {
@@ -427,6 +452,9 @@ async function handleBridge(req: BridgeRequest, projectPath: string): Promise<Br
         steps: (topoSort(p.nodes) ?? p.nodes).map((n) => `${n.name || n.id} (${n.type})`)
       }))
     }
+  }
+  if (req.op === 'hook') {
+    return runHookPipelines(req, req.event, pipelines, projectPath)
   }
   const found = resolvePipeline(pipelines, req.pipeline)
   if (!found.ok) {
@@ -509,6 +537,20 @@ function mcpEntry(projectPath: string): McpServerEntry {
 }
 
 /**
+ * Brings `.git/hooks` in line with which pipelines have `gitHooks` set, for
+ * the project whose app instance serves `socketFor`'s bridge (see
+ * `installMcpConfig` for why those two paths can differ, e.g. a worktree).
+ */
+async function syncProjectGitHooks(dir: string, socketFor = dir, pipelines?: Pipeline[]): Promise<void> {
+  const list = pipelines ?? (await loadPipelines(dir))
+  await syncManagedHooks(dir, list, {
+    execPath: process.execPath,
+    scriptPath: path.join(app.getAppPath(), 'out', 'main', 'git-hook.js'),
+    socketPath: socketPath(socketFor)
+  })
+}
+
+/**
  * `dir` is where project-local configs are written; `socketFor` is the project
  * whose app instance serves the bridge. They differ for a worktree: its agents
  * talk to the app that owns the main checkout, and pass their own cwd with each
@@ -544,6 +586,7 @@ function registerProjectIpc(): void {
     await pushRecent(project)
     installMcpConfig(project.path)
     startBridge(project.path)
+    void syncProjectGitHooks(project.path)
     return project
   })
   ipcMain.handle('project:recents', () => readRecents())
@@ -644,7 +687,9 @@ function registerSessionIpc(): void {
   })
   ipcMain.handle('pipelines:load', async (_e, projectPath: string) => {
     void pipelineFiles.watch(projectPath)
-    return loadPipelines(projectPath)
+    const pipelines = await loadPipelines(projectPath)
+    void syncProjectGitHooks(projectPath, projectPath, pipelines)
+    return pipelines
   })
   ipcMain.handle('pipelines:save', (_e, projectPath: string, pipelines: Pipeline[]) =>
     savePipelines(projectPath, pipelines)
@@ -675,7 +720,10 @@ function registerGitIpc(): void {
   )
   ipcMain.handle('git:worktree', async (_e, projectPath: string, req: WorktreeRequest) => {
     const res = await addWorktree(projectPath, req)
-    if (res.ok && res.path && res.path !== projectPath) installMcpConfig(res.path, projectPath)
+    if (res.ok && res.path && res.path !== projectPath) {
+      installMcpConfig(res.path, projectPath)
+      void syncProjectGitHooks(res.path, projectPath)
+    }
     return res
   })
   ipcMain.handle('git:status', (_e, projectPath: string) => gitStatus(projectPath))
