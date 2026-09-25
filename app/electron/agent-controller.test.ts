@@ -1373,12 +1373,16 @@ describe('AgentController', () => {
     expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate'])
   })
 
-  it('never asks Jev in Plan mode', async () => {
+  it('asks Jev for a read-only Plan focus and keeps inspection tools', async () => {
     selectPipelines.mockClear()
     selectTools.mockClear()
+    selectTools.mockResolvedValueOnce({
+      kind: 'plan',
+      focus: 'inspect',
+      candidatesFingerprint: 'answer\0inspect'
+    })
     const events: AgentTaskEvent[] = []
-    const execute = vi.fn<AgentExecutor>().mockImplementation(async (_request, _prompt, output, onTool) => {
-      onTool?.({ toolId: 'edit-1', name: 'apply_patch', detail: 'src/app.ts', state: 'done' })
+    const execute = vi.fn<AgentExecutor>().mockImplementation(async (_request, _prompt, output) => {
       output('FAROL_PLAN: finished\n')
       return 0
     })
@@ -1390,8 +1394,10 @@ describe('AgentController', () => {
     )
 
     expect(selectPipelines).not.toHaveBeenCalled()
-    expect(selectTools).not.toHaveBeenCalled()
-    expect(execute.mock.calls[0][1]).toMatch(/Plan mode is read-only/i)
+    expect(selectTools).toHaveBeenCalledTimes(1)
+    expect(selectTools.mock.calls[0][0]).toContain('Mode: plan')
+    expect(selectTools.mock.calls[0][1]).toMatchObject({ mode: 'plan' })
+    expect(execute.mock.calls[0][1]).toMatch(/Plan mode is read-only \(focus "inspect"\)/i)
   })
 
   it('asks Jev for a tool focus in Build mode and appends the policy clause', async () => {

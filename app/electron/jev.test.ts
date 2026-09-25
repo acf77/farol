@@ -268,11 +268,11 @@ describe('selectTools', () => {
       focus: 'implement',
       kept: ['edit', 'shell'],
       omitted: ['web'],
-      candidatesFingerprint: toolFocusFingerprint()
+      candidatesFingerprint: toolFocusFingerprint('build')
     })
   })
 
-  it('fails soft (null → full tools) on low confidence', async () => {
+  it('fails soft (null → full tools) on low confidence in Build', async () => {
     peekSecret.mockReturnValue('a-key')
     evaluate.mockResolvedValue({
       answers: {
@@ -286,13 +286,41 @@ describe('selectTools', () => {
     expect(await selectTools('state')).toBe(null)
   })
 
-  it('falls back to null when no key is stored', async () => {
+  it('soft-fails Plan to inspect, never full tools', async () => {
+    peekSecret.mockReturnValue(null)
+    expect(await selectTools('Mode: plan\nTask: outline a fix', { mode: 'plan' })).toEqual({
+      kind: 'plan',
+      focus: 'inspect',
+      candidatesFingerprint: toolFocusFingerprint('plan')
+    })
+    expect(evaluate).not.toHaveBeenCalled()
+  })
+
+  it('picks a Plan answer focus when Jev is confident', async () => {
+    peekSecret.mockReturnValue('a-key')
+    evaluate.mockResolvedValue({
+      answers: {
+        focus: {
+          type: 'choice',
+          choice: 'answer',
+          probabilities: { inspect: 0.1, answer: 0.9 }
+        }
+      }
+    })
+    expect(await selectTools('Mode: plan\nTask: summarize', { mode: 'plan' })).toEqual({
+      kind: 'plan',
+      focus: 'answer',
+      candidatesFingerprint: toolFocusFingerprint('plan')
+    })
+  })
+
+  it('falls back to null when no key is stored in Build', async () => {
     peekSecret.mockReturnValue(null)
     expect(await selectTools('state')).toBe(null)
     expect(evaluate).not.toHaveBeenCalled()
   })
 
-  it('fails soft when the gateway call throws', async () => {
+  it('fails soft when the gateway call throws in Build', async () => {
     peekSecret.mockReturnValue('a-key')
     evaluate.mockRejectedValue(new Error('gateway is down'))
     expect(await selectTools('state')).toBe(null)

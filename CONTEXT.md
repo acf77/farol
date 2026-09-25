@@ -557,7 +557,8 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 
 ### Jev tool focus selection
 
-- Managed Chat could ship every CLI with its full default tool set — resolved: before each Build-mode turn Jev picks one host-prepared focus (`inspect` / `implement` / `verify` / `answer`); Plan mode never asks.
-- Uncertain scores could strand a coding turn — resolved: mid-band, unknown id, fingerprint drift, timeout, and missing key fail open to the full tool set.
+- Managed Chat could ship every CLI with its full default tool set — resolved: before each turn Jev picks one host-prepared focus; Build uses `inspect` / `implement` / `verify` / `answer`, Plan uses only read-only `inspect` / `answer`.
+- Uncertain scores could strand a coding turn — resolved: Build mid-band, unknown id, fingerprint drift, timeout, and missing key fail open to the full tool set; Plan soft-fails to `inspect` so optional families never open.
 - Absolute yes/no per optional family (`edit` / `shell` / `web`) does not compete — resolved: one Choice over foci; the host maps the focus to kept/omitted families and re-validates before native `--tools` or the prompt clause.
+- Plan mode could skip tools entirely — resolved: Plan uses read/search tools under a read-only focus; provider review gates stay the hard write block.
 - Prompt-policy violations could kill the run mid-tool — deferred: v1 logs omitted-family tool cards for diagnosis only.

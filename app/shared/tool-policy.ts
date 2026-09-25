@@ -27,6 +27,10 @@ export type ToolCapabilityId = (typeof TOOL_OPTIONAL)[number]
 export const TOOL_FOCI = ['inspect', 'implement', 'verify', 'answer'] as const
 export type ToolFocusId = (typeof TOOL_FOCI)[number]
 
+/** Read-only foci Plan mode may choose. Never edit / shell / web. */
+export const PLAN_FOCI = ['inspect', 'answer'] as const
+export type PlanFocusId = (typeof PLAN_FOCI)[number]
+
 /** Optional families each focus admits. Inspection tools always stay on. */
 export const FOCUS_ALLOWED: Record<ToolFocusId, readonly ToolCapabilityId[]> = {
   inspect: [],
@@ -54,7 +58,12 @@ export type ToolSelection =
       candidatesFingerprint: string
     }
   | { kind: 'fallback-full'; reason: string }
-  | { kind: 'plan' }
+  | {
+      kind: 'plan'
+      /** Read-only focus — inspection tools stay on; optional families stay off. */
+      focus: PlanFocusId
+      candidatesFingerprint: string
+    }
 
 export interface ToolPolicy {
   selection: ToolSelection
@@ -79,8 +88,8 @@ export interface ToolObservation {
   violations: ToolCapabilityId[]
 }
 
-export function toolFocusFingerprint(): string {
-  return fingerprintIds(TOOL_FOCI)
+export function toolFocusFingerprint(mode: 'plan' | 'build' = 'build'): string {
+  return fingerprintIds(mode === 'plan' ? PLAN_FOCI : TOOL_FOCI)
 }
 
 /** Decision state for selection — never logged; only its size is recorded. */
@@ -104,8 +113,24 @@ const FOCUS_CRITERIA: Record<ToolFocusId, string> = {
     'Reply from context already gathered — no file edits, no shell, no web'
 }
 
-/** One Choice over host-prepared foci. */
-export function toolSelectionQuestions(): Record<string, JevChoiceQuestion> {
+/** One Choice over host-prepared Build foci. */
+export function toolSelectionQuestions(
+  mode: 'plan' | 'build' = 'build'
+): Record<string, JevChoiceQuestion> {
+  if (mode === 'plan') {
+    return {
+      focus: {
+        type: 'choice',
+        instructions:
+          'Which read-only focus should this managed Chat Plan turn use? Pick exactly one. ' +
+          'Plan mode may inspect the project with read/search tools but must not edit, run mutating shell, or use the web.',
+        criteria: {
+          inspect: FOCUS_CRITERIA.inspect,
+          answer: FOCUS_CRITERIA.answer
+        }
+      }
+    }
+  }
   return {
     focus: {
       type: 'choice',
@@ -114,6 +139,15 @@ export function toolSelectionQuestions(): Record<string, JevChoiceQuestion> {
         'Inspection (read/search) stays available under every focus.',
       criteria: { ...FOCUS_CRITERIA }
     }
+  }
+}
+
+/** Safe Plan default when Jev abstains — read-only inspection tools stay on. */
+export function defaultPlanSelection(): Extract<ToolSelection, { kind: 'plan' }> {
+  return {
+    kind: 'plan',
+    focus: 'inspect',
+    candidatesFingerprint: toolFocusFingerprint('plan')
   }
 }
 
@@ -127,22 +161,34 @@ export function omittedForFocus(focus: ToolFocusId): ToolCapabilityId[] {
 }
 
 /**
- * Map a Choice answer onto a selection, or abstain when the id is foreign,
+ * Map a Choice answer onto a Build selection, or abstain when the id is foreign,
  * the fingerprint drifted, or the winning probability is below the bar.
  */
 export function selectionFromChoice(
   answer: JevChoiceAnswer | undefined,
-  opts: { fingerprint: string; currentFingerprint?: string; threshold?: number } = {
-    fingerprint: toolFocusFingerprint()
+  opts: {
+    mode?: 'plan' | 'build'
+    fingerprint: string
+    currentFingerprint?: string
+    threshold?: number
   }
-): Extract<ToolSelection, { kind: 'selected' }> | null {
-  const currentFingerprint = opts.currentFingerprint ?? toolFocusFingerprint()
-  const focus = acceptPreparedChoice(answer, TOOL_FOCI, {
+): ToolSelection | null {
+  const mode = opts.mode ?? 'build'
+  const prepared = mode === 'plan' ? PLAN_FOCI : TOOL_FOCI
+  const currentFingerprint = opts.currentFingerprint ?? toolFocusFingerprint(mode)
+  const focus = acceptPreparedChoice(answer, prepared, {
     fingerprint: opts.fingerprint,
     currentFingerprint,
     threshold: opts.threshold ?? JEV_TOOL_CONFIDENCE
   })
   if (!focus) return null
+  if (mode === 'plan') {
+    return {
+      kind: 'plan',
+      focus: focus as PlanFocusId,
+      candidatesFingerprint: currentFingerprint
+    }
+  }
   return {
     kind: 'selected',
     focus: focus as ToolFocusId,
@@ -154,8 +200,17 @@ export function selectionFromChoice(
 
 /** Re-check a cached selection against the live focus set before remapping. */
 export function validateToolSelection(selection: ToolSelection): ToolSelection {
-  if (selection.kind !== 'selected') return selection
-  if (selection.candidatesFingerprint !== toolFocusFingerprint()) {
+  if (selection.kind === 'fallback-full') return selection
+  if (selection.kind === 'plan') {
+    if (selection.candidatesFingerprint !== toolFocusFingerprint('plan')) {
+      return defaultPlanSelection()
+    }
+    if (!(PLAN_FOCI as readonly string[]).includes(selection.focus)) {
+      return defaultPlanSelection()
+    }
+    return selection
+  }
+  if (selection.candidatesFingerprint !== toolFocusFingerprint('build')) {
     return { kind: 'fallback-full', reason: 'stale-candidates' }
   }
   if (!(TOOL_FOCI as readonly string[]).includes(selection.focus)) {
@@ -236,8 +291,12 @@ export function fullToolPolicy(provider: AiProvider, reason: string): ToolPolicy
   return toolPolicyFor(provider, { kind: 'fallback-full', reason })
 }
 
-export function planToolPolicy(provider: AiProvider): ToolPolicy {
-  return toolPolicyFor(provider, { kind: 'plan' })
+export function planToolPolicy(provider: AiProvider, focus: PlanFocusId = 'inspect'): ToolPolicy {
+  return toolPolicyFor(provider, {
+    kind: 'plan',
+    focus,
+    candidatesFingerprint: toolFocusFingerprint('plan')
+  })
 }
 
 /**
@@ -248,8 +307,10 @@ export function planToolPolicy(provider: AiProvider): ToolPolicy {
  */
 export function toolPolicyPrompt(policy: ToolPolicy): string {
   if (policy.selection.kind === 'plan') {
+    const focus = policy.selection.focus
     return (
-      'Tool policy: Plan mode is read-only. You may inspect the project with read/search tools ' +
+      `Tool policy: Plan mode is read-only (focus "${focus}"). ` +
+      'You may inspect the project with read/search tools ' +
       '(and read-only shell inspection only when that is how this provider reads files). ' +
       'Do not edit files, run mutating shell commands, or use web tools.'
     )

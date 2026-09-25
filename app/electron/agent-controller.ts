@@ -54,8 +54,8 @@ import {
 } from '../shared/mandatory'
 import { pipelineSelectionState } from '../shared/jev'
 import {
+  defaultPlanSelection,
   observeToolUse,
-  planToolPolicy,
   toolPolicyFor,
   toolPolicyPrompt,
   toolSelectionState,
@@ -930,30 +930,31 @@ export class AgentController {
   }
 
   /**
-   * Resolve the turn's tool policy. Plan mode never asks Jev. Build mode asks
-   * once per attempt for a host-prepared focus Choice and remaps the cached
-   * selection onto the current provider (native `--tools` vs prompt clause)
-   * across same-model retries and fallbacks. `toolPolicyFor` rejects stale or
-   * unknown foci before argv/prompt application.
+   * Resolve the turn's tool policy. Build asks Jev for a focus among all
+   * host-prepared foci and remaps across retries; uncertain → full tools.
+   * Plan asks Jev only among read-only foci (`inspect` / `answer`) and soft-fails
+   * to inspect — never to the full set. Provider review gates stay the hard
+   * enforcement. `toolPolicyFor` rejects stale or unknown foci before apply.
    */
   private async resolveToolPolicy(
     task: Task,
     opening: string,
     attempt: number
   ): Promise<ToolPolicy> {
-    if (task.request.mode === 'plan') return planToolPolicy(task.request.provider)
+    const mode = task.request.mode === 'plan' ? 'plan' : 'build'
     if (task.toolSelection && task.toolSelectionAttempt === attempt) {
       return toolPolicyFor(task.request.provider, task.toolSelection)
     }
     const state = toolSelectionState({
       task: task.request.prompt,
       opening,
-      mode: 'build',
+      mode,
       attempt
     })
-    const selected = await selectTools(state, { attempt })
+    const selected = await selectTools(state, { attempt, mode })
     const resolved: ToolSelection =
-      selected ?? { kind: 'fallback-full', reason: 'jev-unavailable' }
+      selected ??
+      (mode === 'plan' ? defaultPlanSelection() : { kind: 'fallback-full', reason: 'jev-unavailable' })
     task.toolSelection = resolved
     task.toolSelectionAttempt = attempt
     return toolPolicyFor(task.request.provider, resolved)

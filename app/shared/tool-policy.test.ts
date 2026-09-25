@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   capabilityForToolName,
   claudeToolsFor,
+  defaultPlanSelection,
   FOCUS_ALLOWED,
   fullToolPolicy,
   observeToolUse,
@@ -27,7 +28,7 @@ const choice = (id: string, probability = 0.95) => ({
 })
 
 describe('selectionFromChoice', () => {
-  const fingerprint = toolFocusFingerprint()
+  const fingerprint = toolFocusFingerprint('build')
 
   it('maps a confident focus onto kept/omitted families', () => {
     expect(selectionFromChoice(choice('implement'), { fingerprint })).toEqual({
@@ -37,8 +38,16 @@ describe('selectionFromChoice', () => {
       omitted: ['web'],
       candidatesFingerprint: fingerprint
     })
-    expect(selectionFromChoice(choice('inspect'), { fingerprint })?.kept).toEqual([])
-    expect(selectionFromChoice(choice('verify'), { fingerprint })?.kept).toEqual(['shell'])
+    expect(selectionFromChoice(choice('inspect'), { fingerprint })).toMatchObject({
+      kind: 'selected',
+      focus: 'inspect',
+      kept: []
+    })
+    expect(selectionFromChoice(choice('verify'), { fingerprint })).toMatchObject({
+      kind: 'selected',
+      focus: 'verify',
+      kept: ['shell']
+    })
   })
 
   it('abstains on low confidence, foreign ids, and fingerprint drift', () => {
@@ -48,10 +57,23 @@ describe('selectionFromChoice', () => {
       selectionFromChoice(choice('implement'), { fingerprint, currentFingerprint: 'stale' })
     ).toBe(null)
   })
+
+  it('maps Plan Choice onto read-only plan selections only', () => {
+    const planFp = toolFocusFingerprint('plan')
+    expect(
+      selectionFromChoice(
+        { type: 'choice', choice: 'answer', probabilities: { answer: 0.9, inspect: 0.1 } },
+        { mode: 'plan', fingerprint: planFp }
+      )
+    ).toEqual({ kind: 'plan', focus: 'answer', candidatesFingerprint: planFp })
+    expect(
+      selectionFromChoice(choice('implement'), { mode: 'plan', fingerprint: planFp })
+    ).toBe(null)
+  })
 })
 
 describe('validateToolSelection', () => {
-  it('fails open when the cached focus set drifted', () => {
+  it('fails open when the cached Build focus set drifted', () => {
     const selection: ToolSelection = {
       kind: 'selected',
       focus: 'implement',
@@ -66,7 +88,7 @@ describe('validateToolSelection', () => {
   })
 
   it('rewrites kept/omitted from the live focus map', () => {
-    const fingerprint = toolFocusFingerprint()
+    const fingerprint = toolFocusFingerprint('build')
     const selection: ToolSelection = {
       kind: 'selected',
       focus: 'verify',
@@ -82,15 +104,30 @@ describe('validateToolSelection', () => {
       candidatesFingerprint: fingerprint
     })
   })
+
+  it('soft-fails Plan drift back to inspect, never full tools', () => {
+    expect(
+      validateToolSelection({
+        kind: 'plan',
+        focus: 'answer',
+        candidatesFingerprint: 'stale'
+      })
+    ).toEqual(defaultPlanSelection())
+  })
 })
 
 describe('toolSelectionQuestions', () => {
-  it('asks one Choice over the host-prepared foci', () => {
-    const questions = toolSelectionQuestions()
+  it('asks one Choice over the host-prepared Build foci', () => {
+    const questions = toolSelectionQuestions('build')
     expect(Object.keys(questions)).toEqual(['focus'])
     expect(questions.focus.type).toBe('choice')
     expect(Object.keys(questions.focus.criteria).sort()).toEqual([...TOOL_FOCI].sort())
     expect(questions.focus.criteria.implement).toMatch(/modify project files/i)
+  })
+
+  it('asks only read-only foci in Plan mode', () => {
+    const questions = toolSelectionQuestions('plan')
+    expect(Object.keys(questions.focus.criteria).sort()).toEqual(['answer', 'inspect'])
   })
 })
 
@@ -115,7 +152,7 @@ describe('toolPolicyFor', () => {
       focus: 'implement',
       kept: ['edit', 'shell'],
       omitted: ['web'],
-      candidatesFingerprint: toolFocusFingerprint()
+      candidatesFingerprint: toolFocusFingerprint('build')
     }
     const claude = toolPolicyFor('claude', selection)
     expect(claude.enforcement).toBe('native')
@@ -139,7 +176,7 @@ describe('toolPolicyFor', () => {
       focus: 'implement',
       kept: ['edit', 'shell'],
       omitted: ['web'],
-      candidatesFingerprint: toolFocusFingerprint()
+      candidatesFingerprint: toolFocusFingerprint('build')
     }
     for (const provider of ['codex', 'cursor', 'opencode', 'openrouter'] as const) {
       expect(toolEnforcementFor(provider)).toBe('prompt')
@@ -157,10 +194,17 @@ describe('toolPolicyFor', () => {
     expect(toolPolicyPrompt(policy)).toBe('')
   })
 
-  it('applies a Plan ceiling with no optional families', () => {
-    const policy = planToolPolicy('codex')
+  it('applies a Plan ceiling with inspection tools and no optional families', () => {
+    const policy = planToolPolicy('codex', 'inspect')
     expect(policy.allowed).toEqual([])
-    expect(toolPolicyPrompt(policy)).toMatch(/Plan mode is read-only/i)
+    expect(policy.selection).toEqual(defaultPlanSelection())
+    expect(toolPolicyPrompt(policy)).toMatch(/Plan mode is read-only \(focus "inspect"\)/i)
+
+    const claude = planToolPolicy('claude', 'answer')
+    expect(claude.nativeTools).toEqual(claudeToolsFor([]))
+    expect(claude.nativeTools).toContain('Read')
+    expect(claude.nativeTools).not.toContain('Edit')
+    expect(toolPolicyPrompt(claude)).toMatch(/focus "answer"/i)
   })
 })
 
@@ -182,7 +226,7 @@ describe('observeToolUse', () => {
       focus: 'implement',
       kept: ['edit', 'shell'],
       omitted: ['web'],
-      candidatesFingerprint: toolFocusFingerprint()
+      candidatesFingerprint: toolFocusFingerprint('build')
     })
     const observation = observeToolUse(policy, ['Read', 'Bash', 'WebFetch', 'mystery'])
     expect(observation.used).toEqual(['shell', 'web'])

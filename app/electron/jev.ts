@@ -27,6 +27,7 @@ import {
   type JevChoiceAnswer
 } from '../shared/jev'
 import {
+  defaultPlanSelection,
   JEV_TOOL_CONFIDENCE,
   selectionFromChoice,
   TOOL_SELECTION_TIMEOUT_MS,
@@ -275,22 +276,26 @@ export async function selectPipelines(
 }
 
 /**
- * Ask Jev which host-prepared tool focus this Build-mode turn needs. Soft-fail
- * only: `null` on no key, timeout, error, low confidence, or a foreign id means
- * "leave the full tool set" — the controller maps that to `fallback-full`.
+ * Ask Jev which host-prepared tool focus this turn needs.
+ *
+ * Build: soft-fail `null` → controller maps to `fallback-full`.
+ * Plan: Choice is only among read-only foci; soft-fail returns inspect so
+ * optional families never open up.
  */
 export async function selectTools(
   state: string,
-  opts: { attempt?: number } = {}
+  opts: { attempt?: number; mode?: 'plan' | 'build' } = {}
 ): Promise<ToolSelection | null> {
-  const questions = toolSelectionQuestions()
-  const fingerprint = toolFocusFingerprint()
+  const mode = opts.mode ?? 'build'
+  const questions = toolSelectionQuestions(mode)
+  const fingerprint = toolFocusFingerprint(mode)
   const started = Date.now()
   const base = {
     timestamp: new Date(started).toISOString(),
     purpose: 'tool-selection' as const,
     model: JEV_MODEL_ID,
     confidence: JEV_TOOL_CONFIDENCE,
+    mode,
     questionIds: Object.keys(questions),
     candidatesFingerprint: fingerprint,
     stateChars: state.length,
@@ -299,7 +304,7 @@ export async function selectTools(
   const key = peekSecret('aiGatewayApiKey')
   if (!key) {
     logJev({ ...base, status: 'skipped', reason: 'no-key' })
-    return null
+    return mode === 'plan' ? defaultPlanSelection() : null
   }
   try {
     const { answers } = await evaluate({
@@ -310,12 +315,14 @@ export async function selectTools(
     })
     const answer = asChoiceAnswer(answers.focus)
     const selection = selectionFromChoice(answer, {
+      mode,
       fingerprint,
       currentFingerprint: fingerprint,
       threshold: JEV_TOOL_CONFIDENCE
     })
     const probability = answer ? choiceProbability(answer) ?? null : null
     if (!selection) {
+      const fallback = mode === 'plan' ? defaultPlanSelection() : null
       logJev({
         ...base,
         status: 'evaluated',
@@ -326,22 +333,26 @@ export async function selectTools(
         omitted: null,
         outcome: !answer
           ? 'missing-answer'
-          : !(answer.choice && fingerprint)
-            ? 'missing-answer'
-            : probability !== null && probability < JEV_TOOL_CONFIDENCE
-              ? 'low-confidence'
-              : 'unknown-id'
+          : probability !== null && probability < JEV_TOOL_CONFIDENCE
+            ? 'low-confidence'
+            : 'unknown-id',
+        ...(fallback ? { focus: fallback.focus, softFail: 'plan-inspect' } : {})
       })
-      return null
+      return fallback
     }
     logJev({
       ...base,
       status: 'evaluated',
       durationMs: Date.now() - started,
-      choice: selection.focus,
+      choice: selection.kind === 'fallback-full' ? null : selection.focus,
       probability,
-      kept: selection.kept,
-      omitted: selection.omitted,
+      kept: selection.kind === 'selected' ? selection.kept : selection.kind === 'plan' ? [] : null,
+      omitted:
+        selection.kind === 'selected'
+          ? selection.omitted
+          : selection.kind === 'plan'
+            ? ['edit', 'shell', 'web']
+            : null,
       outcome: 'selected'
     })
     return selection
@@ -352,9 +363,10 @@ export async function selectTools(
       reason: err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
         ? 'timeout'
         : 'evaluation-error',
-      durationMs: Date.now() - started
+      durationMs: Date.now() - started,
+      ...(mode === 'plan' ? { softFail: 'plan-inspect' } : {})
     })
-    return null
+    return mode === 'plan' ? defaultPlanSelection() : null
   }
 }
 
