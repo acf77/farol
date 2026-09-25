@@ -13,19 +13,24 @@
 import { createGateway } from '@ai-sdk/gateway'
 import { experimental_evaluate as evaluate } from 'ai'
 import {
+  acceptPreparedChoice,
+  choiceProbability,
   decide,
-  decideSelection,
   JEV_CONFIDENCE,
   JEV_MODEL_ID,
   JEV_PROBE,
   JEV_SELECTION_THRESHOLD,
+  PIPELINE_NONE_ID,
   pipelineSelectionQuestions,
-  type JevBooleanQuestion
+  preparePipelineChoice,
+  type JevBooleanQuestion,
+  type JevChoiceAnswer
 } from '../shared/jev'
 import {
   JEV_TOOL_CONFIDENCE,
+  selectionFromChoice,
   TOOL_SELECTION_TIMEOUT_MS,
-  selectionFromAnswers,
+  toolFocusFingerprint,
   toolSelectionQuestions,
   type ToolSelection
 } from '../shared/tool-policy'
@@ -38,8 +43,8 @@ import { loadSettings } from './store'
 const NO_KEY = 'Save a Vercel AI Gateway API key first.'
 
 /**
- * Jev's read on `state`: one entry per question, `null` where Jev was not
- * confident enough for Farol to act on. Throws when no key is stored or the
+ * Jev's read on `state`: one entry per boolean question, `null` where Jev was
+ * not confident enough for Farol to act on. Throws when no key is stored or the
  * gateway refuses, so callers decide whether an outage is fatal.
  */
 export async function askJev(
@@ -68,18 +73,30 @@ export async function askJev(
       abortSignal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined
     })
     const decisions = Object.fromEntries(
-      Object.keys(questions).map((id) => [id, answers[id] ? decide(answers[id]) : null])
+      Object.keys(questions).map((id) => {
+        const answer = answers[id]
+        if (!answer || answer.type !== 'boolean') return [id, null]
+        return [id, decide(answer)]
+      })
     )
     logJev({
       ...context,
       status: 'evaluated',
       durationMs: Date.now() - started,
-      decisions: Object.entries(decisions).map(([id, decision]) => ({
-        id,
-        probability: answers[id]?.probability ?? null,
-        decision,
-        reason: !answers[id] ? 'missing-answer' : decision === null ? 'inconclusive' : 'confident'
-      }))
+      decisions: Object.entries(decisions).map(([id, decision]) => {
+        const answer = answers[id]
+        const probability = answer && answer.type === 'boolean' ? answer.probability : null
+        return {
+          id,
+          probability,
+          decision,
+          reason: !answer || answer.type !== 'boolean'
+            ? 'missing-answer'
+            : decision === null
+              ? 'inconclusive'
+              : 'confident'
+        }
+      })
     })
     return decisions
   } catch (err) {
@@ -140,35 +157,45 @@ export async function verdictFromOutput(output: string): Promise<StepVerdict | n
 
 const SELECTION_TIMEOUT_MS = 2000
 
+function asChoiceAnswer(raw: unknown): JevChoiceAnswer | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const answer = raw as { type?: string; choice?: string; probabilities?: Record<string, number> }
+  if (answer.type !== 'choice' || typeof answer.choice !== 'string') return undefined
+  return {
+    type: 'choice',
+    choice: answer.choice,
+    ...(answer.probabilities ? { probabilities: answer.probabilities } : {})
+  }
+}
+
 /**
- * Ask Jev which of the opted-in, non-mandatory `candidates` should run this
- * turn. Additive and soft-fail only: `null` on no key, a slow gateway, or an
- * error means "Jev added nothing," never "run none of these" — the agent's own
+ * Ask Jev which one opted-in, non-mandatory candidate to add this turn (or
+ * `none`). Soft-fail only: `null` on no key, a slow gateway, or an error means
+ * "Jev added nothing," never "run none of these" — the agent's own
  * `FAROL_PIPELINES` selection and the mandatory merge are unaffected either
- * way. Ids come back only from `candidates`, so an invented id is impossible.
+ * way. Ids come back only from host-prepared candidates, so an invented id is
+ * impossible.
  */
 export async function selectPipelines(
   candidates: Pipeline[],
   state: string,
   opts: { attempt?: number } = {}
 ): Promise<string[] | null> {
+  const prep = preparePipelineChoice(candidates)
   const questions = pipelineSelectionQuestions(candidates)
-  const ids = Object.keys(questions)
   const started = Date.now()
   const base = {
     timestamp: new Date(started).toISOString(),
     purpose: 'pipeline-selection' as const,
     model: JEV_MODEL_ID,
     threshold: JEV_SELECTION_THRESHOLD,
-    candidateCount: ids.length,
-    candidates: ids.map((id) => {
-      const pipeline = candidates.find((p) => p.id === id)
-      return { id, name: pipeline?.name ?? id }
-    }),
+    candidateCount: prep?.candidates.length ?? 0,
+    candidates: (prep?.candidates ?? []).map((pipeline) => ({ id: pipeline.id, name: pipeline.name })),
+    candidatesFingerprint: prep?.fingerprint,
     stateChars: state.length,
     ...(opts.attempt !== undefined ? { attempt: opts.attempt } : {})
   }
-  if (!ids.length) {
+  if (!prep || !Object.keys(questions).length) {
     logJev({ ...base, status: 'skipped', reason: 'no-candidates' })
     return null
   }
@@ -184,27 +211,54 @@ export async function selectPipelines(
       questions,
       abortSignal: AbortSignal.timeout(SELECTION_TIMEOUT_MS)
     })
-    const selected: string[] = []
-    const decisions = ids.map((id) => {
-      const answer = answers[id]
-      if (!answer) {
-        return { id, probability: null, decision: false, reason: 'missing-answer' as const }
-      }
-      const decision = decideSelection(answer)
-      if (decision) selected.push(id)
-      return {
-        id,
-        probability: answer.probability,
-        decision,
-        reason: decision ? ('selected' as const) : ('not-selected' as const)
-      }
+    const answer = asChoiceAnswer(answers.pipeline)
+    const selectedId = acceptPreparedChoice(answer, prep.preparedIds, {
+      fingerprint: prep.fingerprint,
+      currentFingerprint: prep.fingerprint,
+      threshold: JEV_SELECTION_THRESHOLD
     })
+    const probability = answer ? choiceProbability(answer) ?? null : null
+    let reason:
+      | 'selected'
+      | 'not-selected'
+      | 'none'
+      | 'missing-answer'
+      | 'unknown-id'
+      | 'low-confidence'
+      | 'stale-candidates' = 'missing-answer'
+    let selected: string[] = []
+    if (!answer) {
+      reason = 'missing-answer'
+    } else if (!prep.preparedIds.includes(answer.choice)) {
+      reason = 'unknown-id'
+    } else if (
+      probability !== undefined &&
+      probability !== null &&
+      probability < JEV_SELECTION_THRESHOLD
+    ) {
+      reason = 'low-confidence'
+    } else if (selectedId === PIPELINE_NONE_ID) {
+      reason = 'none'
+    } else if (selectedId) {
+      reason = 'selected'
+      selected = [selectedId]
+    } else {
+      reason = 'not-selected'
+    }
     logJev({
       ...base,
       status: 'evaluated',
       durationMs: Date.now() - started,
       selected,
-      decisions
+      choice: answer?.choice ?? null,
+      probability,
+      decisions: prep.candidates.map((pipeline) => ({
+        id: pipeline.id,
+        probability: answer?.probabilities?.[pipeline.id] ?? null,
+        decision: selected.includes(pipeline.id),
+        reason: selected.includes(pipeline.id) ? ('selected' as const) : ('not-selected' as const)
+      })),
+      outcome: reason
     })
     return selected
   } catch (err) {
@@ -221,16 +275,16 @@ export async function selectPipelines(
 }
 
 /**
- * Ask Jev which optional tool families this Build-mode turn needs. Soft-fail
- * only: `null` on no key, timeout, or error means "leave the full tool set" —
- * the controller maps that to `fallback-full`. A family is omitted only when
- * Jev is confidently sure the turn can finish without it.
+ * Ask Jev which host-prepared tool focus this Build-mode turn needs. Soft-fail
+ * only: `null` on no key, timeout, error, low confidence, or a foreign id means
+ * "leave the full tool set" — the controller maps that to `fallback-full`.
  */
 export async function selectTools(
   state: string,
   opts: { attempt?: number } = {}
 ): Promise<ToolSelection | null> {
   const questions = toolSelectionQuestions()
+  const fingerprint = toolFocusFingerprint()
   const started = Date.now()
   const base = {
     timestamp: new Date(started).toISOString(),
@@ -238,6 +292,7 @@ export async function selectTools(
     model: JEV_MODEL_ID,
     confidence: JEV_TOOL_CONFIDENCE,
     questionIds: Object.keys(questions),
+    candidatesFingerprint: fingerprint,
     stateChars: state.length,
     ...(opts.attempt !== undefined ? { attempt: opts.attempt } : {})
   }
@@ -253,27 +308,41 @@ export async function selectTools(
       questions,
       abortSignal: AbortSignal.timeout(TOOL_SELECTION_TIMEOUT_MS)
     })
-    const selection = selectionFromAnswers(answers)
-    const omitted = new Set<string>(selection.omitted)
+    const answer = asChoiceAnswer(answers.focus)
+    const selection = selectionFromChoice(answer, {
+      fingerprint,
+      currentFingerprint: fingerprint,
+      threshold: JEV_TOOL_CONFIDENCE
+    })
+    const probability = answer ? choiceProbability(answer) ?? null : null
+    if (!selection) {
+      logJev({
+        ...base,
+        status: 'evaluated',
+        durationMs: Date.now() - started,
+        choice: answer?.choice ?? null,
+        probability,
+        kept: null,
+        omitted: null,
+        outcome: !answer
+          ? 'missing-answer'
+          : !(answer.choice && fingerprint)
+            ? 'missing-answer'
+            : probability !== null && probability < JEV_TOOL_CONFIDENCE
+              ? 'low-confidence'
+              : 'unknown-id'
+      })
+      return null
+    }
     logJev({
       ...base,
       status: 'evaluated',
       durationMs: Date.now() - started,
+      choice: selection.focus,
+      probability,
       kept: selection.kept,
       omitted: selection.omitted,
-      decisions: Object.keys(questions).map((id) => {
-        const answer = answers[id]
-        return {
-          id,
-          probability: answer?.probability ?? null,
-          kept: !omitted.has(id),
-          reason: !answer
-            ? ('missing-answer' as const)
-            : omitted.has(id)
-              ? ('omitted' as const)
-              : ('kept' as const)
-        }
-      })
+      outcome: 'selected'
     })
     return selection
   } catch (err) {

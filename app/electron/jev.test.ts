@@ -3,6 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import type { Pipeline } from '../shared/types'
+import { toolFocusFingerprint } from '../shared/tool-policy'
 
 const { peekSecret, evaluate } = vi.hoisted(() => ({
   peekSecret: vi.fn(),
@@ -48,15 +49,20 @@ function readJevLog(): Record<string, unknown>[] {
   return raw.split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
+function pipelineChoice(
+  winner: string,
+  opts: Record<string, number> = {}
+): { type: 'choice'; choice: string; probabilities: Record<string, number> } {
+  const probabilities = { none: 0.01, ...opts, [winner]: opts[winner] ?? 0.95 }
+  return { type: 'choice', choice: winner, probabilities }
+}
+
 describe('Jev decision logs', () => {
-  it('records selection as selected/not-selected without logging state or keys', async () => {
+  it('records selection Choice outcomes without logging state or keys', async () => {
     peekSecret.mockReturnValue('secret-key')
     evaluate.mockResolvedValue({
       answers: {
-        yes: { type: 'boolean', probability: 0.99 },
-        no: { type: 'boolean', probability: 0.01 },
-        unsure: { type: 'boolean', probability: 0.5 },
-        unexpected: { type: 'boolean', probability: 1 }
+        pipeline: pipelineChoice('yes', { yes: 0.95, no: 0.02, unsure: 0.02, missing: 0.01, none: 0.0 })
       }
     })
     const candidates = ['yes', 'no', 'unsure', 'missing'].map((id) =>
@@ -70,18 +76,14 @@ describe('Jev decision logs', () => {
       attempt: 2,
       stateChars: 'private-state'.length,
       selected: ['yes'],
-      durationMs: expect.any(Number),
-      decisions: [
-        { id: 'yes', probability: 0.99, decision: true, reason: 'selected' },
-        { id: 'no', probability: 0.01, decision: false, reason: 'not-selected' },
-        { id: 'unsure', probability: 0.5, decision: false, reason: 'not-selected' },
-        { id: 'missing', probability: null, decision: false, reason: 'missing-answer' }
-      ]
+      choice: 'yes',
+      outcome: 'selected',
+      durationMs: expect.any(Number)
     }
     expect(console.info).toHaveBeenCalledExactlyOnceWith('[farol] Jev', expect.objectContaining(entry))
     expect(readJevLog()).toEqual([expect.objectContaining(entry)])
     const logged = JSON.stringify([...vi.mocked(console.info).mock.calls, ...readJevLog()])
-    for (const text of ['secret-key', 'private-state', 'unexpected']) expect(logged).not.toContain(text)
+    for (const text of ['secret-key', 'private-state']) expect(logged).not.toContain(text)
   })
 
   it.each([
@@ -176,35 +178,47 @@ describe('verdictFromOutput', () => {
 })
 
 describe('selectPipelines', () => {
-  it('returns the ids Jev was confident should run', async () => {
+  it('returns the one pipeline Choice winner', async () => {
     peekSecret.mockReturnValue('a-key')
     evaluate.mockResolvedValue({
-      answers: {
-        security: { type: 'boolean', probability: 0.99 },
-        docs: { type: 'boolean', probability: 0.01 }
-      }
+      answers: { pipeline: pipelineChoice('security', { security: 0.92, docs: 0.04, none: 0.04 }) }
     })
     const ids = await selectPipelines(
       [pipeline('security', { autoSelectable: true }), pipeline('docs', { autoSelectable: true })],
       'the diff touched auth code'
     )
     expect(ids).toEqual(['security'])
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        questions: {
+          pipeline: expect.objectContaining({
+            type: 'choice',
+            criteria: expect.objectContaining({
+              security: expect.any(String),
+              docs: expect.any(String),
+              none: expect.any(String)
+            })
+          })
+        }
+      })
+    )
   })
 
   it('never invents an id outside the candidates it was given', async () => {
     peekSecret.mockReturnValue('a-key')
     evaluate.mockResolvedValue({
-      answers: { security: { type: 'boolean', probability: 0.99 }, ghost: { type: 'boolean', probability: 0.99 } }
+      answers: { pipeline: pipelineChoice('ghost', { ghost: 0.99, security: 0.01 }) }
     })
     const ids = await selectPipelines([pipeline('security', { autoSelectable: true })], 'state')
-    expect(ids).toEqual(['security'])
+    expect(ids).toEqual([])
   })
 
-  it('drops an answer key that was never asked about, even if the gateway sends one', async () => {
+  it('treats none as add-nothing', async () => {
     peekSecret.mockReturnValue('a-key')
-    evaluate.mockResolvedValue({ answers: { ghost: { type: 'boolean', probability: 0.99 } } })
-    const ids = await selectPipelines([pipeline('security', { autoSelectable: true })], 'state')
-    expect(ids).toEqual([])
+    evaluate.mockResolvedValue({
+      answers: { pipeline: pipelineChoice('none', { none: 0.9, security: 0.1 }) }
+    })
+    expect(await selectPipelines([pipeline('security', { autoSelectable: true })], 'state')).toEqual([])
   })
 
   it('asks nothing and returns null when no candidate is auto-selectable', async () => {
@@ -218,7 +232,7 @@ describe('selectPipelines', () => {
   it('cannot auto-select a release pipeline that was not opted in, even if the gateway is eager', async () => {
     peekSecret.mockReturnValue('a-key')
     evaluate.mockResolvedValue({
-      answers: { release: { type: 'boolean', probability: 0.99 } }
+      answers: { pipeline: pipelineChoice('release', { release: 0.99 }) }
     })
     expect(await selectPipelines([pipeline('release')], 'please bump and ship')).toBe(null)
     expect(evaluate).not.toHaveBeenCalled()
@@ -238,20 +252,38 @@ describe('selectPipelines', () => {
 })
 
 describe('selectTools', () => {
-  it('omits only capabilities Jev confidently rejects', async () => {
+  it('maps a confident focus Choice onto kept/omitted families', async () => {
     peekSecret.mockReturnValue('a-key')
     evaluate.mockResolvedValue({
       answers: {
-        edit: { type: 'boolean', probability: 0.95 },
-        shell: { type: 'boolean', probability: 0.1 },
-        web: { type: 'boolean', probability: 0.4 }
+        focus: {
+          type: 'choice',
+          choice: 'implement',
+          probabilities: { inspect: 0.02, implement: 0.92, verify: 0.03, answer: 0.03 }
+        }
       }
     })
-    expect(await selectTools('Mode: build\nTask: inspect only')).toEqual({
+    expect(await selectTools('Mode: build\nTask: patch the login form')).toEqual({
       kind: 'selected',
-      kept: ['edit', 'web'],
-      omitted: ['shell']
+      focus: 'implement',
+      kept: ['edit', 'shell'],
+      omitted: ['web'],
+      candidatesFingerprint: toolFocusFingerprint()
     })
+  })
+
+  it('fails soft (null → full tools) on low confidence', async () => {
+    peekSecret.mockReturnValue('a-key')
+    evaluate.mockResolvedValue({
+      answers: {
+        focus: {
+          type: 'choice',
+          choice: 'inspect',
+          probabilities: { inspect: 0.4, implement: 0.3, verify: 0.2, answer: 0.1 }
+        }
+      }
+    })
+    expect(await selectTools('state')).toBe(null)
   })
 
   it('falls back to null when no key is stored', async () => {

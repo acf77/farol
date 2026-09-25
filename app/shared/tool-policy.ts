@@ -1,22 +1,41 @@
 /**
  * Managed Chat Tool policy — which capability families an agent turn may use.
  *
- * Inspection (read/search) is always available. Optional families — edit, shell,
- * web — stay on unless Jev is confidently sure the turn can finish without them.
- * Mid-confidence, missing answers, and gateway failures fail open to the full set.
+ * Inspection (read/search) is always available. Build-mode turns ask Jev for
+ * one host-prepared focus (`inspect` / `implement` / `verify` / `answer`); the
+ * focus maps to optional families. Mid-confidence, unknown ids, fingerprint
+ * drift, and gateway failures fail open to the full set.
  */
 
-import { clip, decide, JEV_CONFIDENCE, type JevBooleanAnswer, type JevBooleanQuestion } from './jev'
+import {
+  acceptPreparedChoice,
+  clip,
+  fingerprintIds,
+  type JevChoiceAnswer,
+  type JevChoiceQuestion
+} from './jev'
 import { isWriteToolName } from './mandatory'
 import { isShellToolName } from './catalog-shell'
 import type { AiProvider } from './ai'
 import { cliFor } from './ai'
 
-/** Optional families Jev may confidently omit. */
+/** Optional families a focus may admit. */
 export const TOOL_OPTIONAL = ['edit', 'shell', 'web'] as const
 export type ToolCapabilityId = (typeof TOOL_OPTIONAL)[number]
 
-export const JEV_TOOL_CONFIDENCE = JEV_CONFIDENCE
+/** Host-prepared foci for one Build-mode turn. */
+export const TOOL_FOCI = ['inspect', 'implement', 'verify', 'answer'] as const
+export type ToolFocusId = (typeof TOOL_FOCI)[number]
+
+/** Optional families each focus admits. Inspection tools always stay on. */
+export const FOCUS_ALLOWED: Record<ToolFocusId, readonly ToolCapabilityId[]> = {
+  inspect: [],
+  implement: ['edit', 'shell'],
+  verify: ['shell'],
+  answer: []
+}
+
+export const JEV_TOOL_CONFIDENCE = 0.85
 /** Pre-turn budget for tool selection — shorter than pipeline selection. */
 export const TOOL_SELECTION_TIMEOUT_MS = 1000
 
@@ -26,7 +45,14 @@ const OPENING_STATE_CAP = 1_500
 export type ToolEnforcement = 'native' | 'prompt'
 
 export type ToolSelection =
-  | { kind: 'selected'; kept: ToolCapabilityId[]; omitted: ToolCapabilityId[] }
+  | {
+      kind: 'selected'
+      focus: ToolFocusId
+      kept: ToolCapabilityId[]
+      omitted: ToolCapabilityId[]
+      /** Fingerprint of the focus option set at ask time. */
+      candidatesFingerprint: string
+    }
   | { kind: 'fallback-full'; reason: string }
   | { kind: 'plan' }
 
@@ -53,6 +79,10 @@ export interface ToolObservation {
   violations: ToolCapabilityId[]
 }
 
+export function toolFocusFingerprint(): string {
+  return fingerprintIds(TOOL_FOCI)
+}
+
 /** Decision state for selection — never logged; only its size is recorded. */
 export function toolSelectionState(ctx: ToolSelectionContext): string {
   return [
@@ -63,64 +93,91 @@ export function toolSelectionState(ctx: ToolSelectionContext): string {
   ].join('\n')
 }
 
+const FOCUS_CRITERIA: Record<ToolFocusId, string> = {
+  inspect:
+    'Read and search the project only — answer or diagnose without editing files, mutating shell commands, or web access',
+  implement:
+    'Create or modify project files; shell may run for builds/tests tied to the change; no public web',
+  verify:
+    'Run checks, tests, or lint via shell without editing files or using the public web',
+  answer:
+    'Reply from context already gathered — no file edits, no shell, no web'
+}
+
+/** One Choice over host-prepared foci. */
+export function toolSelectionQuestions(): Record<string, JevChoiceQuestion> {
+  return {
+    focus: {
+      type: 'choice',
+      instructions:
+        'Which focus should this managed Chat Build turn use? Pick exactly one. ' +
+        'Inspection (read/search) stays available under every focus.',
+      criteria: { ...FOCUS_CRITERIA }
+    }
+  }
+}
+
+export function allowedForFocus(focus: ToolFocusId): ToolCapabilityId[] {
+  return [...FOCUS_ALLOWED[focus]]
+}
+
+export function omittedForFocus(focus: ToolFocusId): ToolCapabilityId[] {
+  const kept = new Set(FOCUS_ALLOWED[focus])
+  return TOOL_OPTIONAL.filter((id) => !kept.has(id))
+}
+
 /**
- * One boolean per optional capability. False means the turn can clearly finish
- * without that family — the only case Farol will omit it.
+ * Map a Choice answer onto a selection, or abstain when the id is foreign,
+ * the fingerprint drifted, or the winning probability is below the bar.
  */
-const CAPABILITY_CRITERIA: Record<
-  ToolCapabilityId,
-  { true: string; false: string }
-> = {
-  edit: {
-    true: 'the turn must create, modify, or delete project files',
-    false: 'the turn can finish by inspecting the project and answering without file changes'
-  },
-  shell: {
-    true: 'the turn must run a mutating or non-inspection shell/terminal command',
-    false: 'the turn can finish with read/search tools only (no bash/terminal commands)'
-  },
-  web: {
-    true: 'the turn must fetch or search the public web',
-    false: 'the turn can finish from the local checkout without web access'
+export function selectionFromChoice(
+  answer: JevChoiceAnswer | undefined,
+  opts: { fingerprint: string; currentFingerprint?: string; threshold?: number } = {
+    fingerprint: toolFocusFingerprint()
+  }
+): Extract<ToolSelection, { kind: 'selected' }> | null {
+  const currentFingerprint = opts.currentFingerprint ?? toolFocusFingerprint()
+  const focus = acceptPreparedChoice(answer, TOOL_FOCI, {
+    fingerprint: opts.fingerprint,
+    currentFingerprint,
+    threshold: opts.threshold ?? JEV_TOOL_CONFIDENCE
+  })
+  if (!focus) return null
+  return {
+    kind: 'selected',
+    focus: focus as ToolFocusId,
+    kept: allowedForFocus(focus as ToolFocusId),
+    omitted: omittedForFocus(focus as ToolFocusId),
+    candidatesFingerprint: currentFingerprint
   }
 }
 
-export function toolSelectionQuestions(): Record<string, JevBooleanQuestion> {
-  return Object.fromEntries(
-    TOOL_OPTIONAL.map((id) => [
-      id,
-      {
-        type: 'boolean',
-        instructions:
-          `Does this managed Chat turn need the "${id}" capability?\n` +
-          `Answer near 1.0 only when the turn cannot finish without it. ` +
-          `Answer near 0.0 only when the turn can clearly finish without it.`,
-        criteria: CAPABILITY_CRITERIA[id]
-      } satisfies JevBooleanQuestion
-    ])
-  )
-}
-
-/** Keep an optional family unless Jev is confidently sure it is unnecessary. */
-export function keepOptionalCapability(
-  answer: JevBooleanAnswer | undefined,
-  confidence = JEV_TOOL_CONFIDENCE
-): boolean {
-  if (!answer) return true
-  return decide(answer, confidence) !== false
-}
-
-export function selectionFromAnswers(
-  answers: Record<string, JevBooleanAnswer | undefined>,
-  confidence = JEV_TOOL_CONFIDENCE
-): Extract<ToolSelection, { kind: 'selected' }> {
-  const kept: ToolCapabilityId[] = []
-  const omitted: ToolCapabilityId[] = []
-  for (const id of TOOL_OPTIONAL) {
-    if (keepOptionalCapability(answers[id], confidence)) kept.push(id)
-    else omitted.push(id)
+/** Re-check a cached selection against the live focus set before remapping. */
+export function validateToolSelection(selection: ToolSelection): ToolSelection {
+  if (selection.kind !== 'selected') return selection
+  if (selection.candidatesFingerprint !== toolFocusFingerprint()) {
+    return { kind: 'fallback-full', reason: 'stale-candidates' }
   }
-  return { kind: 'selected', kept, omitted }
+  if (!(TOOL_FOCI as readonly string[]).includes(selection.focus)) {
+    return { kind: 'fallback-full', reason: 'unknown-focus' }
+  }
+  const kept = allowedForFocus(selection.focus)
+  const omitted = omittedForFocus(selection.focus)
+  if (
+    kept.length !== selection.kept.length ||
+    kept.some((id, i) => id !== selection.kept[i]) ||
+    omitted.length !== selection.omitted.length ||
+    omitted.some((id, i) => id !== selection.omitted[i])
+  ) {
+    return {
+      kind: 'selected',
+      focus: selection.focus,
+      kept,
+      omitted,
+      candidatesFingerprint: selection.candidatesFingerprint
+    }
+  }
+  return selection
 }
 
 export function toolEnforcementFor(provider: AiProvider): ToolEnforcement {
@@ -161,14 +218,15 @@ function allowedFrom(selection: ToolSelection): ToolCapabilityId[] {
 
 /** Remap a cached selection onto the current provider's enforcement path. */
 export function toolPolicyFor(provider: AiProvider, selection: ToolSelection): ToolPolicy {
-  const allowed = allowedFrom(selection)
+  const validated = validateToolSelection(selection)
+  const allowed = allowedFrom(validated)
   const enforcement = toolEnforcementFor(provider)
   return {
-    selection,
+    selection: validated,
     allowed,
     enforcement,
     nativeTools:
-      enforcement === 'native' && selection.kind !== 'fallback-full'
+      enforcement === 'native' && validated.kind !== 'fallback-full'
         ? nativeToolsFor(provider, allowed)
         : []
   }
@@ -199,10 +257,11 @@ export function toolPolicyPrompt(policy: ToolPolicy): string {
   if (policy.selection.kind === 'fallback-full') {
     return ''
   }
+  const focus = policy.selection.focus
   const omitted = policy.selection.omitted
   if (!omitted.length) {
     return (
-      'Tool policy: You may use inspection, edit, shell, and web tools as needed for this turn. ' +
+      `Tool policy: Focus "${focus}". You may use inspection, edit, shell, and web tools as needed for this turn. ` +
       'Do not call unknown custom or Farol MCP tools — use FAROL control lines instead.'
     )
   }
@@ -217,7 +276,7 @@ export function toolPolicyPrompt(policy: ToolPolicy): string {
     .join('; ')
   const allowed = ['inspection (read/search)', ...policy.allowed].join(', ')
   return (
-    `Tool policy (mandatory): Allowed capability families: ${allowed}. ` +
+    `Tool policy (mandatory): Focus "${focus}". Allowed capability families: ${allowed}. ` +
     `Do not use: ${forbidden}. ` +
     `Do not call unknown custom or Farol MCP tools — use FAROL control lines instead.`
   )

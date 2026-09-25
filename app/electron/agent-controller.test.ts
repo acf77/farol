@@ -1394,12 +1394,14 @@ describe('AgentController', () => {
     expect(execute.mock.calls[0][1]).toMatch(/Plan mode is read-only/i)
   })
 
-  it('asks Jev for tool families in Build mode and appends the policy clause', async () => {
+  it('asks Jev for a tool focus in Build mode and appends the policy clause', async () => {
     selectTools.mockClear()
     selectTools.mockResolvedValueOnce({
       kind: 'selected',
-      kept: ['edit'],
-      omitted: ['shell', 'web']
+      focus: 'implement',
+      kept: ['edit', 'shell'],
+      omitted: ['web'],
+      candidatesFingerprint: 'answer\0implement\0inspect\0verify'
     })
     const events: AgentTaskEvent[] = []
     const execute = selecting()
@@ -1412,8 +1414,9 @@ describe('AgentController', () => {
 
     expect(selectTools).toHaveBeenCalledTimes(1)
     expect(selectTools.mock.calls[0][0]).toContain('Mode: build')
-    expect(execute.mock.calls[0][1]).toMatch(/Do not use:.*mutating shell/i)
-    expect(execute.mock.calls[0][1]).toMatch(/web fetch\/search/i)
+    expect(execute.mock.calls[0][1]).toMatch(/Focus "implement"/i)
+    expect(execute.mock.calls[0][1]).toMatch(/Do not use:.*web fetch\/search/i)
+    expect(execute.mock.calls[0][1]).not.toMatch(/mutating shell/i)
   })
 
   it('fails open to the full tool set when Jev tool selection is unavailable', async () => {

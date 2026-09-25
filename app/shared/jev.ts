@@ -3,9 +3,13 @@
  *
  * Jev writes no text. It scores a state against typed questions and answers
  * with probabilities, which rules it out as a coding agent but suits the yes/no
- * calls Farol makes about its own runs. So it is wired in as an internal
- * capability rather than another entry in the model pickers: no `AiProvider`
- * entry, nothing in Chat, nothing a pipeline step can select.
+ * and closed-choice calls Farol makes about its own runs. So it is wired in as
+ * an internal capability rather than another entry in the model pickers: no
+ * `AiProvider` entry, nothing in Chat, nothing a pipeline step can select.
+ *
+ * Booleans gate absolute predicates (step verdicts). Choices pick one opaque
+ * host-prepared option (pipeline id, tool focus). The host always re-checks
+ * the returned id against the prepared set before applying it.
  */
 
 import type { Pipeline } from './types'
@@ -13,12 +17,24 @@ import type { Pipeline } from './types'
 export const JEV_MODEL_ID = 'typesafe-ai/jev'
 export const AI_GATEWAY_API_URL = 'https://ai-gateway.vercel.sh/v1'
 
-/** The one question shape Farol asks. Jev also answers `choice` and `score`. */
+/** Escape hatch in pipeline Choice criteria — do not add any candidate. */
+export const PIPELINE_NONE_ID = 'none'
+
+/** The question shapes Farol asks. */
 export interface JevBooleanQuestion {
   type: 'boolean'
   instructions: string
   criteria?: { true: string; false: string }
 }
+
+export interface JevChoiceQuestion {
+  type: 'choice'
+  instructions: string
+  /** Nonempty map of option id → description. Null means the id is enough. */
+  criteria: Record<string, string | null>
+}
+
+export type JevQuestion = JevBooleanQuestion | JevChoiceQuestion
 
 /** Jev's estimate of P(true), in [0, 1]. */
 export interface JevBooleanAnswer {
@@ -26,12 +42,19 @@ export interface JevBooleanAnswer {
   probability: number
 }
 
+/** Relative pick among the question's criteria keys. */
+export interface JevChoiceAnswer {
+  type: 'choice'
+  choice: string
+  probabilities?: Record<string, number>
+}
+
 /** How sure Jev has to be before Farol acts on a step-verdict answer. */
 export const JEV_CONFIDENCE = 0.85
 
 /**
- * One-sided bar for additive pipeline selection. Only `p >= threshold` adds a
- * pipeline; anything lower is a clean "do not add," not a tri-state verdict.
+ * Minimum winning probability for a Choice to apply. Below the bar Farol
+ * abstains (pipelines: add nothing; tools: fail open to the full set).
  */
 export const JEV_SELECTION_THRESHOLD = 0.85
 
@@ -54,13 +77,38 @@ export function decide(answer: JevBooleanAnswer, confidence = JEV_CONFIDENCE): b
   return null
 }
 
-/** Selection only cares about confident-true; below the bar means do not add. */
-export function decideSelection(
-  answer: JevBooleanAnswer,
-  threshold = JEV_SELECTION_THRESHOLD
-): boolean {
-  const p = answer.probability
-  return Number.isFinite(p) && p >= threshold
+/** Winning option's probability when the provider supplies a distribution. */
+export function choiceProbability(answer: JevChoiceAnswer): number | undefined {
+  const p = answer.probabilities?.[answer.choice]
+  return Number.isFinite(p) ? p : undefined
+}
+
+/**
+ * Accept a Choice only when the id is host-prepared, the candidate fingerprint
+ * still matches, and (when known) the winning probability clears the bar.
+ * Otherwise abstain — never invent or transplant an option.
+ */
+export function acceptPreparedChoice(
+  answer: JevChoiceAnswer | undefined,
+  preparedIds: readonly string[],
+  opts: {
+    fingerprint: string
+    currentFingerprint: string
+    threshold?: number
+  }
+): string | null {
+  if (!answer || answer.type !== 'choice') return null
+  if (opts.fingerprint !== opts.currentFingerprint) return null
+  if (!preparedIds.includes(answer.choice)) return null
+  const threshold = opts.threshold ?? JEV_SELECTION_THRESHOLD
+  const probability = choiceProbability(answer)
+  if (probability !== undefined && probability < threshold) return null
+  return answer.choice
+}
+
+/** Stable fingerprint of the option set the host prepared for one decision. */
+export function fingerprintIds(ids: readonly string[]): string {
+  return [...ids].sort().join('\0')
 }
 
 /**
@@ -125,35 +173,55 @@ export const JEV_PROBE = {
   }
 } satisfies { state: string; questions: Record<string, JevBooleanQuestion> }
 
+export interface PipelineChoicePrep {
+  /** Opted-in non-mandatory candidates, in catalog order. */
+  candidates: Pipeline[]
+  /** Choice criteria including {@link PIPELINE_NONE_ID}. */
+  criteria: Record<string, string | null>
+  /** Ids Jev may legally return (candidates + none). */
+  preparedIds: string[]
+  fingerprint: string
+}
+
 /**
- * One boolean per opted-in, non-mandatory pipeline. Mandatory pipelines always
- * run and are never asked about. Pipelines without `autoSelectable` stay
- * manual so release/mutation workflows cannot fire from a hesitant score.
- * Keyed by pipeline id so a `true` answer maps straight back to a catalog id.
+ * Host-prepared pipeline Choice: one relative pick among opted-in candidates,
+ * plus `none`. Mandatory and non-opted-in pipelines are never offered.
  */
-export function pipelineSelectionQuestions(candidates: Pipeline[]): Record<string, JevBooleanQuestion> {
-  return Object.fromEntries(
-    candidates
-      .filter((pipeline) => pipeline.mandatory !== true && pipeline.autoSelectable === true)
-      .map((pipeline) => {
-        const description = describePipeline(pipeline)
-        return [
-          pipeline.id,
-          {
-            type: 'boolean',
-            instructions:
-              `Should Farol add this pipeline to the turn's validation run?\n` +
-              `Pipeline: ${description}`,
-            criteria: {
-              true:
-                'positive evidence that this pipeline adds material coverage for the observed changes, ' +
-                'and it is not already covered by selected or mandatory pipelines',
-              false:
-                'unrelated to the changes, already covered, insufficient evidence, ' +
-                'or it performs release/deployment/version mutations not explicitly warranted by the turn'
-            }
-          } satisfies JevBooleanQuestion
-        ]
-      })
+export function preparePipelineChoice(candidates: Pipeline[]): PipelineChoicePrep | null {
+  const eligible = candidates.filter(
+    (pipeline) => pipeline.mandatory !== true && pipeline.autoSelectable === true
   )
+  if (!eligible.length) return null
+  const criteria: Record<string, string | null> = {
+    [PIPELINE_NONE_ID]:
+      'Do not add any of these pipelines — unrelated, already covered, or release/mutation work not warranted'
+  }
+  for (const pipeline of eligible) {
+    criteria[pipeline.id] = describePipeline(pipeline)
+  }
+  const preparedIds = Object.keys(criteria)
+  return {
+    candidates: eligible,
+    criteria,
+    preparedIds,
+    fingerprint: fingerprintIds(preparedIds)
+  }
+}
+
+/** Single Choice question for post-turn pipeline auto-selection. */
+export function pipelineSelectionQuestions(
+  candidates: Pipeline[]
+): Record<string, JevChoiceQuestion> {
+  const prep = preparePipelineChoice(candidates)
+  if (!prep) return {}
+  return {
+    pipeline: {
+      type: 'choice',
+      instructions:
+        'Which one auto-selectable pipeline should Farol add to this turn\'s validation run? ' +
+        'Pick exactly one option. Prefer "none" unless one pipeline adds material coverage ' +
+        'for the observed changes that is not already covered by selected or mandatory pipelines.',
+      criteria: prep.criteria
+    }
+  }
 }

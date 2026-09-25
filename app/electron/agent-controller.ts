@@ -132,9 +132,10 @@ interface Task {
    */
   sameModelAttempts: number
   /**
-   * Jev's tool-family selection for the current attempt. Remapped onto each
-   * provider via `toolPolicyFor` without a new Jev call; cleared when the
-   * attempt number advances (repair turns re-ask).
+   * Jev's tool-focus selection for the current attempt. Remapped onto each
+   * provider via `toolPolicyFor` (which re-checks the prepared focus set)
+   * without a new Jev call; cleared when the attempt number advances
+   * (repair turns re-ask).
    */
   toolSelection?: ToolSelection
   toolSelectionAttempt?: number
@@ -930,8 +931,10 @@ export class AgentController {
 
   /**
    * Resolve the turn's tool policy. Plan mode never asks Jev. Build mode asks
-   * once per attempt and remaps the cached selection onto the current provider
-   * (native `--tools` vs prompt clause) across same-model retries and fallbacks.
+   * once per attempt for a host-prepared focus Choice and remaps the cached
+   * selection onto the current provider (native `--tools` vs prompt clause)
+   * across same-model retries and fallbacks. `toolPolicyFor` rejects stale or
+   * unknown foci before argv/prompt application.
    */
   private async resolveToolPolicy(
     task: Task,

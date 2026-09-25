@@ -549,7 +549,15 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 ### Jev pipeline auto-selection
 
 - Jev could be asked about every non-mandatory catalog pipeline — resolved: only pipelines with **Allow Chat to auto-select** (`autoSelectable`) are offered; the flag defaults to off so release/mutation pipelines stay manual.
-- A mid-range probability (for example 0.3) could be treated as inconclusive the way step verdicts are — resolved: selection is one-sided (`probability >=` the selection threshold adds the pipeline; anything lower is do-not-add).
-- Questions that name only the pipeline id leave Jev guessing what the pipeline does — resolved: each question includes a compact, length-capped description of step names, types, and command/prompt excerpts.
+- A mid-range probability (for example 0.3) could be treated as inconclusive the way step verdicts are — resolved: selection is one Choice over opted-in candidates plus `none`; the winner applies only when prepared and `probability >=` the selection threshold (anything lower, `none`, or an unknown id is do-not-add).
+- Questions that name only the pipeline id leave Jev guessing what the pipeline does — resolved: each Choice option includes a compact, length-capped description of step names, types, and command/prompt excerpts.
 - The decision state was only the task prompt plus assistant text — resolved: it also includes changed write targets and compact definitions of already-selected and mandatory pipelines so redundancy can be judged; that state is never written to Jev logs.
-- Below-threshold selection scores were logged as `inconclusive` — resolved: logs use `selected` / `not-selected` (plus missing-answer and gateway fallbacks) with candidate metadata and a state size summary, not prompts or secrets.
+- Below-threshold selection scores were logged as `inconclusive` — resolved: logs use Choice outcomes (`selected` / `none` / `not-selected` / `low-confidence` / `unknown-id`) with candidate metadata and a state size summary, not prompts or secrets.
+- Independent booleans per candidate could over-add — resolved: one relative Choice with a `none` escape hatch; the host re-checks the returned id against the prepared set.
+
+### Jev tool focus selection
+
+- Managed Chat could ship every CLI with its full default tool set — resolved: before each Build-mode turn Jev picks one host-prepared focus (`inspect` / `implement` / `verify` / `answer`); Plan mode never asks.
+- Uncertain scores could strand a coding turn — resolved: mid-band, unknown id, fingerprint drift, timeout, and missing key fail open to the full tool set.
+- Absolute yes/no per optional family (`edit` / `shell` / `web`) does not compete — resolved: one Choice over foci; the host maps the focus to kept/omitted families and re-validates before native `--tools` or the prompt clause.
+- Prompt-policy violations could kill the run mid-tool — deferred: v1 logs omitted-family tool cards for diagnosis only.
