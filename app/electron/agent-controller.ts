@@ -54,8 +54,8 @@ import {
 } from '../shared/mandatory'
 import { pipelineSelectionState } from '../shared/jev'
 import {
+  defaultPlanSelection,
   observeToolUse,
-  planToolPolicy,
   toolPolicyFor,
   toolPolicyPrompt,
   toolSelectionState,
@@ -132,9 +132,10 @@ interface Task {
    */
   sameModelAttempts: number
   /**
-   * Jev's tool-family selection for the current attempt. Remapped onto each
-   * provider via `toolPolicyFor` without a new Jev call; cleared when the
-   * attempt number advances (repair turns re-ask).
+   * Jev's tool-focus selection for the current attempt. Remapped onto each
+   * provider via `toolPolicyFor` (which re-checks the prepared focus set)
+   * without a new Jev call; cleared when the attempt number advances
+   * (repair turns re-ask).
    */
   toolSelection?: ToolSelection
   toolSelectionAttempt?: number
@@ -929,28 +930,31 @@ export class AgentController {
   }
 
   /**
-   * Resolve the turn's tool policy. Plan mode never asks Jev. Build mode asks
-   * once per attempt and remaps the cached selection onto the current provider
-   * (native `--tools` vs prompt clause) across same-model retries and fallbacks.
+   * Resolve the turn's tool policy. Build asks Jev for a focus among all
+   * host-prepared foci and remaps across retries; uncertain → full tools.
+   * Plan asks Jev only among read-only foci (`inspect` / `answer`) and soft-fails
+   * to inspect — never to the full set. Provider review gates stay the hard
+   * enforcement. `toolPolicyFor` rejects stale or unknown foci before apply.
    */
   private async resolveToolPolicy(
     task: Task,
     opening: string,
     attempt: number
   ): Promise<ToolPolicy> {
-    if (task.request.mode === 'plan') return planToolPolicy(task.request.provider)
+    const mode = task.request.mode === 'plan' ? 'plan' : 'build'
     if (task.toolSelection && task.toolSelectionAttempt === attempt) {
       return toolPolicyFor(task.request.provider, task.toolSelection)
     }
     const state = toolSelectionState({
       task: task.request.prompt,
       opening,
-      mode: 'build',
+      mode,
       attempt
     })
-    const selected = await selectTools(state, { attempt })
+    const selected = await selectTools(state, { attempt, mode })
     const resolved: ToolSelection =
-      selected ?? { kind: 'fallback-full', reason: 'jev-unavailable' }
+      selected ??
+      (mode === 'plan' ? defaultPlanSelection() : { kind: 'fallback-full', reason: 'jev-unavailable' })
     task.toolSelection = resolved
     task.toolSelectionAttempt = attempt
     return toolPolicyFor(task.request.provider, resolved)
@@ -1173,7 +1177,10 @@ export class AgentController {
     const epoch = task.askEpoch
     const code = this.executor
       ? await this.executor(task.request, effective, sink.text, sink.tool)
-      : await this.runAgent(task, effective, sink, false, policy.nativeTools)
+      : await this.runAgent(task, effective, sink, false, {
+          tools: policy.nativeTools,
+          webSearch: policy.allowed.includes('web')
+        })
     this.observeTools(task, policy, scan.toolNames, attempt)
     if (task.askEpoch !== epoch) return { kind: 'done' }
     return await this.cycleAfterRun(task, attempt, scan, code, prompt)
@@ -1289,13 +1296,14 @@ export class AgentController {
     prompt: string,
     sink: AgentSink,
     plain = false,
-    tools?: string[]
+    opts?: { tools?: string[]; webSearch?: boolean }
   ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
     const spec = managedAiCommand(task.request.provider, prompt, task.request.model, {
       jsonFormat: !plain,
       mode: task.request.mode,
-      ...(tools?.length ? { tools } : {})
+      ...(opts?.tools?.length ? { tools: opts.tools } : {}),
+      ...(opts?.webSearch ? { webSearch: true } : {})
     })
     const env = aiEnv(task.request.provider)
     const bin = resolveBinFrom(spec.bins)

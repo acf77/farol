@@ -15,8 +15,7 @@
     "isolatedModules": true,
     "noEmit": true,
     "types": ["vite/client"],
-    "baseUrl": ".",
-    "paths": { "@shared/*": ["shared/*"] }
+    "paths": { "@shared/*": ["./shared/*"] }
   },
   "include": ["src", "shared"]
 }

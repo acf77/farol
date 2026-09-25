@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  acceptPreparedChoice,
+  choiceProbability,
   decide,
-  decideSelection,
   describePipeline,
+  fingerprintIds,
   JEV_CONFIDENCE,
   JEV_PROBE,
   JEV_SELECTION_THRESHOLD,
+  PIPELINE_NONE_ID,
   pipelineSelectionQuestions,
-  pipelineSelectionState
+  pipelineSelectionState,
+  preparePipelineChoice
 } from './jev'
 import type { Pipeline } from './types'
 
@@ -61,17 +65,64 @@ describe('decide', () => {
   })
 })
 
-describe('decideSelection', () => {
-  it('adds only at or above the selection threshold', () => {
-    expect(decideSelection(answer(JEV_SELECTION_THRESHOLD))).toBe(true)
-    expect(decideSelection(answer(0.99))).toBe(true)
-    expect(decideSelection(answer(0.84))).toBe(false)
-    expect(decideSelection(answer(0.3))).toBe(false)
-    expect(decideSelection(answer(0.01))).toBe(false)
+describe('acceptPreparedChoice', () => {
+  const prepared = ['security', 'docs', PIPELINE_NONE_ID]
+  const fingerprint = fingerprintIds(prepared)
+
+  it('accepts a prepared id at or above the selection threshold', () => {
+    expect(
+      acceptPreparedChoice(
+        { type: 'choice', choice: 'security', probabilities: { security: 0.9, docs: 0.05, none: 0.05 } },
+        prepared,
+        { fingerprint, currentFingerprint: fingerprint, threshold: JEV_SELECTION_THRESHOLD }
+      )
+    ).toBe('security')
   })
 
-  it('treats non-finite probabilities as do-not-add', () => {
-    expect(decideSelection(answer(NaN))).toBe(false)
+  it('rejects foreign ids, fingerprint drift, and low winning probability', () => {
+    expect(
+      acceptPreparedChoice(
+        { type: 'choice', choice: 'ghost', probabilities: { ghost: 0.99 } },
+        prepared,
+        { fingerprint, currentFingerprint: fingerprint }
+      )
+    ).toBe(null)
+    expect(
+      acceptPreparedChoice(
+        { type: 'choice', choice: 'security', probabilities: { security: 0.99 } },
+        prepared,
+        { fingerprint, currentFingerprint: 'other' }
+      )
+    ).toBe(null)
+    expect(
+      acceptPreparedChoice(
+        { type: 'choice', choice: 'security', probabilities: { security: 0.5 } },
+        prepared,
+        { fingerprint, currentFingerprint: fingerprint }
+      )
+    ).toBe(null)
+  })
+
+  it('accepts when no distribution is supplied (host still checks membership)', () => {
+    expect(
+      acceptPreparedChoice({ type: 'choice', choice: 'none' }, prepared, {
+        fingerprint,
+        currentFingerprint: fingerprint
+      })
+    ).toBe('none')
+  })
+})
+
+describe('choiceProbability', () => {
+  it('reads the winning option from the distribution', () => {
+    expect(
+      choiceProbability({
+        type: 'choice',
+        choice: 'implement',
+        probabilities: { implement: 0.91, inspect: 0.09 }
+      })
+    ).toBe(0.91)
+    expect(choiceProbability({ type: 'choice', choice: 'implement' })).toBeUndefined()
   })
 })
 
@@ -112,22 +163,23 @@ describe('JEV_PROBE', () => {
 })
 
 describe('pipelineSelectionQuestions', () => {
-  it('asks only about opted-in, non-mandatory candidates', () => {
+  it('asks one Choice over opted-in candidates plus none', () => {
     const questions = pipelineSelectionQuestions([
       pipeline('lint', { mandatory: true, autoSelectable: true }),
       pipeline('security', { autoSelectable: true, name: 'Security Scan' }),
       pipeline('release')
     ])
-    expect(Object.keys(questions)).toEqual(['security'])
-    expect(questions.security.instructions).toContain('Security Scan (security)')
-    expect(questions.security.instructions).toContain('[shell]')
-    expect(questions.security.criteria?.true).toMatch(/material coverage/i)
-    expect(questions.security.criteria?.false).toMatch(/release|mutations/i)
+    expect(Object.keys(questions)).toEqual(['pipeline'])
+    expect(questions.pipeline.type).toBe('choice')
+    expect(Object.keys(questions.pipeline.criteria).sort()).toEqual(['none', 'security'])
+    expect(questions.pipeline.criteria.security).toContain('Security Scan (security)')
+    expect(questions.pipeline.criteria.none).toMatch(/Do not add/i)
   })
 
   it('asks nothing when no candidate is auto-selectable', () => {
     expect(pipelineSelectionQuestions([pipeline('release'), pipeline('lint', { mandatory: true })])).toEqual(
       {}
     )
+    expect(preparePipelineChoice([pipeline('release')])).toBe(null)
   })
 })

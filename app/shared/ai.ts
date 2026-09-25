@@ -268,6 +268,109 @@ export function aiCommand(provider: AiProvider, prompt: string, model?: string):
   }
 }
 
+function managedCodexCommand(prompt: string, passed: string | undefined, plan: boolean, webSearch?: boolean): AiCommand {
+  return {
+    bins: ['codex'],
+    // Codex removed `--full-auto` (closer to workspace-write + on-request).
+    // Use approval_policy=never + sandbox so headless Chat never prompts;
+    // do not use --dangerously-bypass-approvals-and-sandbox (no sandbox at all).
+    // Keep workspace-write network_access off (default): never-approve + network
+    // would let model shell commands reach the internet without confirmation.
+    // Native Codex web search is `--search`, not sandbox network_access.
+    args: withModel(
+      [
+        'exec',
+        '--json',
+        '-c',
+        'approval_policy=never',
+        '--sandbox',
+        plan ? 'read-only' : 'workspace-write',
+        ...(webSearch ? ['--search'] : []),
+        prompt
+      ],
+      passed
+    ),
+    hint: "Install the Codex CLI (npm i -g @openai/codex) to use managed Chat.",
+    stream: 'ndjson'
+  }
+}
+
+function managedCursorCommand(prompt: string, passed: string | undefined, plan: boolean): AiCommand {
+  return {
+    bins: ['agent', 'cursor-agent'],
+    // Agent mode is the CLI default; `plan` is Cursor's own read-only mode.
+    args: withModel(
+      ['-p', '--force', ...(plan ? ['--mode=plan'] : []), '--output-format', 'stream-json', prompt],
+      passed
+    ),
+    hint: 'Install the Cursor CLI (https://cursor.com/docs/cli) to use managed Chat.',
+    stream: 'ndjson'
+  }
+}
+
+function managedOpencodeCommand(prompt: string, passed: string | undefined, plan: boolean, jsonFormat: boolean): AiCommand {
+  // OpenCode's built-in `plan` agent is read-only; `--dangerously-skip-permissions`
+  // only bypasses tool-approval prompts, it does not grant plan the write tools
+  // it already lacks, so the two flags are safe to combine.
+  const planArgv = plan ? ['--agent', 'plan'] : []
+  return {
+    bins: ['opencode'],
+    args: withModel(
+      jsonFormat
+        ? ['run', '--format', 'json', '--dangerously-skip-permissions', ...planArgv, prompt]
+        : ['run', '--dangerously-skip-permissions', ...planArgv, prompt],
+      passed
+    ),
+    hint: 'Install OpenCode (https://opencode.ai) to use managed Chat. Farol needs a build that accepts `opencode run --format json`.',
+    ...(jsonFormat ? { stream: 'ndjson' as const } : {})
+  }
+}
+
+function managedOmpCommand(prompt: string, passed: string | undefined, plan: boolean, tools: string | undefined): AiCommand {
+  return {
+    bins: ['omp'],
+    // `--mode json` is already non-interactive, so `-p` is redundant; it also
+    // routes omp's own banners to stderr, leaving stdout pure NDJSON.
+    // Plan mode defaults to inspection-only when Jev did not supply a list;
+    // Build with an explicit allowlist uses that; otherwise omp keeps all tools.
+    args: withModel(
+      ['--mode', 'json', '--auto-approve', ...toolsArgv(tools ?? (plan ? OMP_READONLY_TOOLS : undefined)), prompt],
+      passed
+    ),
+    hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to use managed Chat.',
+    stream: 'ndjson'
+  }
+}
+
+function managedClaudeCommand(prompt: string, passed: string | undefined, plan: boolean, tools: string | undefined): AiCommand {
+  return {
+    bins: ['claude'],
+    // `--verbose` is what makes stream-json emit each turn as it happens;
+    // without it the CLI still waits and prints one final event.
+    // `--strict-mcp-config` with no `--mcp-config` loads zero MCP servers.
+    // Claude Code otherwise picks up project `.mcp.json` (Farol's
+    // list_pipelines / run_pipeline) and calls those instead of emitting
+    // FAROL_PIPELINES — so the managed harness never runs validation, and
+    // MCP runs use origin `agent`, which does not hand failures back.
+    args: withModel(
+      [
+        '-p',
+        '--output-format',
+        'stream-json',
+        '--verbose',
+        '--permission-mode',
+        plan ? 'plan' : 'bypassPermissions',
+        '--strict-mcp-config',
+        ...toolsArgv(tools),
+        prompt
+      ],
+      passed
+    ),
+    hint: 'Install Claude Code (npm i -g @anthropic-ai/claude-code) to use managed Chat.',
+    stream: 'ndjson'
+  }
+}
+
 /**
  * Headless coding commands used by Farol's managed Chat harness.
  * stdin is ignored (see agent-controller.ts), so a mode that can still stop
@@ -289,7 +392,7 @@ export function managedAiCommand(
   provider: AiProvider,
   prompt: string,
   model?: string,
-  opts?: { jsonFormat?: boolean; mode?: AgentMode; tools?: string[] }
+  opts?: { jsonFormat?: boolean; mode?: AgentMode; tools?: string[]; webSearch?: boolean }
 ): AiCommand {
   const cli = cliFor(provider)
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
@@ -298,104 +401,15 @@ export function managedAiCommand(
   const tools = opts?.tools?.length ? opts.tools.join(',') : undefined
   switch (cli) {
     case 'codex':
-      return {
-        bins: ['codex'],
-        // Codex removed `--full-auto` (closer to workspace-write + on-request).
-        // Use approval_policy=never + sandbox so headless Chat never prompts;
-        // do not use --dangerously-bypass-approvals-and-sandbox (no sandbox at all).
-        // Keep workspace-write network_access off (default): never-approve + network
-        // would let model shell commands reach the internet without confirmation.
-        // Native Codex web search is `--search`, not sandbox network_access.
-        args: withModel(
-          [
-            'exec',
-            '--json',
-            '-c',
-            'approval_policy=never',
-            '--sandbox',
-            plan ? 'read-only' : 'workspace-write',
-            prompt
-          ],
-          passed
-        ),
-        hint: "Install the Codex CLI (npm i -g @openai/codex) to use managed Chat.",
-        stream: 'ndjson'
-      }
+      return managedCodexCommand(prompt, passed, plan, opts?.webSearch)
     case 'cursor':
-      return {
-        bins: ['agent', 'cursor-agent'],
-        // Agent mode is the CLI default; `plan` is Cursor's own read-only mode.
-        args: withModel(
-          ['-p', '--force', ...(plan ? ['--mode=plan'] : []), '--output-format', 'stream-json', prompt],
-          passed
-        ),
-        hint: 'Install the Cursor CLI (https://cursor.com/docs/cli) to use managed Chat.',
-        stream: 'ndjson'
-      }
-    case 'opencode': {
-      // OpenCode's built-in `plan` agent is read-only; `--dangerously-skip-permissions`
-      // only bypasses tool-approval prompts, it does not grant plan the write tools
-      // it already lacks, so the two flags are safe to combine.
-      const planArgv = plan ? ['--agent', 'plan'] : []
-      return {
-        bins: ['opencode'],
-        args: withModel(
-          jsonFormat
-            ? ['run', '--format', 'json', '--dangerously-skip-permissions', ...planArgv, prompt]
-            : ['run', '--dangerously-skip-permissions', ...planArgv, prompt],
-          passed
-        ),
-        hint: 'Install OpenCode (https://opencode.ai) to use managed Chat. Farol needs a build that accepts `opencode run --format json`.',
-        ...(jsonFormat ? { stream: 'ndjson' as const } : {})
-      }
-    }
+      return managedCursorCommand(prompt, passed, plan)
+    case 'opencode':
+      return managedOpencodeCommand(prompt, passed, plan, jsonFormat)
     case 'omp':
-      return {
-        bins: ['omp'],
-        // `--mode json` is already non-interactive, so `-p` is redundant; it also
-        // routes omp's own banners to stderr, leaving stdout pure NDJSON.
-        // Plan mode defaults to inspection-only when Jev did not supply a list;
-        // Build with an explicit allowlist uses that; otherwise omp keeps all tools.
-        args: withModel(
-          [
-            '--mode',
-            'json',
-            '--auto-approve',
-            ...toolsArgv(tools ?? (plan ? OMP_READONLY_TOOLS : undefined)),
-            prompt
-          ],
-          passed
-        ),
-        hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to use managed Chat.',
-        stream: 'ndjson'
-      }
+      return managedOmpCommand(prompt, passed, plan, tools)
     case 'claude':
-      return {
-        bins: ['claude'],
-        // `--verbose` is what makes stream-json emit each turn as it happens;
-        // without it the CLI still waits and prints one final event.
-        // `--strict-mcp-config` with no `--mcp-config` loads zero MCP servers.
-        // Claude Code otherwise picks up project `.mcp.json` (Farol's
-        // list_pipelines / run_pipeline) and calls those instead of emitting
-        // FAROL_PIPELINES — so the managed harness never runs validation, and
-        // MCP runs use origin `agent`, which does not hand failures back.
-        args: withModel(
-          [
-            '-p',
-            '--output-format',
-            'stream-json',
-            '--verbose',
-            '--permission-mode',
-            plan ? 'plan' : 'bypassPermissions',
-            '--strict-mcp-config',
-            ...toolsArgv(tools),
-            prompt
-          ],
-          passed
-        ),
-        hint: 'Install Claude Code (npm i -g @anthropic-ai/claude-code) to use managed Chat.',
-        stream: 'ndjson'
-      }
+      return managedClaudeCommand(prompt, passed, plan, tools)
   }
 }
 

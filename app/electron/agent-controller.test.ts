@@ -1373,12 +1373,16 @@ describe('AgentController', () => {
     expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate'])
   })
 
-  it('never asks Jev in Plan mode', async () => {
+  it('asks Jev for a read-only Plan focus and keeps inspection tools', async () => {
     selectPipelines.mockClear()
     selectTools.mockClear()
+    selectTools.mockResolvedValueOnce({
+      kind: 'plan',
+      focus: 'inspect',
+      candidatesFingerprint: 'answer\0inspect'
+    })
     const events: AgentTaskEvent[] = []
-    const execute = vi.fn<AgentExecutor>().mockImplementation(async (_request, _prompt, output, onTool) => {
-      onTool?.({ toolId: 'edit-1', name: 'apply_patch', detail: 'src/app.ts', state: 'done' })
+    const execute = vi.fn<AgentExecutor>().mockImplementation(async (_request, _prompt, output) => {
       output('FAROL_PLAN: finished\n')
       return 0
     })
@@ -1390,16 +1394,21 @@ describe('AgentController', () => {
     )
 
     expect(selectPipelines).not.toHaveBeenCalled()
-    expect(selectTools).not.toHaveBeenCalled()
-    expect(execute.mock.calls[0][1]).toMatch(/Plan mode is read-only/i)
+    expect(selectTools).toHaveBeenCalledTimes(1)
+    expect(selectTools.mock.calls[0][0]).toContain('Mode: plan')
+    expect(selectTools.mock.calls[0][1]).toMatchObject({ mode: 'plan' })
+    expect(execute.mock.calls[0][1]).toMatch(/Plan mode is read-only \(focus "inspect"\)/i)
+    expect(execute.mock.calls[0][1]).toMatch(/Allowed capability families:.*web/i)
   })
 
-  it('asks Jev for tool families in Build mode and appends the policy clause', async () => {
+  it('asks Jev for a tool focus in Build mode and appends the policy clause', async () => {
     selectTools.mockClear()
     selectTools.mockResolvedValueOnce({
       kind: 'selected',
-      kept: ['edit'],
-      omitted: ['shell', 'web']
+      focus: 'implement',
+      kept: ['edit', 'shell'],
+      omitted: ['web'],
+      candidatesFingerprint: 'answer\0implement\0inspect\0verify'
     })
     const events: AgentTaskEvent[] = []
     const execute = selecting()
@@ -1412,8 +1421,9 @@ describe('AgentController', () => {
 
     expect(selectTools).toHaveBeenCalledTimes(1)
     expect(selectTools.mock.calls[0][0]).toContain('Mode: build')
-    expect(execute.mock.calls[0][1]).toMatch(/Do not use:.*mutating shell/i)
-    expect(execute.mock.calls[0][1]).toMatch(/web fetch\/search/i)
+    expect(execute.mock.calls[0][1]).toMatch(/Focus "implement"/i)
+    expect(execute.mock.calls[0][1]).toMatch(/Do not use:.*web fetch\/search/i)
+    expect(execute.mock.calls[0][1]).not.toMatch(/mutating shell/i)
   })
 
   it('fails open to the full tool set when Jev tool selection is unavailable', async () => {
