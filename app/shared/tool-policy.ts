@@ -27,15 +27,24 @@ export type ToolCapabilityId = (typeof TOOL_OPTIONAL)[number]
 export const TOOL_FOCI = ['inspect', 'implement', 'verify', 'answer'] as const
 export type ToolFocusId = (typeof TOOL_FOCI)[number]
 
-/** Read-only foci Plan mode may choose. Never edit / shell / web. */
+/** Read-only foci Plan mode may choose. Never edit or mutating shell. */
 export const PLAN_FOCI = ['inspect', 'answer'] as const
 export type PlanFocusId = (typeof PLAN_FOCI)[number]
 
-/** Optional families each focus admits. Inspection tools always stay on. */
+/** Optional families each Build focus admits. Inspection tools always stay on. */
 export const FOCUS_ALLOWED: Record<ToolFocusId, readonly ToolCapabilityId[]> = {
   inspect: [],
   implement: ['edit', 'shell'],
   verify: ['shell'],
+  answer: []
+}
+
+/**
+ * Optional families each Plan focus admits. Web search/fetch is read-only
+ * research; edit and shell stay off.
+ */
+export const PLAN_FOCUS_ALLOWED: Record<PlanFocusId, readonly ToolCapabilityId[]> = {
+  inspect: ['web'],
   answer: []
 }
 
@@ -60,7 +69,7 @@ export type ToolSelection =
   | { kind: 'fallback-full'; reason: string }
   | {
       kind: 'plan'
-      /** Read-only focus — inspection tools stay on; optional families stay off. */
+      /** Read-only focus — inspection (+ web on inspect); never edit/shell. */
       focus: PlanFocusId
       candidatesFingerprint: string
     }
@@ -123,9 +132,11 @@ export function toolSelectionQuestions(
         type: 'choice',
         instructions:
           'Which read-only focus should this managed Chat Plan turn use? Pick exactly one. ' +
-          'Plan mode may inspect the project with read/search tools but must not edit, run mutating shell, or use the web.',
+          'Plan mode may inspect the project and use web search/fetch when researching, ' +
+          'but must not edit files or run mutating shell commands.',
         criteria: {
-          inspect: FOCUS_CRITERIA.inspect,
+          inspect:
+            'Read and search the project, and use web search/fetch when needed to research docs or APIs — no file edits or mutating shell',
           answer: FOCUS_CRITERIA.answer
         }
       }
@@ -157,6 +168,15 @@ export function allowedForFocus(focus: ToolFocusId): ToolCapabilityId[] {
 
 export function omittedForFocus(focus: ToolFocusId): ToolCapabilityId[] {
   const kept = new Set(FOCUS_ALLOWED[focus])
+  return TOOL_OPTIONAL.filter((id) => !kept.has(id))
+}
+
+export function allowedForPlanFocus(focus: PlanFocusId): ToolCapabilityId[] {
+  return [...PLAN_FOCUS_ALLOWED[focus]]
+}
+
+export function omittedForPlanFocus(focus: PlanFocusId): ToolCapabilityId[] {
+  const kept = new Set(PLAN_FOCUS_ALLOWED[focus])
   return TOOL_OPTIONAL.filter((id) => !kept.has(id))
 }
 
@@ -267,7 +287,7 @@ export function nativeToolsFor(provider: AiProvider, allowed: ToolCapabilityId[]
 
 function allowedFrom(selection: ToolSelection): ToolCapabilityId[] {
   if (selection.kind === 'fallback-full') return [...TOOL_OPTIONAL]
-  if (selection.kind === 'plan') return []
+  if (selection.kind === 'plan') return allowedForPlanFocus(selection.focus)
   return [...selection.kept]
 }
 
@@ -308,11 +328,22 @@ export function planToolPolicy(provider: AiProvider, focus: PlanFocusId = 'inspe
 export function toolPolicyPrompt(policy: ToolPolicy): string {
   if (policy.selection.kind === 'plan') {
     const focus = policy.selection.focus
+    const omitted = omittedForPlanFocus(focus)
+    const forbidden = omitted
+      .map((id) =>
+        id === 'edit'
+          ? 'file edits/writes/deletes'
+          : id === 'shell'
+            ? 'mutating shell/terminal commands (read-only shell inspection is allowed when this provider has no separate read tool)'
+            : 'web fetch/search'
+      )
+      .join('; ')
+    const allowed = ['inspection (read/search)', ...policy.allowed].join(', ')
     return (
       `Tool policy: Plan mode is read-only (focus "${focus}"). ` +
-      'You may inspect the project with read/search tools ' +
-      '(and read-only shell inspection only when that is how this provider reads files). ' +
-      'Do not edit files, run mutating shell commands, or use web tools.'
+      `Allowed capability families: ${allowed}. ` +
+      `Do not use: ${forbidden}. ` +
+      'Do not call unknown custom or Farol MCP tools — use FAROL control lines instead.'
     )
   }
   if (policy.selection.kind === 'fallback-full') {

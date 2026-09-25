@@ -289,7 +289,7 @@ export function managedAiCommand(
   provider: AiProvider,
   prompt: string,
   model?: string,
-  opts?: { jsonFormat?: boolean; mode?: AgentMode; tools?: string[] }
+  opts?: { jsonFormat?: boolean; mode?: AgentMode; tools?: string[]; webSearch?: boolean }
 ): AiCommand {
   const cli = cliFor(provider)
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
@@ -314,6 +314,7 @@ export function managedAiCommand(
             'approval_policy=never',
             '--sandbox',
             plan ? 'read-only' : 'workspace-write',
+            ...(opts?.webSearch ? ['--search'] : []),
             prompt
           ],
           passed

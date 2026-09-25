@@ -194,17 +194,27 @@ describe('toolPolicyFor', () => {
     expect(toolPolicyPrompt(policy)).toBe('')
   })
 
-  it('applies a Plan ceiling with inspection tools and no optional families', () => {
+  it('applies a Plan ceiling with inspection + web on inspect, never edit/shell', () => {
     const policy = planToolPolicy('codex', 'inspect')
-    expect(policy.allowed).toEqual([])
+    expect(policy.allowed).toEqual(['web'])
     expect(policy.selection).toEqual(defaultPlanSelection())
     expect(toolPolicyPrompt(policy)).toMatch(/Plan mode is read-only \(focus "inspect"\)/i)
+    expect(toolPolicyPrompt(policy)).toMatch(/web fetch\/search|web/i)
+    expect(toolPolicyPrompt(policy)).toMatch(/Do not use:.*file edits/i)
+    expect(toolPolicyPrompt(policy)).toMatch(/mutating shell/i)
 
-    const claude = planToolPolicy('claude', 'answer')
-    expect(claude.nativeTools).toEqual(claudeToolsFor([]))
+    const claude = planToolPolicy('claude', 'inspect')
+    expect(claude.nativeTools).toEqual(claudeToolsFor(['web']))
     expect(claude.nativeTools).toContain('Read')
+    expect(claude.nativeTools).toContain('WebSearch')
     expect(claude.nativeTools).not.toContain('Edit')
-    expect(toolPolicyPrompt(claude)).toMatch(/focus "answer"/i)
+    expect(claude.nativeTools).not.toContain('Bash')
+
+    const answer = planToolPolicy('claude', 'answer')
+    expect(answer.allowed).toEqual([])
+    expect(answer.nativeTools).toEqual(claudeToolsFor([]))
+    expect(answer.nativeTools).not.toContain('WebSearch')
+    expect(toolPolicyPrompt(answer)).toMatch(/focus "answer"/i)
   })
 })
 

@@ -1177,7 +1177,10 @@ export class AgentController {
     const epoch = task.askEpoch
     const code = this.executor
       ? await this.executor(task.request, effective, sink.text, sink.tool)
-      : await this.runAgent(task, effective, sink, false, policy.nativeTools)
+      : await this.runAgent(task, effective, sink, false, {
+          tools: policy.nativeTools,
+          webSearch: policy.allowed.includes('web')
+        })
     this.observeTools(task, policy, scan.toolNames, attempt)
     if (task.askEpoch !== epoch) return { kind: 'done' }
     return await this.cycleAfterRun(task, attempt, scan, code, prompt)
@@ -1293,13 +1296,14 @@ export class AgentController {
     prompt: string,
     sink: AgentSink,
     plain = false,
-    tools?: string[]
+    opts?: { tools?: string[]; webSearch?: boolean }
   ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
     const spec = managedAiCommand(task.request.provider, prompt, task.request.model, {
       jsonFormat: !plain,
       mode: task.request.mode,
-      ...(tools?.length ? { tools } : {})
+      ...(opts?.tools?.length ? { tools: opts.tools } : {}),
+      ...(opts?.webSearch ? { webSearch: true } : {})
     })
     const env = aiEnv(task.request.provider)
     const bin = resolveBinFrom(spec.bins)

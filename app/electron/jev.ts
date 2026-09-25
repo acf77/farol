@@ -27,8 +27,10 @@ import {
   type JevChoiceAnswer
 } from '../shared/jev'
 import {
+  allowedForPlanFocus,
   defaultPlanSelection,
   JEV_TOOL_CONFIDENCE,
+  omittedForPlanFocus,
   selectionFromChoice,
   TOOL_SELECTION_TIMEOUT_MS,
   toolFocusFingerprint,
@@ -346,12 +348,12 @@ export async function selectTools(
       durationMs: Date.now() - started,
       choice: selection.kind === 'fallback-full' ? null : selection.focus,
       probability,
-      kept: selection.kind === 'selected' ? selection.kept : selection.kind === 'plan' ? [] : null,
+      kept: selection.kind === 'selected' ? selection.kept : selection.kind === 'plan' ? allowedForPlanFocus(selection.focus) : null,
       omitted:
         selection.kind === 'selected'
           ? selection.omitted
           : selection.kind === 'plan'
-            ? ['edit', 'shell', 'web']
+            ? omittedForPlanFocus(selection.focus)
             : null,
       outcome: 'selected'
     })

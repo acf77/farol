@@ -1398,6 +1398,7 @@ describe('AgentController', () => {
     expect(selectTools.mock.calls[0][0]).toContain('Mode: plan')
     expect(selectTools.mock.calls[0][1]).toMatchObject({ mode: 'plan' })
     expect(execute.mock.calls[0][1]).toMatch(/Plan mode is read-only \(focus "inspect"\)/i)
+    expect(execute.mock.calls[0][1]).toMatch(/Allowed capability families:.*web/i)
   })
 
   it('asks Jev for a tool focus in Build mode and appends the policy clause', async () => {
