@@ -157,6 +157,15 @@ describe('managedAiCommand', () => {
     ])
   })
 
+  it('enables Codex native web search when the policy allows web', () => {
+    expect(
+      managedAiCommand('codex', 'plan this', undefined, { mode: 'plan', webSearch: true }).args
+    ).toContain('--search')
+    expect(managedAiCommand('codex', 'plan this', undefined, { mode: 'plan' }).args).not.toContain(
+      '--search'
+    )
+  })
+
   it('auto-approves every provider so headless Chat can use shell tools', () => {
     expect(managedAiCommand('claude', 'fix this').args).toEqual([
       '-p',
