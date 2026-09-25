@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -258,6 +259,9 @@ export function useGitPanel(
   const knownFiles = useRef<Set<string> | null>(null)
   const refreshFailing = useRef(false)
   const logId = useRef(0)
+  // Callers pass `opts` inline; read `onAskAi` through a ref so it never destabilises the actions.
+  const onAskAiRef = useRef(opts?.onAskAi)
+  onAskAiRef.current = opts?.onAskAi
   const refresh = useCallback(() => setRefreshVersion((version) => version + 1), [])
   const appendLog = useCallback((action: string, message: string, ok: boolean) => {
     const time = new Date().toLocaleTimeString([], {
@@ -344,9 +348,9 @@ export function useGitPanel(
   const reportHookRun = useCallback(
     (kind: 'commit' | 'push', hookRun: GitHookRun) => {
       appendLog('Hooks', `${hookRun.hooks.join(', ')} blocked the ${kind}:\n${hookRun.output}`, false)
-      opts?.onAskAi?.(gitHookFailurePrompt(kind, hookRun.hooks, hookRun.output))
+      onAskAiRef.current?.(gitHookFailurePrompt(kind, hookRun.hooks, hookRun.output))
     },
-    [appendLog, opts]
+    [appendLog]
   )
 
   /** Note in the log which hooks are about to run, before the underlying git command starts. */
@@ -400,7 +404,9 @@ export function useGitPanel(
     [announceHooks, appendLog, gitAction, refresh, reportHookRun]
   )
 
-  const remotes = createRemoteActions(projectPath, runRemote)
+  // Stable identities matter: App's git-control effect depends on `pull`, and a fresh
+  // function every render re-sets App state, which re-renders this hook — an endless loop.
+  const remotes = useMemo(() => createRemoteActions(projectPath, runRemote), [projectPath, runRemote])
 
   const preparePr = useCallback(
     async (base: string, provider?: AiProvider, model?: string) => {
@@ -434,8 +440,8 @@ export function useGitPanel(
       () => api.git.bringConflicts(projectPath),
       'Could not bring pull request conflicts into the working tree'
     )
-    if (res?.prompt) opts?.onAskAi?.(res.prompt)
-  }, [opts?.onAskAi, projectPath, runRemote])
+    if (res?.prompt) onAskAiRef.current?.(res.prompt)
+  }, [projectPath, runRemote])
 
   return {
     status,
