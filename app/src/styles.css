@@ -67,6 +67,19 @@ button:disabled {
   }
 }
 
+@keyframes bfOverlayIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes bfOverlayCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+}
+
 /*
  * Reduced motion. Both run indicators have to keep reporting "running" once
  * the movement is taken away, so neither of these is a plain `animation:

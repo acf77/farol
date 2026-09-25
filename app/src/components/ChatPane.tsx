@@ -620,39 +620,107 @@ function ExecutePlanButton({ onExecute }: { onExecute: () => void }) {
   )
 }
 
-function ClearChatBanner({
+/**
+ * Blocks the whole chat behind a dimmed, transparent scrim so the confirmation
+ * can't be missed or clicked through by accident — clearing a chat is
+ * unrecoverable, so this needs to grab attention rather than sit as a
+ * dismissible banner in the scroll flow.
+ */
+function ClearChatOverlay({
   onCancelClearChat,
   onConfirmClearChat
 }: {
   onCancelClearChat?: () => void
   onConfirmClearChat?: () => void
 }) {
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const previousFocus = document.activeElement
+    cardRef.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true })
+    return () => {
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+        previousFocus.focus({ preventScroll: true })
+      }
+    }
+  }, [])
+
+  const trapFocus = (e: React.KeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      onCancelClearChat?.()
+      return
+    }
+    if (e.key !== 'Tab') return
+    const focusable = cardRef.current?.querySelectorAll<HTMLElement>('button')
+    if (!focusable?.length) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
+
   return (
-    <ChatBanner
+    <div
       role="alertdialog"
-      labelledBy="clear-chat-title"
-      describedBy="clear-chat-desc"
-      style={{ flexWrap: 'wrap', gap: '10px 14px' }}
+      aria-modal="true"
+      aria-labelledby="clear-chat-title"
+      aria-describedby="clear-chat-desc"
+      onKeyDown={trapFocus}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onCancelClearChat?.()
+      }}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        zIndex: 20,
+        display: 'grid',
+        placeItems: 'center',
+        padding: 20,
+        boxSizing: 'border-box',
+        background: 'rgba(12, 12, 10, 0.55)',
+        backdropFilter: 'blur(2px)',
+        animation: 'bfOverlayIn 120ms ease-out'
+      }}
     >
-      <div style={{ flex: '1 1 220px', minWidth: 0 }}>
-        <div id="clear-chat-title" style={{ fontSize: 13.5, fontWeight: 600, color: C.textSoft }}>
+      <div
+        ref={cardRef}
+        className="bf-clear-chat-card"
+        style={{
+          width: '100%',
+          maxWidth: 360,
+          boxSizing: 'border-box',
+          padding: '16px 18px',
+          borderRadius: 14,
+          background: C.card,
+          border: `1px solid ${C.red}`,
+          boxShadow: '0 20px 48px rgba(0,0,0,0.5)',
+          animation: 'bfOverlayCardIn 140ms ease-out'
+        }}
+      >
+        <div id="clear-chat-title" style={{ fontSize: 14.5, fontWeight: 700, color: C.textStrong }}>
           Clear this conversation?
         </div>
-        <div id="clear-chat-desc" style={{ fontSize: 12.5, lineHeight: 1.45, color: C.textMuted, marginTop: 4 }}>
-          Clearing permanently deletes this branch&apos;s current messages.
+        <div id="clear-chat-desc" style={{ fontSize: 12.5, lineHeight: 1.45, color: C.textMuted, marginTop: 6 }}>
+          Clearing permanently deletes this branch&apos;s current messages. This can&apos;t be undone.
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <Button onClick={onCancelClearChat}>Cancel</Button>
+          <Button
+            variant="danger"
+            onClick={onConfirmClearChat}
+            style={{ background: 'rgba(255, 98, 90,0.16)' }}
+          >
+            Clear chat
+          </Button>
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 8, flex: 'none' }}>
-        <Button onClick={onCancelClearChat}>Cancel</Button>
-        <Button
-          variant="danger"
-          onClick={onConfirmClearChat}
-          style={{ background: 'rgba(255, 98, 90,0.16)' }}
-        >
-          Clear chat
-        </Button>
-      </div>
-    </ChatBanner>
+    </div>
   )
 }
 
@@ -1829,9 +1897,9 @@ export default function ChatPane({
   const flex = view === 'split' ? '1 1 50%' : '1 1 100%'
 
   return (
-    <div style={{ ...PANE, flex }}>
+    <div style={{ ...PANE, flex, position: 'relative' }}>
       {clearChatConfirm && (
-        <ClearChatBanner
+        <ClearChatOverlay
           onCancelClearChat={onCancelClearChat}
           onConfirmClearChat={onConfirmClearChat}
         />

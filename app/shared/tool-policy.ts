@@ -155,7 +155,7 @@ export function nativeToolsFor(provider: AiProvider, allowed: ToolCapabilityId[]
 
 function allowedFrom(selection: ToolSelection): ToolCapabilityId[] {
   if (selection.kind === 'fallback-full') return [...TOOL_OPTIONAL]
-  if (selection.kind === 'plan') return []
+  if (selection.kind === 'plan') return ['web']
   return [...selection.kept]
 }
 
@@ -192,8 +192,8 @@ export function toolPolicyPrompt(policy: ToolPolicy): string {
   if (policy.selection.kind === 'plan') {
     return (
       'Tool policy: Plan mode is read-only. You may inspect the project with read/search tools ' +
-      '(and read-only shell inspection only when that is how this provider reads files). ' +
-      'Do not edit files, run mutating shell commands, or use web tools.'
+      '(and read-only shell inspection only when that is how this provider reads files), and you ' +
+      'may use web tools to research. Do not edit files or run mutating shell commands.'
     )
   }
   if (policy.selection.kind === 'fallback-full') {

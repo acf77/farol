@@ -99,10 +99,17 @@ describe('toolPolicyFor', () => {
     expect(toolPolicyPrompt(policy)).toBe('')
   })
 
-  it('applies a Plan ceiling with no optional families', () => {
+  it('applies a Plan ceiling that keeps web research but blocks edit/shell', () => {
     const policy = planToolPolicy('codex')
-    expect(policy.allowed).toEqual([])
+    expect(policy.allowed).toEqual(['web'])
     expect(toolPolicyPrompt(policy)).toMatch(/Plan mode is read-only/i)
+    expect(toolPolicyPrompt(policy)).toMatch(/may use web tools to research/i)
+
+    const claude = planToolPolicy('claude')
+    expect(claude.nativeTools).toContain('WebFetch')
+    expect(claude.nativeTools).toContain('WebSearch')
+    expect(claude.nativeTools).not.toContain('Edit')
+    expect(claude.nativeTools).not.toContain('Bash')
   })
 })
 
