@@ -7,7 +7,7 @@
       ],
       "env": {
         "ELECTRON_RUN_AS_NODE": "1",
-        "FAROL_SOCKET": "/private/tmp/claude-501/-Users-acf-Documents-Github-pipe-builder-ai/c3c153e0-d02b-48c1-a476-f1066debd0bc/scratchpad/tmp/farol-1sqmlho17xwa93.sock"
+        "FAROL_SOCKET": "/var/folders/8c/dnq_8d0j6b10xklrxyqdt1fh0000gn/T/farol-1sqmlho17xwa93.sock"
       }
     }
   }

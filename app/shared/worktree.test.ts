@@ -5,6 +5,7 @@ import {
   parseAlreadyOpenPath,
   parseWorktreeList,
   pipelineStoreRoot,
+  primaryRepoFolderName,
   worktreeFolderName
 } from './worktree'
 
@@ -85,6 +86,28 @@ describe('parseAlreadyOpenPath', () => {
     expect(
       parseAlreadyOpenPath("fatal: 'feat/x' is already used by worktree at '/repos/app-feat-x'")
     ).toBe('/repos/app-feat-x')
+  })
+})
+
+describe('primaryRepoFolderName', () => {
+  const trees = parseWorktreeList(
+    [
+      'worktree /repos/app',
+      'branch refs/heads/main',
+      '',
+      'worktree /repos/app-feature-x',
+      'branch refs/heads/feature/x',
+      ''
+    ].join('\n')
+  )
+
+  it('uses the primary checkout basename, not the current worktree folder', () => {
+    expect(primaryRepoFolderName('/repos/app-feature-x', trees)).toBe('app')
+    expect(primaryRepoFolderName('/repos/app', trees)).toBe('app')
+  })
+
+  it('falls back to the current toplevel when git lists no worktrees', () => {
+    expect(primaryRepoFolderName('/repos/app-feature-x', [])).toBe('app-feature-x')
   })
 })
 

@@ -26,7 +26,14 @@ import type {
 } from '../shared/types'
 import { githubInfo } from './github'
 import type { WorktreeRequest } from '../shared/worktree'
-import { parseAlreadyOpenPath, parseWorktreeList, pipelineStoreRoot, worktreeFolderName } from '../shared/worktree'
+import {
+  parseAlreadyOpenPath,
+  parseWorktreeList,
+  pipelineStoreRoot,
+  primaryRepoFolderName,
+  worktreeFolderName,
+  type WorktreeEntry
+} from '../shared/worktree'
 
 /**
  * Real git, read through the CLI. Plain `execFile` rather than a PTY: this is
@@ -186,10 +193,9 @@ async function reuseExistingWorktree(
   cwd: string,
   name: string,
   toplevel: string,
-  bare: boolean
+  bare: boolean,
+  trees: WorktreeEntry[]
 ): Promise<WorktreeResult | null> {
-  const listed = await git(cwd, ['worktree', 'list', '--porcelain'])
-  const trees = parseWorktreeList(listed.out)
   const existing = trees.find((t) => t.branch === name)
   if (existing && fs.existsSync(existing.path)) {
     return { ok: true, path: existing.path, branch: name, reused: true, message: '' }
@@ -206,11 +212,12 @@ async function reuseExistingWorktree(
 async function resolveWorktreeDest(
   toplevel: string,
   name: string,
-  folder: string | undefined
+  folder: string | undefined,
+  repoFolder: string
 ): Promise<{ dest: string } | WorktreeResult> {
   const destBase = path.join(
     path.dirname(toplevel),
-    worktreeFolderName(path.basename(toplevel), name, folder)
+    worktreeFolderName(repoFolder, name, folder)
   )
   if (fs.existsSync(destBase)) {
     const at = await git(destBase, ['rev-parse', '--abbrev-ref', 'HEAD'])
@@ -267,10 +274,14 @@ export async function addWorktree(cwd: string, req: WorktreeRequest): Promise<Wo
   const root = await resolveWorktreeRoot(cwd)
   if ('message' in root) return { ok: false, message: root.message }
 
-  const reused = await reuseExistingWorktree(cwd, name, root.toplevel, root.bare)
+  const listed = await git(cwd, ['worktree', 'list', '--porcelain'])
+  const trees = parseWorktreeList(listed.out)
+  const repoFolder = primaryRepoFolderName(root.toplevel, trees)
+
+  const reused = await reuseExistingWorktree(cwd, name, root.toplevel, root.bare, trees)
   if (reused) return reused
 
-  const destOrReuse = await resolveWorktreeDest(root.toplevel, name, req.folder)
+  const destOrReuse = await resolveWorktreeDest(root.toplevel, name, req.folder, repoFolder)
   if ('ok' in destOrReuse) return destOrReuse
 
   const built = await buildWorktreeArgs(cwd, name, destOrReuse.dest, req.base)

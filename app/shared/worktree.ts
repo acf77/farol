@@ -39,6 +39,15 @@ export function primaryWorktreePath(entries: WorktreeEntry[]): string | null {
 }
 
 /**
+ * Basename of the primary checkout — used as the `repo` prefix in sibling worktree
+ * folder names so creating from a linked worktree does not stack prefixes.
+ */
+export function primaryRepoFolderName(toplevel: string, entries: WorktreeEntry[]): string {
+  const primary = primaryWorktreePath(entries)
+  return baseName(primary ?? toplevel) || baseName(toplevel) || 'repo'
+}
+
+/**
  * Deepest worktree whose path contains `cwd` — the checkout that owns it, so a
  * chat opened in a subdirectory shares that checkout's state. Null when the
  * path sits outside every listed worktree.

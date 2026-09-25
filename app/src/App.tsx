@@ -36,7 +36,7 @@ import {
   withCommitMessageModel
 } from '@shared/settings'
 import { sessionSeq } from '@shared/session'
-import { owningWorktree } from '@shared/worktree'
+import { owningWorktree, primaryRepoFolderName } from '@shared/worktree'
 import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
 import { parallelAsClashIds, sanitizeAs, topoSort } from '@shared/graph'
 import { clearIndent, emptyTerm, ensureNewline, setIndent, trimTo, write, writeLine } from './ansi'
@@ -1029,6 +1029,10 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     code
   } = props
   const defaultChoice = modeDefault(settings, 'build')
+  const worktreeRepoName = useMemo(
+    () => primaryRepoFolderName(project.path, git.worktrees ?? []),
+    [project.path, git.worktrees]
+  )
 
   return (
     <div
@@ -1214,7 +1218,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           liquid={liquid}
           git={git}
           projectPath={project.path}
-          repoName={project.name}
+          repoName={worktreeRepoName}
           busy={creating}
           error={newTabError}
           onCancel={() => setNewTabOpen(false)}
