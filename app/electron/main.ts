@@ -26,6 +26,7 @@ import {
   setOpenRouterPinned
 } from './openrouter'
 import { refreshAgentCatalogs } from './agent-models'
+import { errorMessage } from '../shared/jev'
 import { checkJev, clearJev, saveJevKey } from './jev'
 import { configureJevLogs } from './jev-log'
 import { configureAgentFailureLogs } from './agent-failure-log'
@@ -508,7 +509,7 @@ function startBridge(projectPath: string): void {
               JSON.stringify({
                 id: req.id,
                 ok: false,
-                message: err instanceof Error ? err.message : String(err)
+                message: errorMessage(err)
               }) + '\n'
             )
           )

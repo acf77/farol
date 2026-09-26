@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { errorMessage } from '@shared/jev'
 import {
   TODO_PRIORITIES,
   TODO_STATUSES,
@@ -317,7 +318,7 @@ export default function TodoList({
       setSnapshot({ checkout, todos: updates.get(checkout) ?? next.todos })
       updates.clear()
     }).catch((reason: unknown) => {
-      if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load the todo list')
+      if (!cancelled) setError(errorMessage(reason, 'Could not load the todo list'))
     })
     return () => {
       cancelled = true
@@ -336,7 +337,7 @@ export default function TodoList({
         trigger.current?.focus()
       }
     } catch (reason) {
-      if (mounted.current) setError(reason instanceof Error ? reason.message : 'Could not save the todo list')
+      if (mounted.current) setError(errorMessage(reason, 'Could not save the todo list'))
     } finally {
       if (mounted.current) setSaving(false)
     }

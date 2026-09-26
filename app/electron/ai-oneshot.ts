@@ -1,5 +1,6 @@
 import { spawn } from 'child_process'
 import { aiCommand, type AiProvider } from '../shared/ai'
+import { errorMessage } from '../shared/jev'
 import { aiEnv, resolveBinFrom } from './bin'
 import { openRouterAgent } from './openrouter-agent'
 
@@ -30,7 +31,7 @@ export function runAiOnce(
         stdio: ['ignore', 'pipe', 'pipe']
       })
     } catch (error) {
-      resolve({ ok: false, text: '', error: error instanceof Error ? error.message : String(error) })
+      resolve({ ok: false, text: '', error: errorMessage(error) })
       return
     }
     const timer = setTimeout(() => {

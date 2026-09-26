@@ -21,6 +21,7 @@ import {
   JEV_PROBE,
   JEV_SELECTION_THRESHOLD,
   PIPELINE_NONE_ID,
+  errorMessage,
   pipelineSelectionQuestions,
   preparePipelineChoice,
   type JevBooleanQuestion,
@@ -392,7 +393,7 @@ async function result(error?: string): Promise<SettingsResult> {
   return { settings: await loadSettings(), ...(error ? { error } : {}) }
 }
 
-const message = (err: unknown): string => (err instanceof Error ? err.message : String(err))
+const message = errorMessage
 
 /** Run the known-answer probe. No error means the key works and Jev agreed. */
 export async function checkJev(): Promise<SettingsResult> {

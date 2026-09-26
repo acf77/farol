@@ -66,7 +66,7 @@ import {
   mandatoryPipelines,
   mergeWithMandatory
 } from '../shared/mandatory'
-import { pipelineSelectionState } from '../shared/jev'
+import { errorMessage, pipelineSelectionState } from '../shared/jev'
 import {
   defaultPlanSelection,
   observeToolUse,
@@ -1420,7 +1420,7 @@ export class AgentController {
       task,
       'failed',
       attempt,
-      `Agent stopped: ${error instanceof Error ? error.message : String(error)}`
+      `Agent stopped: ${errorMessage(error)}`
     )
     this.releaseIfDisposed(task)
   }
@@ -1607,7 +1607,7 @@ export class AgentController {
           stdio: ['ignore', 'pipe', 'pipe']
         })
       } catch (error) {
-        sink.text(`farol: ${error instanceof Error ? error.message : String(error)}\n`)
+        sink.text(`farol: ${errorMessage(error)}\n`)
         done(127)
         return
       }

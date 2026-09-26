@@ -1,3 +1,4 @@
+import { errorMessage } from '../shared/jev'
 import type { AiModel, AppSettings, SettingsResult } from '../shared/types'
 import {
   OPENROUTER_MODELS_URL,
@@ -72,7 +73,7 @@ export async function saveOpenRouterKey(raw: unknown): Promise<SettingsResult> {
   } catch (err) {
     return {
       settings: await currentSettings(),
-      error: err instanceof Error ? err.message : String(err)
+      error: errorMessage(err)
     }
   }
   clearUsageCache()
@@ -95,7 +96,7 @@ export async function refreshOpenRouterCatalog(): Promise<SettingsResult> {
   } catch (err) {
     return {
       settings: await currentSettings(),
-      error: err instanceof Error ? err.message : String(err)
+      error: errorMessage(err)
     }
   }
 }

@@ -295,6 +295,9 @@ export type AgentTaskStatus =
   | 'cancelled'
   | 'failed'
 
+/** Statuses that mean the agent is still in flight. */
+export const AGENT_LIVE: ReadonlySet<string> = new Set(['working', 'validating', 'repairing'])
+
 export interface AgentTaskRequest {
   id: string
   prompt: string

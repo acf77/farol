@@ -1,5 +1,6 @@
 import * as pty from 'node-pty'
 import { interactiveAiCommand, isAiProvider, type AiProvider } from '../shared/ai'
+import { errorMessage } from '../shared/jev'
 import type { ShellCwd, ShellData, ShellExit } from '../shared/types'
 import { aiEnv, resolveBin } from './bin'
 import { openRouterAgent } from './openrouter-agent'
@@ -59,7 +60,7 @@ export class ShellManager {
         env: agent ? aiEnv(agent, via) : shellEnv()
       })
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = errorMessage(err)
       this.onData({ tabId: paneId, chunk: `farol: cannot start ${command}: ${message}\r\n` })
       return
     }

@@ -1,5 +1,6 @@
 /** Persisted workspace: last project, tabs, split trees, and preferences. */
 
+import { trimSlashes } from './project-groups'
 import type { AppSettings } from './settings'
 import type { AgentMode, AiProvider } from './ai'
 import { normalizeAi, normalizeModel } from './ai'
@@ -88,8 +89,8 @@ export function sanitizeOpenProjects(
 
 /** Projects that left the workspace between two saved lists. */
 export function closedProjects(previous: string[], next: string[]): string[] {
-  const open = new Set(next.map((projectPath) => projectPath.replace(/[/\\]+$/, '')))
-  return previous.filter((projectPath) => !open.has(projectPath.replace(/[/\\]+$/, '')))
+  const open = new Set(next.map(trimSlashes))
+  return previous.filter((projectPath) => !open.has(trimSlashes(projectPath)))
 }
 
 export function savedLeaves(n: SavedNode, out: string[] = []): string[] {

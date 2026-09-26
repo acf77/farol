@@ -1,4 +1,5 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { shortPath } from '@shared/project-groups'
 import type { GitInfo, WorktreeRequest } from '@shared/types'
 import { branchNameError, worktreeFolderName } from '@shared/worktree'
 import { C, MONO, glass as G } from '../theme'
@@ -42,11 +43,6 @@ const field: React.CSSProperties = {
 }
 
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
-
-function shortPath(p: string): string {
-  const parts = p.replace(/[/\\]+$/, '').split(/[/\\]/)
-  return parts.slice(-2).join('/')
-}
 
 type ExistingInfo = { where: string; checkedOut: boolean }
 

@@ -8,6 +8,8 @@ import {
   type MutableRefObject,
   type SetStateAction
 } from 'react'
+import { errorMessage } from '@shared/jev'
+import { trimSlashes } from '@shared/project-groups'
 import { activeHooks, committableFiles, gitHookFailurePrompt } from '@shared/git-status'
 import type {
   AiProvider,
@@ -24,11 +26,7 @@ import type {
 const api = window.farol
 
 function sameProject(a: string, b: string): boolean {
-  return a.replace(/[/\\]+$/, '') === b.replace(/[/\\]+$/, '')
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback
+  return trimSlashes(a) === trimSlashes(b)
 }
 
 type PollJob = {
@@ -51,7 +49,7 @@ function runPoller(job: PollJob, isCancelled: () => boolean): () => void {
       const apply = await read()
       if (!isCancelled()) apply()
     } catch (err) {
-      if (!isCancelled()) fail(err instanceof Error ? err.message : 'Could not update Git information')
+      if (!isCancelled()) fail(errorMessage(err, 'Could not update Git information'))
     } finally {
       busy = false
       if (!isCancelled()) {
