@@ -118,6 +118,26 @@ _Avoid_: relying on the agent to remember to commit, a per-turn reminder to comm
 **Chat diagram**:
 A Mermaid flowchart or sequence diagram the agent puts in a ` ```mermaid ` fenced block. Chat renders it as SVG in the message. A finished plan includes one for the intended approach; a Build turn that changed files includes one for what changed and why. Four to twelve well-labeled steps, detailed but not crowded.
 _Avoid_: a new control line, a remote image URL, a 20-node map, a diagram on a questions-only or status-only reply
+
+**CLI session**:
+The conversation a coding CLI saves for a managed Chat, by id. The next turn resumes it when it runs on the same CLI in the same directory, and then sends only the new request. A session the CLI refuses, or one that ran out of context, is dropped once per turn and the turn runs again with the **Rebuilt history**.
+_Avoid_: resuming across providers or directories, spending a same-model retry on a refused resume
+
+**Rebuilt history**:
+What a turn that cannot resume a **CLI session** gets instead: the task, the newest follow-ups that fit a 100k-character budget, and the **Handoff note**. Trimming drops the oldest follow-ups and says so; the task always stays.
+_Avoid_: cutting from the front (losing the task), a Farol summarizer call, resending it to a resumed session
+
+**Handoff note**:
+The agent's own summary for whichever agent takes the next turn — what is done, decisions, dead ends, next step — sent on a hidden `FAROL_HANDOFF:` line when the work's state changed. A new line replaces the note. The chat pane saves it with the **CLI session** reference so the chat continues after a restart.
+_Avoid_: a note on every turn, sharing notes across chats or checkouts, saving the full history to disk
+
+**Context meter**:
+The `ctx` reading in the composer: tokens the agent's latest model call read, as a share of the model's window when known, else a token count. Amber from 70% of the window, or 150k tokens without one. Shown only when the CLI reports usage.
+_Avoid_: estimating from characters, a percentage from a guessed window, a reading for Codex turn totals
+
+**Fresh start**:
+Continuing a chat in a new **CLI session** without clearing it. The agent first writes a **Handoff note** in one read-only turn on the old session; Farol keeps the task, the latest two requests and the note. Suggested when the **Context meter** is amber or the agent stopped on its context limit; never automatic.
+_Avoid_: Clear as the remedy for a full context, a Farol summarizer call, dropping the session when no note was written
 ### Todo list
 
 **Todo list**:

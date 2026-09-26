@@ -126,6 +126,39 @@ describe('aiCommand', () => {
 })
 
 describe('managedAiCommand', () => {
+  it('continues the CLI session when given one', () => {
+    const claude = managedAiCommand('claude', 'next', 'opus', { resume: 's1' }).args
+    expect(claude.slice(-5)).toEqual(['--resume', 's1', '--model', 'opus', 'next'])
+    expect(managedAiCommand('cursor', 'next', undefined, { resume: 'c1' }).args).toEqual(
+      expect.arrayContaining(['--resume', 'c1'])
+    )
+    expect(managedAiCommand('opencode', 'next', undefined, { resume: 'ses_1' }).args).toEqual(
+      expect.arrayContaining(['--session', 'ses_1'])
+    )
+    expect(managedAiCommand('omp', 'next', undefined, { resume: 'x' }).args).not.toContain('x')
+    expect(managedAiCommand('claude', 'next').args).not.toContain('--resume')
+  })
+
+  it('resumes Codex through `exec resume`, which takes the sandbox as config', () => {
+    expect(managedAiCommand('codex', 'next', 'gpt-5.6', { mode: 'plan', resume: 't1' }).args).toEqual([
+      'exec',
+      'resume',
+      '--json',
+      '-c',
+      'approval_policy=never',
+      '-c',
+      'sandbox_mode="read-only"',
+      't1',
+      '--model',
+      'gpt-5.6',
+      'next'
+    ])
+    const build = managedAiCommand('codex', 'next', undefined, { resume: 't1', webSearch: true }).args
+    expect(build).toContain('sandbox_mode="workspace-write"')
+    expect(build).toContain('web_search=live')
+    expect(build).not.toContain('--sandbox')
+  })
+
   it('switches each provider to its read-only Plan flags', () => {
     expect(managedAiCommand('codex', 'plan this', undefined, { mode: 'plan' }).args).toContain('read-only')
     expect(managedAiCommand('cursor', 'plan this', undefined, { mode: 'plan' }).args).toContain(
