@@ -822,6 +822,7 @@ function registerTaskIpc(): void {
   )
   ipcMain.handle('run:cancel', (_e, pipelineId: string) => runner.cancelAndWait(pipelineId))
   ipcMain.handle('agent:start', (_e, request: AgentTaskRequest) => agents.start(request))
+  ipcMain.handle('agent:freshStart', (_e, taskId: string) => agents.freshStart(taskId))
   ipcMain.handle(
     'agent:message',
     (

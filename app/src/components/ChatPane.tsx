@@ -9,6 +9,13 @@ import {
   skillMenuQuery,
   skillWarningLine
 } from '@shared/skills'
+import {
+  contextIsHigh,
+  contextLongLabel,
+  contextShortLabel,
+  isContextOverflow,
+  type ContextUsage
+} from '@shared/agent-context'
 import type { AgentMessage, AgentPane, View } from '../types'
 import { C, MONO, PANE } from '../theme'
 import { MarkdownBody, stripControlMarkers } from '../markdown'
@@ -48,6 +55,8 @@ interface Props {
   /** `answers: null` dismisses the chooser. */
   onAnswer: (requestId: string, answers: string[][] | null) => void
   onCancel: () => void
+  /** Continue in a new CLI session seeded with the agent's handoff note. */
+  onFreshStart?: () => void
   onProviderChange: (provider: AiProvider, model?: string) => void
   onModeChange: (mode: AgentMode) => void
   onExecutePlan: (index: number) => void
@@ -753,6 +762,94 @@ function ChatClearedBanner({ onDismissChatCleared }: { onDismissChatCleared?: ()
   )
 }
 
+/**
+ * How full the agent's context is. Shown only with a reading from the CLI;
+ * amber once it is large enough that answers tend to lose precision.
+ */
+function ContextMeter({ usage }: { usage?: ContextUsage }) {
+  if (!usage) return null
+  const high = contextIsHigh(usage)
+  return (
+    <span
+      role="status"
+      title={`Context: ${contextLongLabel(usage)} at the agent's latest step${high ? ' — consider a fresh start' : ''}`}
+      style={{
+        fontFamily: MONO,
+        fontSize: 11,
+        color: high ? C.yellow : C.faint,
+        whiteSpace: 'nowrap'
+      }}
+    >
+      ctx {contextShortLabel(usage)}
+      {high ? ' !' : ''}
+    </span>
+  )
+}
+
+/**
+ * Why a fresh start is suggested — a large reading, or the agent stopped on
+ * its context limit — and a key that changes only when the situation does
+ * (a new stop, or the next 10% band), so a dismissal holds until then.
+ */
+export function freshStartReason(
+  usage: ContextUsage | undefined,
+  messages: AgentMessage[]
+): { text: string; key: string } | null {
+  const last = messages[messages.length - 1]
+  if (last?.role === 'system' && isContextOverflow(last.text)) {
+    return { text: 'The agent ran out of context.', key: `overflow:${messages.length}` }
+  }
+  if (!usage || !contextIsHigh(usage)) return null
+  const band = usage.window ? Math.floor((usage.tokens / usage.window) * 10) : Math.floor(usage.tokens / 50_000)
+  return { text: `Context is large (${contextLongLabel(usage)}).`, key: `high:${band}` }
+}
+
+function FreshStartBanner({
+  reason,
+  isBusy,
+  onFreshStart,
+  onDismiss
+}: {
+  reason: string
+  isBusy: boolean
+  onFreshStart: () => void
+  onDismiss: () => void
+}) {
+  return (
+    <ChatBanner role="status" style={{ borderColor: C.yellowDim }}>
+      <span style={{ flex: 1, fontSize: 12.5, lineHeight: 1.45, color: C.textMuted }}>
+        <span style={{ color: C.yellow }}>{reason}</span> Answers get less precise as it grows. Fresh
+        start keeps this chat and continues in a new session from the agent&apos;s handoff note.
+      </span>
+      <Button
+        disabled={isBusy}
+        title={isBusy ? 'Available when the agent finishes' : 'Write a handoff note and start a new session'}
+        onClick={onFreshStart}
+      >
+        Fresh start
+      </Button>
+      <button
+        type="button"
+        className="bf-focus"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        style={{
+          flex: 'none',
+          border: 'none',
+          background: 'transparent',
+          color: C.textMuted,
+          fontSize: 16,
+          lineHeight: 1,
+          cursor: 'pointer',
+          padding: '2px 4px'
+        }}
+      >
+        ×
+      </button>
+    </ChatBanner>
+  )
+}
+
 function ChatGreeting({ availableCount, mode }: { availableCount: number; mode: AgentMode }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
@@ -1284,6 +1381,7 @@ function ComposerToolbar({
   provider,
   model,
   usage,
+  contextUsage,
   onRefreshUsage,
   mode,
   isBusy,
@@ -1300,6 +1398,7 @@ function ComposerToolbar({
   provider: AiProvider
   model?: string
   usage: ProviderUsage[]
+  contextUsage?: ContextUsage
   onRefreshUsage: () => void
   mode: AgentMode
   isBusy: boolean
@@ -1347,6 +1446,7 @@ function ComposerToolbar({
         <ChevronDown size={11} />
       </button>
       <UsageBar usage={usage} provider={provider} onRefresh={onRefreshUsage} />
+      <ContextMeter usage={contextUsage} />
       <button
         type="button"
         className="bf-focus"
@@ -1441,6 +1541,7 @@ function ComposerBox({
   mode,
   settings,
   usage,
+  contextUsage,
   onRefreshUsage,
   textareaRef,
   onMessage,
@@ -1459,6 +1560,7 @@ function ComposerBox({
   mode: AgentMode
   settings?: AppSettings
   usage: ProviderUsage[]
+  contextUsage?: ContextUsage
   onRefreshUsage: () => void
   textareaRef: React.RefObject<HTMLTextAreaElement>
   onMessage: (text: string, provider: AiProvider, model: string | undefined, mode: AgentMode) => void
@@ -1772,6 +1874,7 @@ function ComposerBox({
           provider={provider}
           model={model}
           usage={usage}
+          contextUsage={contextUsage}
           onRefreshUsage={onRefreshUsage}
           mode={mode}
           isBusy={isBusy}
@@ -1845,6 +1948,7 @@ export default function ChatPane({
   onMessage,
   onAnswer,
   onCancel,
+  onFreshStart,
   onProviderChange,
   onModeChange,
   onExecutePlan,
@@ -1880,6 +1984,10 @@ export default function ChatPane({
   const messages = pane?.messages ?? []
   const availableCount = pipelines.filter((p) => p.nodes.length).length
   const showSuggestions = availableCount > 0 && mode === 'build'
+  const freshReason = onFreshStart ? freshStartReason(pane?.usage, messages) : null
+  // Dismissed for this reason until the reading changes band or the chat changes.
+  const freshKey = `${pane?.taskId ?? ''}:${freshReason?.key ?? ''}`
+  const [dismissedFresh, setDismissedFresh] = useState<string | null>(null)
 
   // Follow the stream only while the reader is already at the bottom, so
   // scrolling up to read something does not get yanked back by the next event.
@@ -1957,6 +2065,14 @@ export default function ChatPane({
         </div>
       </div>
 
+      {freshReason && onFreshStart && dismissedFresh !== freshKey && (
+        <FreshStartBanner
+          reason={freshReason.text}
+          isBusy={isBusy || status === 'asking'}
+          onFreshStart={onFreshStart}
+          onDismiss={() => setDismissedFresh(freshKey)}
+        />
+      )}
       <ComposerBox
         projectPath={projectPath}
         availableCount={availableCount}
@@ -1967,6 +2083,7 @@ export default function ChatPane({
         mode={mode}
         settings={settings}
         usage={usage}
+        contextUsage={pane?.usage}
         onRefreshUsage={onRefreshUsage}
         textareaRef={textareaRef}
         onMessage={onMessage}

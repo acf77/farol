@@ -234,6 +234,11 @@ function toolsArgv(tools: string | undefined): string[] {
   return tools ? ['--tools', tools] : []
 }
 
+/** `--flag <id>` to continue the CLI's own saved conversation, or empty for a new one. */
+function resumeArgv(flag: string, resume: string | undefined): string[] {
+  return resume ? [flag, resume] : []
+}
+
 /** OMP has no read-only sandbox, so this allowlist — inspection only, no bash/edit/write — is the gate. */
 const OMP_READONLY_TOOLS = 'read,glob,grep,lsp'
 /** Pi has no sandbox or approval prompts either; its gate is the same kind of allowlist. */
@@ -300,7 +305,37 @@ export function aiCommand(
   }
 }
 
-function managedCodexCommand(prompt: string, passed: string | undefined, plan: boolean, webSearch?: boolean): AiCommand {
+function managedCodexCommand(
+  prompt: string,
+  passed: string | undefined,
+  plan: boolean,
+  webSearch?: boolean,
+  resume?: string
+): AiCommand {
+  const sandbox = plan ? 'read-only' : 'workspace-write'
+  if (resume) {
+    // `exec resume` takes no `--sandbox`; the config key sets the same mode.
+    return {
+      bins: ['codex'],
+      args: withModel(
+        [
+          'exec',
+          'resume',
+          '--json',
+          '-c',
+          'approval_policy=never',
+          '-c',
+          `sandbox_mode="${sandbox}"`,
+          ...(webSearch ? ['-c', 'web_search=live'] : []),
+          resume,
+          prompt
+        ],
+        passed
+      ),
+      hint: "Install the Codex CLI (npm i -g @openai/codex) to use managed Chat.",
+      stream: 'ndjson'
+    }
+  }
   return {
     bins: ['codex'],
     // Codex removed `--full-auto` (closer to workspace-write + on-request).
@@ -316,7 +351,7 @@ function managedCodexCommand(prompt: string, passed: string | undefined, plan: b
         '-c',
         'approval_policy=never',
         '--sandbox',
-        plan ? 'read-only' : 'workspace-write',
+        sandbox,
         ...(webSearch ? ['-c', 'web_search=live'] : []),
         prompt
       ],
@@ -327,12 +362,20 @@ function managedCodexCommand(prompt: string, passed: string | undefined, plan: b
   }
 }
 
-function managedCursorCommand(prompt: string, passed: string | undefined, plan: boolean): AiCommand {
+function managedCursorCommand(prompt: string, passed: string | undefined, plan: boolean, resume?: string): AiCommand {
   return {
     bins: ['agent', 'cursor-agent'],
     // Agent mode is the CLI default; `plan` is Cursor's own read-only mode.
     args: withModel(
-      ['-p', '--force', ...(plan ? ['--mode=plan'] : []), '--output-format', 'stream-json', prompt],
+      [
+        '-p',
+        '--force',
+        ...(plan ? ['--mode=plan'] : []),
+        ...resumeArgv('--resume', resume),
+        '--output-format',
+        'stream-json',
+        prompt
+      ],
       passed
     ),
     hint: 'Install the Cursor CLI (https://cursor.com/docs/cli) to use managed Chat.',
@@ -340,11 +383,17 @@ function managedCursorCommand(prompt: string, passed: string | undefined, plan: 
   }
 }
 
-function managedOpencodeCommand(prompt: string, passed: string | undefined, plan: boolean, jsonFormat: boolean): AiCommand {
+function managedOpencodeCommand(
+  prompt: string,
+  passed: string | undefined,
+  plan: boolean,
+  jsonFormat: boolean,
+  resume?: string
+): AiCommand {
   // OpenCode's built-in `plan` agent is read-only; `--dangerously-skip-permissions`
   // only bypasses tool-approval prompts, it does not grant plan the write tools
   // it already lacks, so the two flags are safe to combine.
-  const planArgv = plan ? ['--agent', 'plan'] : []
+  const planArgv = [...(plan ? ['--agent', 'plan'] : []), ...resumeArgv('--session', resume)]
   return {
     bins: ['opencode'],
     args: withModel(
@@ -388,7 +437,13 @@ function managedPiCommand(prompt: string, passed: string | undefined, plan: bool
   }
 }
 
-function managedClaudeCommand(prompt: string, passed: string | undefined, plan: boolean, tools: string | undefined): AiCommand {
+function managedClaudeCommand(
+  prompt: string,
+  passed: string | undefined,
+  plan: boolean,
+  tools: string | undefined,
+  resume?: string
+): AiCommand {
   return {
     bins: ['claude'],
     // `--verbose` is what makes stream-json emit each turn as it happens;
@@ -408,6 +463,7 @@ function managedClaudeCommand(prompt: string, passed: string | undefined, plan: 
         plan ? 'plan' : 'bypassPermissions',
         '--strict-mcp-config',
         ...toolsArgv(tools),
+        ...resumeArgv('--resume', resume),
         prompt
       ],
       passed
@@ -433,6 +489,9 @@ function managedClaudeCommand(prompt: string, passed: string | undefined, plan: 
  * render command, file, MCP, and web-search activity as tool cards.
  * OpenCode does the same with `--format json`, and OMP and pi with `--mode json`;
  * OpenRouter rides whichever of OpenCode or pi `opts.via` names.
+ *
+ * `opts.resume` continues the CLI's own saved conversation (see
+ * `shared/agent-context.ts`). OMP and pi have no headless resume and ignore it.
  */
 export function managedAiCommand(
   provider: AiProvider,
@@ -444,26 +503,28 @@ export function managedAiCommand(
     tools?: string[]
     webSearch?: boolean
     via?: OpenRouterAgent
+    resume?: string
   }
 ): AiCommand {
   const cli = cliFor(provider, opts?.via)
+  const resume = opts?.resume?.trim() || undefined
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
   const jsonFormat = opts?.jsonFormat !== false
   const plan = opts?.mode === 'plan'
   const tools = opts?.tools?.length ? opts.tools.join(',') : undefined
   switch (cli) {
     case 'codex':
-      return managedCodexCommand(prompt, passed, plan, opts?.webSearch)
+      return managedCodexCommand(prompt, passed, plan, opts?.webSearch, resume)
     case 'cursor':
-      return managedCursorCommand(prompt, passed, plan)
+      return managedCursorCommand(prompt, passed, plan, resume)
     case 'opencode':
-      return managedOpencodeCommand(prompt, passed, plan, jsonFormat)
+      return managedOpencodeCommand(prompt, passed, plan, jsonFormat, resume)
     case 'omp':
       return managedOmpCommand(prompt, passed, plan, tools)
     case 'pi':
       return managedPiCommand(prompt, passed, plan, tools)
     case 'claude':
-      return managedClaudeCommand(prompt, passed, plan, tools)
+      return managedClaudeCommand(prompt, passed, plan, tools, resume)
   }
 }
 

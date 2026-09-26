@@ -20,6 +20,20 @@ import {
   normalizeModel
 } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
+import {
+  FRESH_START_KEEP_FOLLOW_UPS,
+  HANDOFF_MARKER,
+  MAX_HANDOFF_CHARS,
+  addFollowUp,
+  knownContextWindow,
+  historyText,
+  newAgentContext,
+  parseHandoffMarker,
+  resumableSession,
+  sanitizeAgentContext,
+  type AgentContext,
+  type ContextUsage
+} from '../shared/agent-context'
 import { appendControlLines, flushControlLines, lastControlLine, type ControlLineState } from '../shared/control-line'
 import {
   BLOCK_MARKER,
@@ -88,11 +102,20 @@ export type AgentToolReport = {
   state: 'running' | 'done' | 'error'
 }
 
+/** Resume a CLI's saved conversation, and learn the id of the one a run used. */
+export interface AgentSessionIo {
+  resume?: string
+  onSession(id: string): void
+  /** The latest context reading, as the run reports it. */
+  onUsage?(usage: ContextUsage): void
+}
+
 export type AgentExecutor = (
   request: AgentTaskRequest,
   prompt: string,
   onOutput: (chunk: string) => void,
-  onTool?: (event: AgentToolReport) => void
+  onTool?: (event: AgentToolReport) => void,
+  session?: AgentSessionIo
 ) => Promise<number>
 
 /**
@@ -121,6 +144,12 @@ interface Task {
   guidance: string[]
   pipelineRuns: PipelineActivity[]
   todos: Todo[]
+  /** The chat so far, and the CLI session that already holds it. */
+  context: AgentContext
+  /** A failed resume already fell back to a new session this cycle. */
+  resumeAbandoned: boolean
+  /** Last context reading sent to the renderer. */
+  usage?: ContextUsage
   abort: AbortController
   /** Set on file writes / failed mandatory runs; cleared when they pass. */
   mandatoryOutstanding: boolean
@@ -158,6 +187,8 @@ interface PipelineActivity {
 }
 
 type CycleScan = ControlLineState & {
+  /** This run continued the CLI's saved conversation instead of starting one. */
+  resumed: boolean
   assistant: string
   output: string
   blocked: string | null
@@ -173,10 +204,23 @@ type CycleScan = ControlLineState & {
   questionId?: string
 }
 
+/**
+ * What a turn asks the agent to do. A `continued` opening builds on earlier
+ * turns: a resumed CLI session already holds them; any other run gets the
+ * rebuilt history (`historyText`) and handoff note in front of it.
+ */
+interface Opening {
+  text: string
+  continued: boolean
+}
+
+function continued(text: string): Opening {
+  return { text, continued: true }
+}
+
 type CycleAttemptResult =
   | { kind: 'done' }
-  | { kind: 'retry'; opening: string; rewindAttempt?: boolean }
-  | { kind: 'retry'; prompt: string; rewindAttempt: true }
+  | { kind: 'retry'; opening: Opening; rewindAttempt?: boolean }
 
 const DEFAULT_MAX_ATTEMPTS = 5
 /**
@@ -188,8 +232,6 @@ const DEFAULT_MAX_ATTEMPTS = 5
 const SAME_MODEL_RETRIES = 3
 /** How much trailing output the marker and failure scans keep in memory. */
 const SCAN_WINDOW = 16_384
-/** Cap stored prompt history so long chats cannot retain unbounded text. */
-const MAX_PROMPT_CHARS = 100_000
 /** Cap pipeline activity retained for prompt context. */
 const MAX_PIPELINE_RUNS = 40
 
@@ -248,14 +290,11 @@ function failureContext(pipeline: Pipeline, result: PipelineRunResult): string {
 }
 
 function repairPromptOpening(
-  originalPrompt: string,
   attempt: number,
   failures: { pipeline: Pipeline; result: PipelineRunResult }[],
   guidance: string
 ): string {
   return [
-    `Continue the original task: ${originalPrompt}`,
-    '',
     `Farol validation attempt ${attempt} failed. Fix the code, then finish so Farol can validate again.`,
     `Do not re-run the failing shell commands yourself. Follow the failure report's Verify section: select the same pipelines again via ${PIPELINES_MARKER} so Farol re-runs them.`,
     ...failures.flatMap(({ pipeline, result }) => [
@@ -406,6 +445,8 @@ export class AgentController {
       guidance: [],
       pipelineRuns: [],
       todos: [],
+      context: newAgentContext(clean),
+      resumeAbandoned: false,
       abort: new AbortController(),
       mandatoryOutstanding: false,
       fallbacks: [...(request.fallbacks ?? [])],
@@ -416,7 +457,16 @@ export class AgentController {
     }
     this.tasks.set(request.id, task)
     this.emit({ kind: 'user', taskId: request.id, text: clean })
-    void this.cycle(task, clean)
+    // After a restart the renderer hands back the chat so far; this message
+    // then continues it instead of starting over.
+    const restored = sanitizeAgentContext(request.context)
+    if (restored) {
+      task.context = restored
+      task.request.prompt = historyText(restored)
+      this.followUp(task, clean)
+      return { ok: true }
+    }
+    void this.cycle(task, { text: clean, continued: false })
     return { ok: true }
   }
 
@@ -557,6 +607,97 @@ export class AgentController {
   }
 
   /**
+   * Start the chat over in a new CLI session without clearing it. While the
+   * old session is still resumable, the agent first writes a handoff note
+   * from everything it holds (read-only, Plan mode); the next message then
+   * starts a new session from the task, the latest requests and that note.
+   * Failures leave the session as it was; those after the note turn started
+   * are reported as a status and return no message.
+   */
+  async freshStart(taskId: string): Promise<{ ok: boolean; message?: string; missing?: boolean }> {
+    const task = this.tasks.get(taskId)
+    if (!task) return { ok: false, missing: true, message: 'This agent task is no longer available.' }
+    if (task.running || task.pendingQuestions) {
+      return { ok: false, message: 'Wait for the agent to finish, or stop it, before a fresh start.' }
+    }
+    task.running = true
+    task.cancelled = false
+    task.abort = new AbortController()
+    const resume = resumableSession(task.context, cliFor(task.request.provider, openRouterAgent()), task.request.cwd)
+    let handoff = task.context.handoff
+    if (resume) {
+      this.status(task, 'working', 0, 'Writing a handoff note for a fresh start')
+      const note = await this.writeHandoff(task, resume)
+      if (task.cancelled || task.disposeWhenIdle) {
+        this.settleCancel(task)
+        return { ok: false }
+      }
+      if (!note) {
+        this.finishOrContinue(
+          task,
+          0,
+          'needs-attention',
+          'Fresh start stopped: the agent did not write a handoff note. The current session is unchanged.'
+        )
+        return { ok: false }
+      }
+      handoff = note
+      this.emit({ kind: 'assistant', taskId, text: `Handoff note for the fresh start:\n\n${note}` })
+    }
+    task.context = {
+      ...task.context,
+      // The note covers what came before; the latest requests stay verbatim.
+      followUps: handoff ? task.context.followUps.slice(-FRESH_START_KEEP_FOLLOW_UPS) : task.context.followUps,
+      ...(handoff ? { handoff } : {})
+    }
+    task.request.prompt = historyText(task.context)
+    if (task.context.session) this.forgetSession(task)
+    else this.emitContext(task)
+    this.finishOrContinue(
+      task,
+      0,
+      'completed',
+      'Fresh start: the next message starts a new session from the task, the latest requests and the handoff note.'
+    )
+    return { ok: true }
+  }
+
+  /** One read-only turn on the old session that only writes the handoff note. */
+  private async writeHandoff(task: Task, resume: string): Promise<string | undefined> {
+    const prompt = [
+      `Farol is about to move this chat to a new session because its context is large. Write the handoff note the new session will start from.`,
+      `It sees only the original task, the latest one or two user requests, and this note — make it specific and self-contained: the goal, what is done, decisions and why, dead ends to avoid, the files involved, and the next step.`,
+      `Do not change files or run commands. Reply with only one line: ${HANDOFF_MARKER} "<JSON string>", at most ${MAX_HANDOFF_CHARS} characters.`
+    ].join('\n\n')
+    let said = ''
+    const sink: AgentSink = {
+      text: (chunk) => {
+        said = (said + chunk).slice(-SCAN_WINDOW)
+      },
+      turn: (text) => {
+        said = `${said}\n${text}`.slice(-SCAN_WINDOW)
+      },
+      tool: () => {},
+      question: () => {},
+      noise: () => {}
+    }
+    const session: AgentSessionIo = { resume, onSession: () => {} }
+    const mode = task.request.mode
+    task.request.mode = 'plan'
+    let code: number
+    try {
+      code = this.executor
+        ? await this.executor(task.request, prompt, sink.text, undefined, session)
+        : await this.runAgent(task, prompt, sink, false, { session })
+    } catch {
+      code = 1
+    } finally {
+      task.request.mode = mode
+    }
+    return code === 0 ? parseHandoffMarker(said) : undefined
+  }
+
+  /**
    * Cancel and release the task. Cleared/closed chats must not leave prompt
    * history and pipeline catalogs resident for the rest of the session.
    */
@@ -599,11 +740,11 @@ export class AgentController {
     this.status(task, 'asking', attempt, 'Waiting for your answers')
   }
 
-  /** Append a user follow-up and start a new cycle with the full task history. */
+  /** Append a user follow-up and start a new cycle that continues the chat. */
   private followUp(task: Task, userText: string): void {
     task.askEpoch += 1
-    const next = `${task.request.prompt}\n\nFollow-up: ${userText}`
-    task.request.prompt = next.length > MAX_PROMPT_CHARS ? next.slice(-MAX_PROMPT_CHARS) : next
+    task.context = addFollowUp(task.context, userText)
+    task.request.prompt = historyText(task.context)
     this.resume(task, userText)
   }
 
@@ -633,10 +774,7 @@ export class AgentController {
     task.cancelled = false
     task.abort = new AbortController()
     task.running = true
-    void this.cycle(
-      task,
-      `Continue the original task: ${task.request.prompt}\n\nUser request: ${userText}`
-    )
+    void this.cycle(task, continued(`User request: ${userText}`))
   }
 
   /**
@@ -655,10 +793,10 @@ export class AgentController {
   }
 
   /** If the user typed while a cycle was finishing, run their message next. */
-  private continueIfGuidanceOpening(task: Task): string | null {
+  private continueIfGuidanceOpening(task: Task): Opening | null {
     const guidance = task.guidance.splice(0).join('\n')
     if (!guidance) return null
-    return `Continue the original task: ${task.request.prompt}\n\nUser request:\n${guidance}`
+    return continued(`User request:\n${guidance}`)
   }
 
   private cycleSink(task: Task, scan: CycleScan): AgentSink {
@@ -760,6 +898,70 @@ export class AgentController {
     }
   }
 
+  /** Keep the CLI's session id so the next turn on this CLI and directory resumes it. */
+  private recordSession(task: Task, provider: AiProvider, id: string): void {
+    if (task.disposeWhenIdle) return
+    const current = task.context.session
+    const cli = cliFor(provider, openRouterAgent())
+    if (current?.cli === cli && current.id === id && current.cwd === task.request.cwd) return
+    task.context = { ...task.context, session: { cli, id, cwd: task.request.cwd } }
+    this.emitContext(task)
+  }
+
+  /**
+   * A resumed run that failed before the agent said anything usually means the
+   * CLI would not continue its session (expired, deleted, an older build), and
+   * one that ran out of context cannot continue it. Drop the session and
+   * retry once on a new one with the rebuilt history — not a provider
+   * failure, so no retry budget is spent. Once per cycle, so a CLI that fails
+   * every run still reaches the normal retry and fallback path.
+   */
+  private abandonResume(task: Task, scan: CycleScan, code: number): boolean {
+    if (!scan.resumed || task.resumeAbandoned) return false
+    const contextFull = scan.blockedByProvider && /context length/i.test(scan.blocked ?? '')
+    const refused = code !== 0 && !scan.blocked && !scan.assistant.trim()
+    if (!contextFull && !refused) return false
+    task.resumeAbandoned = true
+    this.forgetSession(task)
+    return true
+  }
+
+  private forgetSession(task: Task): void {
+    if (!task.context.session) return
+    task.context = { ...task.context, session: undefined }
+    this.emitContext(task)
+    // The reading described that session; the next run measures its own.
+    task.usage = undefined
+    this.emit({ kind: 'usage', taskId: task.request.id, usage: null })
+  }
+
+  private recordUsage(task: Task, provider: AiProvider, model: string | undefined, reading: ContextUsage): void {
+    if (task.disposeWhenIdle || !(reading.tokens > 0)) return
+    const window = reading.window ?? knownContextWindow(cliFor(provider, openRouterAgent()), model)
+    const usage: ContextUsage = { tokens: reading.tokens, ...(window ? { window } : {}) }
+    if (task.usage?.tokens === usage.tokens && task.usage.window === usage.window) return
+    task.usage = usage
+    this.emit({ kind: 'usage', taskId: task.request.id, usage })
+  }
+
+  private applyHandoff(task: Task, control: string): void {
+    if (task.disposeWhenIdle) return
+    const handoff = parseHandoffMarker(control)
+    if (!handoff || handoff === task.context.handoff) return
+    task.context = { ...task.context, handoff }
+    this.emitContext(task)
+  }
+
+  /** Hand the renderer what it must save to continue this chat after a restart. */
+  private emitContext(task: Task): void {
+    const { handoff, session } = task.context
+    this.emit({
+      kind: 'context',
+      taskId: task.request.id,
+      context: { ...(handoff ? { handoff } : {}), ...(session ? { session } : {}) }
+    })
+  }
+
   private async runValidationPipelines(
     task: Task,
     pipelines: Pipeline[],
@@ -837,7 +1039,7 @@ export class AgentController {
     const selection = selectedPipelines(scan.control, task.request.pipelines)
     const retryInvalid = (reason: string): CycleAttemptResult => ({
       kind: 'retry',
-      opening: `Continue the original task: ${task.request.prompt}\n\nFarol could not validate because ${reason}`
+      opening: continued(`Farol could not validate because ${reason}`)
     })
     if (selection.error) {
       return retryInvalid(`your pipeline selection was invalid: ${selection.error}`)
@@ -900,7 +1102,7 @@ export class AgentController {
     const guidance = task.guidance.splice(0).join('\n')
     return {
       kind: 'retry',
-      opening: repairPromptOpening(task.request.prompt, attempt, outcome.failures, guidance)
+      opening: continued(repairPromptOpening(attempt, outcome.failures, guidance))
     }
   }
 
@@ -992,7 +1194,9 @@ export class AgentController {
     if ('error' in marker) {
       return {
         kind: 'retry',
-        opening: `Continue the original task: ${task.request.prompt}\n\nEnd this Plan response with ${FINISHED_PLAN}, ${QUESTIONS_MARKER} if you need a decision, or ${PIPELINES_MARKER} [] when it is not yet a finished plan.`
+        opening: continued(
+          `End this Plan response with ${FINISHED_PLAN}, ${QUESTIONS_MARKER} if you need a decision, or ${PIPELINES_MARKER} [] when it is not yet a finished plan.`
+        )
       }
     }
     return this.completeCycle(task, attempt, 'Plan response complete')
@@ -1094,7 +1298,7 @@ export class AgentController {
     if (marked && 'error' in marked) {
       return {
         kind: 'retry',
-        opening: `Continue the original task: ${task.request.prompt}\n\nFarol could not show your questions because ${marked.error}`
+        opening: continued(`Farol could not show your questions because ${marked.error}`)
       }
     }
     const questions = scan.questions ?? (marked && 'questions' in marked ? marked.questions : undefined)
@@ -1108,7 +1312,7 @@ export class AgentController {
     attempt: number,
     scan: CycleScan,
     code: number,
-    prompt: string
+    opening: Opening
   ): Promise<CycleAttemptResult> {
     if (task.cancelled) {
       this.settleCancel(task)
@@ -1116,14 +1320,16 @@ export class AgentController {
     }
     flushControlLines(scan)
     await this.applyTodos(task, scan.control)
+    this.applyHandoff(task, scan.control)
     const asked = this.questionsAfterRun(task, attempt, scan)
     if (asked) return asked
+    if (this.abandonResume(task, scan, code)) return { kind: 'retry', opening, rewindAttempt: true }
     if (scan.blocked) {
       // Same model first (up to SAME_MODEL_RETRIES), then the next rung down
       // the chain — nothing was produced to repair, so the attempt counter
       // does not move either way.
       if (scan.blockedByProvider && (await this.shouldRetryAfterError(task, attempt, scan.blocked))) {
-        return { kind: 'retry', prompt, rewindAttempt: true }
+        return { kind: 'retry', opening, rewindAttempt: true }
       }
       // A follow-up may already be queued with a switched provider (e.g. after
       // a usage limit). Surface the stop, then continue that message.
@@ -1132,7 +1338,7 @@ export class AgentController {
     }
     if (code !== 0) {
       if (await this.shouldRetryAfterError(task, attempt, `exit code ${code}`)) {
-        return { kind: 'retry', prompt, rewindAttempt: true }
+        return { kind: 'retry', opening, rewindAttempt: true }
       }
       this.finishOrContinue(task, attempt, 'needs-attention', `Agent exited with code ${code}`)
       return { kind: 'done' }
@@ -1143,7 +1349,7 @@ export class AgentController {
       return {
         kind: 'retry',
         rewindAttempt: true,
-        opening: `Continue the original task: ${task.request.prompt}\n\nAdditional user guidance:\n${guidance}`
+        opening: continued(`Additional user guidance:\n${guidance}`)
       }
     }
     return this.finishCycleAttempt(task, attempt, scan)
@@ -1151,9 +1357,8 @@ export class AgentController {
 
   private async runCycleAttempt(
     task: Task,
-    prompt: string,
-    attempt: number,
-    opening: string
+    opening: Opening,
+    attempt: number
   ): Promise<CycleAttemptResult> {
     this.status(
       task,
@@ -1161,9 +1366,14 @@ export class AgentController {
       attempt,
       attempt === 1 ? 'Agent working' : 'Agent repairing validation failures'
     )
+    // Decided per run: a fallback or a provider switch since the opening was
+    // chosen means this CLI has no session and needs the rebuilt history.
+    const resume = resumableSession(task.context, cliFor(task.request.provider, openRouterAgent()), task.request.cwd)
+    const prompt = this.prompt(task, opening, resume !== undefined)
     // What the agent said, which is what the markers are read from, and
     // everything it printed, which is where provider failures show up.
     const scan: CycleScan = {
+      resumed: resume !== undefined,
       assistant: '',
       buffer: '',
       fenced: false,
@@ -1176,20 +1386,27 @@ export class AgentController {
       changedTargets: [],
       toolNames: []
     }
-    const policy = await this.resolveToolPolicy(task, opening, attempt)
+    const policy = await this.resolveToolPolicy(task, opening.text, attempt)
     const clause = toolPolicyPrompt(policy)
     const effective = clause ? `${prompt}\n\n${clause}` : prompt
     const sink = this.cycleSink(task, scan)
     const epoch = task.askEpoch
+    const { provider, model } = task.request
+    const session: AgentSessionIo = {
+      ...(resume ? { resume } : {}),
+      onSession: (id) => this.recordSession(task, provider, id),
+      onUsage: (usage) => this.recordUsage(task, provider, model, usage)
+    }
     const code = this.executor
-      ? await this.executor(task.request, effective, sink.text, sink.tool)
+      ? await this.executor(task.request, effective, sink.text, sink.tool, session)
       : await this.runAgent(task, effective, sink, false, {
           tools: policy.nativeTools,
-          webSearch: policy.allowed.includes('web')
+          webSearch: policy.allowed.includes('web'),
+          session
         })
     this.observeTools(task, policy, scan.toolNames, attempt)
     if (task.askEpoch !== epoch) return { kind: 'done' }
-    return await this.cycleAfterRun(task, attempt, scan, code, prompt)
+    return await this.cycleAfterRun(task, attempt, scan, code, opening)
   }
 
   private handleCycleError(task: Task, attempt: number, error: unknown): void {
@@ -1208,23 +1425,20 @@ export class AgentController {
     this.releaseIfDisposed(task)
   }
 
-  private async cycle(task: Task, opening: string): Promise<void> {
+  private async cycle(task: Task, first: Opening): Promise<void> {
     const maxAttempts = Math.max(1, Math.min(20, task.request.maxAttempts ?? DEFAULT_MAX_ATTEMPTS))
-    let openingText = opening
-    let prompt: string | undefined
+    let opening = first
     let attempt = 0
+    task.resumeAbandoned = false
     // Fresh cycle → fresh tool ask; within the cycle, same-attempt retries remap.
     task.toolSelection = undefined
     task.toolSelectionAttempt = undefined
     try {
       for (attempt = 1; attempt <= maxAttempts && !task.cancelled; attempt++) {
         await this.loadTodos(task)
-        const currentPrompt = prompt ?? this.prompt(task, openingText)
-        prompt = undefined
-        const result = await this.runCycleAttempt(task, currentPrompt, attempt, openingText)
+        const result = await this.runCycleAttempt(task, opening, attempt)
         if (result.kind === 'done') return
-        if ('prompt' in result) prompt = result.prompt
-        else openingText = result.opening
+        opening = result.opening
         if (result.rewindAttempt) attempt--
       }
 
@@ -1240,14 +1454,30 @@ export class AgentController {
     }
   }
 
-  private prompt(task: Task, opening: string): string {
+  /**
+   * The turn's opening, preceded by the chat so far unless the CLI resumes its
+   * own session, which already holds it (and every reply and tool result).
+   */
+  private lead(task: Task, opening: Opening, resuming: boolean): string {
+    if (!opening.continued || resuming) return opening.text
+    const handoff = task.context.handoff
+    return [
+      `Continue the original task: ${task.request.prompt}`,
+      handoff ? `Handoff note from the agent that worked on this chat before you:\n${handoff}` : '',
+      opening.text
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+  }
+
+  private prompt(task: Task, opening: Opening, resuming: boolean): string {
     const plan = task.request.mode === 'plan'
     const mandatoryIds = mandatoryPipelines(task.request.pipelines).map((pipeline) => pipeline.id)
     const mandatoryNote = mandatoryIds.length
       ? `Mandatory pipelines (run only when files change, and after a failed mandatory run until they pass): ${mandatoryIds.join(', ')}. ${PIPELINES_MARKER} [] is only valid when you made no file changes and no mandatory pipeline is still waiting to pass.`
       : ''
     return [
-      opening,
+      this.lead(task, opening, resuming),
       '',
       `Work only in ${task.request.cwd}.`,
       this.pipelineHistory(task),
@@ -1257,6 +1487,7 @@ export class AgentController {
         : `When the requested file change is complete, select every relevant validation pipeline from the catalog below. If you made no file changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
       plan ? '' : mandatoryNote,
       this.todoContext(task),
+      `Handoff note: another agent may take the next turn of this chat without seeing this conversation. When the work's state changed this turn, put one line ${HANDOFF_MARKER} "<JSON string>" just before your final marker: what is done, decisions made, dead ends, and the next step, in at most ${MAX_HANDOFF_CHARS} characters. It replaces the previous note; omit it when nothing changed.`,
       plan
         ? `Do not run validation pipelines in Plan mode.`
         : `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
@@ -1302,7 +1533,7 @@ export class AgentController {
     prompt: string,
     sink: AgentSink,
     plain = false,
-    opts?: { tools?: string[]; webSearch?: boolean }
+    opts?: { tools?: string[]; webSearch?: boolean; session?: AgentSessionIo }
   ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
     const via = openRouterAgent()
@@ -1311,7 +1542,8 @@ export class AgentController {
       via,
       mode: task.request.mode,
       ...(opts?.tools?.length ? { tools: opts.tools } : {}),
-      ...(opts?.webSearch ? { webSearch: true } : {})
+      ...(opts?.webSearch ? { webSearch: true } : {}),
+      ...(opts?.session?.resume ? { resume: opts.session.resume } : {})
     })
     const env = aiEnv(task.request.provider, via)
     const bin = resolveBinFrom(spec.bins)
@@ -1329,7 +1561,19 @@ export class AgentController {
     const stdoutText = new StringDecoder('utf8')
     const stderrText = new StringDecoder('utf8')
 
+    let reported: ContextUsage | undefined
+    const reportUsage = (): void => {
+      if (!parser?.contextTokens) return
+      const usage = {
+        tokens: parser.contextTokens,
+        ...(parser.contextWindow ? { window: parser.contextWindow } : {})
+      }
+      if (reported?.tokens === usage.tokens && reported.window === usage.window) return
+      reported = usage
+      opts?.session?.onUsage?.(usage)
+    }
     const consume = (events: ReturnType<AgentStreamParser['push']>): void => {
+      reportUsage()
       for (const event of events) {
         if (event.kind === 'text') sink.turn(event.text)
         else if (event.kind === 'raw') sink.text(plainText(event.text))
@@ -1348,6 +1592,7 @@ export class AgentController {
         if (parser) {
           consume(parser.flush())
           if (code === 0 && parser.failed) code = 1
+          if (parser.sessionId) opts?.session?.onSession(parser.sessionId)
           const tail = diagnostics.trim()
           if (code !== 0 && tail) sink.text(`${tail.slice(-SCAN_WINDOW)}\n`)
         }
@@ -1400,7 +1645,7 @@ export class AgentController {
         ) {
           settled = true
           task.process = null
-          void this.runAgent(task, prompt, sink, true).then(resolve)
+          void this.runAgent(task, prompt, sink, true, opts).then(resolve)
           return
         }
         done(exit)
