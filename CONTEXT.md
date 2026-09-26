@@ -130,6 +130,14 @@ _Avoid_: cutting from the front (losing the task), a Farol summarizer call, rese
 **Handoff note**:
 The agent's own summary for whichever agent takes the next turn — what is done, decisions, dead ends, next step — sent on a hidden `FAROL_HANDOFF:` line when the work's state changed. A new line replaces the note. The chat pane saves it with the **CLI session** reference so the chat continues after a restart.
 _Avoid_: a note on every turn, sharing notes across chats or checkouts, saving the full history to disk
+
+**Context meter**:
+The `ctx` reading in the composer: tokens the agent's latest model call read, as a share of the model's window when known, else a token count. Amber from 70% of the window, or 150k tokens without one. Shown only when the CLI reports usage.
+_Avoid_: estimating from characters, a percentage from a guessed window, a reading for Codex turn totals
+
+**Fresh start**:
+Continuing a chat in a new **CLI session** without clearing it. The agent first writes a **Handoff note** in one read-only turn on the old session; Farol keeps the task, the latest two requests and the note. Suggested when the **Context meter** is amber or the agent stopped on its context limit; never automatic.
+_Avoid_: Clear as the remedy for a full context, a Farol summarizer call, dropping the session when no note was written
 ### Todo list
 
 **Todo list**:

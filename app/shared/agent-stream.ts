@@ -348,9 +348,55 @@ function streamSessionId(event: Record<string, unknown>): string | undefined {
   return id?.trim() || undefined
 }
 
+function count(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+}
+
+/**
+ * Tokens the latest model call read — how full the context is now. Claude
+ * reports `message.usage` on each top-level assistant message (subagent
+ * messages carry a `parent_tool_use_id` and are skipped), OpenCode `tokens`
+ * on each finished step, OMP `usage` on each settled message. Codex's
+ * per-turn totals add up every call in the turn, and Cursor reports none, so
+ * neither gives a reading.
+ */
+function streamContextTokens(event: Record<string, unknown>): number | undefined {
+  if (event.type === 'assistant' && !event.parent_tool_use_id && isRecord(event.message)) {
+    const usage = event.message.usage
+    if (!isRecord(usage)) return undefined
+    const tokens =
+      count(usage.input_tokens) + count(usage.cache_creation_input_tokens) + count(usage.cache_read_input_tokens)
+    return tokens || undefined
+  }
+  if (isRecord(event.part) && isRecord(event.part.tokens)) {
+    const tokens = event.part.tokens
+    const cache = isRecord(tokens.cache) ? tokens.cache : {}
+    return count(tokens.input) + count(cache.read) + count(cache.write) || undefined
+  }
+  if (event.type === 'message_end' && isRecord(event.message) && event.message.role === 'assistant') {
+    const usage = event.message.usage
+    if (!isRecord(usage)) return undefined
+    return count(usage.input) + count(usage.cacheRead) + count(usage.cacheWrite) || undefined
+  }
+  return undefined
+}
+
+/** Claude Code's result names each model's window in `modelUsage`. */
+function streamContextWindow(event: Record<string, unknown>): number | undefined {
+  if (event.type !== 'result' || !isRecord(event.modelUsage)) return undefined
+  let window = 0
+  for (const entry of Object.values(event.modelUsage)) {
+    if (isRecord(entry)) window = Math.max(window, count(entry.contextWindow))
+  }
+  return window || undefined
+}
+
 export class AgentStreamParser {
   /** Set once the stream names the CLI's own conversation. */
   sessionId?: string
+  /** Latest context reading; replaced as the run goes on. */
+  contextTokens?: number
+  contextWindow?: number
   private buffer = ''
   /** tool_use id -> name, so a later tool_result can name the card it closes. */
   private names = new Map<string, string>()
@@ -394,6 +440,8 @@ export class AgentStreamParser {
     }
     if (!isRecord(value)) return [{ kind: 'raw', text: `${line}\n` }]
     this.sessionId ??= streamSessionId(value)
+    this.contextTokens = streamContextTokens(value) ?? this.contextTokens
+    this.contextWindow = streamContextWindow(value) ?? this.contextWindow
     return this.event(value)
   }
 

@@ -26,6 +26,38 @@ function parse(parser: AgentStreamParser, ...chunks: string[]) {
 }
 
 describe('AgentStreamParser', () => {
+  it('reads how full the context is from each provider', () => {
+    const claude = new AgentStreamParser()
+    claude.push(
+      `${JSON.stringify({
+        type: 'assistant',
+        message: { content: [], usage: { input_tokens: 10, cache_creation_input_tokens: 1_000, cache_read_input_tokens: 50_000, output_tokens: 99 } }
+      })}\n`
+    )
+    // A subagent's own context is not the chat's.
+    claude.push(
+      `${JSON.stringify({ type: 'assistant', parent_tool_use_id: 'toolu_1', message: { content: [], usage: { input_tokens: 5 } } })}\n`
+    )
+    claude.push(`${JSON.stringify({ type: 'result', result: '', modelUsage: { 'claude-x': { contextWindow: 1_000_000 } } })}\n`)
+    expect([claude.contextTokens, claude.contextWindow]).toEqual([51_010, 1_000_000])
+
+    const opencode = new AgentStreamParser()
+    opencode.push(
+      `${JSON.stringify({ type: 'step_finish', part: { type: 'step-finish', tokens: { input: 200, output: 5, cache: { read: 30_000, write: 100 } } } })}\n`
+    )
+    expect(opencode.contextTokens).toBe(30_300)
+
+    const omp = new AgentStreamParser()
+    omp.push(
+      `${JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [], usage: { input: 7, cacheRead: 9_000, cacheWrite: 3 } } })}\n`
+    )
+    expect(omp.contextTokens).toBe(9_010)
+
+    const codex = new AgentStreamParser()
+    codex.push(`${JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 500_000 } })}\n`)
+    expect(codex.contextTokens).toBeUndefined()
+  })
+
   it('remembers the CLI session id from each provider', () => {
     const cases: [string, string][] = [
       [JSON.stringify({ type: 'system', subtype: 'init', session_id: 'claude-1' }), 'claude-1'],

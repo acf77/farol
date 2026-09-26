@@ -628,12 +628,14 @@ function applyAgentEvent(
     ])
   }
   if (event.kind === 'provider') {
+    // A new provider starts its own session; the old reading no longer applies.
     return appendAgentMessages(
-      { ...pane, provider: event.provider, model: event.model, mode: event.mode },
+      { ...pane, provider: event.provider, model: event.model, mode: event.mode, usage: undefined },
       [...pane.messages, { role: 'system', text: asText(event.reason) }]
     )
   }
   if (event.kind === 'context') return { ...pane, context: event.context }
+  if (event.kind === 'usage') return { ...pane, usage: event.usage ?? undefined }
   if (event.kind === 'pipeline') {
     // Runner start/end owns the card. Only start-failed pipelines (error:) never emit a RunEvent.
     if (!event.runId?.startsWith('error:')) return pane
@@ -904,6 +906,7 @@ interface ProjectWorkspaceViewProps {
     modeOverride?: AgentMode
   ) => void
   cancelAgent: () => void
+  freshStartChat: () => void
   setAgentProvider: (provider: AppSettings['agent'], model?: string) => void
   setAgentMode: (mode: AgentMode) => void
   executePlan: (index: number) => void
@@ -981,6 +984,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     pipelines,
     sendAgentMessage,
     cancelAgent,
+    freshStartChat,
     setAgentProvider,
     setAgentMode,
     executePlan,
@@ -1103,6 +1107,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   if (chatPane) void api.agent.answer(chatPane.taskId, requestId, answers)
                 }}
                 onCancel={cancelAgent}
+                onFreshStart={freshStartChat}
                 onProviderChange={setAgentProvider}
                 onModeChange={setAgentMode}
                 onExecutePlan={executePlan}
@@ -2265,6 +2270,40 @@ export function ProjectWorkspace({
     if (chatPane) void api.agent.cancel(chatPane.taskId)
   }, [chatPane])
 
+  /** Continue this chat in a new CLI session, seeded with the agent's handoff note. */
+  const freshStartChat = useCallback(() => {
+    if (!chatPane) return
+    const paneId = chatPane.id
+    const note = (text: string) => (current: Pane): Pane =>
+      current.kind === 'agent'
+        ? appendAgentMessages(current, [...current.messages, { role: 'system', text }])
+        : current
+    void api.agent.freshStart(chatPane.taskId).then((result) => {
+      if (result.ok) {
+        patchPane(
+          paneId,
+          note('Fresh start: the next message starts a new session from the task, the latest requests and the handoff note.')
+        )
+        return
+      }
+      if (result.missing) {
+        // Farol restarted: nothing can write a new note, but dropping the saved
+        // session makes the next message start fresh from the last one.
+        patchPane(paneId, (current) =>
+          current.kind === 'agent'
+            ? note('Fresh start: the next message starts a new session from this chat and its last handoff note.')({
+                ...current,
+                usage: undefined,
+                ...(current.context?.handoff ? { context: { handoff: current.context.handoff } } : { context: undefined })
+              })
+            : current
+        )
+        return
+      }
+      if (result.message) patchPane(paneId, note(result.message))
+    })
+  }, [chatPane, patchPane])
+
   /* -------------------------------------------------------------- running */
 
   const runPipeline = useCallback(
@@ -2724,6 +2763,7 @@ export function ProjectWorkspace({
       pipelines={pipelines}
       sendAgentMessage={sendAgentMessage}
       cancelAgent={cancelAgent}
+      freshStartChat={freshStartChat}
       setAgentProvider={setAgentProvider}
       setAgentMode={setAgentMode}
       executePlan={executePlan}

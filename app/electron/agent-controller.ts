@@ -21,15 +21,18 @@ import {
 } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
 import {
+  FRESH_START_KEEP_FOLLOW_UPS,
   HANDOFF_MARKER,
   MAX_HANDOFF_CHARS,
   addFollowUp,
+  knownContextWindow,
   historyText,
   newAgentContext,
   parseHandoffMarker,
   resumableSession,
   sanitizeAgentContext,
-  type AgentContext
+  type AgentContext,
+  type ContextUsage
 } from '../shared/agent-context'
 import { appendControlLines, flushControlLines, lastControlLine, type ControlLineState } from '../shared/control-line'
 import {
@@ -102,6 +105,8 @@ export type AgentToolReport = {
 export interface AgentSessionIo {
   resume?: string
   onSession(id: string): void
+  /** The latest context reading, as the run reports it. */
+  onUsage?(usage: ContextUsage): void
 }
 
 export type AgentExecutor = (
@@ -142,6 +147,8 @@ interface Task {
   context: AgentContext
   /** A failed resume already fell back to a new session this cycle. */
   resumeAbandoned: boolean
+  /** Last context reading sent to the renderer. */
+  usage?: ContextUsage
   abort: AbortController
   /** Set on file writes / failed mandatory runs; cleared when they pass. */
   mandatoryOutstanding: boolean
@@ -594,6 +601,97 @@ export class AgentController {
   }
 
   /**
+   * Start the chat over in a new CLI session without clearing it. While the
+   * old session is still resumable, the agent first writes a handoff note
+   * from everything it holds (read-only, Plan mode); the next message then
+   * starts a new session from the task, the latest requests and that note.
+   * Failures leave the session as it was; those after the note turn started
+   * are reported as a status and return no message.
+   */
+  async freshStart(taskId: string): Promise<{ ok: boolean; message?: string; missing?: boolean }> {
+    const task = this.tasks.get(taskId)
+    if (!task) return { ok: false, missing: true, message: 'This agent task is no longer available.' }
+    if (task.running || task.pendingQuestions) {
+      return { ok: false, message: 'Wait for the agent to finish, or stop it, before a fresh start.' }
+    }
+    task.running = true
+    task.cancelled = false
+    task.abort = new AbortController()
+    const resume = resumableSession(task.context, cliFor(task.request.provider), task.request.cwd)
+    let handoff = task.context.handoff
+    if (resume) {
+      this.status(task, 'working', 0, 'Writing a handoff note for a fresh start')
+      const note = await this.writeHandoff(task, resume)
+      if (task.cancelled || task.disposeWhenIdle) {
+        this.settleCancel(task)
+        return { ok: false }
+      }
+      if (!note) {
+        this.finishOrContinue(
+          task,
+          0,
+          'needs-attention',
+          'Fresh start stopped: the agent did not write a handoff note. The current session is unchanged.'
+        )
+        return { ok: false }
+      }
+      handoff = note
+      this.emit({ kind: 'assistant', taskId, text: `Handoff note for the fresh start:\n\n${note}` })
+    }
+    task.context = {
+      ...task.context,
+      // The note covers what came before; the latest requests stay verbatim.
+      followUps: handoff ? task.context.followUps.slice(-FRESH_START_KEEP_FOLLOW_UPS) : task.context.followUps,
+      ...(handoff ? { handoff } : {})
+    }
+    task.request.prompt = historyText(task.context)
+    if (task.context.session) this.forgetSession(task)
+    else this.emitContext(task)
+    this.finishOrContinue(
+      task,
+      0,
+      'completed',
+      'Fresh start: the next message starts a new session from the task, the latest requests and the handoff note.'
+    )
+    return { ok: true }
+  }
+
+  /** One read-only turn on the old session that only writes the handoff note. */
+  private async writeHandoff(task: Task, resume: string): Promise<string | undefined> {
+    const prompt = [
+      `Farol is about to move this chat to a new session because its context is large. Write the handoff note the new session will start from.`,
+      `It sees only the original task, the latest one or two user requests, and this note — make it specific and self-contained: the goal, what is done, decisions and why, dead ends to avoid, the files involved, and the next step.`,
+      `Do not change files or run commands. Reply with only one line: ${HANDOFF_MARKER} "<JSON string>", at most ${MAX_HANDOFF_CHARS} characters.`
+    ].join('\n\n')
+    let said = ''
+    const sink: AgentSink = {
+      text: (chunk) => {
+        said = (said + chunk).slice(-SCAN_WINDOW)
+      },
+      turn: (text) => {
+        said = `${said}\n${text}`.slice(-SCAN_WINDOW)
+      },
+      tool: () => {},
+      question: () => {},
+      noise: () => {}
+    }
+    const session: AgentSessionIo = { resume, onSession: () => {} }
+    const mode = task.request.mode
+    task.request.mode = 'plan'
+    let code: number
+    try {
+      code = this.executor
+        ? await this.executor(task.request, prompt, sink.text, undefined, session)
+        : await this.runAgent(task, prompt, sink, false, { session })
+    } catch {
+      code = 1
+    } finally {
+      task.request.mode = mode
+    }
+    return code === 0 ? parseHandoffMarker(said) : undefined
+  }
+
+  /**
    * Cancel and release the task. Cleared/closed chats must not leave prompt
    * history and pipeline catalogs resident for the rest of the session.
    */
@@ -826,6 +924,18 @@ export class AgentController {
     if (!task.context.session) return
     task.context = { ...task.context, session: undefined }
     this.emitContext(task)
+    // The reading described that session; the next run measures its own.
+    task.usage = undefined
+    this.emit({ kind: 'usage', taskId: task.request.id, usage: null })
+  }
+
+  private recordUsage(task: Task, provider: AiProvider, model: string | undefined, reading: ContextUsage): void {
+    if (task.disposeWhenIdle || !(reading.tokens > 0)) return
+    const window = reading.window ?? knownContextWindow(cliFor(provider), model)
+    const usage: ContextUsage = { tokens: reading.tokens, ...(window ? { window } : {}) }
+    if (task.usage?.tokens === usage.tokens && task.usage.window === usage.window) return
+    task.usage = usage
+    this.emit({ kind: 'usage', taskId: task.request.id, usage })
   }
 
   private applyHandoff(task: Task, control: string): void {
@@ -1275,10 +1385,11 @@ export class AgentController {
     const effective = clause ? `${prompt}\n\n${clause}` : prompt
     const sink = this.cycleSink(task, scan)
     const epoch = task.askEpoch
-    const provider = task.request.provider
-    const session = {
+    const { provider, model } = task.request
+    const session: AgentSessionIo = {
       ...(resume ? { resume } : {}),
-      onSession: (id: string) => this.recordSession(task, provider, id)
+      onSession: (id) => this.recordSession(task, provider, id),
+      onUsage: (usage) => this.recordUsage(task, provider, model, usage)
     }
     const code = this.executor
       ? await this.executor(task.request, effective, sink.text, sink.tool, session)
@@ -1442,7 +1553,19 @@ export class AgentController {
     const stdoutText = new StringDecoder('utf8')
     const stderrText = new StringDecoder('utf8')
 
+    let reported: ContextUsage | undefined
+    const reportUsage = (): void => {
+      if (!parser?.contextTokens) return
+      const usage = {
+        tokens: parser.contextTokens,
+        ...(parser.contextWindow ? { window: parser.contextWindow } : {})
+      }
+      if (reported?.tokens === usage.tokens && reported.window === usage.window) return
+      reported = usage
+      opts?.session?.onUsage?.(usage)
+    }
     const consume = (events: ReturnType<AgentStreamParser['push']>): void => {
+      reportUsage()
       for (const event of events) {
         if (event.kind === 'text') sink.turn(event.text)
         else if (event.kind === 'raw') sink.text(plainText(event.text))

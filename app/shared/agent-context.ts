@@ -40,8 +40,67 @@ export interface AgentContext {
 export const MAX_HISTORY_CHARS = 100_000
 /** The task always survives trimming, but a pasted log cannot fill the budget. */
 export const MAX_TASK_CHARS = 20_000
-export const MAX_HANDOFF_CHARS = 4_000
+export const MAX_HANDOFF_CHARS = 6_000
 const MAX_FOLLOW_UPS = 200
+
+/**
+ * How full the agent's context is: the tokens its latest model call read
+ * (prompt, cache reads and writes), and the model's window when known.
+ */
+export interface ContextUsage {
+  tokens: number
+  window?: number
+}
+
+/** Warn at this share of a known window — answers degrade well before the limit. */
+export const CONTEXT_WARN_RATIO = 0.7
+/** Without a known window, warn at this many tokens. */
+export const CONTEXT_WARN_TOKENS = 150_000
+
+/**
+ * Windows for the CLI defaults Farol can name, used when the CLI does not
+ * report one itself (Claude Code does, in its result event). Anything not
+ * listed shows a token count with no percentage.
+ */
+export function knownContextWindow(cli: AiCli, model: string | undefined): number | undefined {
+  const id = (model ?? '').toLowerCase()
+  if (id.includes('[1m]')) return 1_000_000
+  if (cli === 'claude') return 200_000
+  return /claude|sonnet|opus|haiku|fable/.test(id) ? 200_000 : undefined
+}
+
+export function contextRatio(usage: ContextUsage): number | undefined {
+  return usage.window && usage.window > 0 ? usage.tokens / usage.window : undefined
+}
+
+export function contextIsHigh(usage: ContextUsage | undefined): boolean {
+  if (!usage) return false
+  const ratio = contextRatio(usage)
+  return ratio === undefined ? usage.tokens >= CONTEXT_WARN_TOKENS : ratio >= CONTEXT_WARN_RATIO
+}
+
+function kTokens(tokens: number): string {
+  return tokens >= 1_000_000 ? `${(tokens / 1_000_000).toFixed(1)}M` : `${Math.round(tokens / 1_000)}k`
+}
+
+/** `62%` with a known window, else `84k`. */
+export function contextShortLabel(usage: ContextUsage): string {
+  const ratio = contextRatio(usage)
+  return ratio === undefined ? kTokens(usage.tokens) : `${Math.min(999, Math.round(ratio * 100))}%`
+}
+
+/** `124k of 200k tokens` or `84k tokens`. */
+export function contextLongLabel(usage: ContextUsage): string {
+  return usage.window ? `${kTokens(usage.tokens)} of ${kTokens(usage.window)} tokens` : `${kTokens(usage.tokens)} tokens`
+}
+
+/** The agent's own stop message when a call no longer fits its window. */
+export function isContextOverflow(text: string): boolean {
+  return /context length|context window|prompt is too long/i.test(text)
+}
+
+/** Follow-ups a fresh start keeps verbatim; the handoff note covers the rest. */
+export const FRESH_START_KEEP_FOLLOW_UPS = 2
 
 /** CLIs whose headless mode can continue a saved conversation by id. */
 const RESUMABLE: ReadonlySet<AiCli> = new Set<AiCli>(['claude', 'codex', 'cursor', 'opencode'])

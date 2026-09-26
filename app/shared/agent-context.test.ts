@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   HANDOFF_MARKER,
+  MAX_HANDOFF_CHARS,
+  contextIsHigh,
+  contextLongLabel,
+  contextShortLabel,
+  isContextOverflow,
+  knownContextWindow,
   addFollowUp,
   historyText,
   newAgentContext,
@@ -61,7 +67,7 @@ describe('parseHandoffMarker', () => {
   })
 
   it('caps the note', () => {
-    expect(parseHandoffMarker(`${HANDOFF_MARKER} ${'n'.repeat(10_000)}`)?.length).toBe(4_000)
+    expect(parseHandoffMarker(`${HANDOFF_MARKER} ${'n'.repeat(10_000)}`)?.length).toBe(MAX_HANDOFF_CHARS)
   })
 
   it('is hidden from the transcript like the other control lines', () => {
@@ -115,5 +121,35 @@ describe('sanitizing saved context', () => {
       session: { cli: 'claude', id: 's1', cwd: '/r' }
     })
     expect(restoredAgentContext([], { handoff: 'x' })).toBeUndefined()
+  })
+})
+
+describe('context usage', () => {
+  it('warns at 70% of a known window, or 150k tokens without one', () => {
+    expect(contextIsHigh({ tokens: 139_000, window: 200_000 })).toBe(false)
+    expect(contextIsHigh({ tokens: 140_000, window: 200_000 })).toBe(true)
+    expect(contextIsHigh({ tokens: 149_000 })).toBe(false)
+    expect(contextIsHigh({ tokens: 150_000 })).toBe(true)
+    expect(contextIsHigh(undefined)).toBe(false)
+  })
+
+  it('labels with a percentage only when the window is known', () => {
+    expect(contextShortLabel({ tokens: 124_000, window: 200_000 })).toBe('62%')
+    expect(contextShortLabel({ tokens: 84_400 })).toBe('84k')
+    expect(contextLongLabel({ tokens: 124_000, window: 200_000 })).toBe('124k of 200k tokens')
+    expect(contextLongLabel({ tokens: 1_250_000 })).toBe('1.3M tokens')
+  })
+
+  it('knows Claude windows and nothing it cannot name', () => {
+    expect(knownContextWindow('claude', undefined)).toBe(200_000)
+    expect(knownContextWindow('claude', 'sonnet[1m]')).toBe(1_000_000)
+    expect(knownContextWindow('opencode', 'anthropic/claude-opus-5')).toBe(200_000)
+    expect(knownContextWindow('codex', 'gpt-5.6')).toBeUndefined()
+  })
+
+  it('recognizes a context overflow stop', () => {
+    expect(isContextOverflow('Agent stopped: maximum context length')).toBe(true)
+    expect(isContextOverflow('Prompt is too long')).toBe(true)
+    expect(isContextOverflow('Agent stopped: rate limit')).toBe(false)
   })
 })

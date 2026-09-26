@@ -1809,3 +1809,120 @@ describe('AgentController chat context', () => {
     expect(last).toContain('earlier follow-up')
   })
 })
+
+describe('AgentController context usage and fresh start', () => {
+  type Turn = { session?: string; tokens?: number; reply?: string; code?: number }
+  type Call = { request: AgentTaskRequest; prompt: string; resume?: string }
+
+  function scripted(turns: Turn[]) {
+    const calls: Call[] = []
+    const execute: AgentExecutor = async (req, prompt, output, _tool, session) => {
+      const turn = turns[calls.length] ?? {}
+      calls.push({ request: { ...req }, prompt, resume: session?.resume })
+      if (turn.session) session?.onSession(turn.session)
+      if (turn.tokens) session?.onUsage?.({ tokens: turn.tokens })
+      if (turn.code) return turn.code
+      output(`${turn.reply ?? 'Done\nFAROL_PIPELINES: []'}\n`)
+      return 0
+    }
+    return { calls, execute }
+  }
+
+  const statuses = (events: AgentTaskEvent[], status: string) =>
+    events.filter((event) => event.kind === 'status' && event.status === status)
+
+  it('reports context usage with the known window for the model', async () => {
+    const events: AgentTaskEvent[] = []
+    const { execute } = scripted([{ session: 's1', tokens: 150_000 }])
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() => expect(statuses(events, 'completed')).toHaveLength(1))
+
+    expect(events).toContainEqual({
+      kind: 'usage',
+      taskId: request.id,
+      usage: { tokens: 150_000, window: 200_000 }
+    })
+  })
+
+  it('writes a handoff note on the old session, then starts the next message fresh', async () => {
+    const events: AgentTaskEvent[] = []
+    const { calls, execute } = scripted([
+      { session: 's1', tokens: 150_000 },
+      { session: 's1', tokens: 160_000 },
+      { session: 's1', tokens: 170_000 },
+      { session: 's1', tokens: 180_000 },
+      { reply: 'FAROL_HANDOFF: "Widget fixed in src/widget.ts; next: docs"' },
+      { session: 's2', tokens: 9_000 }
+    ])
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() => expect(statuses(events, 'completed')).toHaveLength(1))
+    controller.message(request.id, 'first follow-up')
+    await vi.waitFor(() => expect(statuses(events, 'completed')).toHaveLength(2))
+    controller.message(request.id, 'second follow-up')
+    await vi.waitFor(() => expect(statuses(events, 'completed')).toHaveLength(3))
+    controller.message(request.id, 'third follow-up')
+    await vi.waitFor(() => expect(statuses(events, 'completed')).toHaveLength(4))
+
+    await expect(controller.freshStart(request.id)).resolves.toEqual({ ok: true })
+    const note = calls[4]
+    expect(note.resume).toBe('s1')
+    expect(note.request.mode).toBe('plan')
+    expect(note.prompt).toContain('FAROL_HANDOFF')
+    expect(events).toContainEqual({ kind: 'usage', taskId: request.id, usage: null })
+    expect(events.filter((event) => event.kind === 'context').at(-1)).toEqual({
+      kind: 'context',
+      taskId: request.id,
+      context: { handoff: 'Widget fixed in src/widget.ts; next: docs' }
+    })
+
+    controller.message(request.id, 'fourth follow-up')
+    await vi.waitFor(() => expect(calls).toHaveLength(6))
+    const next = calls[5]
+    expect(next.resume).toBeUndefined()
+    expect(next.request.mode).toBe('build')
+    // The note covers the older follow-ups; the latest two stay verbatim.
+    expect(next.prompt).toContain(
+      'Continue the original task: Fix the widget\n\nFollow-up: second follow-up\n\nFollow-up: third follow-up\n\nFollow-up: fourth follow-up'
+    )
+    expect(next.prompt).not.toContain('first follow-up')
+    expect(next.prompt).toContain('Widget fixed in src/widget.ts; next: docs')
+  })
+
+  it('keeps the session when the agent writes no note', async () => {
+    const events: AgentTaskEvent[] = []
+    const { calls, execute } = scripted([{ session: 's1' }, { reply: 'I would rather not.' }, {}])
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() => expect(statuses(events, 'completed')).toHaveLength(1))
+    await expect(controller.freshStart(request.id)).resolves.toEqual({ ok: false })
+    expect(statuses(events, 'needs-attention').at(-1)).toMatchObject({
+      message: expect.stringContaining('did not write a handoff note')
+    })
+
+    controller.message(request.id, 'carry on')
+    await vi.waitFor(() => expect(calls).toHaveLength(3))
+    expect(calls[2].resume).toBe('s1')
+  })
+
+  it('refuses while the agent is working, and reports a task it no longer holds', async () => {
+    let release: () => void = () => {}
+    const execute: AgentExecutor = (_req, _prompt, output) =>
+      new Promise((resolve) => {
+        release = () => {
+          output('FAROL_PIPELINES: []\n')
+          resolve(0)
+        }
+      })
+    const controller = new AgentController({ run: vi.fn() }, () => {}, execute)
+
+    controller.start(request)
+    await expect(controller.freshStart(request.id)).resolves.toMatchObject({ ok: false, message: expect.stringContaining('Wait') })
+    release()
+    await expect(controller.freshStart('gone')).resolves.toMatchObject({ ok: false, missing: true })
+  })
+})
