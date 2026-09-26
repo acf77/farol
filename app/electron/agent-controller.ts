@@ -64,6 +64,7 @@ import {
 } from '../shared/tool-policy'
 import { plainText } from '../shared/terminal'
 import { aiEnv, resolveBinFrom } from './bin'
+import { openRouterAgent } from './openrouter-agent'
 import { backoffWait } from './backoff'
 import { killPidTree } from './kill'
 import { logAgentFailure } from './agent-failure-log'
@@ -198,7 +199,12 @@ function shouldRetryPlainOpenCode(
   provider: AiProvider,
   diagnostics: string
 ): boolean {
-  return !plain && exit !== 0 && cliFor(provider) === 'opencode' && isUnknownJsonFormatError(diagnostics)
+  return (
+    !plain &&
+    exit !== 0 &&
+    cliFor(provider, openRouterAgent()) === 'opencode' &&
+    isUnknownJsonFormatError(diagnostics)
+  )
 }
 
 /**
@@ -943,7 +949,7 @@ export class AgentController {
   ): Promise<ToolPolicy> {
     const mode = task.request.mode === 'plan' ? 'plan' : 'build'
     if (task.toolSelection && task.toolSelectionAttempt === attempt) {
-      return toolPolicyFor(task.request.provider, task.toolSelection)
+      return toolPolicyFor(task.request.provider, task.toolSelection, openRouterAgent())
     }
     const state = toolSelectionState({
       task: task.request.prompt,
@@ -957,7 +963,7 @@ export class AgentController {
       (mode === 'plan' ? defaultPlanSelection() : { kind: 'fallback-full', reason: 'jev-unavailable' })
     task.toolSelection = resolved
     task.toolSelectionAttempt = attempt
-    return toolPolicyFor(task.request.provider, resolved)
+    return toolPolicyFor(task.request.provider, resolved, openRouterAgent())
   }
 
   /** Diagnostic-only: log omitted-family tool cards without killing the run. */
@@ -1299,13 +1305,15 @@ export class AgentController {
     opts?: { tools?: string[]; webSearch?: boolean }
   ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
+    const via = openRouterAgent()
     const spec = managedAiCommand(task.request.provider, prompt, task.request.model, {
       jsonFormat: !plain,
+      via,
       mode: task.request.mode,
       ...(opts?.tools?.length ? { tools: opts.tools } : {}),
       ...(opts?.webSearch ? { webSearch: true } : {})
     })
-    const env = aiEnv(task.request.provider)
+    const env = aiEnv(task.request.provider, via)
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       sink.text(`farol: ${spec.hint}\n`)

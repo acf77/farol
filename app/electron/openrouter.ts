@@ -26,7 +26,8 @@ async function writeOpenRouter(
     openrouter: {
       pinned: patch.pinned ?? prev.pinned,
       catalog: patch.catalog ?? prev.catalog,
-      autoPinned: patch.autoPinned ?? prev.autoPinned
+      autoPinned: patch.autoPinned ?? prev.autoPinned,
+      ...(prev.agent ? { agent: prev.agent } : {})
     }
   }
   await saveSettings(next)

@@ -26,6 +26,7 @@ import {
   validateRunnable
 } from '../shared/graph'
 import { aiEnv, resolveBinFrom } from './bin'
+import { openRouterAgent } from './openrouter-agent'
 import { defaultShell, pipelineEnv, PtySession } from './session'
 import { killPidTree, killPty } from './kill'
 import { verdictFromOutput } from './jev'
@@ -617,7 +618,8 @@ export class PipelineRunner {
     }
 
     const prompt = [cmd, verdictPromptSuffix()].join('\n')
-    const spec = aiCommand(normalizeAi(node.ai), prompt, node.model)
+    const via = openRouterAgent()
+    const spec = aiCommand(normalizeAi(node.ai), prompt, node.model, via)
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       const listed = spec.bins.map((b) => `'${b}'`).join(' or ')
@@ -649,7 +651,7 @@ export class PipelineRunner {
           cols: 110,
           rows: 40,
           cwd,
-          env: aiEnv(normalizeAi(node.ai))
+          env: aiEnv(normalizeAi(node.ai), via)
         })
       } catch (err) {
         onChunk(`farol: ${err instanceof Error ? err.message : String(err)}\r\n`)

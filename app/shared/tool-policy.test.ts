@@ -187,6 +187,20 @@ describe('toolPolicyFor', () => {
     }
   })
 
+  it('enforces OpenRouter natively when it rides OMP', () => {
+    const selection: ToolSelection = {
+      kind: 'selected',
+      focus: 'implement',
+      kept: ['edit', 'shell'],
+      omitted: ['web'],
+      candidatesFingerprint: toolFocusFingerprint('build')
+    }
+    expect(toolEnforcementFor('openrouter', 'omp')).toBe('native')
+    expect(toolPolicyFor('openrouter', selection, 'omp').nativeTools).toEqual(
+      toolPolicyFor('omp', selection).nativeTools
+    )
+  })
+
   it('fails open to the full set without native argv when fallback-full', () => {
     const policy = fullToolPolicy('claude', 'no-key')
     expect(policy.allowed).toEqual([...TOOL_OPTIONAL])

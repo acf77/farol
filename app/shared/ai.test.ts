@@ -12,6 +12,7 @@ import {
   modelsFor,
   normalizeAi,
   normalizeModel,
+  normalizeOpenRouterAgent,
   pickerProviders,
   providerModels,
   usesOpenRouterEnv,
@@ -285,6 +286,34 @@ describe('managedAiCommand', () => {
       'fix this'
     ])
     expect(interactiveAiCommand('openrouter')).toBe('opencode')
+  })
+
+  it('runs OpenRouter through OMP when chosen, with the same prefixed --model', () => {
+    expect(normalizeOpenRouterAgent('omp')).toBe('omp')
+    expect(normalizeOpenRouterAgent(undefined)).toBe('opencode')
+    expect(normalizeOpenRouterAgent('pi')).toBe('opencode')
+    expect(cliFor('openrouter', 'omp')).toBe('omp')
+    expect(cliFor('claude', 'omp')).toBe('claude')
+    expect(aiCommand('openrouter', 'review this', 'anthropic/claude-sonnet-4', 'omp').args).toEqual([
+      '-p',
+      '--auto-approve',
+      '--tools',
+      'read,glob,grep,lsp',
+      '--model',
+      'openrouter/anthropic/claude-sonnet-4',
+      'review this'
+    ])
+    expect(
+      managedAiCommand('openrouter', 'fix this', 'openai/gpt-4o', { via: 'omp' }).args
+    ).toEqual(['--mode', 'json', '--auto-approve', '--model', 'openrouter/openai/gpt-4o', 'fix this'])
+    // OMP's review gate for Plan is the read-only tool allowlist.
+    expect(
+      managedAiCommand('openrouter', 'plan this', undefined, { mode: 'plan', via: 'omp' }).args
+    ).toEqual(['--mode', 'json', '--auto-approve', '--tools', 'read,glob,grep,lsp', 'plan this'])
+    expect(interactiveAiCommand('openrouter', 'omp')).toBe('omp')
+    expect(aiFixCommand('openrouter', undefined, 'omp')).toMatch(/^omp "/)
+    // The choice only reroutes OpenRouter; plain OpenCode stays OpenCode.
+    expect(managedAiCommand('opencode', 'x', undefined, { via: 'omp' }).bins).toEqual(['opencode'])
   })
 
   it('shows OpenRouter after a key and catalog exist, listing only its pins', () => {

@@ -6,8 +6,17 @@ import { openCodeModel } from './openrouter'
 export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'omp', 'openrouter'] as const
 export type AiProvider = (typeof AI_PROVIDERS)[number]
 export type AgentMode = 'plan' | 'build'
-/** The binary Farol actually spawns — OpenRouter rides OpenCode. */
+/** The binary Farol actually spawns — OpenRouter rides OpenCode or OMP. */
 export type AiCli = Exclude<AiProvider, 'openrouter'>
+
+/** CLIs that can carry OpenRouter; both read `OPENROUTER_API_KEY` and take `openrouter/<slug>`. */
+export const OPENROUTER_AGENTS = ['opencode', 'omp'] as const
+export type OpenRouterAgent = (typeof OPENROUTER_AGENTS)[number]
+
+/** Older settings have no choice stored; they keep running OpenCode. */
+export function normalizeOpenRouterAgent(value: unknown): OpenRouterAgent {
+  return value === 'omp' ? 'omp' : 'opencode'
+}
 
 export const AI_LABELS: Record<AiProvider, string> = {
   claude: 'Claude',
@@ -82,8 +91,8 @@ export function isAiProvider(value: unknown): value is AiProvider {
   return typeof value === 'string' && (AI_PROVIDERS as readonly string[]).includes(value)
 }
 
-export function cliFor(provider: AiProvider): AiCli {
-  return provider === 'openrouter' ? 'opencode' : provider
+export function cliFor(provider: AiProvider, via: OpenRouterAgent = 'opencode'): AiCli {
+  return provider === 'openrouter' ? via : provider
 }
 
 export function usesOpenRouterEnv(provider: AiProvider): boolean {
@@ -225,8 +234,13 @@ const OMP_READONLY_TOOLS = 'read,glob,grep,lsp'
  * text so a review step returns a string instead of Agent "ACT" chrome.
  * `--force` still auto-approves read tools so it cannot stall on a prompt.
  */
-export function aiCommand(provider: AiProvider, prompt: string, model?: string): AiCommand {
-  const cli = cliFor(provider)
+export function aiCommand(
+  provider: AiProvider,
+  prompt: string,
+  model?: string,
+  via?: OpenRouterAgent
+): AiCommand {
+  const cli = cliFor(provider, via)
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
   switch (cli) {
     case 'codex':
@@ -385,16 +399,22 @@ function managedClaudeCommand(prompt: string, passed: string | undefined, plan: 
  * both run in `stream-json` and are decoded by `shared/agent-stream.ts`.
  * Codex also emits NDJSON when passed `--json`; decoding it lets managed Chat
  * render command, file, MCP, and web-search activity as tool cards.
- * OpenCode (and OpenRouter, which rides it) do the same with `--format json`,
- * and OMP with `--mode json`.
+ * OpenCode does the same with `--format json`, and OMP with `--mode json`;
+ * OpenRouter rides whichever of the two `opts.via` names.
  */
 export function managedAiCommand(
   provider: AiProvider,
   prompt: string,
   model?: string,
-  opts?: { jsonFormat?: boolean; mode?: AgentMode; tools?: string[]; webSearch?: boolean }
+  opts?: {
+    jsonFormat?: boolean
+    mode?: AgentMode
+    tools?: string[]
+    webSearch?: boolean
+    via?: OpenRouterAgent
+  }
 ): AiCommand {
-  const cli = cliFor(provider)
+  const cli = cliFor(provider, opts?.via)
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
   const jsonFormat = opts?.jsonFormat !== false
   const plan = opts?.mode === 'plan'
@@ -426,9 +446,13 @@ export function aiFixPrompt(reportPath = FAILURE_REPORT_REL): string {
  * The prompt only ever names a fixed path, so there is nothing to quote-escape;
  * everything about the failure lives in the report file itself.
  */
-export function aiFixCommand(provider: AiProvider, reportPath = FAILURE_REPORT_REL): string {
+export function aiFixCommand(
+  provider: AiProvider,
+  reportPath = FAILURE_REPORT_REL,
+  via?: OpenRouterAgent
+): string {
   const ask = aiFixPrompt(reportPath)
-  switch (cliFor(provider)) {
+  switch (cliFor(provider, via)) {
     case 'codex':
       return `codex "${ask}"`
     case 'cursor':
@@ -445,8 +469,8 @@ export function aiFixCommand(provider: AiProvider, reportPath = FAILURE_REPORT_R
 }
 
 /** Interactive CLI entry point for a dedicated Terminal agent session. */
-export function interactiveAiCommand(provider: AiProvider): string {
-  switch (cliFor(provider)) {
+export function interactiveAiCommand(provider: AiProvider, via?: OpenRouterAgent): string {
+  switch (cliFor(provider, via)) {
     case 'codex':
       return 'codex'
     case 'cursor':

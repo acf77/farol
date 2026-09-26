@@ -1,10 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AgentMode, AppSettings, ModelChoice, SettingsResult } from '@shared/types'
-import { AI_LABELS, pickerProviders, type AiProvider } from '@shared/ai'
+import {
+  AI_LABELS,
+  normalizeOpenRouterAgent,
+  OPENROUTER_AGENTS,
+  pickerProviders,
+  type AiProvider
+} from '@shared/ai'
 import { AI_GATEWAY_API_URL, JEV_MODEL_ID } from '@shared/jev'
 import { OPENROUTER_API_URL } from '@shared/openrouter'
-import { withAgentModel, withCommitMessageModel, withModeChain } from '@shared/settings'
+import {
+  withAgentModel,
+  withCommitMessageModel,
+  withModeChain,
+  withOpenRouterAgent
+} from '@shared/settings'
 import { C, UI } from '../theme'
 import { Button, Checkbox, CliModelDropdown, SegmentedControl } from './controls'
 import { ChevronDown, ChevronUp } from './icons'
@@ -24,6 +35,11 @@ const TABS: readonly { value: TabKey; label: string }[] = [
   { value: 'general', label: 'General' },
   { value: 'models', label: 'Models' }
 ]
+
+const OPENROUTER_AGENT_OPTIONS = OPENROUTER_AGENTS.map((value) => ({
+  value,
+  label: AI_LABELS[value]
+}))
 
 const card: React.CSSProperties = {
   border: `1px solid ${C.cardBorder}`,
@@ -298,6 +314,7 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
   const api = window.farol
   const or = settings.openrouter
   const configured = !!or?.hasKey
+  const orAgent = normalizeOpenRouterAgent(or?.agent)
   const [tab, setTab] = useState<TabKey>('general')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -506,7 +523,7 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
 
               <Section
                 title="OpenRouter"
-                hint={`Endpoint ${OPENROUTER_API_URL} · runs through OpenCode`}
+                hint={`Endpoint ${OPENROUTER_API_URL} · runs through ${AI_LABELS[orAgent]}`}
               >
                 <ApiKeyField
                   configured={configured}
@@ -521,6 +538,17 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
                     void api.openrouter.clearKey().then(apply)
                   }}
                 />
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, color: C.textSoft }}>Runs through</span>
+                  <SegmentedControl
+                    label="OpenRouter agent"
+                    options={OPENROUTER_AGENT_OPTIONS}
+                    value={orAgent}
+                    onChange={(next) => onSettings(withOpenRouterAgent(settings, next))}
+                    style={{ width: 180 }}
+                  />
+                </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                   <Button

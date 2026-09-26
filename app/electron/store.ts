@@ -19,7 +19,9 @@ import {
   withOpenRouterKeyFlag,
   type AppSettings
 } from '../shared/settings'
+import { normalizeOpenRouterAgent } from '../shared/ai'
 import { hasSecret } from './secrets'
+import { setOpenRouterAgent } from './openrouter-agent'
 import { pipelineStoreRootFor } from './git'
 import { migrateUserDataFiles } from './user-data-migrate'
 
@@ -478,6 +480,7 @@ export async function saveProjectSession(
 export async function loadSettings(): Promise<AppSettings> {
   await flushWorkspace()
   const stored = sanitizeSettings((await readWorkspace()).settings)
+  setOpenRouterAgent(normalizeOpenRouterAgent(stored.openrouter?.agent))
   return withJevKeyFlag(
     withOpenRouterKeyFlag(stored, hasSecret('openrouterApiKey')),
     hasSecret('aiGatewayApiKey')
@@ -485,6 +488,7 @@ export async function loadSettings(): Promise<AppSettings> {
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
+  setOpenRouterAgent(normalizeOpenRouterAgent(settings.openrouter?.agent))
   await updateWorkspace((ws) => {
     ws.settings = retainCatalogs(sanitizeSettings(settings), sanitizeSettings(ws.settings))
   })

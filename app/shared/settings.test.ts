@@ -8,7 +8,8 @@ import {
   sanitizeSettings,
   withAgentModel,
   withCommitMessageModel,
-  withModeChain
+  withModeChain,
+  withOpenRouterAgent
 } from './settings'
 
 describe('sanitizeSettings', () => {
@@ -112,6 +113,23 @@ describe('commit message selection', () => {
         { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' }
       ]
     })
+  })
+
+  it('keeps the OpenRouter agent choice and stores OpenCode as absence', () => {
+    expect(sanitizeSettings({ openrouter: { agent: 'omp' } }).openrouter).toEqual({
+      pinned: [],
+      catalog: [],
+      autoPinned: false,
+      agent: 'omp'
+    })
+    expect(sanitizeSettings({ openrouter: { agent: 'opencode' } }).openrouter).toBeUndefined()
+    expect(
+      sanitizeSettings({ openrouter: { agent: 'bogus', pinned: ['openai/gpt-4o'] } }).openrouter
+    ).not.toHaveProperty('agent')
+
+    const omp = withOpenRouterAgent(defaultSettings(), 'omp')
+    expect(omp.openrouter?.agent).toBe('omp')
+    expect(withOpenRouterAgent(omp, 'opencode').openrouter).not.toHaveProperty('agent')
   })
 
   it('keeps discovered per-agent catalogs', () => {

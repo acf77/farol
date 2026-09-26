@@ -1,8 +1,12 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { extraBinDirs, resolveBin } from './bin'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('./secrets', () => ({ peekSecret: () => 'sk-or-test' }))
+vi.mock('./session', () => ({ shellEnv: () => ({ PATH: '/usr/bin' }) }))
+
+import { aiEnv, extraBinDirs, resolveBin } from './bin'
 
 const dirs: string[] = []
 
@@ -33,5 +37,20 @@ describe('resolveBin', () => {
     fs.writeFileSync(binPath, '#!/bin/sh\necho ok\n', { mode: 0o755 })
 
     expect(resolveBin('opencode', [binDir])).toBe(binPath)
+  })
+})
+
+describe('aiEnv', () => {
+  it('isolates OpenCode data only when OpenRouter rides OpenCode', () => {
+    const viaOpencode = aiEnv('openrouter')
+    expect(viaOpencode.OPENROUTER_API_KEY).toBe('sk-or-test')
+    expect(viaOpencode.XDG_DATA_HOME).toContain('farol-opencode')
+
+    const viaOmp = aiEnv('openrouter', 'omp')
+    expect(viaOmp.OPENROUTER_API_KEY).toBe('sk-or-test')
+    expect(viaOmp.XDG_DATA_HOME).toBeUndefined()
+
+    expect(aiEnv('opencode', 'omp').XDG_DATA_HOME).toContain('farol-opencode')
+    expect(aiEnv('omp').OPENROUTER_API_KEY).toBeUndefined()
   })
 })

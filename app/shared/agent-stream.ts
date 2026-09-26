@@ -16,9 +16,10 @@ import {
  * Claude and Cursor share the Anthropic-style `assistant`/`user` envelope;
  * Cursor adds its own `tool_call` events. Codex uses `item.started`,
  * `item.updated`, and `item.completed` lifecycle events around agent messages
- * and tool items. OpenCode (`--format json`, including OpenRouter) emits
+ * and tool items. OpenCode (`--format json`) emits
  * `text` / `tool_use` / `error` envelopes with a `part` payload. OMP
  * (`--mode json`) emits `message_end` envelopes plus `tool_execution_*` events.
+ * OpenRouter streams whichever of the two its Settings choice runs.
  */
 
 /** One complete assistant turn. */

@@ -17,7 +17,7 @@ import {
 import { isWriteToolName } from './mandatory'
 import { isShellToolName } from './catalog-shell'
 import type { AiProvider } from './ai'
-import { cliFor } from './ai'
+import { cliFor, type OpenRouterAgent } from './ai'
 
 /** Optional families a focus may admit. */
 export const TOOL_OPTIONAL = ['edit', 'shell', 'web'] as const
@@ -255,8 +255,8 @@ export function validateToolSelection(selection: ToolSelection): ToolSelection {
   return selection
 }
 
-export function toolEnforcementFor(provider: AiProvider): ToolEnforcement {
-  const cli = cliFor(provider)
+export function toolEnforcementFor(provider: AiProvider, via?: OpenRouterAgent): ToolEnforcement {
+  const cli = cliFor(provider, via)
   return cli === 'claude' || cli === 'omp' ? 'native' : 'prompt'
 }
 
@@ -278,8 +278,12 @@ export function ompToolsFor(allowed: ToolCapabilityId[]): string[] {
   return tools
 }
 
-export function nativeToolsFor(provider: AiProvider, allowed: ToolCapabilityId[]): string[] {
-  const cli = cliFor(provider)
+export function nativeToolsFor(
+  provider: AiProvider,
+  allowed: ToolCapabilityId[],
+  via?: OpenRouterAgent
+): string[] {
+  const cli = cliFor(provider, via)
   if (cli === 'claude') return claudeToolsFor(allowed)
   if (cli === 'omp') return ompToolsFor(allowed)
   return []
@@ -292,17 +296,21 @@ function allowedFrom(selection: ToolSelection): ToolCapabilityId[] {
 }
 
 /** Remap a cached selection onto the current provider's enforcement path. */
-export function toolPolicyFor(provider: AiProvider, selection: ToolSelection): ToolPolicy {
+export function toolPolicyFor(
+  provider: AiProvider,
+  selection: ToolSelection,
+  via?: OpenRouterAgent
+): ToolPolicy {
   const validated = validateToolSelection(selection)
   const allowed = allowedFrom(validated)
-  const enforcement = toolEnforcementFor(provider)
+  const enforcement = toolEnforcementFor(provider, via)
   return {
     selection: validated,
     allowed,
     enforcement,
     nativeTools:
       enforcement === 'native' && validated.kind !== 'fallback-full'
-        ? nativeToolsFor(provider, allowed)
+        ? nativeToolsFor(provider, allowed, via)
         : []
   }
 }

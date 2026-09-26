@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 import { aiCommand, type AiProvider } from '../shared/ai'
 import { aiEnv, resolveBinFrom } from './bin'
+import { openRouterAgent } from './openrouter-agent'
 
 /** Run a one-shot AI prompt and return stdout as plain text. */
 export function runAiOnce(
@@ -10,7 +11,8 @@ export function runAiOnce(
   timeoutMs = 120_000,
   model?: string
 ): Promise<{ ok: boolean; text: string; error?: string }> {
-  const spec = aiCommand(provider, prompt, model)
+  const via = openRouterAgent()
+  const spec = aiCommand(provider, prompt, model, via)
   const bin = resolveBinFrom(spec.bins)
   if (!bin) {
     const listed = spec.bins.map((b) => `'${b}'`).join(' or ')
@@ -24,7 +26,7 @@ export function runAiOnce(
     try {
       proc = spawn(bin, spec.args, {
         cwd,
-        env: aiEnv(provider),
+        env: aiEnv(provider, via),
         stdio: ['ignore', 'pipe', 'pipe']
       })
     } catch (error) {

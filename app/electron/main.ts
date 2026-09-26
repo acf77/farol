@@ -31,6 +31,7 @@ import { configureJevLogs } from './jev-log'
 import { configureAgentFailureLogs } from './agent-failure-log'
 import { listProjectDir, listProjectFiles, readProjectFile, saveChatAttachment, writeProjectFile } from './files'
 import { listAgentSkills } from './skills'
+import { openRouterAgent } from './openrouter-agent'
 import { AppUpdater } from './update'
 import { applyGlass, glassAvailable } from './glass'
 import { providerUsage } from './usage'
@@ -612,7 +613,7 @@ function registerProjectIpc(): void {
   )
   ipcMain.handle('project:listSkills', (_e, projectPath: string, provider: unknown) =>
     typeof projectPath === 'string' && isAiProvider(provider)
-      ? listAgentSkills(projectPath, provider)
+      ? listAgentSkills(projectPath, provider, undefined, openRouterAgent())
       : []
   )
   ipcMain.handle(
@@ -904,6 +905,8 @@ app.whenReady().then(() => {
   configureAgentFailureLogs(userData)
   applyBrandIcon()
   registerIpc()
+  // Mirrors the OpenRouter CLI choice before anything spawns an agent.
+  void loadSettings()
   buildMenu()
   createWindow()
   if (app.isPackaged) setTimeout(() => void updater.check(), 2500)
