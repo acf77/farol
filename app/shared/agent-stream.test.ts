@@ -26,6 +26,25 @@ function parse(parser: AgentStreamParser, ...chunks: string[]) {
 }
 
 describe('AgentStreamParser', () => {
+  it('remembers the CLI session id from each provider', () => {
+    const cases: [string, string][] = [
+      [JSON.stringify({ type: 'system', subtype: 'init', session_id: 'claude-1' }), 'claude-1'],
+      [JSON.stringify({ type: 'thread.started', thread_id: 'codex-1' }), 'codex-1'],
+      [JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { text: 'hi' } }), 'ses_1'],
+      [JSON.stringify({ type: 'result', subtype: 'success', session_id: 'cursor-1', result: '' }), 'cursor-1']
+    ]
+    for (const [line, id] of cases) {
+      const parser = new AgentStreamParser()
+      parser.push(`${line}\n`)
+      expect(parser.sessionId).toBe(id)
+    }
+    const parser = new AgentStreamParser()
+    parser.push(`${JSON.stringify({ type: 'system', subtype: 'init', session_id: 'first' })}\n`)
+    parser.push(`${JSON.stringify({ type: 'result', session_id: 'second', result: '' })}\n`)
+    expect(parser.sessionId).toBe('first')
+    expect(new AgentStreamParser().sessionId).toBeUndefined()
+  })
+
   it('reports a tool call as it starts and again when it finishes', () => {
     const parser = new AgentStreamParser()
     const events = parse(parser, `${claudeToolUse}\n${claudeToolResult}\n`)

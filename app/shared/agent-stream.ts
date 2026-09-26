@@ -333,7 +333,24 @@ function handleBrokenStreamJson(text: string): AgentStreamEvent[] {
   return openCode.length ? openCode : recoverOmpTool(text)
 }
 
+/**
+ * The CLI's own conversation id, for resuming it next turn. Claude and Cursor
+ * report `session_id` on their init and result events, Codex a `thread_id`
+ * on `thread.started`, and OpenCode a `sessionID` on every event.
+ */
+function streamSessionId(event: Record<string, unknown>): string | undefined {
+  if (event.type === 'thread.started') return stringField(event, 'thread_id')?.trim() || undefined
+  if ((event.type === 'system' && event.subtype === 'init') || event.type === 'result') {
+    return stringField(event, 'session_id')?.trim() || undefined
+  }
+  const part = event.part
+  const id = stringField(event, 'sessionID') ?? (isRecord(part) ? stringField(part, 'sessionID') : undefined)
+  return id?.trim() || undefined
+}
+
 export class AgentStreamParser {
+  /** Set once the stream names the CLI's own conversation. */
+  sessionId?: string
   private buffer = ''
   /** tool_use id -> name, so a later tool_result can name the card it closes. */
   private names = new Map<string, string>()
@@ -375,7 +392,9 @@ export class AgentStreamParser {
       if (looksLikeStreamJson(line)) return handleBrokenStreamJson(line)
       return [{ kind: 'raw', text: `${line}\n` }]
     }
-    return isRecord(value) ? this.event(value) : [{ kind: 'raw', text: `${line}\n` }]
+    if (!isRecord(value)) return [{ kind: 'raw', text: `${line}\n` }]
+    this.sessionId ??= streamSessionId(value)
+    return this.event(value)
   }
 
   private event(event: Record<string, unknown>): AgentStreamEvent[] {

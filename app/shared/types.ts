@@ -1,6 +1,7 @@
 /** Types shared between the main process, the preload bridge, and the renderer. */
 
 import type { AgentMode, AiProvider } from './ai'
+import type { AgentContext, SavedAgentContext } from './agent-context'
 import type { AgentQuestion } from './questions'
 import type { ProjectSession } from './session'
 import type { AgentSkill } from './skills'
@@ -312,6 +313,11 @@ export interface AgentTaskRequest {
   checkout: string
   branch: string
   maxAttempts?: number
+  /**
+   * The chat so far, rebuilt from a restored pane when the main process no
+   * longer holds the task (after a restart). Ignored for a task it still has.
+   */
+  context?: AgentContext
 }
 
 export type AgentTaskEvent =
@@ -356,6 +362,8 @@ export type AgentTaskEvent =
       mode: AgentMode
       reason: string
     }
+  /** What the pane saves so the chat can continue after a restart. */
+  | { kind: 'context'; taskId: string; context: SavedAgentContext }
   /** Agent asked the user; `answers` is set when they reply or dismiss. */
   | {
       kind: 'question'

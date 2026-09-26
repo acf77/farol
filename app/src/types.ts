@@ -1,4 +1,5 @@
 import type { AgentMode, AgentQuestion, AgentTaskStatus, AiProvider, GitHookEvent, PipelineNode, StepState } from '@shared/types'
+import type { SavedAgentContext } from '@shared/agent-context'
 import type { TermState } from './ansi'
 import type { PaneNode } from './layout'
 
@@ -77,6 +78,8 @@ export interface AgentPane extends BasePane {
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
   messages: AgentMessage[]
+  /** The agent's handoff note and CLI session, so the chat continues after a restart. */
+  context?: SavedAgentContext
 }
 
 export type Pane = ShellPane | RunPane | AgentPane

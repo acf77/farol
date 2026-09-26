@@ -26,6 +26,7 @@ import type {
   WorktreeRequest
 } from '@shared/types'
 import { AI_LABELS, aiFixPrompt, normalizeMode } from '@shared/ai'
+import { restoredAgentContext } from '@shared/agent-context'
 import { isFinishedPlan, sanitizePlan } from '@shared/questions'
 import {
   defaultSettings,
@@ -257,6 +258,7 @@ function tabsFromSession(sess: ProjectSession): Tab[] {
               provider: p.provider,
               mode: normalizeMode(p.mode),
               ...(p.model ? { model: p.model } : {}),
+              ...(p.context ? { context: p.context } : {}),
               messages: trimAgentMessages(
                 [
                   ...p.messages,
@@ -265,7 +267,7 @@ function tabsFromSession(sess: ProjectSession): Tab[] {
                     : [
                         {
                           role: 'system' as const,
-                          text: 'Farol restarted. This managed process stopped; start a new chat to continue.'
+                          text: 'Farol restarted. This managed process stopped; send a message to continue.'
                         }
                       ])
                 ].map(sanitizeAgentMessage)
@@ -346,6 +348,7 @@ function toSession(
                 provider: p.provider,
                 mode: p.mode,
                 ...(p.model ? { model: p.model } : {}),
+                ...(p.context ? { context: p.context } : {}),
                 // A restored transcript is for reading, not for replaying a
                 // whole run's output — the workspace file is rewritten often.
                 messages: p.messages.map((m) => ({
@@ -630,6 +633,7 @@ function applyAgentEvent(
       [...pane.messages, { role: 'system', text: asText(event.reason) }]
     )
   }
+  if (event.kind === 'context') return { ...pane, context: event.context }
   if (event.kind === 'pipeline') {
     // Runner start/end owns the card. Only start-failed pipelines (error:) never emit a RunEvent.
     if (!event.runId?.startsWith('error:')) return pane
@@ -2083,6 +2087,12 @@ export function ProjectWorkspace({
       const cwd = cwdOverride || ownerCwd || pane.cwd || project.path
       const checkout = owningWorktree(cwd, git.worktrees ?? [])?.path ?? project.path
       const branch = branchForTab(owner, project.path, git)
+      // Only used when the main process lost the task (a restart): rebuild the
+      // chat from the transcript and what the pane saved.
+      const restored = restoredAgentContext(
+        pane.messages.flatMap((message) => (message.role === 'user' ? [message.text] : [])),
+        pane.context
+      )
       const startRequest = {
         id: pane.taskId,
         prompt: clean,
@@ -2093,7 +2103,8 @@ export function ProjectWorkspace({
         pipelines: availablePipelines,
         cwd,
         checkout,
-        branch
+        branch,
+        ...(restored ? { context: restored } : {})
       }
       const runAgent = (operation: 'message' | 'start'): void => {
         if (operation === 'message') {
