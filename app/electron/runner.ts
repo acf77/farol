@@ -26,8 +26,10 @@ import {
   validateRunnable
 } from '../shared/graph'
 import { aiEnv, resolveBinFrom } from './bin'
+import { openRouterAgent } from './openrouter-agent'
 import { defaultShell, pipelineEnv, PtySession } from './session'
 import { killPidTree, killPty } from './kill'
+import { errorMessage } from '../shared/jev'
 import { verdictFromOutput } from './jev'
 import { shellFamily } from './protocol'
 
@@ -243,7 +245,7 @@ export class PipelineRunner {
     } catch (error) {
       // Spawn / unexpected throws must still settle waiters (cancelAndWait).
       if (!this.finished.has(runId)) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = errorMessage(error)
         this.emit({
           kind: 'output',
           runId,
@@ -386,7 +388,7 @@ export class PipelineRunner {
         }
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       this.emitOut(state, graph, graph.nodes[0]?.id ?? 'n1', `farol: failed to spawn login shell: ${message}\r\n`)
       this.emit({
         kind: 'end',
@@ -617,7 +619,8 @@ export class PipelineRunner {
     }
 
     const prompt = [cmd, verdictPromptSuffix()].join('\n')
-    const spec = aiCommand(normalizeAi(node.ai), prompt, node.model)
+    const via = openRouterAgent()
+    const spec = aiCommand(normalizeAi(node.ai), prompt, node.model, via)
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       const listed = spec.bins.map((b) => `'${b}'`).join(' or ')
@@ -649,10 +652,10 @@ export class PipelineRunner {
           cols: 110,
           rows: 40,
           cwd,
-          env: aiEnv(normalizeAi(node.ai))
+          env: aiEnv(normalizeAi(node.ai), via)
         })
       } catch (err) {
-        onChunk(`farol: ${err instanceof Error ? err.message : String(err)}\r\n`)
+        onChunk(`farol: ${errorMessage(err)}\r\n`)
         done(127)
         return
       }
@@ -696,7 +699,7 @@ export class PipelineRunner {
       try {
         child = spawn(shell, args, { cwd, env: pipelineEnv(), windowsHide: true })
       } catch (err) {
-        onChunk(`farol: ${err instanceof Error ? err.message : String(err)}\r\n`)
+        onChunk(`farol: ${errorMessage(err)}\r\n`)
         resolve(127)
         return
       }

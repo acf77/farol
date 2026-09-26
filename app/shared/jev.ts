@@ -14,6 +14,12 @@
 
 import type { Pipeline } from './types'
 
+/** Prefer this over `error instanceof Error ? error.message : String(error)`. */
+export function errorMessage(err: unknown, fallback?: string): string {
+  if (err instanceof Error) return err.message
+  return fallback !== undefined ? fallback : String(err)
+}
+
 export const JEV_MODEL_ID = 'typesafe-ai/jev'
 export const AI_GATEWAY_API_URL = 'https://ai-gateway.vercel.sh/v1'
 

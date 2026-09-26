@@ -38,6 +38,22 @@ function runCardStatus(
   return event.ok ? 'passed' : 'failed'
 }
 
+export function upsertMessage(
+  messages: AgentMessage[],
+  match: (message: AgentMessage) => boolean,
+  next: AgentMessage
+): AgentMessage[] {
+  const copy = [...messages]
+  for (let i = copy.length - 1; i >= 0; i--) {
+    if (match(copy[i])) {
+      copy[i] = next
+      return copy
+    }
+  }
+  copy.push(next)
+  return copy
+}
+
 function upsertRunMessage(
   pane: Tab['panes'][string],
   event: Extract<RunEvent, { kind: 'start' | 'end' }>,
@@ -66,10 +82,14 @@ function upsertRunMessage(
     text: pipelineActivityText(pipeline),
     pipeline
   }
-  const messages = [...pane.messages]
-  if (index < 0) messages.push(message)
-  else messages[index] = message
-  return { ...pane, messages: trimAgentMessages(messages) }
+  return {
+    ...pane,
+    messages: trimAgentMessages(
+      index < 0
+        ? [...pane.messages, message]
+        : pane.messages.map((existing, i) => (i === index ? message : existing))
+    )
+  }
 }
 
 /** Project the runner lifecycle into existing chats on its branch. Never creates chats. */

@@ -115,7 +115,7 @@ that tab stops watching without cancelling the run.
   tab, that's the worktree, not the original checkout.
 - **AI steps** shell out to the CLI chosen on the step — Claude (`claude -p`),
   Codex (`codex exec`), Cursor (`agent -p`), OpenCode (`opencode run`), OMP
-  (`omp -p`), or OpenRouter (OpenCode plus a saved key) — and are handed the
+  (`omp -p`), or OpenRouter (OpenCode or pi plus a saved key) — and are handed the
   run's output so far as context. If that CLI isn't on PATH the step fails with
   a note saying so.
 
@@ -124,9 +124,13 @@ agent that new chats start with and that failed steps are handed to. *Models*
 sets each CLI's default `--model` — leave one on *Default* to let that CLI
 decide — and holds the OpenRouter config: paste an API key, which Farol
 encrypts locally, and Settings fetches tool-capable models from OpenRouter’s
-catalog and pins a short recommended set for Chat and pipeline pickers. The key
-is injected as `OPENROUTER_API_KEY` only into Farol-spawned OpenCode processes
-— not into regular shell panes, and not into OpenCode’s own auth file.
+catalog and pins a short recommended set for Chat and pipeline pickers.
+*Runs through* picks the CLI OpenRouter drives — OpenCode (the default) or
+upstream [pi](https://github.com/badlogic/pi-mono) (`npm i -g @mariozechner/pi-coding-agent`);
+both take the same `openrouter/<slug>` model ids, so pins carry over. The key
+is injected as `OPENROUTER_API_KEY` only into Farol-spawned OpenCode and
+OpenRouter processes — not into regular shell panes, and not into either CLI’s
+own auth file.
 
 The editor is a node canvas. Steps are nodes you drag into position; wires
 between them declare order, dragged from the port on one node's bottom edge to

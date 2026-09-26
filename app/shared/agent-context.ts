@@ -5,7 +5,7 @@
  * (`session`) and the next turn runs on that same CLI and directory, Farol
  * resumes it and sends only the new request: the CLI already holds every
  * reply and tool result, and compacts its own context. Otherwise (another
- * provider after a fallback, a restart that lost the session, OMP) Farol
+ * provider after a fallback, a restart that lost the session, OMP or pi) Farol
  * rebuilds the context from the chat's own record: the task, the user's
  * follow-ups, and the agent's handoff note.
  */

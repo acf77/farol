@@ -15,6 +15,7 @@
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { errorMessage } from '../shared/jev'
 import { requestBridge } from './bridge-client'
 
 const APP_DOWN =
@@ -74,6 +75,6 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   // stdout is the protocol channel; diagnostics must go to stderr.
-  process.stderr.write(`farol-mcp: ${err instanceof Error ? err.message : String(err)}\n`)
+  process.stderr.write(`farol-mcp: ${errorMessage(err)}\n`)
   process.exit(1)
 })

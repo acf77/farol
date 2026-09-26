@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { usesOpenRouterEnv, type AiProvider } from '../shared/ai'
+import { cliFor, usesOpenRouterEnv, type AiProvider, type OpenRouterAgent } from '../shared/ai'
 import { OPENROUTER_API_KEY_ENV } from '../shared/openrouter'
 import { peekSecret } from './secrets'
 import { shellEnv } from './session'
@@ -65,8 +65,8 @@ export function resolveBinFrom(names: string[], dirs: string[] = searchDirs()): 
  * OpenCode keeps every session in one SQLite db under XDG_DATA_HOME
  * (`~/.local/share/opencode/opencode.db`). Two concurrent OpenCode processes
  * writing it get "database is locked", so Farol gives each process a private
- * data home seeded with the user's credentials. OpenRouter rides the same
- * binary, so `usesOpenRouterEnv` is also the "spawns opencode" signal here.
+ * data home seeded with the user's credentials. OpenRouter can ride the same
+ * binary, so the isolation follows `cliFor`, not the provider name.
  */
 const OPENCODE_AUTH_FILES = ['auth.json', 'account.json'] as const
 /** Where the shared OpenCode data (auth + the contended db) lives. */
@@ -104,13 +104,13 @@ function isolatedOpencodeDataHome(): string {
   return root
 }
 
-export function aiEnv(provider?: AiProvider): Record<string, string> {
+export function aiEnv(provider?: AiProvider, via?: OpenRouterAgent): Record<string, string> {
   const env = shellEnv()
   env.PATH = pathDirs(env.PATH).join(path.delimiter)
   if (provider && usesOpenRouterEnv(provider)) {
     const key = peekSecret('openrouterApiKey')
     if (key) env[OPENROUTER_API_KEY_ENV] = key
-    env.XDG_DATA_HOME = isolatedOpencodeDataHome()
   }
+  if (provider && cliFor(provider, via) === 'opencode') env.XDG_DATA_HOME = isolatedOpencodeDataHome()
   return env
 }

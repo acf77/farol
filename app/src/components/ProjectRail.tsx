@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { GitInfo, Project } from '@shared/types'
-import { groupOpenProjects } from '@shared/project-groups'
+import { groupOpenProjects, shortPath } from '@shared/project-groups'
 import { C, UI } from '../theme'
 import {
   CHROME_ROW,
@@ -107,11 +107,6 @@ function ChatActivityDot({ busy, unread }: { busy: boolean; unread: boolean }) {
       }}
     />
   )
-}
-
-function shortPath(p: string): string {
-  const parts = p.replace(/[/\\]+$/, '').split(/[/\\]/)
-  return parts.slice(-2).join('/')
 }
 
 function activityTip(display: string, busy: boolean, unread: boolean): string {

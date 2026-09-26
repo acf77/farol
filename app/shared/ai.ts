@@ -6,8 +6,25 @@ import { openCodeModel } from './openrouter'
 export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'omp', 'openrouter'] as const
 export type AiProvider = (typeof AI_PROVIDERS)[number]
 export type AgentMode = 'plan' | 'build'
-/** The binary Farol actually spawns — OpenRouter rides OpenCode. */
-export type AiCli = Exclude<AiProvider, 'openrouter'>
+/**
+ * The binary Farol actually spawns. OpenRouter rides OpenCode or upstream pi
+ * (`@mariozechner/pi-coding-agent`), which is not a provider of its own.
+ */
+export type AiCli = Exclude<AiProvider, 'openrouter'> | 'pi'
+
+/** CLIs that can carry OpenRouter; both read `OPENROUTER_API_KEY` and take `openrouter/<slug>`. */
+export const OPENROUTER_AGENTS = ['opencode', 'pi'] as const
+export type OpenRouterAgent = (typeof OPENROUTER_AGENTS)[number]
+
+export const OPENROUTER_AGENT_LABELS: Record<OpenRouterAgent, string> = {
+  opencode: 'OpenCode',
+  pi: 'Pi'
+}
+
+/** Older settings have no choice stored; they keep running OpenCode. */
+export function normalizeOpenRouterAgent(value: unknown): OpenRouterAgent {
+  return value === 'pi' ? 'pi' : 'opencode'
+}
 
 export const AI_LABELS: Record<AiProvider, string> = {
   claude: 'Claude',
@@ -82,8 +99,8 @@ export function isAiProvider(value: unknown): value is AiProvider {
   return typeof value === 'string' && (AI_PROVIDERS as readonly string[]).includes(value)
 }
 
-export function cliFor(provider: AiProvider): AiCli {
-  return provider === 'openrouter' ? 'opencode' : provider
+export function cliFor(provider: AiProvider, via: OpenRouterAgent = 'opencode'): AiCli {
+  return provider === 'openrouter' ? via : provider
 }
 
 export function usesOpenRouterEnv(provider: AiProvider): boolean {
@@ -224,14 +241,22 @@ function resumeArgv(flag: string, resume: string | undefined): string[] {
 
 /** OMP has no read-only sandbox, so this allowlist — inspection only, no bash/edit/write — is the gate. */
 const OMP_READONLY_TOOLS = 'read,glob,grep,lsp'
+/** Pi has no sandbox or approval prompts either; its gate is the same kind of allowlist. */
+const PI_READONLY_TOOLS = 'read,grep,find,ls'
+const PI_HINT = 'Install pi (npm i -g @mariozechner/pi-coding-agent) to run OpenRouter through Pi.'
 
 /**
  * Non-interactive argv for each CLI. Cursor runs in ask mode with plain
  * text so a review step returns a string instead of Agent "ACT" chrome.
  * `--force` still auto-approves read tools so it cannot stall on a prompt.
  */
-export function aiCommand(provider: AiProvider, prompt: string, model?: string): AiCommand {
-  const cli = cliFor(provider)
+export function aiCommand(
+  provider: AiProvider,
+  prompt: string,
+  model?: string,
+  via?: OpenRouterAgent
+): AiCommand {
+  const cli = cliFor(provider, via)
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
   switch (cli) {
     case 'codex':
@@ -263,6 +288,13 @@ export function aiCommand(provider: AiProvider, prompt: string, model?: string):
         // --auto-approve keeps it from waiting on an approval it can never receive.
         args: withModel(['-p', '--auto-approve', '--tools', OMP_READONLY_TOOLS, prompt], passed),
         hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to run OMP steps.'
+      }
+    case 'pi':
+      return {
+        bins: ['pi'],
+        // Pi never asks for approval, so no auto-approve flag exists or is needed.
+        args: withModel(['-p', '--tools', PI_READONLY_TOOLS, prompt], passed),
+        hint: PI_HINT
       }
     case 'claude':
       return {
@@ -391,6 +423,20 @@ function managedOmpCommand(prompt: string, passed: string | undefined, plan: boo
   }
 }
 
+function managedPiCommand(prompt: string, passed: string | undefined, plan: boolean, tools: string | undefined): AiCommand {
+  return {
+    bins: ['pi'],
+    // `--mode json` is non-interactive on its own. Plan defaults to the
+    // inspection-only allowlist, exactly like OMP.
+    args: withModel(
+      ['--mode', 'json', ...toolsArgv(tools ?? (plan ? PI_READONLY_TOOLS : undefined)), prompt],
+      passed
+    ),
+    hint: PI_HINT,
+    stream: 'ndjson'
+  }
+}
+
 function managedClaudeCommand(
   prompt: string,
   passed: string | undefined,
@@ -441,19 +487,26 @@ function managedClaudeCommand(
  * both run in `stream-json` and are decoded by `shared/agent-stream.ts`.
  * Codex also emits NDJSON when passed `--json`; decoding it lets managed Chat
  * render command, file, MCP, and web-search activity as tool cards.
- * OpenCode (and OpenRouter, which rides it) do the same with `--format json`,
- * and OMP with `--mode json`.
+ * OpenCode does the same with `--format json`, and OMP and pi with `--mode json`;
+ * OpenRouter rides whichever of OpenCode or pi `opts.via` names.
  *
  * `opts.resume` continues the CLI's own saved conversation (see
- * `shared/agent-context.ts`). OMP has no headless resume and ignores it.
+ * `shared/agent-context.ts`). OMP and pi have no headless resume and ignore it.
  */
 export function managedAiCommand(
   provider: AiProvider,
   prompt: string,
   model?: string,
-  opts?: { jsonFormat?: boolean; mode?: AgentMode; tools?: string[]; webSearch?: boolean; resume?: string }
+  opts?: {
+    jsonFormat?: boolean
+    mode?: AgentMode
+    tools?: string[]
+    webSearch?: boolean
+    via?: OpenRouterAgent
+    resume?: string
+  }
 ): AiCommand {
-  const cli = cliFor(provider)
+  const cli = cliFor(provider, opts?.via)
   const resume = opts?.resume?.trim() || undefined
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
   const jsonFormat = opts?.jsonFormat !== false
@@ -468,6 +521,8 @@ export function managedAiCommand(
       return managedOpencodeCommand(prompt, passed, plan, jsonFormat, resume)
     case 'omp':
       return managedOmpCommand(prompt, passed, plan, tools)
+    case 'pi':
+      return managedPiCommand(prompt, passed, plan, tools)
     case 'claude':
       return managedClaudeCommand(prompt, passed, plan, tools, resume)
   }
@@ -486,9 +541,13 @@ export function aiFixPrompt(reportPath = FAILURE_REPORT_REL): string {
  * The prompt only ever names a fixed path, so there is nothing to quote-escape;
  * everything about the failure lives in the report file itself.
  */
-export function aiFixCommand(provider: AiProvider, reportPath = FAILURE_REPORT_REL): string {
+export function aiFixCommand(
+  provider: AiProvider,
+  reportPath = FAILURE_REPORT_REL,
+  via?: OpenRouterAgent
+): string {
   const ask = aiFixPrompt(reportPath)
-  switch (cliFor(provider)) {
+  switch (cliFor(provider, via)) {
     case 'codex':
       return `codex "${ask}"`
     case 'cursor':
@@ -499,14 +558,16 @@ export function aiFixCommand(provider: AiProvider, reportPath = FAILURE_REPORT_R
       return `opencode run "${ask}"`
     case 'omp':
       return `omp "${ask}"`
+    case 'pi':
+      return `pi "${ask}"`
     case 'claude':
       return `claude "${ask}"`
   }
 }
 
 /** Interactive CLI entry point for a dedicated Terminal agent session. */
-export function interactiveAiCommand(provider: AiProvider): string {
-  switch (cliFor(provider)) {
+export function interactiveAiCommand(provider: AiProvider, via?: OpenRouterAgent): string {
+  switch (cliFor(provider, via)) {
     case 'codex':
       return 'codex'
     case 'cursor':
@@ -515,6 +576,8 @@ export function interactiveAiCommand(provider: AiProvider): string {
       return 'opencode'
     case 'omp':
       return 'omp'
+    case 'pi':
+      return 'pi'
     case 'claude':
       return 'claude'
   }

@@ -66,7 +66,7 @@ import {
   mandatoryPipelines,
   mergeWithMandatory
 } from '../shared/mandatory'
-import { pipelineSelectionState } from '../shared/jev'
+import { errorMessage, pipelineSelectionState } from '../shared/jev'
 import {
   defaultPlanSelection,
   observeToolUse,
@@ -78,6 +78,7 @@ import {
 } from '../shared/tool-policy'
 import { plainText } from '../shared/terminal'
 import { aiEnv, resolveBinFrom } from './bin'
+import { openRouterAgent } from './openrouter-agent'
 import { backoffWait } from './backoff'
 import { killPidTree } from './kill'
 import { logAgentFailure } from './agent-failure-log'
@@ -240,7 +241,12 @@ function shouldRetryPlainOpenCode(
   provider: AiProvider,
   diagnostics: string
 ): boolean {
-  return !plain && exit !== 0 && cliFor(provider) === 'opencode' && isUnknownJsonFormatError(diagnostics)
+  return (
+    !plain &&
+    exit !== 0 &&
+    cliFor(provider, openRouterAgent()) === 'opencode' &&
+    isUnknownJsonFormatError(diagnostics)
+  )
 }
 
 /**
@@ -617,7 +623,7 @@ export class AgentController {
     task.running = true
     task.cancelled = false
     task.abort = new AbortController()
-    const resume = resumableSession(task.context, cliFor(task.request.provider), task.request.cwd)
+    const resume = resumableSession(task.context, cliFor(task.request.provider, openRouterAgent()), task.request.cwd)
     let handoff = task.context.handoff
     if (resume) {
       this.status(task, 'working', 0, 'Writing a handoff note for a fresh start')
@@ -896,7 +902,7 @@ export class AgentController {
   private recordSession(task: Task, provider: AiProvider, id: string): void {
     if (task.disposeWhenIdle) return
     const current = task.context.session
-    const cli = cliFor(provider)
+    const cli = cliFor(provider, openRouterAgent())
     if (current?.cli === cli && current.id === id && current.cwd === task.request.cwd) return
     task.context = { ...task.context, session: { cli, id, cwd: task.request.cwd } }
     this.emitContext(task)
@@ -931,7 +937,7 @@ export class AgentController {
 
   private recordUsage(task: Task, provider: AiProvider, model: string | undefined, reading: ContextUsage): void {
     if (task.disposeWhenIdle || !(reading.tokens > 0)) return
-    const window = reading.window ?? knownContextWindow(cliFor(provider), model)
+    const window = reading.window ?? knownContextWindow(cliFor(provider, openRouterAgent()), model)
     const usage: ContextUsage = { tokens: reading.tokens, ...(window ? { window } : {}) }
     if (task.usage?.tokens === usage.tokens && task.usage.window === usage.window) return
     task.usage = usage
@@ -1145,7 +1151,7 @@ export class AgentController {
   ): Promise<ToolPolicy> {
     const mode = task.request.mode === 'plan' ? 'plan' : 'build'
     if (task.toolSelection && task.toolSelectionAttempt === attempt) {
-      return toolPolicyFor(task.request.provider, task.toolSelection)
+      return toolPolicyFor(task.request.provider, task.toolSelection, openRouterAgent())
     }
     const state = toolSelectionState({
       task: task.request.prompt,
@@ -1159,7 +1165,7 @@ export class AgentController {
       (mode === 'plan' ? defaultPlanSelection() : { kind: 'fallback-full', reason: 'jev-unavailable' })
     task.toolSelection = resolved
     task.toolSelectionAttempt = attempt
-    return toolPolicyFor(task.request.provider, resolved)
+    return toolPolicyFor(task.request.provider, resolved, openRouterAgent())
   }
 
   /** Diagnostic-only: log omitted-family tool cards without killing the run. */
@@ -1362,7 +1368,7 @@ export class AgentController {
     )
     // Decided per run: a fallback or a provider switch since the opening was
     // chosen means this CLI has no session and needs the rebuilt history.
-    const resume = resumableSession(task.context, cliFor(task.request.provider), task.request.cwd)
+    const resume = resumableSession(task.context, cliFor(task.request.provider, openRouterAgent()), task.request.cwd)
     const prompt = this.prompt(task, opening, resume !== undefined)
     // What the agent said, which is what the markers are read from, and
     // everything it printed, which is where provider failures show up.
@@ -1414,7 +1420,7 @@ export class AgentController {
       task,
       'failed',
       attempt,
-      `Agent stopped: ${error instanceof Error ? error.message : String(error)}`
+      `Agent stopped: ${errorMessage(error)}`
     )
     this.releaseIfDisposed(task)
   }
@@ -1530,14 +1536,16 @@ export class AgentController {
     opts?: { tools?: string[]; webSearch?: boolean; session?: AgentSessionIo }
   ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
+    const via = openRouterAgent()
     const spec = managedAiCommand(task.request.provider, prompt, task.request.model, {
       jsonFormat: !plain,
+      via,
       mode: task.request.mode,
       ...(opts?.tools?.length ? { tools: opts.tools } : {}),
       ...(opts?.webSearch ? { webSearch: true } : {}),
       ...(opts?.session?.resume ? { resume: opts.session.resume } : {})
     })
-    const env = aiEnv(task.request.provider)
+    const env = aiEnv(task.request.provider, via)
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       sink.text(`farol: ${spec.hint}\n`)
@@ -1576,12 +1584,14 @@ export class AgentController {
 
     return new Promise((resolve) => {
       let settled = false
-      const done = (code: number): void => {
+      const done = (exit: number): void => {
         if (settled) return
         settled = true
         task.process = null
+        let code = exit
         if (parser) {
           consume(parser.flush())
+          if (code === 0 && parser.failed) code = 1
           if (parser.sessionId) opts?.session?.onSession(parser.sessionId)
           const tail = diagnostics.trim()
           if (code !== 0 && tail) sink.text(`${tail.slice(-SCAN_WINDOW)}\n`)
@@ -1597,7 +1607,7 @@ export class AgentController {
           stdio: ['ignore', 'pipe', 'pipe']
         })
       } catch (error) {
-        sink.text(`farol: ${error instanceof Error ? error.message : String(error)}\n`)
+        sink.text(`farol: ${errorMessage(error)}\n`)
         done(127)
         return
       }

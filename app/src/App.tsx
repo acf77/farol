@@ -9,23 +9,25 @@ import {
   type SetStateAction
 } from 'react'
 import { createPortal } from 'react-dom'
-import type {
-  AgentMode,
-  AgentTaskEvent,
-  AiProvider,
-  AppSettings,
-  GitInfo,
-  Pipeline,
-  PipelineNode,
-  ProviderUsage,
-  Project,
-  ProjectSession,
-  RunEvent,
-  RunOrigin,
-  StepState,
-  WorktreeRequest
+import {
+  AGENT_LIVE,
+  type AgentMode,
+  type AgentTaskEvent,
+  type AiProvider,
+  type AppSettings,
+  type GitInfo,
+  type Pipeline,
+  type PipelineNode,
+  type ProviderUsage,
+  type Project,
+  type ProjectSession,
+  type RunEvent,
+  type RunOrigin,
+  type StepState,
+  type WorktreeRequest
 } from '@shared/types'
 import { AI_LABELS, aiFixPrompt, normalizeMode } from '@shared/ai'
+import { trimSlashes } from '@shared/project-groups'
 import { restoredAgentContext } from '@shared/agent-context'
 import { isFinishedPlan, sanitizePlan } from '@shared/questions'
 import {
@@ -42,7 +44,7 @@ import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
 import { parallelAsClashIds, sanitizeAs, topoSort } from '@shared/graph'
 import { clearIndent, emptyTerm, ensureNewline, setIndent, trimTo, write, writeLine } from './ansi'
 import { agentPaneFor, chatOwnerFor, chatTabFor, trimAgentMessages } from './chat-context'
-import { fmtDuration, pipelineActivityText, projectRunChat } from './pipeline-chat'
+import { fmtDuration, pipelineActivityText, projectRunChat, upsertMessage } from './pipeline-chat'
 import { bindLatestRunId, bindRunStart, runOutcomeLabel, syncAgentPipelineRun } from './run-slot'
 import { CHROME_ROW, PANEL_INSET } from './components/side-panel'
 import { leaf, leaves, removeLeaf, setSize, splitLeaf } from './layout'
@@ -93,6 +95,33 @@ const MAX_DETAIL_LOGS = 40
 const STREAM_FLUSH_MS = 60
 /** Drop oldest run/agent events once a flush window falls this far behind. */
 const MAX_STREAM_QUEUE = 400
+
+function coalesceAndFlush<T>(opts: {
+  same: (last: T, incoming: T) => boolean
+  merge: (last: T, incoming: T) => void
+  flush: (batch: T[]) => void
+}): { push: (item: T) => void; dispose: () => void } {
+  const queue: T[] = []
+  let timer: number | null = null
+  const run = (): void => {
+    timer = null
+    if (!queue.length) return
+    opts.flush(queue.splice(0))
+  }
+  return {
+    push(item) {
+      const last = queue[queue.length - 1]
+      if (last && opts.same(last, item)) opts.merge(last, item)
+      else queue.push(item)
+      if (queue.length > MAX_STREAM_QUEUE) queue.splice(0, queue.length - MAX_STREAM_QUEUE)
+      if (timer === null) timer = window.setTimeout(run, STREAM_FLUSH_MS)
+    },
+    dispose() {
+      if (timer !== null) window.clearTimeout(timer)
+      timer = null
+    }
+  }
+}
 /** Past this a single streamed turn starts a new bubble rather than growing. */
 const MAX_MESSAGE_CHARS = 40_000
 /** Per-message ceiling on what a restored session carries back. */
@@ -314,15 +343,10 @@ function scopeSessionPanes(sess: ProjectSession, projectPath: string): ProjectSe
   }
 }
 
-function toSession(
-  tabs: Tab[],
-  activeTab: string,
-  sidebarW: number,
-  selId: string | null
-): ProjectSession {
+function toSession(tabs: Tab[], activeTab: string, selId: string | null): ProjectSession {
   const savedTabs = tabs.filter((t) => t.kind === 'shell' || t.kind === 'agent')
   return {
-    sidebarW,
+    sidebarW: 300,
     selId,
     activeTab: savedTabs.some((t) => t.id === activeTab) ? activeTab : (savedTabs[0]?.id ?? ''),
     tabs: savedTabs.map((t) => ({
@@ -383,9 +407,7 @@ function cancelAgents(tabList: Tab[]): void {
   }
 }
 
-function normPath(p: string): string {
-  return p.replace(/[/\\]+$/, '')
-}
+const normPath = trimSlashes
 
 /**
  * Absolute path shown the way the spec shows it — home-relative. The home
@@ -445,17 +467,14 @@ function agentChatTab(owner: Tab, project: Project, branch: string, settings: Ap
 }
 
 function appendAgentMessages(pane: AgentPane, messages: AgentMessage[]): AgentPane {
-  return {
-    ...pane,
-    messages: trimAgentMessages(messages.map(sanitizeAgentMessage))
-  }
+  return { ...pane, messages: trimAgentMessages(messages) }
 }
 
 function applyAgentOutputEvent(
   pane: AgentPane,
   event: Extract<AgentTaskEvent, { kind: 'output' }>
 ): AgentPane {
-  const chunk = asText(event.chunk)
+  const chunk = event.chunk
   const messages = [...pane.messages]
   const last = messages[messages.length - 1]
   // Only plain prose keeps growing; a card or an oversized turn is closed.
@@ -464,12 +483,9 @@ function applyAgentOutputEvent(
     !last.tool &&
     !last.pipeline &&
     !last.question &&
-    asText(last.text).length < MAX_MESSAGE_CHARS
+    last.text.length < MAX_MESSAGE_CHARS
   ) {
-    messages[messages.length - 1] = planMessage(
-      { ...last, text: asText(last.text) + chunk },
-      pane.mode
-    )
+    messages[messages.length - 1] = planMessage({ ...last, text: last.text + chunk }, pane.mode)
   } else {
     messages.push(planMessage({ role: 'assistant', text: chunk }, pane.mode))
   }
@@ -497,34 +513,22 @@ function applyAgentQuestionEvent(
         : event.questions.map((q) => q.header).join(', '),
     question: card
   }
-  const messages = [...pane.messages]
-  let existing = -1
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].question?.requestId === event.requestId) {
-      existing = i
-      break
-    }
-  }
-  if (existing >= 0) messages[existing] = message
-  else messages.push(message)
-  return appendAgentMessages(pane, messages)
+  return appendAgentMessages(
+    pane,
+    upsertMessage(pane.messages, (item) => item.question?.requestId === event.requestId, message)
+  )
 }
 
 function applyAgentToolEvent(
   pane: AgentPane,
   event: Extract<AgentTaskEvent, { kind: 'tool' }>
 ): AgentPane {
-  const messages = [...pane.messages]
-  let existing = -1
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].tool?.toolId === event.toolId) {
-      existing = i
-      break
-    }
-  }
+  const existing = [...pane.messages]
+    .reverse()
+    .find((item) => item.tool?.toolId === event.toolId)
   // The finishing event names the tool but repeats none of its input,
   // so the card it closes keeps the detail it was opened with.
-  const card = existing >= 0 ? messages[existing].tool! : { toolId: event.toolId, name: event.name }
+  const card = existing?.tool ?? { toolId: event.toolId, name: event.name }
   const tool = {
     ...card,
     name: event.name || card.name,
@@ -536,9 +540,10 @@ function applyAgentToolEvent(
     text: `${tool.name}${tool.detail ? ` — ${tool.detail}` : ''}`,
     tool
   }
-  if (existing >= 0) messages[existing] = message
-  else messages.push(message)
-  return appendAgentMessages(pane, messages)
+  return appendAgentMessages(
+    pane,
+    upsertMessage(pane.messages, (item) => item.tool?.toolId === event.toolId, message)
+  )
 }
 
 function applyAgentPipelineEvent(
@@ -572,18 +577,14 @@ function applyAgentPipelineEvent(
     text: pipelineActivityText(pipeline),
     pipeline
   }
-  const messages = [...pane.messages]
-  let existing = -1
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const card = messages[i].pipeline
-    if (card?.pipelineId === pipelineId && card.startedAt === event.startedAt) {
-      existing = i
-      break
-    }
-  }
-  if (existing >= 0) messages[existing] = message
-  else messages.push(message)
-  return appendAgentMessages(pane, messages)
+  return appendAgentMessages(
+    pane,
+    upsertMessage(
+      pane.messages,
+      (item) => item.pipeline?.pipelineId === pipelineId && item.pipeline.startedAt === event.startedAt,
+      message
+    )
+  )
 }
 
 function applyAgentStatusEvent(
@@ -592,7 +593,7 @@ function applyAgentStatusEvent(
 ): AgentPane {
   const announce =
     event.status !== 'validating' && event.status !== 'completed' && event.status !== 'asking'
-  const message = asText(event.message)
+  const message = event.message
   return {
     ...pane,
     status: event.status,
@@ -616,7 +617,7 @@ function applyAgentEvent(
   if (event.kind === 'assistant') {
     return appendAgentMessages(pane, [
       ...pane.messages,
-      planMessage({ role: 'assistant', text: asText(event.text) }, pane.mode)
+      planMessage({ role: 'assistant', text: event.text }, pane.mode)
     ])
   }
   if (event.kind === 'tool') return applyAgentToolEvent(pane, event)
@@ -624,14 +625,14 @@ function applyAgentEvent(
   if (event.kind === 'user') {
     return appendAgentMessages(pane, [
       ...pane.messages,
-      { role: 'user', text: asText(event.text), at: Date.now() }
+      { role: 'user', text: event.text, at: Date.now() }
     ])
   }
   if (event.kind === 'provider') {
     // A new provider starts its own session; the old reading no longer applies.
     return appendAgentMessages(
       { ...pane, provider: event.provider, model: event.model, mode: event.mode, usage: undefined },
-      [...pane.messages, { role: 'system', text: asText(event.reason) }]
+      [...pane.messages, { role: 'system', text: event.reason }]
     )
   }
   if (event.kind === 'context') return { ...pane, context: event.context }
@@ -875,422 +876,27 @@ function resolveRunBranch(project: Project | null, active: Tab | undefined, git:
   return git.branch || '—'
 }
 
-interface ProjectWorkspaceViewProps {
-  liquid: boolean
-  project: Project
-  visible: boolean
-  view: View
-  setView: Dispatch<SetStateAction<View>>
-  newShellTab: () => void
-  recents: Project[]
-  menuOpen: boolean
-  setMenuOpen: Dispatch<SetStateAction<boolean>>
-  setRecents: Dispatch<SetStateAction<Project[]>>
-  onOpenProject: () => void
-  onOpenPath: (path: string) => void
-  onCloseProject: () => void
-  updateVersion: string | null
-  settings: AppSettings
-  setSettings: Dispatch<SetStateAction<AppSettings>>
-  usage: ProviderUsage[]
-  onRefreshUsage: () => void
-  chatOwner: Tab | undefined
-  chatPane: AgentPane | null
-  pipelines: Pipeline[]
-  sendAgentMessage: (
-    text: string,
-    providerOverride?: AppSettings['agent'],
-    ownerOverride?: Tab,
-    cwdOverride?: string,
-    modelOverride?: string | null,
-    modeOverride?: AgentMode
-  ) => void
-  cancelAgent: () => void
-  freshStartChat: () => void
-  setAgentProvider: (provider: AppSettings['agent'], model?: string) => void
-  setAgentMode: (mode: AgentMode) => void
-  executePlan: (index: number) => void
-  showTerminal: (tabId?: string, mode?: 'split' | 'terminal') => void
-  requestNewChat: () => void
-  clearChatConfirm: boolean
-  clearChat: (hadMessages?: boolean) => void
-  setClearChatConfirm: Dispatch<SetStateAction<boolean>>
-  chatClearedNotice: boolean
-  setChatClearedNotice: Dispatch<SetStateAction<boolean>>
-  composerRef: RefObject<HTMLTextAreaElement>
-  termTabs: Tab[]
-  active: Tab | undefined
-  runBranch: string
-  cwdLabel: string
-  setActiveTab: Dispatch<SetStateAction<string>>
-  closeTab: (id: string) => void
-  patchTab: (tabId: string, fn: (t: Tab) => Tab) => void
-  closePane: (tabId: string, paneId: string) => void
-  splitPane: (dir: 'row' | 'col') => void
-  branchRuns: Record<string, RunState>
-  detailLogs: DetailLog[]
-  selected: Pipeline | null
-  setSelId: Dispatch<SetStateAction<string | null>>
-  setEditor: Dispatch<SetStateAction<EditorState | null>>
-  runPipeline: (pipelineId: string) => void
-  stopPipeline: (id: string, branch?: string) => void
-  deletePipeline: (id: string) => void
-  openRunLogs: () => void
-  pipesCollapsed: boolean
-  setPipesCollapsed: Dispatch<SetStateAction<boolean>>
-  gitOpen: boolean
-  onGitOpenChange: Dispatch<SetStateAction<boolean>>
-  gitAnchorRef: RefObject<HTMLButtonElement>
-  gitPanel: ReturnType<typeof useGitPanel>
-  git: GitInfo
-  paletteOpen: boolean
-  paletteItems: PaletteItem[]
-  setPaletteOpen: Dispatch<SetStateAction<boolean>>
-  settingsOpen: boolean
-  setSettingsOpen: Dispatch<SetStateAction<boolean>>
-  newTabOpen: boolean
-  creating: boolean
-  newTabError: string | null
-  setNewTabOpen: Dispatch<SetStateAction<boolean>>
-  openExistingWorktree: (branch: string) => void
-  createBranchProject: (req: WorktreeRequest) => void
-  editor: EditorState | null
-  saveEditor: () => void
-  code: ReturnType<typeof useCodeWorkspace>
+function togglePathFlag(
+  set: Dispatch<SetStateAction<ReadonlySet<string>>>,
+  projectPath: string,
+  on: boolean
+): void {
+  set((prev) => {
+    if (on === prev.has(projectPath)) return prev
+    const next = new Set(prev)
+    if (on) next.add(projectPath)
+    else next.delete(projectPath)
+    return next
+  })
 }
 
-function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
-  const {
-    liquid,
-    project,
-    visible,
-    view,
-    setView,
-    newShellTab,
-    recents,
-    menuOpen,
-    setMenuOpen,
-    setRecents,
-    onOpenProject,
-    onOpenPath,
-    onCloseProject,
-    updateVersion,
-    settings,
-    setSettings,
-    usage,
-    onRefreshUsage,
-    chatOwner,
-    chatPane,
-    pipelines,
-    sendAgentMessage,
-    cancelAgent,
-    freshStartChat,
-    setAgentProvider,
-    setAgentMode,
-    executePlan,
-    showTerminal,
-    requestNewChat,
-    clearChatConfirm,
-    clearChat,
-    setClearChatConfirm,
-    chatClearedNotice,
-    setChatClearedNotice,
-    composerRef,
-    termTabs,
-    active,
-    runBranch,
-    cwdLabel,
-    setActiveTab,
-    closeTab,
-    patchTab,
-    closePane,
-    splitPane,
-    branchRuns,
-    detailLogs,
-    selected,
-    setSelId,
-    setEditor,
-    runPipeline,
-    stopPipeline,
-    deletePipeline,
-    openRunLogs,
-    pipesCollapsed,
-    setPipesCollapsed,
-    gitOpen,
-    onGitOpenChange,
-    gitAnchorRef,
-    gitPanel,
-    git,
-    paletteOpen,
-    paletteItems,
-    setPaletteOpen,
-    settingsOpen,
-    setSettingsOpen,
-    newTabOpen,
-    creating,
-    newTabError,
-    setNewTabOpen,
-    openExistingWorktree,
-    createBranchProject,
-    editor,
-    saveEditor,
-    code
-  } = props
-  const defaultChoice = modeDefault(settings, 'build')
-  const worktreeRepoName = useMemo(
-    () => primaryRepoFolderName(project.path, git.worktrees ?? []),
-    [project.path, git.worktrees]
-  )
-
-  return (
-    <div
-      style={{
-        width: '100%',
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        background: liquid ? G.appBg : GRADIENT_BG,
-        color: C.text,
-        fontFamily: UI,
-        fontSize: 13,
-        WebkitFontSmoothing: 'antialiased',
-        userSelect: 'none',
-        overflow: 'hidden'
-      }}
-    >
-      <Toolbar
-        liquid={liquid}
-        project={project}
-        view={view}
-        onView={setView}
-        onNewTerminal={newShellTab}
-        recents={recents}
-        menuOpen={menuOpen}
-        menuDisabled={settingsOpen || editor !== null}
-        onMenuToggle={() => {
-          setMenuOpen((v) => !v)
-          void api.project.recents().then(setRecents)
-        }}
-        onMenuClose={() => setMenuOpen(false)}
-        onOpenProject={onOpenProject}
-        onOpenRecent={onOpenPath}
-        onCloseProject={onCloseProject}
-        updateVersion={updateVersion}
-        onInstallUpdate={() => api.update.install()}
-        settings={settings}
-        onSettings={(next) => {
-          setSettings(next)
-          void api.settings.save(next)
-        }}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
-
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 8, padding: PANEL_INSET }}>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 8 }}>
-          {showsChat(view) && (
-            <ErrorBoundary compact>
-              <ChatPane
-                key={`${project.path}:${chatOwner?.id ?? 'chat'}`}
-                pane={chatPane}
-                pipelines={pipelines}
-                view={view}
-                projectPath={project.path}
-                defaultProvider={defaultChoice.agent}
-                defaultModel={defaultChoice.model}
-                settings={settings}
-                usage={usage}
-                onRefreshUsage={onRefreshUsage}
-                onMessage={(text, provider, model, mode) =>
-                  sendAgentMessage(text, provider, undefined, undefined, model ?? null, mode)
-                }
-                onAnswer={(requestId, answers) => {
-                  if (chatPane) void api.agent.answer(chatPane.taskId, requestId, answers)
-                }}
-                onCancel={cancelAgent}
-                onFreshStart={freshStartChat}
-                onProviderChange={setAgentProvider}
-                onModeChange={setAgentMode}
-                onExecutePlan={executePlan}
-                onOpenPipeline={(tabId) => showTerminal(tabId, 'terminal')}
-                onNewChat={requestNewChat}
-                clearChatConfirm={clearChatConfirm}
-                onConfirmClearChat={() => clearChat(true)}
-                onCancelClearChat={() => setClearChatConfirm(false)}
-                chatClearedNotice={chatClearedNotice}
-                onDismissChatCleared={() => setChatClearedNotice(false)}
-                composerRef={composerRef}
-              />
-            </ErrorBoundary>
-          )}
-          {/* Keep terminals mounted in Chat view so PTY scrollback is not lost. */}
-          <div
-            style={{
-              flex: view === 'split' ? '1 1 50%' : '1 1 100%',
-              minWidth: 0,
-              minHeight: 0,
-              display: showsTerminal(view) ? 'flex' : 'none',
-              flexDirection: 'column'
-            }}
-            aria-hidden={!showsTerminal(view)}
-          >
-            <TerminalPane
-              key={project.path}
-              tabs={termTabs}
-              activeId={active?.id ?? ''}
-              view={showsTerminal(view) ? view : 'terminal'}
-              workspaceVisible={visible && showsTerminal(view)}
-              branch={runBranch}
-              cwd={cwdLabel}
-              onSelect={setActiveTab}
-              onClose={closeTab}
-              onNew={newShellTab}
-              onFocusPane={(tabId, paneId) =>
-                patchTab(tabId, (tab) => (tab.focus === paneId ? tab : { ...tab, focus: paneId }))
-              }
-              onClosePane={closePane}
-              onResize={(tabId, nodeId, size) =>
-                patchTab(tabId, (tab) => ({
-                  ...tab,
-                  root: setSize(tab.root, nodeId, size)
-                }))
-              }
-              onSplitRight={() => splitPane('row')}
-              onSplitDown={() => splitPane('col')}
-              canSplit={!!active && active.kind === 'shell' && active.panes[active.focus]?.kind === 'shell'}
-            />
-          </div>
-          {view === 'code' && (
-            <ErrorBoundary compact>
-              <CodePane
-                projectPath={project.path}
-                tabs={code.tabs}
-                activePath={code.activePath}
-                active={code.active}
-                notice={code.notice}
-                onOpen={(path) => void code.openFile(path)}
-                onSelect={code.setActive}
-                onChange={code.updateContent}
-                onClose={code.requestClose}
-                onSave={() => void code.saveActive()}
-                onRevert={code.revertActive}
-                onDiscard={code.confirmClose}
-                onOverwrite={() => void code.overwriteSave()}
-                onCancelNotice={code.cancelNotice}
-              />
-            </ErrorBoundary>
-          )}
-        </div>
-
-        <Sidebar
-          pipelines={pipelines}
-          runs={branchRuns}
-          logs={detailLogs}
-          selected={selected}
-          onSelect={(id) => {
-            setSelId(id)
-            setEditor(null)
-          }}
-          onNew={() => setEditor({ id: null, name: '', nodes: [blankNode()] })}
-          onRun={runPipeline}
-          onStop={(id) => stopPipeline(id, runBranch)}
-          onEdit={(p) =>
-            setEditor({
-              id: p.id,
-              name: p.name,
-              nodes: p.nodes.map((n) => ({ ...n })),
-              ...(p.mandatory === true ? { mandatory: true } : {}),
-              ...(p.autoSelectable === true ? { autoSelectable: true } : {}),
-              ...(p.gitHooks?.length ? { gitHooks: p.gitHooks } : {})
-            })
-          }
-          onDelete={deletePipeline}
-          onOpenTerminal={openRunLogs}
-          collapsed={pipesCollapsed}
-          onSetCollapsed={setPipesCollapsed}
-        />
-      </div>
-
-      <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
-      {settingsOpen && visible && (
-        <SettingsPage
-          settings={settings}
-          onSettings={(next) => {
-            setSettings(next)
-            void api.settings.save(next)
-          }}
-          onAdoptSettings={setSettings}
-          onClose={() => setSettingsOpen(false)}
-        />
-      )}
-
-      {newTabOpen && (
-        <NewTabDialog
-          liquid={liquid}
-          git={git}
-          projectPath={project.path}
-          repoName={worktreeRepoName}
-          busy={creating}
-          error={newTabError}
-          onCancel={() => setNewTabOpen(false)}
-          onOpenExisting={openExistingWorktree}
-          onCreate={(req) => void createBranchProject(req)}
-        />
-      )}
-
-      {editor && visible && createPortal(
-        <div
-          className="bf-page-overlay"
-          style={{
-            position: 'fixed',
-            inset: `${CHROME_ROW}px 0 0`,
-            zIndex: 80,
-            display: 'flex',
-            flexDirection: 'column',
-            background: '#181817'
-          }}
-        >
-          <PipelineCanvas
-            editor={editor}
-            settings={settings}
-            keyboardEnabled={!settingsOpen}
-            onChange={setEditor}
-            onCancel={() => setEditor(null)}
-            onSave={saveEditor}
-          />
-        </div>,
-        document.body
-      )}
-
-      {git.isRepo && (
-        <GitPane
-          branch={git.branch}
-          branches={git.branches}
-          remotes={git.remotes ?? []}
-          provider={settings.commitMessage.agent}
-          model={settings.commitMessage.model}
-          settings={settings}
-          onCommitMessageModelChange={(provider, model) => {
-            const next = withCommitMessageModel(settings, provider, model)
-            setSettings(next)
-            void api.settings.save(next)
-          }}
-          {...gitPanel}
-          open={gitOpen && visible}
-          onClose={() => onGitOpenChange(false)}
-          anchorRef={gitAnchorRef}
-        />
-      )}
-    </div>
-  )
-}
+type WorkspaceActionKind = 'branch' | 'chat'
 
 interface ProjectWorkspaceProps {
   project: Project
   visible: boolean
-  /** Incremented when the rail asks this project to open the branch dialog. */
-  branchDialogNonce: number
-  /** Incremented when the rail asks this project to clear its chat. */
-  newChatNonce: number
+  /** Rail poke for a keep-mounted workspace — nonce 0 means "not for this path". */
+  workspaceAction: { kind: WorkspaceActionKind; nonce: number }
   gitOpen: boolean
   onGitOpenChange: Dispatch<SetStateAction<boolean>>
   gitAnchorRef: RefObject<HTMLButtonElement>
@@ -1309,8 +915,7 @@ interface ProjectWorkspaceProps {
 export function ProjectWorkspace({
   project,
   visible,
-  branchDialogNonce,
-  newChatNonce,
+  workspaceAction,
   gitOpen,
   onGitOpenChange,
   gitAnchorRef,
@@ -1382,9 +987,6 @@ export function ProjectWorkspace({
     return () => onGitControlChange(null)
   }, [visible, git.isRepo, gitPanel.status, gitPanel.github, gitPanel.gitAction, gitPanel.log, gitPanel.pull, onGitControlChange])
 
-  useEffect(() => {
-    if (!visible) onGitOpenChange(false)
-  }, [visible, onGitOpenChange])
   const sendToAgentRef = useRef<(branch: string, cwd: string) => void>(() => {})
   const worktreeBusy = useRef(false)
   const lastRunOut = useRef<{ paneId: string; nodeId: string } | null>(null)
@@ -1425,7 +1027,7 @@ export function ProjectWorkspace({
       if (!last) void api.session.clearLast()
       return
     }
-    void api.session.save(s.project.path, toSession(s.tabs, s.activeTab, 300, s.selId), last)
+    void api.session.save(s.project.path, toSession(s.tabs, s.activeTab, s.selId), last)
   }
 
   const nextPaneId = (): string =>
@@ -1460,12 +1062,13 @@ export function ProjectWorkspace({
   const chatTab = useMemo(() => chatTabFor(tabs, chatOwner?.id), [tabs, chatOwner])
   const chatPane = useMemo(() => agentPaneFor(chatTab), [chatTab])
 
-  const agentBusy = useMemo(() => {
-    const live = new Set(['working', 'validating', 'repairing'])
-    return tabs.some((tab) =>
-      Object.values(tab.panes).some((pane) => pane.kind === 'agent' && live.has(pane.status))
-    )
-  }, [tabs])
+  const agentBusy = useMemo(
+    () =>
+      tabs.some((tab) =>
+        Object.values(tab.panes).some((pane) => pane.kind === 'agent' && AGENT_LIVE.has(pane.status))
+      ),
+    [tabs]
+  )
 
   const runBranchForBusy = resolveRunBranch(project, active, git)
   const pipelineBusy = useMemo(() => {
@@ -1629,20 +1232,16 @@ export function ProjectWorkspace({
     setNewTabOpen(true)
   }, [project])
 
-  const branchDialogSeen = useRef(0)
+  const actionSeen = useRef(0)
   useEffect(() => {
-    if (!visible || !branchDialogNonce || branchDialogNonce === branchDialogSeen.current) return
-    branchDialogSeen.current = branchDialogNonce
-    void openBranchDialog()
-  }, [visible, branchDialogNonce, openBranchDialog])
-
-  const newChatSeen = useRef(0)
-  useEffect(() => {
-    if (!visible || !newChatNonce || newChatNonce === newChatSeen.current) return
-    newChatSeen.current = newChatNonce
-    requestNewChat()
-    setView('chat')
-  }, [visible, newChatNonce, requestNewChat])
+    if (!visible || !workspaceAction.nonce || workspaceAction.nonce === actionSeen.current) return
+    actionSeen.current = workspaceAction.nonce
+    if (workspaceAction.kind === 'branch') void openBranchDialog()
+    else {
+      requestNewChat()
+      setView('chat')
+    }
+  }, [visible, workspaceAction, openBranchDialog, requestNewChat])
 
   const openWorktreeProject = useCallback(
     async (req: WorktreeRequest): Promise<{ ok: boolean; message: string }> => {
@@ -1973,73 +1572,63 @@ export function ProjectWorkspace({
    * state update each re-rendered the entire workspace — which is what used to
    * lock the window up mid-run. Queue them and fold each window into one pass.
    */
-  const agentQueue = useRef<AgentTaskEvent[]>([])
-  const agentFlush = useRef<number | null>(null)
-
   useEffect(() => {
-    const flush = (): void => {
-      agentFlush.current = null
-      const queued = agentQueue.current
-      if (!queued.length) return
-      agentQueue.current = []
-      try {
-        const pipelineEvents = queued.filter(
-          (event): event is Extract<AgentTaskEvent, { kind: 'pipeline' }> => event.kind === 'pipeline' && !!event.runId?.startsWith('error:')
-        )
-        if (pipelineEvents.length) {
-          const proj = snapRef.current.project
-          setRuns((prev) => {
-            let next = prev
-            for (const event of pipelineEvents) {
-              const pipelineId = proj ? unscopeLocalPipelineId(proj.path, event.pipelineId) : null
-              if (!pipelineId) continue
-              const p = pipelinesRef.current.find((x) => x.id === pipelineId)
-              if (!p) continue
-              const owner = tabsRef.current.find((t) =>
-                Object.values(t.panes).some((pane) => pane.kind === 'agent' && pane.taskId === event.taskId)
-              )
-              const branch = owner && proj ? branchForTab(owner, proj.path, gitRef.current) : ''
-              if (!branch) continue
-              next = syncAgentPipelineRun(next, event, pipelineId, branch, p.nodes, fmtTime(event.startedAt))
-            }
-            return next === prev ? prev : next
+    const queue = coalesceAndFlush<AgentTaskEvent>({
+      same: (last, incoming) =>
+        incoming.kind === 'output' && last.kind === 'output' && last.taskId === incoming.taskId,
+      merge: (last, incoming) => {
+        if (last.kind === 'output' && incoming.kind === 'output') last.chunk += incoming.chunk
+      },
+      flush: (queued) => {
+        try {
+          const pipelineEvents = queued.filter(
+            (event): event is Extract<AgentTaskEvent, { kind: 'pipeline' }> =>
+              event.kind === 'pipeline' && !!event.runId?.startsWith('error:')
+          )
+          if (pipelineEvents.length) {
+            const proj = snapRef.current.project
+            setRuns((prev) => {
+              let next = prev
+              for (const event of pipelineEvents) {
+                const pipelineId = proj ? unscopeLocalPipelineId(proj.path, event.pipelineId) : null
+                if (!pipelineId) continue
+                const p = pipelinesRef.current.find((x) => x.id === pipelineId)
+                if (!p) continue
+                const owner = tabsRef.current.find((t) =>
+                  Object.values(t.panes).some((pane) => pane.kind === 'agent' && pane.taskId === event.taskId)
+                )
+                const branch = owner && proj ? branchForTab(owner, proj.path, gitRef.current) : ''
+                if (!branch) continue
+                next = syncAgentPipelineRun(next, event, pipelineId, branch, p.nodes, fmtTime(event.startedAt))
+              }
+              return next === prev ? prev : next
+            })
+          }
+          setTabs((prev) => {
+            let touched = false
+            const next = prev.map((tab) => {
+              let panes = tab.panes
+              for (const event of queued) {
+                const pane = agentPaneByTaskId(panes, event.taskId)
+                if (!pane) continue
+                const updated = applyAgentEventToPane(pane, event)
+                if (updated !== pane) panes = { ...panes, [pane.id]: updated }
+              }
+              if (panes === tab.panes) return tab
+              touched = true
+              return { ...tab, panes }
+            })
+            return touched ? next : prev
           })
+        } catch (error) {
+          console.error('[farol] agent event flush failed', error)
         }
-        setTabs((prev) => {
-          let touched = false
-          const next = prev.map((tab) => {
-            let panes = tab.panes
-            for (const event of queued) {
-              const pane = agentPaneByTaskId(panes, event.taskId)
-              if (!pane) continue
-              const updated = applyAgentEventToPane(pane, event)
-              if (updated !== pane) panes = { ...panes, [pane.id]: updated }
-            }
-            if (panes === tab.panes) return tab
-            touched = true
-            return { ...tab, panes }
-          })
-          return touched ? next : prev
-        })
-      } catch (error) {
-        console.error('[farol] agent event flush failed', error)
       }
-    }
-    const off = api.agent.onEvent((event: AgentTaskEvent) => {
-      const queue = agentQueue.current
-      const last = queue[queue.length - 1]
-      if (event.kind === 'output' && last?.kind === 'output' && last.taskId === event.taskId) {
-        last.chunk += event.chunk
-      } else {
-        queue.push(event)
-      }
-      if (queue.length > MAX_STREAM_QUEUE) queue.splice(0, queue.length - MAX_STREAM_QUEUE)
-      if (agentFlush.current === null) agentFlush.current = window.setTimeout(flush, STREAM_FLUSH_MS)
     })
+    const off = api.agent.onEvent(queue.push)
     return () => {
       off()
-      if (agentFlush.current !== null) window.clearTimeout(agentFlush.current)
-      agentFlush.current = null
+      queue.dispose()
     }
   }, [applyAgentEventToPane, agentPaneByTaskId])
 
@@ -2426,37 +2015,29 @@ export function ProjectWorkspace({
     // A talkative test suite emits output line by line, and every line used to
     // be its own render of the whole workspace. Replaying a window's worth in
     // one pass lets React batch them into a single render.
-    const queue: RunEvent[] = []
-    let timer: number | null = null
-    const flush = (): void => {
-      timer = null
-      const batch = queue.splice(0)
-      for (const event of batch) {
-        try {
-          handle(event)
-        } catch (error) {
-          console.error('[farol] run event failed', event, error)
+    const queue = coalesceAndFlush<RunEvent>({
+      same: (last, incoming) =>
+        incoming.kind === 'output' &&
+        last.kind === 'output' &&
+        last.runId === incoming.runId &&
+        last.nodeId === incoming.nodeId,
+      merge: (last, incoming) => {
+        if (last.kind === 'output' && incoming.kind === 'output') last.chunk += incoming.chunk
+      },
+      flush: (batch) => {
+        for (const event of batch) {
+          try {
+            handle(event)
+          } catch (error) {
+            console.error('[farol] run event failed', event, error)
+          }
         }
       }
-    }
-    const off = api.run.onEvent((event: RunEvent) => {
-      const last = queue[queue.length - 1]
-      if (
-        event.kind === 'output' &&
-        last?.kind === 'output' &&
-        last.runId === event.runId &&
-        last.nodeId === event.nodeId
-      ) {
-        last.chunk += event.chunk
-      } else {
-        queue.push(event)
-      }
-      if (queue.length > MAX_STREAM_QUEUE) queue.splice(0, queue.length - MAX_STREAM_QUEUE)
-      if (timer === null) timer = window.setTimeout(flush, STREAM_FLUSH_MS)
     })
+    const off = api.run.onEvent(queue.push)
     return () => {
       off()
-      if (timer !== null) window.clearTimeout(timer)
+      queue.dispose()
     }
   }, [patchPane, patchTab, pushLog])
 
@@ -2738,83 +2319,251 @@ export function ProjectWorkspace({
 
   const cwdLabel = displayPath(active?.panes[active.focus]?.cwd ?? project.path, project)
 
+  const defaultChoice = modeDefault(settings, 'build')
+  const worktreeRepoName = useMemo(
+    () => primaryRepoFolderName(project.path, git.worktrees ?? []),
+    [project.path, git.worktrees]
+  )
+
   return (
-    <ProjectWorkspaceView
-      liquid={liquid}
-      project={project}
-      visible={visible}
-      view={view}
-      setView={setView}
-      newShellTab={newShellTab}
-      recents={recents}
-      menuOpen={menuOpen}
-      setMenuOpen={setMenuOpen}
-      setRecents={setRecents}
-      onOpenProject={onOpenProject}
-      onOpenPath={onOpenPath}
-      onCloseProject={onCloseProject}
-      updateVersion={updateVersion}
-      settings={settings}
-      setSettings={setSettings}
-      usage={usage}
-      onRefreshUsage={onRefreshUsage}
-      chatOwner={chatOwner}
-      chatPane={chatPane}
-      pipelines={pipelines}
-      sendAgentMessage={sendAgentMessage}
-      cancelAgent={cancelAgent}
-      freshStartChat={freshStartChat}
-      setAgentProvider={setAgentProvider}
-      setAgentMode={setAgentMode}
-      executePlan={executePlan}
-      showTerminal={showTerminal}
-      requestNewChat={requestNewChat}
-      clearChatConfirm={clearChatConfirm}
-      clearChat={clearChat}
-      setClearChatConfirm={setClearChatConfirm}
-      chatClearedNotice={chatClearedNotice}
-      setChatClearedNotice={setChatClearedNotice}
-      composerRef={composerRef}
-      termTabs={termTabs}
-      active={active}
-      runBranch={runBranch}
-      cwdLabel={cwdLabel}
-      setActiveTab={setActiveTab}
-      closeTab={closeTab}
-      patchTab={patchTab}
-      closePane={closePane}
-      splitPane={splitPane}
-      branchRuns={branchRuns}
-      detailLogs={detailLogs}
-      selected={selected}
-      setSelId={setSelId}
-      setEditor={setEditor}
-      runPipeline={runPipeline}
-      stopPipeline={stopPipeline}
-      deletePipeline={deletePipeline}
-      openRunLogs={openRunLogs}
-      pipesCollapsed={pipesCollapsed}
-      setPipesCollapsed={setPipesCollapsed}
-      gitOpen={gitOpen}
-      onGitOpenChange={onGitOpenChange}
-      gitAnchorRef={gitAnchorRef}
-      gitPanel={gitPanel}
-      git={git}
-      paletteOpen={paletteOpen}
-      paletteItems={paletteItems}
-      setPaletteOpen={setPaletteOpen}
-      settingsOpen={settingsOpen}
-      setSettingsOpen={setSettingsOpen}
-      newTabOpen={newTabOpen}
-      creating={creating}
-      newTabError={newTabError}
-      setNewTabOpen={setNewTabOpen}
-      openExistingWorktree={openExistingWorktree}
-      createBranchProject={createBranchProject}
-      editor={editor}
-      saveEditor={saveEditor}
-      code={code}
-    />
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        background: liquid ? G.appBg : GRADIENT_BG,
+        color: C.text,
+        fontFamily: UI,
+        fontSize: 13,
+        WebkitFontSmoothing: 'antialiased',
+        userSelect: 'none',
+        overflow: 'hidden'
+      }}
+    >
+      <Toolbar
+        liquid={liquid}
+        project={project}
+        view={view}
+        onView={setView}
+        onNewTerminal={newShellTab}
+        recents={recents}
+        menuOpen={menuOpen}
+        menuDisabled={settingsOpen || editor !== null}
+        onMenuToggle={() => {
+          setMenuOpen((v) => !v)
+          void api.project.recents().then(setRecents)
+        }}
+        onMenuClose={() => setMenuOpen(false)}
+        onOpenProject={onOpenProject}
+        onOpenRecent={onOpenPath}
+        onCloseProject={onCloseProject}
+        updateVersion={updateVersion}
+        onInstallUpdate={() => api.update.install()}
+        settings={settings}
+        onSettings={(next) => {
+          setSettings(next)
+          void api.settings.save(next)
+        }}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
+
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 8, padding: PANEL_INSET }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 8 }}>
+          {showsChat(view) && (
+            <ErrorBoundary compact>
+              <ChatPane
+                key={`${project.path}:${chatOwner?.id ?? 'chat'}`}
+                pane={chatPane}
+                pipelines={pipelines}
+                view={view}
+                projectPath={project.path}
+                defaultProvider={defaultChoice.agent}
+                defaultModel={defaultChoice.model}
+                settings={settings}
+                usage={usage}
+                onRefreshUsage={onRefreshUsage}
+                onMessage={(text, provider, model, mode) =>
+                  sendAgentMessage(text, provider, undefined, undefined, model ?? null, mode)
+                }
+                onAnswer={(requestId, answers) => {
+                  if (chatPane) void api.agent.answer(chatPane.taskId, requestId, answers)
+                }}
+                onCancel={cancelAgent}
+                onFreshStart={freshStartChat}
+                onProviderChange={setAgentProvider}
+                onModeChange={setAgentMode}
+                onExecutePlan={executePlan}
+                onOpenPipeline={(tabId) => showTerminal(tabId, 'terminal')}
+                onNewChat={requestNewChat}
+                clearChatConfirm={clearChatConfirm}
+                onConfirmClearChat={() => clearChat(true)}
+                onCancelClearChat={() => setClearChatConfirm(false)}
+                chatClearedNotice={chatClearedNotice}
+                onDismissChatCleared={() => setChatClearedNotice(false)}
+                composerRef={composerRef}
+              />
+            </ErrorBoundary>
+          )}
+          {/* Keep terminals mounted in Chat view so PTY scrollback is not lost. */}
+          <div
+            style={{
+              flex: view === 'split' ? '1 1 50%' : '1 1 100%',
+              minWidth: 0,
+              minHeight: 0,
+              display: showsTerminal(view) ? 'flex' : 'none',
+              flexDirection: 'column'
+            }}
+            aria-hidden={!showsTerminal(view)}
+          >
+            <TerminalPane
+              key={project.path}
+              tabs={termTabs}
+              activeId={active?.id ?? ''}
+              view={showsTerminal(view) ? view : 'terminal'}
+              workspaceVisible={visible && showsTerminal(view)}
+              branch={runBranch}
+              cwd={cwdLabel}
+              onSelect={setActiveTab}
+              onClose={closeTab}
+              onNew={newShellTab}
+              onFocusPane={(tabId, paneId) =>
+                patchTab(tabId, (tab) => (tab.focus === paneId ? tab : { ...tab, focus: paneId }))
+              }
+              onClosePane={closePane}
+              onResize={(tabId, nodeId, size) =>
+                patchTab(tabId, (tab) => ({
+                  ...tab,
+                  root: setSize(tab.root, nodeId, size)
+                }))
+              }
+              onSplitRight={() => splitPane('row')}
+              onSplitDown={() => splitPane('col')}
+              canSplit={!!active && active.kind === 'shell' && active.panes[active.focus]?.kind === 'shell'}
+            />
+          </div>
+          {view === 'code' && (
+            <ErrorBoundary compact>
+              <CodePane
+                projectPath={project.path}
+                tabs={code.tabs}
+                activePath={code.activePath}
+                active={code.active}
+                notice={code.notice}
+                onOpen={(path) => void code.openFile(path)}
+                onSelect={code.setActive}
+                onChange={code.updateContent}
+                onClose={code.requestClose}
+                onSave={() => void code.saveActive()}
+                onRevert={code.revertActive}
+                onDiscard={code.confirmClose}
+                onOverwrite={() => void code.overwriteSave()}
+                onCancelNotice={code.cancelNotice}
+              />
+            </ErrorBoundary>
+          )}
+        </div>
+
+        <Sidebar
+          pipelines={pipelines}
+          runs={branchRuns}
+          logs={detailLogs}
+          selected={selected}
+          onSelect={(id) => {
+            setSelId(id)
+            setEditor(null)
+          }}
+          onNew={() => setEditor({ id: null, name: '', nodes: [blankNode()] })}
+          onRun={runPipeline}
+          onStop={(id) => stopPipeline(id, runBranch)}
+          onEdit={(p) =>
+            setEditor({
+              id: p.id,
+              name: p.name,
+              nodes: p.nodes.map((n) => ({ ...n })),
+              ...(p.mandatory === true ? { mandatory: true } : {}),
+              ...(p.autoSelectable === true ? { autoSelectable: true } : {}),
+              ...(p.gitHooks?.length ? { gitHooks: p.gitHooks } : {})
+            })
+          }
+          onDelete={deletePipeline}
+          onOpenTerminal={openRunLogs}
+          collapsed={pipesCollapsed}
+          onSetCollapsed={setPipesCollapsed}
+        />
+      </div>
+
+      <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
+      {settingsOpen && visible && (
+        <SettingsPage
+          settings={settings}
+          onSettings={(next) => {
+            setSettings(next)
+            void api.settings.save(next)
+          }}
+          onAdoptSettings={setSettings}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {newTabOpen && (
+        <NewTabDialog
+          liquid={liquid}
+          git={git}
+          projectPath={project.path}
+          repoName={worktreeRepoName}
+          busy={creating}
+          error={newTabError}
+          onCancel={() => setNewTabOpen(false)}
+          onOpenExisting={openExistingWorktree}
+          onCreate={(req) => void createBranchProject(req)}
+        />
+      )}
+
+      {editor && visible && createPortal(
+        <div
+          className="bf-page-overlay"
+          style={{
+            position: 'fixed',
+            inset: `${CHROME_ROW}px 0 0`,
+            zIndex: 80,
+            display: 'flex',
+            flexDirection: 'column',
+            background: '#181817'
+          }}
+        >
+          <PipelineCanvas
+            editor={editor}
+            settings={settings}
+            keyboardEnabled={!settingsOpen}
+            onChange={setEditor}
+            onCancel={() => setEditor(null)}
+            onSave={saveEditor}
+          />
+        </div>,
+        document.body
+      )}
+
+      {git.isRepo && (
+        <GitPane
+          branch={git.branch}
+          branches={git.branches}
+          remotes={git.remotes ?? []}
+          provider={settings.commitMessage.agent}
+          model={settings.commitMessage.model}
+          settings={settings}
+          onCommitMessageModelChange={(provider, model) => {
+            const next = withCommitMessageModel(settings, provider, model)
+            setSettings(next)
+            void api.settings.save(next)
+          }}
+          {...gitPanel}
+          open={gitOpen && visible}
+          onClose={() => onGitOpenChange(false)}
+          anchorRef={gitAnchorRef}
+        />
+      )}
+    </div>
   )
 }
 
@@ -2825,40 +2574,25 @@ export default function App() {
   const [gitOpen, setGitOpen] = useState(false)
   const [gitControl, setGitControl] = useState<GitControl | null>(null)
   const gitAnchorRef = useRef<HTMLButtonElement>(null)
-  const [branchDialog, setBranchDialog] = useState<{ path: string; nonce: number }>({
-    path: '',
-    nonce: 0
-  })
-  const [chatRequest, setChatRequest] = useState<{ path: string; nonce: number }>({
-    path: '',
-    nonce: 0
-  })
+  const [workspaceAction, setWorkspaceAction] = useState<{
+    path: string
+    kind: WorkspaceActionKind
+    nonce: number
+  }>({ path: '', kind: 'branch', nonce: 0 })
   const [agentBusyPaths, setAgentBusyPaths] = useState<ReadonlySet<string>>(() => new Set())
   const [agentUnreadPaths, setAgentUnreadPaths] = useState<ReadonlySet<string>>(() => new Set())
   const hydrated = useRef(false)
   const { usage, refresh: refreshUsage } = useUsage()
 
-  const setAgentBusy = useCallback((projectPath: string, busy: boolean) => {
-    setAgentBusyPaths((prev) => {
-      const has = prev.has(projectPath)
-      if (busy === has) return prev
-      const next = new Set(prev)
-      if (busy) next.add(projectPath)
-      else next.delete(projectPath)
-      return next
-    })
-  }, [])
+  const setAgentBusy = useCallback(
+    (projectPath: string, busy: boolean) => togglePathFlag(setAgentBusyPaths, projectPath, busy),
+    []
+  )
 
-  const setAgentUnread = useCallback((projectPath: string, unread: boolean) => {
-    setAgentUnreadPaths((prev) => {
-      const has = prev.has(projectPath)
-      if (unread === has) return prev
-      const next = new Set(prev)
-      if (unread) next.add(projectPath)
-      else next.delete(projectPath)
-      return next
-    })
-  }, [])
+  const setAgentUnread = useCallback(
+    (projectPath: string, unread: boolean) => togglePathFlag(setAgentUnreadPaths, projectPath, unread),
+    []
+  )
 
   const activateProject = useCallback((project: Project) => {
     setProjects((prev) =>
@@ -2901,14 +2635,9 @@ export default function App() {
     [activePath, setAgentBusy, setAgentUnread]
   )
 
-  const requestBranchDialog = useCallback((projectPath: string) => {
+  const requestWorkspaceAction = useCallback((projectPath: string, kind: WorkspaceActionKind) => {
     setActivePath(projectPath)
-    setBranchDialog((prev) => ({ path: projectPath, nonce: prev.nonce + 1 }))
-  }, [])
-
-  const requestNewChat = useCallback((projectPath: string) => {
-    setActivePath(projectPath)
-    setChatRequest((prev) => ({ path: projectPath, nonce: prev.nonce + 1 }))
+    setWorkspaceAction((prev) => ({ path: projectPath, kind, nonce: prev.nonce + 1 }))
   }, [])
 
   useEffect(() => {
@@ -3027,8 +2756,8 @@ export default function App() {
         unreadPaths={agentUnreadPaths}
         onSelect={setActivePath}
         onClose={closeProject}
-        onNewBranch={requestBranchDialog}
-        onNewChat={requestNewChat}
+        onNewBranch={(path) => requestWorkspaceAction(path, 'branch')}
+        onNewChat={(path) => requestWorkspaceAction(path, 'chat')}
         collapsed={projectsCollapsed}
         onSetCollapsed={setProjectsCollapsed}
         gitAnchorRef={gitAnchorRef}
@@ -3069,10 +2798,11 @@ export default function App() {
               <ProjectWorkspace
                 project={project}
                 visible={visible}
-                branchDialogNonce={
-                  branchDialog.path === project.path ? branchDialog.nonce : 0
+                workspaceAction={
+                  workspaceAction.path === project.path
+                    ? { kind: workspaceAction.kind, nonce: workspaceAction.nonce }
+                    : { kind: workspaceAction.kind, nonce: 0 }
                 }
-                newChatNonce={chatRequest.path === project.path ? chatRequest.nonce : 0}
                 gitOpen={gitOpen}
                 onGitOpenChange={setGitOpen}
                 gitAnchorRef={gitAnchorRef}

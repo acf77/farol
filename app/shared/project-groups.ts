@@ -15,12 +15,22 @@ export interface ProjectGroup {
   projects: GroupedProject[]
 }
 
+export function trimSlashes(p: string): string {
+  return p.replace(/[/\\]+$/, '')
+}
+
+export function shortPath(p: string): string {
+  const parts = trimSlashes(p).split(/[/\\]/)
+  return parts.slice(-2).join('/')
+}
+
+/** Case-folded identity for grouping worktrees. */
 function normPath(p: string): string {
-  return p.replace(/[/\\]+$/, '').toLowerCase()
+  return trimSlashes(p).toLowerCase()
 }
 
 function basename(p: string): string {
-  const parts = p.replace(/[/\\]+$/, '').split(/[/\\]/)
+  const parts = trimSlashes(p).split(/[/\\]/)
   return parts[parts.length - 1] || p
 }
 

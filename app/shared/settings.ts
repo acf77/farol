@@ -4,9 +4,11 @@ import {
   isAiProvider,
   normalizeMode,
   normalizeModel,
+  normalizeOpenRouterAgent,
   type AgentMode,
   type AiModel,
-  type AiProvider
+  type AiProvider,
+  type OpenRouterAgent
 } from './ai'
 import {
   DISCOVERABLE_PROVIDERS,
@@ -20,6 +22,8 @@ export interface OpenRouterSettings {
   catalog: AiModel[]
   /** True after the first successful auto-pin so Refresh does not restore defaults. */
   autoPinned: boolean
+  /** The CLI OpenRouter runs through. Absent means OpenCode, the original backend. */
+  agent?: OpenRouterAgent
   /** Runtime flag from the encrypted store — not persisted. */
   hasKey?: boolean
 }
@@ -201,8 +205,9 @@ export function sanitizeOpenRouter(raw: unknown): OpenRouterSettings | undefined
   // as well, so a saved selection survives a temporary catalog outage.
   const pinned = uniqueIds(o.pinned)
   const autoPinned = o.autoPinned === true
-  if (!pinned.length && !catalog.length && !autoPinned) return undefined
-  return { pinned, catalog, autoPinned }
+  const agent = normalizeOpenRouterAgent(o.agent)
+  if (!pinned.length && !catalog.length && !autoPinned && agent === 'opencode') return undefined
+  return { pinned, catalog, autoPinned, ...(agent === 'opencode' ? {} : { agent }) }
 }
 
 /** Jev is on exactly when a key is stored, so the flag is the whole setting. */
@@ -212,6 +217,14 @@ export function withJevKeyFlag(settings: AppSettings, hasKey: boolean): AppSetti
   const next = { ...settings }
   delete next.jev
   return next
+}
+
+/** Pick the CLI OpenRouter runs through; OpenCode is stored as absence. */
+export function withOpenRouterAgent(settings: AppSettings, agent: OpenRouterAgent): AppSettings {
+  const next: OpenRouterSettings = { ...defaultOpenRouter(), ...settings.openrouter }
+  if (agent === 'opencode') delete next.agent
+  else next.agent = agent
+  return { ...settings, openrouter: next }
 }
 
 export function withOpenRouterKeyFlag(settings: AppSettings, hasKey: boolean): AppSettings {

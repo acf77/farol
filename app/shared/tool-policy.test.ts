@@ -187,6 +187,26 @@ describe('toolPolicyFor', () => {
     }
   })
 
+  it('enforces OpenRouter natively with pi tool names when it rides pi', () => {
+    const selection: ToolSelection = {
+      kind: 'selected',
+      focus: 'implement',
+      kept: ['edit', 'shell'],
+      omitted: ['web'],
+      candidatesFingerprint: toolFocusFingerprint('build')
+    }
+    expect(toolEnforcementFor('openrouter', 'pi')).toBe('native')
+    expect(toolPolicyFor('openrouter', selection, 'pi').nativeTools).toEqual([
+      'read',
+      'grep',
+      'find',
+      'ls',
+      'edit',
+      'write',
+      'bash'
+    ])
+  })
+
   it('fails open to the full set without native argv when fallback-full', () => {
     const policy = fullToolPolicy('claude', 'no-key')
     expect(policy.allowed).toEqual([...TOOL_OPTIONAL])

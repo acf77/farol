@@ -3,9 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Todo } from '@shared/todos'
 import { TodoDockView } from './components/TodoList'
-import ChatPane from './components/ChatPane'
+import { makeAgentPane, renderChatPane } from './components/chat/test-pane'
 import { modeDefault, sanitizeSettings } from '@shared/settings'
-import type { AgentPane } from './types'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -93,40 +92,20 @@ describe('ChatPane todo placement', () => {
       modeDefaults: { build: [{ agent: 'codex' }] }
     })
     const choice = modeDefault(settings, 'build')
-    const pane: AgentPane = {
-      id: 'agent-pane',
-      kind: 'agent',
-      title: 'Chat',
-      cwd: '/repo',
-      taskId: 'agent:sh1',
-      status: 'idle',
-      attempt: 0,
-      provider: 'codex',
-      model: choice.model,
-      mode: 'build',
-      messages: []
-    }
-    const html = renderToStaticMarkup(
-      createElement(ChatPane, {
-        pane,
-        pipelines: [],
-        view: 'chat',
-        projectPath: '/repo',
-        defaultProvider: choice.agent,
-        defaultModel: choice.model,
-        settings,
-        usage: [],
-        onRefreshUsage: vi.fn(),
-        onMessage: vi.fn(),
-        onAnswer: vi.fn(),
-        onCancel: vi.fn(),
-        onProviderChange: vi.fn(),
-        onModeChange: vi.fn(),
-        onExecutePlan: vi.fn(),
-        onOpenPipeline: vi.fn(),
-        onNewChat: vi.fn()
-      })
-    )
+    const html = renderChatPane({
+      pane: makeAgentPane({
+        id: 'agent-pane',
+        cwd: '/repo',
+        taskId: 'agent:sh1',
+        attempt: 0,
+        provider: 'codex',
+        model: choice.model
+      }),
+      projectPath: '/repo',
+      defaultProvider: choice.agent,
+      defaultModel: choice.model,
+      settings
+    })
 
     const dock = html.indexOf('bf-todo-dock')
     const composer = html.indexOf('Message the agent')

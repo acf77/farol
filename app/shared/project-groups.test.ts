@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupOpenProjects } from './project-groups'
+import { groupOpenProjects, shortPath, trimSlashes } from './project-groups'
 import type { GitInfo, Project } from './types'
 
 const proj = (name: string, path: string): Project => ({
@@ -51,5 +51,15 @@ describe('groupOpenProjects', () => {
     expect(groups).toHaveLength(1)
     expect(groups[0].label).toBe('notes')
     expect(groups[0].projects[0].branch).toBe('notes')
+  })
+})
+
+describe('path helpers', () => {
+  it('trims trailing slashes without folding case', () => {
+    expect(trimSlashes('/Repo/App/')).toBe('/Repo/App')
+  })
+
+  it('shows the last two path segments', () => {
+    expect(shortPath('/Users/dev/repo/app/')).toBe('repo/app')
   })
 })

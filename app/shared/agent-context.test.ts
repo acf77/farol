@@ -84,9 +84,12 @@ describe('resumableSession', () => {
     expect(resumableSession(context, 'claude', '/repo/sub')).toBeUndefined()
   })
 
-  it('never resumes OMP', () => {
+  it('never resumes OMP or pi', () => {
     expect(
       resumableSession({ ...context, session: { cli: 'omp', id: 's1', cwd: '/repo' } }, 'omp', '/repo')
+    ).toBeUndefined()
+    expect(
+      resumableSession({ ...context, session: { cli: 'pi', id: 's1', cwd: '/repo' } }, 'pi', '/repo')
     ).toBeUndefined()
   })
 })

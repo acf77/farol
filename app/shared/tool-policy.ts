@@ -17,7 +17,7 @@ import {
 import { isWriteToolName } from './mandatory'
 import { isShellToolName } from './catalog-shell'
 import type { AiProvider } from './ai'
-import { cliFor } from './ai'
+import { cliFor, type OpenRouterAgent } from './ai'
 
 /** Optional families a focus may admit. */
 export const TOOL_OPTIONAL = ['edit', 'shell', 'web'] as const
@@ -255,9 +255,9 @@ export function validateToolSelection(selection: ToolSelection): ToolSelection {
   return selection
 }
 
-export function toolEnforcementFor(provider: AiProvider): ToolEnforcement {
-  const cli = cliFor(provider)
-  return cli === 'claude' || cli === 'omp' ? 'native' : 'prompt'
+export function toolEnforcementFor(provider: AiProvider, via?: OpenRouterAgent): ToolEnforcement {
+  const cli = cliFor(provider, via)
+  return cli === 'claude' || cli === 'omp' || cli === 'pi' ? 'native' : 'prompt'
 }
 
 /** Claude built-ins for the active policy. AskUserQuestion stays so Farol choosers work. */
@@ -278,10 +278,23 @@ export function ompToolsFor(allowed: ToolCapabilityId[]): string[] {
   return tools
 }
 
-export function nativeToolsFor(provider: AiProvider, allowed: ToolCapabilityId[]): string[] {
-  const cli = cliFor(provider)
+/** Pi built-ins for the active policy. Pi ships no web tools. */
+export function piToolsFor(allowed: ToolCapabilityId[]): string[] {
+  const tools = ['read', 'grep', 'find', 'ls']
+  if (allowed.includes('edit')) tools.push('edit', 'write')
+  if (allowed.includes('shell')) tools.push('bash')
+  return tools
+}
+
+export function nativeToolsFor(
+  provider: AiProvider,
+  allowed: ToolCapabilityId[],
+  via?: OpenRouterAgent
+): string[] {
+  const cli = cliFor(provider, via)
   if (cli === 'claude') return claudeToolsFor(allowed)
   if (cli === 'omp') return ompToolsFor(allowed)
+  if (cli === 'pi') return piToolsFor(allowed)
   return []
 }
 
@@ -292,17 +305,21 @@ function allowedFrom(selection: ToolSelection): ToolCapabilityId[] {
 }
 
 /** Remap a cached selection onto the current provider's enforcement path. */
-export function toolPolicyFor(provider: AiProvider, selection: ToolSelection): ToolPolicy {
+export function toolPolicyFor(
+  provider: AiProvider,
+  selection: ToolSelection,
+  via?: OpenRouterAgent
+): ToolPolicy {
   const validated = validateToolSelection(selection)
   const allowed = allowedFrom(validated)
-  const enforcement = toolEnforcementFor(provider)
+  const enforcement = toolEnforcementFor(provider, via)
   return {
     selection: validated,
     allowed,
     enforcement,
     nativeTools:
       enforcement === 'native' && validated.kind !== 'fallback-full'
-        ? nativeToolsFor(provider, allowed)
+        ? nativeToolsFor(provider, allowed, via)
         : []
   }
 }
