@@ -4,6 +4,7 @@ import type { AgentMode, AppSettings, ModelChoice, SettingsResult } from '@share
 import {
   AI_LABELS,
   normalizeOpenRouterAgent,
+  OPENROUTER_AGENT_LABELS,
   OPENROUTER_AGENTS,
   pickerProviders,
   type AiProvider
@@ -38,7 +39,7 @@ const TABS: readonly { value: TabKey; label: string }[] = [
 
 const OPENROUTER_AGENT_OPTIONS = OPENROUTER_AGENTS.map((value) => ({
   value,
-  label: AI_LABELS[value]
+  label: OPENROUTER_AGENT_LABELS[value]
 }))
 
 const card: React.CSSProperties = {
@@ -523,7 +524,7 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
 
               <Section
                 title="OpenRouter"
-                hint={`Endpoint ${OPENROUTER_API_URL} · runs through ${AI_LABELS[orAgent]}`}
+                hint={`Endpoint ${OPENROUTER_API_URL} · runs through ${OPENROUTER_AGENT_LABELS[orAgent]}`}
               >
                 <ApiKeyField
                   configured={configured}

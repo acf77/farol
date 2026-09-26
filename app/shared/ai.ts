@@ -6,16 +6,24 @@ import { openCodeModel } from './openrouter'
 export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'omp', 'openrouter'] as const
 export type AiProvider = (typeof AI_PROVIDERS)[number]
 export type AgentMode = 'plan' | 'build'
-/** The binary Farol actually spawns — OpenRouter rides OpenCode or OMP. */
-export type AiCli = Exclude<AiProvider, 'openrouter'>
+/**
+ * The binary Farol actually spawns. OpenRouter rides OpenCode or upstream pi
+ * (`@mariozechner/pi-coding-agent`), which is not a provider of its own.
+ */
+export type AiCli = Exclude<AiProvider, 'openrouter'> | 'pi'
 
 /** CLIs that can carry OpenRouter; both read `OPENROUTER_API_KEY` and take `openrouter/<slug>`. */
-export const OPENROUTER_AGENTS = ['opencode', 'omp'] as const
+export const OPENROUTER_AGENTS = ['opencode', 'pi'] as const
 export type OpenRouterAgent = (typeof OPENROUTER_AGENTS)[number]
+
+export const OPENROUTER_AGENT_LABELS: Record<OpenRouterAgent, string> = {
+  opencode: 'OpenCode',
+  pi: 'Pi'
+}
 
 /** Older settings have no choice stored; they keep running OpenCode. */
 export function normalizeOpenRouterAgent(value: unknown): OpenRouterAgent {
-  return value === 'omp' ? 'omp' : 'opencode'
+  return value === 'pi' ? 'pi' : 'opencode'
 }
 
 export const AI_LABELS: Record<AiProvider, string> = {
@@ -228,6 +236,9 @@ function toolsArgv(tools: string | undefined): string[] {
 
 /** OMP has no read-only sandbox, so this allowlist — inspection only, no bash/edit/write — is the gate. */
 const OMP_READONLY_TOOLS = 'read,glob,grep,lsp'
+/** Pi has no sandbox or approval prompts either; its gate is the same kind of allowlist. */
+const PI_READONLY_TOOLS = 'read,grep,find,ls'
+const PI_HINT = 'Install pi (npm i -g @mariozechner/pi-coding-agent) to run OpenRouter through Pi.'
 
 /**
  * Non-interactive argv for each CLI. Cursor runs in ask mode with plain
@@ -272,6 +283,13 @@ export function aiCommand(
         // --auto-approve keeps it from waiting on an approval it can never receive.
         args: withModel(['-p', '--auto-approve', '--tools', OMP_READONLY_TOOLS, prompt], passed),
         hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to run OMP steps.'
+      }
+    case 'pi':
+      return {
+        bins: ['pi'],
+        // Pi never asks for approval, so no auto-approve flag exists or is needed.
+        args: withModel(['-p', '--tools', PI_READONLY_TOOLS, prompt], passed),
+        hint: PI_HINT
       }
     case 'claude':
       return {
@@ -356,6 +374,20 @@ function managedOmpCommand(prompt: string, passed: string | undefined, plan: boo
   }
 }
 
+function managedPiCommand(prompt: string, passed: string | undefined, plan: boolean, tools: string | undefined): AiCommand {
+  return {
+    bins: ['pi'],
+    // `--mode json` is non-interactive on its own. Plan defaults to the
+    // inspection-only allowlist, exactly like OMP.
+    args: withModel(
+      ['--mode', 'json', ...toolsArgv(tools ?? (plan ? PI_READONLY_TOOLS : undefined)), prompt],
+      passed
+    ),
+    hint: PI_HINT,
+    stream: 'ndjson'
+  }
+}
+
 function managedClaudeCommand(prompt: string, passed: string | undefined, plan: boolean, tools: string | undefined): AiCommand {
   return {
     bins: ['claude'],
@@ -399,8 +431,8 @@ function managedClaudeCommand(prompt: string, passed: string | undefined, plan: 
  * both run in `stream-json` and are decoded by `shared/agent-stream.ts`.
  * Codex also emits NDJSON when passed `--json`; decoding it lets managed Chat
  * render command, file, MCP, and web-search activity as tool cards.
- * OpenCode does the same with `--format json`, and OMP with `--mode json`;
- * OpenRouter rides whichever of the two `opts.via` names.
+ * OpenCode does the same with `--format json`, and OMP and pi with `--mode json`;
+ * OpenRouter rides whichever of OpenCode or pi `opts.via` names.
  */
 export function managedAiCommand(
   provider: AiProvider,
@@ -428,6 +460,8 @@ export function managedAiCommand(
       return managedOpencodeCommand(prompt, passed, plan, jsonFormat)
     case 'omp':
       return managedOmpCommand(prompt, passed, plan, tools)
+    case 'pi':
+      return managedPiCommand(prompt, passed, plan, tools)
     case 'claude':
       return managedClaudeCommand(prompt, passed, plan, tools)
   }
@@ -463,6 +497,8 @@ export function aiFixCommand(
       return `opencode run "${ask}"`
     case 'omp':
       return `omp "${ask}"`
+    case 'pi':
+      return `pi "${ask}"`
     case 'claude':
       return `claude "${ask}"`
   }
@@ -479,6 +515,8 @@ export function interactiveAiCommand(provider: AiProvider, via?: OpenRouterAgent
       return 'opencode'
     case 'omp':
       return 'omp'
+    case 'pi':
+      return 'pi'
     case 'claude':
       return 'claude'
   }

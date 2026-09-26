@@ -46,11 +46,11 @@ describe('aiEnv', () => {
     expect(viaOpencode.OPENROUTER_API_KEY).toBe('sk-or-test')
     expect(viaOpencode.XDG_DATA_HOME).toContain('farol-opencode')
 
-    const viaOmp = aiEnv('openrouter', 'omp')
-    expect(viaOmp.OPENROUTER_API_KEY).toBe('sk-or-test')
-    expect(viaOmp.XDG_DATA_HOME).toBeUndefined()
+    const viaPi = aiEnv('openrouter', 'pi')
+    expect(viaPi.OPENROUTER_API_KEY).toBe('sk-or-test')
+    expect(viaPi.XDG_DATA_HOME).toBeUndefined()
 
-    expect(aiEnv('opencode', 'omp').XDG_DATA_HOME).toContain('farol-opencode')
+    expect(aiEnv('opencode', 'pi').XDG_DATA_HOME).toContain('farol-opencode')
     expect(aiEnv('omp').OPENROUTER_API_KEY).toBeUndefined()
   })
 })

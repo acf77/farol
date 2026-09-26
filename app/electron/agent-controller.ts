@@ -1340,12 +1340,14 @@ export class AgentController {
 
     return new Promise((resolve) => {
       let settled = false
-      const done = (code: number): void => {
+      const done = (exit: number): void => {
         if (settled) return
         settled = true
         task.process = null
+        let code = exit
         if (parser) {
           consume(parser.flush())
+          if (code === 0 && parser.failed) code = 1
           const tail = diagnostics.trim()
           if (code !== 0 && tail) sink.text(`${tail.slice(-SCAN_WINDOW)}\n`)
         }

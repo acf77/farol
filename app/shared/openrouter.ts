@@ -69,7 +69,7 @@ export function recommendedPins(catalog: readonly AiModel[]): string[] {
   return catalog.slice(0, 4).map((m) => m.id)
 }
 
-/** OpenCode's and OMP's `--model` id for an OpenRouter catalog slug — both take `openrouter/<slug>`. */
+/** OpenCode's and pi's `--model` id for an OpenRouter catalog slug — both take `openrouter/<slug>`. */
 export function openCodeModel(model?: string): string | undefined {
   if (!model) return undefined
   const id = model.trim()

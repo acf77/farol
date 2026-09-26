@@ -71,6 +71,14 @@ export function skillRoots(provider: AiProvider, via?: OpenRouterAgent): SkillRo
         { kind: 'project', rel: '.claude/skills', rank: 11 },
         { kind: 'project', rel: '.omp/skills', rank: 12 }
       ]
+    case 'pi':
+      // Pi reads Claude/Codex skill dirs only when settings.json lists them.
+      return [
+        { kind: 'user', rel: '.pi/agent/skills', rank: 1 },
+        { kind: 'user', rel: '.agents/skills', rank: 2 },
+        { kind: 'project', rel: '.agents/skills', rank: 10 },
+        { kind: 'project', rel: '.pi/skills', rank: 11 }
+      ]
   }
 }
 

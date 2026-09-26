@@ -19,7 +19,7 @@ import {
  * and tool items. OpenCode (`--format json`) emits
  * `text` / `tool_use` / `error` envelopes with a `part` payload. OMP
  * (`--mode json`) emits `message_end` envelopes plus `tool_execution_*` events.
- * OpenRouter streams whichever of the two its Settings choice runs.
+ * Upstream pi, which OpenRouter can ride, emits the same events as OMP.
  */
 
 /** One complete assistant turn. */
@@ -340,6 +340,17 @@ export class AgentStreamParser {
   private names = new Map<string, string>()
   /** Claude's final `result` event duplicates assistant text; only used for missed markers. */
   private sawControlMarker = false
+  /** OMP/pi: the latest settled assistant message ended with `stopReason: 'error'`. */
+  private endedInError = false
+
+  /**
+   * True when the run's last assistant message failed. Pi exits 0 in
+   * `--mode json` even then, so the exit code alone would read as success.
+   * A later message (pi's own auto-retry) clears it.
+   */
+  get failed(): boolean {
+    return this.endedInError
+  }
 
   /** Feed raw stdout. Chunks split lines anywhere, so partials are held back. */
   push(chunk: string): AgentStreamEvent[] {
@@ -541,6 +552,7 @@ export class AgentStreamParser {
   private ompMessage(event: Record<string, unknown>): AgentStreamEvent[] {
     const message = event.message
     if (!isRecord(message) || message.role !== 'assistant') return []
+    this.endedInError = message.stopReason === 'error'
     const content = Array.isArray(message.content) ? message.content : []
     const out: AgentStreamEvent[] = []
     for (const item of content) {

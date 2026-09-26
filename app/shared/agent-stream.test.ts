@@ -517,6 +517,28 @@ describe('AgentStreamParser', () => {
     ])
   })
 
+  it('flags a pi/OMP run whose last assistant message failed, cleared by a retry', () => {
+    const parser = new AgentStreamParser()
+    const failed = JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        provider: 'openrouter',
+        stopReason: 'error',
+        errorMessage: 'Connection error.'
+      }
+    })
+    expect(parse(parser, `${failed}\n`)).toEqual([{ kind: 'raw', text: 'Connection error.\n' }])
+    expect(parser.failed).toBe(true)
+    const retried = JSON.stringify({
+      type: 'message_end',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }], stopReason: 'stop' }
+    })
+    parse(parser, `${retried}\n`)
+    expect(parser.failed).toBe(false)
+  })
+
   it('ignores OMP echoes of the prompt and of a settled tool result', () => {
     const parser = new AgentStreamParser()
     const prompt = JSON.stringify({

@@ -257,7 +257,7 @@ export function validateToolSelection(selection: ToolSelection): ToolSelection {
 
 export function toolEnforcementFor(provider: AiProvider, via?: OpenRouterAgent): ToolEnforcement {
   const cli = cliFor(provider, via)
-  return cli === 'claude' || cli === 'omp' ? 'native' : 'prompt'
+  return cli === 'claude' || cli === 'omp' || cli === 'pi' ? 'native' : 'prompt'
 }
 
 /** Claude built-ins for the active policy. AskUserQuestion stays so Farol choosers work. */
@@ -278,6 +278,14 @@ export function ompToolsFor(allowed: ToolCapabilityId[]): string[] {
   return tools
 }
 
+/** Pi built-ins for the active policy. Pi ships no web tools. */
+export function piToolsFor(allowed: ToolCapabilityId[]): string[] {
+  const tools = ['read', 'grep', 'find', 'ls']
+  if (allowed.includes('edit')) tools.push('edit', 'write')
+  if (allowed.includes('shell')) tools.push('bash')
+  return tools
+}
+
 export function nativeToolsFor(
   provider: AiProvider,
   allowed: ToolCapabilityId[],
@@ -286,6 +294,7 @@ export function nativeToolsFor(
   const cli = cliFor(provider, via)
   if (cli === 'claude') return claudeToolsFor(allowed)
   if (cli === 'omp') return ompToolsFor(allowed)
+  if (cli === 'pi') return piToolsFor(allowed)
   return []
 }
 

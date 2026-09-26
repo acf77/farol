@@ -288,32 +288,36 @@ describe('managedAiCommand', () => {
     expect(interactiveAiCommand('openrouter')).toBe('opencode')
   })
 
-  it('runs OpenRouter through OMP when chosen, with the same prefixed --model', () => {
-    expect(normalizeOpenRouterAgent('omp')).toBe('omp')
+  it('runs OpenRouter through upstream pi when chosen, with the same prefixed --model', () => {
+    expect(normalizeOpenRouterAgent('pi')).toBe('pi')
     expect(normalizeOpenRouterAgent(undefined)).toBe('opencode')
-    expect(normalizeOpenRouterAgent('pi')).toBe('opencode')
-    expect(cliFor('openrouter', 'omp')).toBe('omp')
-    expect(cliFor('claude', 'omp')).toBe('claude')
-    expect(aiCommand('openrouter', 'review this', 'anthropic/claude-sonnet-4', 'omp').args).toEqual([
+    expect(normalizeOpenRouterAgent('omp')).toBe('opencode')
+    expect(cliFor('openrouter', 'pi')).toBe('pi')
+    expect(cliFor('claude', 'pi')).toBe('claude')
+    const oneShot = aiCommand('openrouter', 'review this', 'anthropic/claude-sonnet-4', 'pi')
+    expect(oneShot.bins).toEqual(['pi'])
+    expect(oneShot.args).toEqual([
       '-p',
-      '--auto-approve',
       '--tools',
-      'read,glob,grep,lsp',
+      'read,grep,find,ls',
       '--model',
       'openrouter/anthropic/claude-sonnet-4',
       'review this'
     ])
+    const build = managedAiCommand('openrouter', 'fix this', 'openai/gpt-4o', { via: 'pi' })
+    expect(build.stream).toBe('ndjson')
+    expect(build.args).toEqual(['--mode', 'json', '--model', 'openrouter/openai/gpt-4o', 'fix this'])
+    // Pi's review gate for Plan is the read-only tool allowlist.
     expect(
-      managedAiCommand('openrouter', 'fix this', 'openai/gpt-4o', { via: 'omp' }).args
-    ).toEqual(['--mode', 'json', '--auto-approve', '--model', 'openrouter/openai/gpt-4o', 'fix this'])
-    // OMP's review gate for Plan is the read-only tool allowlist.
+      managedAiCommand('openrouter', 'plan this', undefined, { mode: 'plan', via: 'pi' }).args
+    ).toEqual(['--mode', 'json', '--tools', 'read,grep,find,ls', 'plan this'])
     expect(
-      managedAiCommand('openrouter', 'plan this', undefined, { mode: 'plan', via: 'omp' }).args
-    ).toEqual(['--mode', 'json', '--auto-approve', '--tools', 'read,glob,grep,lsp', 'plan this'])
-    expect(interactiveAiCommand('openrouter', 'omp')).toBe('omp')
-    expect(aiFixCommand('openrouter', undefined, 'omp')).toMatch(/^omp "/)
+      managedAiCommand('openrouter', 'x', undefined, { via: 'pi', tools: ['read', 'bash'] }).args
+    ).toEqual(['--mode', 'json', '--tools', 'read,bash', 'x'])
+    expect(interactiveAiCommand('openrouter', 'pi')).toBe('pi')
+    expect(aiFixCommand('openrouter', undefined, 'pi')).toMatch(/^pi "/)
     // The choice only reroutes OpenRouter; plain OpenCode stays OpenCode.
-    expect(managedAiCommand('opencode', 'x', undefined, { via: 'omp' }).bins).toEqual(['opencode'])
+    expect(managedAiCommand('opencode', 'x', undefined, { via: 'pi' }).bins).toEqual(['opencode'])
   })
 
   it('shows OpenRouter after a key and catalog exist, listing only its pins', () => {

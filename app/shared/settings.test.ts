@@ -116,20 +116,20 @@ describe('commit message selection', () => {
   })
 
   it('keeps the OpenRouter agent choice and stores OpenCode as absence', () => {
-    expect(sanitizeSettings({ openrouter: { agent: 'omp' } }).openrouter).toEqual({
+    expect(sanitizeSettings({ openrouter: { agent: 'pi' } }).openrouter).toEqual({
       pinned: [],
       catalog: [],
       autoPinned: false,
-      agent: 'omp'
+      agent: 'pi'
     })
     expect(sanitizeSettings({ openrouter: { agent: 'opencode' } }).openrouter).toBeUndefined()
     expect(
       sanitizeSettings({ openrouter: { agent: 'bogus', pinned: ['openai/gpt-4o'] } }).openrouter
     ).not.toHaveProperty('agent')
 
-    const omp = withOpenRouterAgent(defaultSettings(), 'omp')
-    expect(omp.openrouter?.agent).toBe('omp')
-    expect(withOpenRouterAgent(omp, 'opencode').openrouter).not.toHaveProperty('agent')
+    const pi = withOpenRouterAgent(defaultSettings(), 'pi')
+    expect(pi.openrouter?.agent).toBe('pi')
+    expect(withOpenRouterAgent(pi, 'opencode').openrouter).not.toHaveProperty('agent')
   })
 
   it('keeps discovered per-agent catalogs', () => {

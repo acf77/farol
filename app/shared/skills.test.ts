@@ -8,9 +8,22 @@ import {
   parseSkillFrontmatter,
   retainSkillWarning,
   skillMenuQuery,
+  skillRoots,
   skillToken,
   skillWarningLine
 } from './skills'
+
+describe('skillRoots', () => {
+  it("lists pi's own roots when OpenRouter rides pi", () => {
+    expect(skillRoots('openrouter', 'pi').map((r) => `${r.kind}:${r.rel}`)).toEqual([
+      'user:.pi/agent/skills',
+      'user:.agents/skills',
+      'project:.agents/skills',
+      'project:.pi/skills'
+    ])
+    expect(skillRoots('openrouter')).toEqual(skillRoots('opencode'))
+  })
+})
 
 describe('skillToken', () => {
   it('uses each provider’s native prefix', () => {
