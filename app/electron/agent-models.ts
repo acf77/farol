@@ -9,13 +9,13 @@ import {
   DISCOVERABLE_PROVIDERS,
   type AgentCatalogs,
   type DiscoverableProvider,
+  finalizeClaudeCatalog,
   parseClaudeHelp,
   parseClaudeModelOptions,
   parseCodexModelsCache,
   parseCursorModels,
   parseOmpModelsJson,
-  parseOpenCodeModels,
-  uniqueModels
+  parseOpenCodeModels
 } from '../shared/agent-models'
 import { resolveBinFrom } from './bin'
 import { execCli } from './exec-cli'
@@ -66,7 +66,7 @@ function readClaudeOptionsCache(): AiModel[] {
 async function discoverClaude(): Promise<AiModel[]> {
   const text = await runBin(['claude'], ['--help'])
   const fromHelp = text ? parseClaudeHelp(text) : []
-  return uniqueModels([...fromHelp, ...readClaudeOptionsCache(), ...AI_MODELS.claude])
+  return finalizeClaudeCatalog([...fromHelp, ...readClaudeOptionsCache(), ...AI_MODELS.claude])
 }
 
 async function discoverCodex(forceRefresh: boolean): Promise<AiModel[]> {

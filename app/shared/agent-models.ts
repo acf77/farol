@@ -87,6 +87,19 @@ function claudeModelLabel(id: string): string {
   return CLAUDE_LABELS[id] ?? id.replace(/\[1m\]$/i, ' 1M')
 }
 
+/** Canonical Farol labels for Claude aliases — override stale CLI cache strings. */
+export function finalizeClaudeModel(model: AiModel): AiModel {
+  const id = model.id.trim()
+  if (!id) return model
+  const label =
+    id in CLAUDE_LABELS ? CLAUDE_LABELS[id] : model.label.trim() || claudeModelLabel(id)
+  return { id, label }
+}
+
+export function finalizeClaudeCatalog(models: readonly AiModel[]): AiModel[] {
+  return uniqueModels(models.map(finalizeClaudeModel))
+}
+
 /** Quoted `--model` aliases from `claude --help`. */
 export function parseClaudeHelp(text: string): AiModel[] {
   const block = /--model\s+<model>[\s\S]*?(?=\n\s+-\w)/.exec(text)?.[0] ?? ''
@@ -104,7 +117,7 @@ export function parseClaudeModelOptions(rows: unknown): AiModel[] {
     if (!rec || rec.disabled === true) continue
     const id = trimmedString(rec.value)
     if (!id || id.startsWith('cc-')) continue
-    out.push({ id, label: trimmedString(rec.label) || claudeModelLabel(id) })
+    out.push(finalizeClaudeModel({ id, label: trimmedString(rec.label) || claudeModelLabel(id) }))
   }
   return uniqueModels(out)
 }

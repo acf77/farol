@@ -3,6 +3,7 @@ import {
   filterModels,
   groupModels,
   mergeCatalogs,
+  finalizeClaudeCatalog,
   parseClaudeHelp,
   parseClaudeModelOptions,
   parseCodexModelsCache,
@@ -69,6 +70,20 @@ describe('parseClaudeModelOptions', () => {
         { value: 'cc-update-required-1', label: 'Fable 5.1 (disabled)', disabled: true }
       ])
     ).toEqual([{ id: 'claude-fable-5[1m]', label: 'Fable' }])
+  })
+
+  it('prefers Farol alias labels over stale Claude cache strings', () => {
+    expect(parseClaudeModelOptions([{ value: 'opus', label: 'Opus 5' }])).toEqual([
+      { id: 'opus', label: 'Opus 5.5' }
+    ])
+  })
+})
+
+describe('finalizeClaudeCatalog', () => {
+  it('relabels known aliases when refreshing a persisted catalog', () => {
+    expect(finalizeClaudeCatalog([{ id: 'opus', label: 'Opus 5' }])).toEqual([
+      { id: 'opus', label: 'Opus 5.5' }
+    ])
   })
 })
 
