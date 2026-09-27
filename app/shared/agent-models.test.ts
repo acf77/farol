@@ -54,7 +54,7 @@ describe('parseClaudeHelp', () => {
 `
     expect(parseClaudeHelp(text)).toEqual([
       { id: 'fable', label: 'Fable 5.1' },
-      { id: 'opus', label: 'Opus 5' },
+      { id: 'opus', label: 'Opus 5.5' },
       { id: 'sonnet', label: 'Sonnet 5' },
       { id: 'claude-fable-5', label: 'claude-fable-5' }
     ])

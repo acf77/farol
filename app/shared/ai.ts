@@ -48,9 +48,9 @@ export interface AiModel {
 export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
   claude: [
     { id: 'sonnet', label: 'Sonnet 5' },
-    { id: 'opus', label: 'Opus 5' },
+    { id: 'opus', label: 'Opus 5.5' },
     { id: 'fable', label: 'Fable 5.1' },
-    { id: 'haiku', label: 'Haiku 5' }
+    { id: 'haiku', label: 'Haiku 4.5' }
   ],
   codex: [
     { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },

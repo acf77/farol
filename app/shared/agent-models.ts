@@ -78,9 +78,9 @@ export function parseOpenCodeModels(text: string): AiModel[] {
 
 const CLAUDE_LABELS: Record<string, string> = {
   sonnet: 'Sonnet 5',
-  opus: 'Opus 5',
+  opus: 'Opus 5.5',
   fable: 'Fable 5.1',
-  haiku: 'Haiku 5'
+  haiku: 'Haiku 4.5'
 }
 
 function claudeModelLabel(id: string): string {
