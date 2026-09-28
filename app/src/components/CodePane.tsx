@@ -33,42 +33,42 @@ import { ChevronDown, ChevronRight, FileIcon, FolderIcon } from './icons'
 const api = window.farol
 
 const farolHighlight = HighlightStyle.define([
-  { tag: t.comment, color: '#777772' },
-  { tag: t.string, color: '#87C9AE' },
-  { tag: t.keyword, color: '#D8D8D3', fontWeight: '600' },
-  { tag: t.number, color: '#C4C4BE' },
-  { tag: t.name, color: '#F0F0EC' },
-  { tag: t.propertyName, color: '#C4C4BE' },
-  { tag: t.typeName, color: '#A1A19A' },
-  { tag: t.operator, color: '#A1A19A' },
-  { tag: t.meta, color: '#A1A19A' },
-  { tag: t.heading, color: '#F0F0EC', fontWeight: '600' },
-  { tag: t.tagName, color: '#D8D8D3' },
-  { tag: t.attributeName, color: '#C4C4BE' }
+  { tag: t.comment, color: C.faint },
+  { tag: t.string, color: C.green },
+  { tag: t.keyword, color: C.textSoft, fontWeight: '600' },
+  { tag: t.number, color: C.textRow },
+  { tag: t.name, color: C.text },
+  { tag: t.propertyName, color: C.textRow },
+  { tag: t.typeName, color: C.textMuted },
+  { tag: t.operator, color: C.textMuted },
+  { tag: t.meta, color: C.textMuted },
+  { tag: t.heading, color: C.text, fontWeight: '600' },
+  { tag: t.tagName, color: C.textSoft },
+  { tag: t.attributeName, color: C.textRow }
 ])
 
 const farolTheme = EditorView.theme(
   {
     '&': {
       height: '100%',
-      backgroundColor: '#181817',
-      color: '#F0F0EC',
+      backgroundColor: C.terminal,
+      color: C.text,
       fontFamily: MONO,
       fontSize: '12px'
     },
     '.cm-scroller': { overflow: 'auto', fontFamily: 'inherit' },
-    '.cm-content': { caretColor: '#F0F0EC' },
+    '.cm-content': { caretColor: C.text },
     '.cm-gutters': {
-      backgroundColor: '#181817',
-      color: '#777772',
+      backgroundColor: C.terminal,
+      color: C.faint,
       borderRight: '1px solid #3E3E3A'
     },
     '.cm-activeLine': { backgroundColor: 'rgba(255,255,255,0.04)' },
-    '.cm-activeLineGutter': { backgroundColor: 'rgba(255,255,255,0.04)', color: '#A1A19A' },
+    '.cm-activeLineGutter': { backgroundColor: 'rgba(255,255,255,0.04)', color: C.textMuted },
     '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
       backgroundColor: 'rgba(214, 242, 58, 0.22)'
     },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#F0F0EC' },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: C.text },
     '.cm-searchMatch': { backgroundColor: 'rgba(214, 242, 58, 0.18)' },
     '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'rgba(214, 242, 58, 0.35)' }
   },
@@ -270,7 +270,7 @@ function NoticeBar({
         gap: 10,
         padding: '6px 10px',
         borderBottom: `1px solid ${C.border}`,
-        background: '#232322',
+        background: C.sidebar,
         color: notice.kind === 'error' ? '#ff8b80' : C.text,
         fontSize: 12
       }}
@@ -283,7 +283,7 @@ function NoticeBar({
             : notice.text}
       </span>
       {dirty && (
-        <button type="button" className="bf-focus" onClick={onDiscard} style={textBtn('#FF625A')}>
+        <button type="button" className="bf-focus" onClick={onDiscard} style={textBtn(C.red)}>
           Discard
         </button>
       )}
@@ -357,7 +357,7 @@ export default function CodePane({
             flex: 'none',
             overflow: 'auto',
             borderRight: `1px solid ${C.border}`,
-            background: '#232322',
+            background: C.sidebar,
             padding: '6px 4px'
           }}
         >
@@ -406,7 +406,7 @@ export default function CodePane({
                       alignItems: 'center',
                       gap: 6,
                       padding: '6px 10px',
-                      background: on ? '#232322' : 'transparent',
+                      background: on ? C.sidebar : 'transparent',
                       color: on ? C.text : C.textMuted,
                       fontSize: 11,
                       fontWeight: 600,

@@ -35,15 +35,15 @@ interface Status {
 }
 
 function statusOf(run: RunState | undefined): Status {
-  if (!run) return { label: 'Not run', color: '#A1A19A' }
-  if (run.status === 'running') return { label: 'Running', color: C.accentBright }
+  if (!run) return { label: 'Not run', color: C.textMuted }
+  if (run.status === 'running') return { label: 'Running', color: C.accent }
   if (run.status === 'cancelled') return { label: 'Cancelled', color: C.textMuted }
   if (run.status === 'pass') return { label: 'Passed', color: C.green }
   return { label: 'Failed', color: C.red }
 }
 
 function runStatusColor(status: string | undefined, idle: string = C.faint): string {
-  if (status === 'running') return C.accentBright
+  if (status === 'running') return C.accent
   if (status === 'pass') return C.green
   if (status === 'fail') return C.red
   return idle
@@ -108,20 +108,20 @@ function CollapsedRail({
           display: 'grid',
           placeItems: 'center',
           cursor: 'pointer',
-          color: '#A1A19A'
+          color: C.textMuted
         }}
       >
         <CaretLeft />
       </button>
-      <div style={{ width: 22, height: 1, background: '#3E3E3A' }} />
+      <div style={{ width: 22, height: 1, background: C.border }} />
 
       {running ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
           <Spinner size={16} />
-          <RailLabel color="#F0F0EC" weight={500}>
+          <RailLabel color={C.text} weight={500}>
             {running.name}
           </RailLabel>
-          <RailLabel color={C.accentBright}>
+          <RailLabel color={C.accent}>
             Step {done + 1} of {running.nodes.length}
           </RailLabel>
           <button
@@ -155,7 +155,7 @@ function CollapsedRail({
                 background: runStatusColor(sel?.status)
               }}
             />
-            <RailLabel color="#A1A19A">{statusOf(sel).label}</RailLabel>
+            <RailLabel color={C.textMuted}>{statusOf(sel).label}</RailLabel>
           </div>
         )
       )}
@@ -210,7 +210,7 @@ function StepRow({
         gap: 9,
         padding: '8px 9px',
         borderBottom: isLast ? 'none' : '1px solid #3E3E3A',
-        color: !state || state === 'pending' ? '#A1A19A' : '#F0F0EC',
+        color: !state || state === 'pending' ? C.textMuted : C.text,
         background: state === 'running' ? 'rgba(214, 242, 58,.07)' : 'transparent'
       }}
     >
@@ -219,7 +219,7 @@ function StepRow({
         style={{
           flex: 1,
           minWidth: 0,
-          fontSize: 11.8,
+          fontSize: 11,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap'
@@ -227,7 +227,7 @@ function StepRow({
       >
         {node.name}
       </span>
-      <span style={{ fontSize: 11.5, color: '#A1A19A', flex: 'none' }}>{stepLabel(state)}</span>
+      <span style={{ fontSize: 11, color: C.textMuted, flex: 'none' }}>{stepLabel(state)}</span>
       {state === 'pass' && <StatusMark done size={18} />}
       {state === 'running' && <Spinner style={{ flex: 'none' }} />}
       {state === 'fail' && (
@@ -269,7 +269,7 @@ function PipelineCard({
       onContextMenu={onContextMenu}
       style={{
         borderRadius: 12,
-        background: isSel ? C.panel : C.card,
+        background: isSel ? C.panel : C.sidebar,
         border: `1px solid ${isSel ? C.accent : C.border}`,
         boxShadow: isSel ? '0 0 0 1px rgba(214, 242, 58,.25)' : 'none'
       }}
@@ -364,7 +364,7 @@ function PipelineCard({
         >
           <span
             style={{
-              fontSize: 12.5,
+              fontSize: 12,
               fontWeight: 600,
               whiteSpace: 'nowrap',
               overflow: 'hidden',
@@ -378,7 +378,7 @@ function PipelineCard({
                 title="Mandatory in Chat — always runs when the agent changes code"
                 style={{
                   marginLeft: 6,
-                  fontSize: 9.5,
+                  fontSize: 10,
                   fontWeight: 600,
                   letterSpacing: '0.04em',
                   textTransform: 'uppercase',
@@ -392,7 +392,7 @@ function PipelineCard({
           </span>
           <span style={{ fontSize: 12, marginTop: 3, color: st.color }}>{st.label}</span>
         </button>
-        <span style={{ fontSize: 10.5, color: '#A1A19A', flex: 'none' }}>
+        <span style={{ fontSize: 10, color: C.textMuted, flex: 'none' }}>
           {doneCount} / {nodes.length} steps
         </span>
         {isExp && <ChevronUp style={{ flex: 'none' }} />}
@@ -457,9 +457,9 @@ function SelectedPanel({
             background: runStatusColor(selRun?.status)
           }}
         />
-        <span style={{ fontSize: 13.5, fontWeight: 600 }}>{selected.name}</span>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{selected.name}</span>
       </div>
-      <div style={{ flex: 'none', fontSize: 12.5, marginTop: 4, marginLeft: 18, color: selStatus.color }}>
+      <div style={{ flex: 'none', fontSize: 12, marginTop: 4, marginLeft: 18, color: selStatus.color }}>
         {selRun ? selRun.label : 'Not run'}
       </div>
 
@@ -470,9 +470,9 @@ function SelectedPanel({
           marginTop: 13,
           display: 'flex',
           flexDirection: 'column',
-          background: '#232322',
+          background: C.sidebar,
           border: '1px solid #3E3E3A',
-          borderRadius: 7,
+          borderRadius: 6,
           padding: '11px 11px 5px',
           overflow: 'hidden'
         }}
@@ -485,7 +485,7 @@ function SelectedPanel({
             overflowY: 'auto',
             fontFamily: MONO,
             fontSize: 12,
-            color: '#A1A19A',
+            color: C.textMuted,
             marginTop: 4,
             wordBreak: 'break-all'
           }}
@@ -504,9 +504,9 @@ function SelectedPanel({
             alignItems: 'center',
             gap: 6,
             marginTop: 10,
-            fontSize: 11.5,
+            fontSize: 11,
             fontWeight: 600,
-            color: '#A1A19A',
+            color: C.textMuted,
             padding: 0,
             border: 0,
             background: 'transparent',
@@ -523,7 +523,7 @@ function SelectedPanel({
               flex: 1,
               minHeight: 0,
               marginTop: 13,
-              background: '#181817',
+              background: C.terminal,
               borderRadius: 8,
               padding: '12px 13px',
               display: 'flex',
@@ -533,8 +533,8 @@ function SelectedPanel({
             }}
           >
             {logs.slice(-4).map((l, i) => (
-              <div key={i} style={{ display: 'flex', gap: 14, fontFamily: MONO, fontSize: 11.5 }}>
-                <span style={{ color: '#777772', flex: 'none' }}>{l.t}</span>
+              <div key={i} style={{ display: 'flex', gap: 14, fontFamily: MONO, fontSize: 11 }}>
+                <span style={{ color: C.faint, flex: 'none' }}>{l.t}</span>
                 <span style={{ color: l.color, minWidth: 0, overflowWrap: 'anywhere' }}>{l.text}</span>
               </div>
             ))}
@@ -580,7 +580,7 @@ function SelectedPanelFooter({
           width: '100%',
           marginTop: 10,
           padding: '8px 0 7px',
-          borderRadius: 7,
+          borderRadius: 6,
           border: '1px solid rgba(255, 98, 90, 0.35)',
           background: 'rgba(255, 98, 90, 0.1)',
           color: C.red,
@@ -609,7 +609,7 @@ function SelectedPanelFooter({
           width: '100%',
           marginTop: 10,
           padding: '8px 0 7px',
-          borderRadius: 7,
+          borderRadius: 6,
           border: '1px solid rgba(255, 98, 90, 0.35)',
           background: 'rgba(255, 98, 90, 0.1)',
           color: C.red,
@@ -642,7 +642,7 @@ function SelectedPanelFooter({
         fontFamily: 'inherit'
       }}
     >
-      <span style={{ fontSize: 11.5 }}>View logs</span>
+      <span style={{ fontSize: 11 }}>View logs</span>
       <ChevronRight />
     </button>
   )
@@ -672,9 +672,9 @@ function PipelineContextMenu({
           top: Math.min(menu.y, window.innerHeight - 90),
           zIndex: 61,
           width: 160,
-          background: '#232322',
-          border: `1px solid ${C.cardBorder}`,
-          borderRadius: 10,
+          background: C.sidebar,
+          border: `1px solid ${C.border}`,
+          borderRadius: 8,
           boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
           padding: 4
         }}
@@ -786,10 +786,10 @@ export default function Sidebar({
       >
         <span
           style={{
-            fontSize: 10.5,
+            fontSize: 10,
             fontWeight: 600,
             letterSpacing: '0.09em',
-            color: '#A1A19A',
+            color: C.textMuted,
             flex: 1
           }}
         >
@@ -808,7 +808,7 @@ export default function Sidebar({
             background: C.panel,
             border: `1px solid ${C.border}`,
             borderRadius: 8,
-            fontSize: 11.5,
+            fontSize: 11,
             fontWeight: 600,
             color: C.text,
             cursor: 'pointer',
@@ -827,13 +827,13 @@ export default function Sidebar({
           style={{
             width: 26,
             height: 26,
-            borderRadius: 7,
+            borderRadius: 6,
             border: 0,
             background: 'transparent',
             display: 'grid',
             placeItems: 'center',
             cursor: 'pointer',
-            color: '#A1A19A'
+            color: C.textMuted
           }}
         >
           <CaretRight />

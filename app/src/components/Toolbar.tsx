@@ -100,7 +100,7 @@ export default function Toolbar({
         columnGap: 18,
         position: 'relative',
         zIndex: 30,
-        background: liquid ? G.appBg : C.appBg
+        background: liquid ? G.appBg : C.terminal
       }}
     >
       <div
@@ -137,12 +137,12 @@ export default function Toolbar({
                 alignItems: 'center',
                 gap: 7,
                 padding: '6px 12px',
-                borderRadius: 10,
-                fontSize: 12.5,
+                borderRadius: 8,
+                fontSize: 12,
                 fontWeight: 600,
                 cursor: 'pointer',
-                background: on ? '#232322' : 'transparent',
-                color: on ? '#F0F0EC' : '#A1A19A'
+                background: on ? C.sidebar : 'transparent',
+                color: on ? C.text : C.textMuted
               }}
             >
               <v.Icon />
@@ -172,10 +172,10 @@ export default function Toolbar({
               ...noDrag,
               height: 28,
               padding: '0 10px',
-              borderRadius: 7,
+              borderRadius: 6,
               border: '1px solid #3E3E3A',
-              background: '#2D2D2B',
-              color: '#F0F0EC',
+              background: C.panel,
+              color: C.text,
               fontSize: 12,
               fontWeight: 600,
               cursor: 'pointer',
@@ -212,9 +212,9 @@ export default function Toolbar({
             ...noDrag,
             width: 28,
             height: 28,
-            borderRadius: 7,
+            borderRadius: 6,
             border: `1px solid ${C.border}`,
-            background: C.card,
+            background: C.sidebar,
             color: C.text,
             display: 'grid',
             placeItems: 'center',
@@ -234,9 +234,9 @@ export default function Toolbar({
             ...noDrag,
             width: 28,
             height: 28,
-            borderRadius: 7,
+            borderRadius: 6,
             border: `1px solid ${C.border}`,
-            background: C.card,
+            background: C.sidebar,
             color: C.text,
             display: 'grid',
             placeItems: 'center',
@@ -313,9 +313,9 @@ export default function Toolbar({
             right: 16,
             zIndex: 50,
             width: 292,
-            background: liquid ? G.panel : '#232322',
-            border: `1px solid ${C.cardBorder}`,
-            borderRadius: 11,
+            background: liquid ? G.panel : C.sidebar,
+            border: `1px solid ${C.border}`,
+            borderRadius: 12,
             boxShadow: '0 18px 44px rgba(0,0,0,0.55)',
             padding: 5
           }}
@@ -390,7 +390,7 @@ export default function Toolbar({
               checked={settings.autoFix}
               onChange={(autoFix) => onSettings({ ...settings, autoFix })}
               title="On a failed step, send the failure report to Chat"
-              style={{ fontSize: 11.5, color: C.textMuted }}
+              style={{ fontSize: 11, color: C.textMuted }}
             >
               Send failures to the agent
             </Checkbox>

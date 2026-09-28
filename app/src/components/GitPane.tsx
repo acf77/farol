@@ -51,16 +51,16 @@ export function gitStatusDotColor(status: GitStatus | null, github: GitHubInfo |
 }
 
 const card: CSSProperties = {
-  border: `1px solid ${C.cardBorder}`,
+  border: `1px solid ${C.border}`,
   borderRadius: 12,
-  background: C.card,
+  background: C.sidebar,
   padding: 16,
   minWidth: 0
 }
 
 const sectionLabel: CSSProperties = {
   color: C.textMuted,
-  fontSize: 10.5,
+  fontSize: 10,
   fontWeight: 700,
   letterSpacing: '0.1em',
   textTransform: 'uppercase'
@@ -69,7 +69,7 @@ const sectionLabel: CSSProperties = {
 const input: CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
-  border: `1px solid ${C.cardBorder}`,
+  border: `1px solid ${C.border}`,
   borderRadius: 8,
   background: C.terminal,
   color: C.textSoft,
@@ -82,7 +82,7 @@ const KIND: Record<GitFileKind, { letter: string; color: string }> = {
   added: { letter: 'A', color: C.green },
   deleted: { letter: 'D', color: C.red },
   renamed: { letter: 'R', color: C.purpleSoft },
-  untracked: { letter: 'U', color: C.accentBright },
+  untracked: { letter: 'U', color: C.accent },
   conflict: { letter: '!', color: C.red }
 }
 
@@ -460,9 +460,9 @@ function RecentCommitsCard({ commits }: { commits: ReturnType<typeof useGitPanel
           {commits.map((commit, index) => (
             <div key={commit.hash} style={{ position: 'relative', display: 'grid', gridTemplateColumns: '14px minmax(0, 1fr) auto', columnGap: 10, paddingBottom: index === commits.length - 1 ? 0 : 16 }}>
               {index < commits.length - 1 && (
-                <span style={{ position: 'absolute', top: 9, bottom: -2, left: 4, width: 1, background: C.cardBorder }} />
+                <span style={{ position: 'absolute', top: 9, bottom: -2, left: 4, width: 1, background: C.border }} />
               )}
-              <span style={{ width: 7, height: 7, marginTop: 5, borderRadius: '50%', background: index === 0 ? C.green : C.card, border: `1px solid ${index === 0 ? C.green : C.faint}`, zIndex: 1 }} />
+              <span style={{ width: 7, height: 7, marginTop: 5, borderRadius: '50%', background: index === 0 ? C.green : C.sidebar, border: `1px solid ${index === 0 ? C.green : C.faint}`, zIndex: 1 }} />
               <div style={{ minWidth: 0 }}>
                 <div title={commit.subject} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.textSoft, fontSize: 12, fontWeight: 600 }}>
                   {commit.subject}
@@ -471,7 +471,7 @@ function RecentCommitsCard({ commits }: { commits: ReturnType<typeof useGitPanel
                   {commit.author}{commit.when ? ` · ${commit.when}` : ''}
                 </div>
               </div>
-              <span style={{ color: C.textMuted, fontFamily: MONO, fontSize: 10.5 }}>{commit.hash}</span>
+              <span style={{ color: C.textMuted, fontFamily: MONO, fontSize: 10 }}>{commit.hash}</span>
             </div>
           ))}
         </div>
@@ -486,7 +486,7 @@ function ConflictPaths({ title, files }: { title: string; files: string[] }) {
     <div style={{ marginTop: 10 }}>
       <div style={{ color: C.red, fontSize: 11, marginBottom: 5 }}>{title}</div>
       {files.map((file) => (
-        <div key={file} title={file} style={{ color: C.textMuted, fontFamily: MONO, fontSize: 10.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div key={file} title={file} style={{ color: C.textMuted, fontFamily: MONO, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {file}
         </div>
       ))}
@@ -695,9 +695,9 @@ function PullRequestCard({
         </label>
       </div>
 
-      <div style={{ marginTop: 12, padding: '5px 6px 5px 11px', minHeight: 32, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${C.cardBorder}`, borderRadius: 8, background: C.terminal }}>
+      <div style={{ marginTop: 12, padding: '5px 6px 5px 11px', minHeight: 32, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${C.border}`, borderRadius: 8, background: C.terminal }}>
         <span style={{ width: 8, height: 8, flex: 'none', borderRadius: '50%', background: mergeItems.some((item) => item.tone === 'conflict') ? C.red : mergeItems.some((item) => item.tone === 'ok') ? C.green : C.faint }} />
-        <span style={{ flex: 1, minWidth: 0, color: C.textMuted, fontSize: 11.5 }}>
+        <span style={{ flex: 1, minWidth: 0, color: C.textMuted, fontSize: 11 }}>
           {mergeItems[0]?.text ?? 'Merge status unknown'}
         </span>
         <ConfirmButton
@@ -720,7 +720,7 @@ function PullRequestCard({
       <ConflictPaths title="Predicted conflicts" files={predicted} />
 
       {attached && checks && (
-        <div style={{ marginTop: 12, padding: '10px 12px', border: `1px solid ${C.cardBorder}`, borderRadius: 8, background: C.terminal }}>
+        <div style={{ marginTop: 12, padding: '10px 12px', border: `1px solid ${C.border}`, borderRadius: 8, background: C.terminal }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span
               style={{
@@ -738,7 +738,7 @@ function PullRequestCard({
                         : C.faint
               }}
             />
-            <span style={{ color: C.textSoft, fontSize: 11.5, fontWeight: 600 }}>
+            <span style={{ color: C.textSoft, fontSize: 11, fontWeight: 600 }}>
               {checksSummaryLabel(checks)}
             </span>
           </div>
@@ -835,7 +835,7 @@ function GitLogCard({ log }: { log: GitLogEntry[] }) {
   return (
     <section style={{ ...card, flex: 1, minHeight: 144 }}>
       <div style={{ ...sectionLabel, marginBottom: 14 }}>Git log</div>
-      <div role="log" aria-live="polite" style={{ minHeight: 84, maxHeight: 220, overflow: 'auto', borderRadius: 8, background: C.terminal, padding: '11px 12px', boxSizing: 'border-box', fontFamily: MONO, fontSize: 10.5, lineHeight: 1.6 }}>
+      <div role="log" aria-live="polite" style={{ minHeight: 84, maxHeight: 220, overflow: 'auto', borderRadius: 8, background: C.terminal, padding: '11px 12px', boxSizing: 'border-box', fontFamily: MONO, fontSize: 10, lineHeight: 1.6 }}>
         {!log.length && <span style={{ color: C.faint }}>No Git actions this session.</span>}
         {log.map((entry) => (
           <div key={entry.id} style={{ display: 'grid', gridTemplateColumns: '58px max-content minmax(0, 1fr)', gap: 8, color: entry.ok ? C.textMuted : C.red }}>
@@ -880,9 +880,9 @@ function HooksCard({ hooks }: { hooks: GitHookInfo[] | null }) {
                   }}
                 />
                 <span style={{ fontFamily: MONO, fontSize: 12, color: C.textSoft }}>{hook.name}</span>
-                {!hook.enabled && <span style={{ color: C.textMuted, fontSize: 10.5 }}>disabled</span>}
+                {!hook.enabled && <span style={{ color: C.textMuted, fontSize: 10 }}>disabled</span>}
                 {blocks.length > 0 && (
-                  <span style={{ color: C.yellow, fontSize: 10.5 }}>
+                  <span style={{ color: C.yellow, fontSize: 10 }}>
                     blocks {blocks.join(' & ')}
                   </span>
                 )}
@@ -966,12 +966,12 @@ export default function GitPane({
       aria-modal="true"
       aria-label="Source Control"
       tabIndex={-1}
-      style={{ position: 'fixed', inset: 0, zIndex: 90, display: 'flex', flexDirection: 'column', background: C.appBg, color: C.text, fontFamily: UI }}
+      style={{ position: 'fixed', inset: 0, zIndex: 90, display: 'flex', flexDirection: 'column', background: C.terminal, color: C.text, fontFamily: UI }}
     >
       <header style={{ height: 52, flex: 'none', display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', borderBottom: `1px solid ${C.border}` }}>
         <GitIcon size={14} color={C.textMuted} />
         <span style={{ fontSize: 13, fontWeight: 650 }}>Source Control</span>
-        <span style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '5px 9px', border: `1px solid ${C.cardBorder}`, borderRadius: 7, background: C.card, color: C.textSoft, fontFamily: MONO, fontSize: 11 }}>
+        <span style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '5px 9px', border: `1px solid ${C.border}`, borderRadius: 6, background: C.sidebar, color: C.textSoft, fontFamily: MONO, fontSize: 11 }}>
           {branch}{base ? ` → ${base}` : ''}
         </span>
         <span style={{ flex: 1 }} />

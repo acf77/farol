@@ -63,7 +63,7 @@ export default function PaneGrid({
     <div
       ref={areaRef}
       onContextMenu={onContextMenu}
-      style={{ flex: 1, minHeight: 0, height: '100%', position: 'relative', background: '#181817' }}
+      style={{ flex: 1, minHeight: 0, height: '100%', position: 'relative', background: C.terminal }}
     >
       {layout.panes.map((rect) => {
         const pane = tab.panes[rect.id]
@@ -96,9 +96,9 @@ export default function PaneGrid({
                   alignItems: 'center',
                   gap: 8,
                   padding: '0 8px',
-                  background: '#232322',
+                  background: C.sidebar,
                   borderBottom: '1px solid #3E3E3A',
-                  color: focused ? '#F0F0EC' : '#A1A19A',
+                  color: focused ? C.text : C.textMuted,
                   fontSize: 11
                 }}
               >

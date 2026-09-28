@@ -105,7 +105,7 @@ function codeBlock(body: string, lang: string | undefined, key: string): ReactNo
       }}
     >
       {lang ? (
-        <div style={{ fontSize: 10.5, color: C.faint, marginBottom: 8, userSelect: 'none' }}>{lang}</div>
+        <div style={{ fontSize: 10, color: C.faint, marginBottom: 8, userSelect: 'none' }}>{lang}</div>
       ) : null}
       <code style={{ fontFamily: 'inherit', whiteSpace: 'pre' }}>{body.replace(/\n$/, '')}</code>
     </pre>
@@ -455,7 +455,7 @@ export function MarkdownBody({ text }: { text: string }) {
     <div
       className="bf-md"
       style={{
-        fontSize: 13.5,
+        fontSize: 13,
         lineHeight: 1.6,
         color: C.text,
         textWrap: 'pretty',

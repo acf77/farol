@@ -87,7 +87,7 @@ function AttachmentStrip({
               boxSizing: 'border-box',
               padding: '10px',
               borderRadius: 8,
-              border: `1px solid ${C.cardBorder}`,
+              border: `1px solid ${C.border}`,
               background: C.terminal,
               color: C.textMuted
             }}
@@ -99,7 +99,7 @@ function AttachmentStrip({
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
-                  fontSize: 12.5,
+                  fontSize: 12,
                   fontWeight: 600,
                   color: C.textSoft
                 }}
@@ -167,9 +167,9 @@ function ComposerPickerMenu({
         zIndex: 70,
         maxHeight: 220,
         overflow: 'auto',
-        background: C.card,
-        border: `1px solid ${C.cardBorder}`,
-        borderRadius: 10,
+        background: C.sidebar,
+        border: `1px solid ${C.border}`,
+        borderRadius: 8,
         boxShadow: '0 14px 36px rgba(0,0,0,0.5)',
         padding: 4
       }}
@@ -356,8 +356,8 @@ function composerSurfaceStyle(dragOver: boolean): React.CSSProperties {
   return {
     maxWidth: 680,
     margin: '0 auto',
-    background: dragOver ? C.panel : C.card,
-    border: dragOver ? `1px solid ${C.accent}` : `1px solid ${C.cardBorder}`,
+    background: dragOver ? C.panel : C.sidebar,
+    border: dragOver ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
     borderRadius: 12,
     padding: '14px 16px 11px',
     position: 'relative',
@@ -428,7 +428,7 @@ const COMPOSER_TEXTAREA_STYLE: React.CSSProperties = {
   background: 'transparent',
   color: C.text,
   fontFamily: 'inherit',
-  fontSize: 13.5,
+  fontSize: 13,
   lineHeight: 1.5,
   minHeight: 40,
   maxHeight: 200,
@@ -459,7 +459,7 @@ export function ChatModeSwitch({
         gap: 2,
         borderRadius: 8,
         background: C.panel,
-        border: `1px solid ${C.cardBorder}`
+        border: `1px solid ${C.border}`
       }}
     >
       <button
@@ -471,7 +471,7 @@ export function ChatModeSwitch({
         aria-pressed={mode === 'plan'}
         style={{
           border: 'none', borderRadius: 6, padding: '3px 7px',
-          background: mode === 'plan' ? C.card : 'transparent',
+          background: mode === 'plan' ? C.sidebar : 'transparent',
           color: mode === 'plan' ? C.text : C.textMuted,
           fontSize: 11, fontWeight: 600, cursor: locked ? 'default' : 'pointer'
         }}
@@ -487,7 +487,7 @@ export function ChatModeSwitch({
         aria-pressed={mode === 'build'}
         style={{
           border: 'none', borderRadius: 6, padding: '3px 7px',
-          background: mode === 'build' ? C.card : 'transparent', color: mode === 'build' ? C.text : C.textMuted,
+          background: mode === 'build' ? C.sidebar : 'transparent', color: mode === 'build' ? C.text : C.textMuted,
           fontSize: 11, fontWeight: 600, cursor: locked ? 'default' : 'pointer'
         }}
       >
@@ -548,7 +548,7 @@ function ComposerToolbar({
           gap: 5,
           border: 'none',
           background: 'transparent',
-          color: '#A1A19A',
+          color: C.textMuted,
           fontSize: 12,
           cursor: 'pointer',
           padding: '2px 4px'
@@ -579,7 +579,7 @@ function ComposerToolbar({
           placeItems: 'center',
           border: 'none',
           background: 'transparent',
-          color: '#A1A19A',
+          color: C.textMuted,
           cursor: 'pointer',
           padding: 2
         }}
@@ -644,7 +644,7 @@ function SendButton({
       }}
     >
       {isBusy ? (
-        <span style={{ width: 10, height: 10, borderRadius: 2, background: '#fff' }} />
+        <span style={{ width: 10, height: 10, borderRadius: 4, background: '#fff' }} />
       ) : (
         <SendIcon />
       )}

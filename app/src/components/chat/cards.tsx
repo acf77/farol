@@ -30,10 +30,10 @@ function ChatCard({
   return (
     <div
       style={{
-        border: `1px solid ${C.cardBorder}`,
+        border: `1px solid ${C.border}`,
         borderRadius: 12,
         overflow: 'hidden',
-        background: C.card,
+        background: C.sidebar,
         ...style
       }}
     >
@@ -44,7 +44,7 @@ function ChatCard({
           gap: compact ? 9 : 8,
           minWidth: 0,
           padding: compact ? '7px 11px' : '11px 14px',
-          borderBottom: children ? `1px solid ${C.cardBorder}` : undefined
+          borderBottom: children ? `1px solid ${C.border}` : undefined
         }}
       >
         <ToolIcon />
@@ -52,7 +52,7 @@ function ChatCard({
           style={{
             fontFamily: MONO,
             fontSize: compact ? 11.5 : 12,
-            color: '#C4C4BE',
+            color: C.textRow,
             flex: compact ? 'none' : undefined
           }}
         >
@@ -95,8 +95,8 @@ export function ChatBanner({
         alignItems: 'center',
         gap: 10,
         padding: '12px 14px',
-        background: C.card,
-        border: `1px solid ${C.cardBorder}`,
+        background: C.sidebar,
+        border: `1px solid ${C.border}`,
         borderRadius: 12,
         ...style
       }}
@@ -124,8 +124,8 @@ export function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool
               title={tool.detail}
               style={{
                 fontFamily: MONO,
-                fontSize: 11.5,
-                color: '#A1A19A',
+                fontSize: 11,
+                color: C.textMuted,
                 minWidth: 0,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -185,8 +185,8 @@ export function PipelineMsgCard({
             className="bf-focus bf-linkish"
             onClick={() => onOpenPipeline(pc.tabId)}
             style={{
-              fontSize: 11.5,
-              color: '#A1A19A',
+              fontSize: 11,
+              color: C.textMuted,
               cursor: 'pointer',
               border: 'none',
               background: 'transparent',
@@ -209,7 +209,7 @@ export function PipelineMsgCard({
           fontFamily: MONO,
           fontSize: 12,
           lineHeight: 1.5,
-          color: '#A1A19A',
+          color: C.textMuted,
           userSelect: 'text'
         }}
       >
@@ -229,7 +229,7 @@ export function AssistantFooter({
   onNewChat: () => void
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#A1A19A' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.textMuted }}>
       <CircleIcon />
       <span style={{ fontSize: 12 }}>{AI_LABELS[provider]}</span>
       <span style={{ flex: 1 }} />
@@ -300,18 +300,18 @@ function QuestionOptionButton({
         gap: 2,
         width: '100%',
         padding: '8px 10px',
-        border: selected ? `1px solid ${C.accent}` : `1px solid ${C.cardBorder}`,
+        border: selected ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
         borderRadius: 8,
         background: selected ? 'rgba(214, 242, 58,0.12)' : 'transparent',
-        color: '#D8D8D3',
+        color: C.textSoft,
         cursor: locked ? 'default' : 'pointer',
         textAlign: 'left',
         fontFamily: 'inherit'
       }}
     >
-      <span style={{ fontSize: 12.5, fontWeight: 600 }}>{option.label}</span>
+      <span style={{ fontSize: 12, fontWeight: 600 }}>{option.label}</span>
       {option.description && (
-        <span style={{ fontSize: 12, lineHeight: 1.4, color: '#A1A19A' }}>{option.description}</span>
+        <span style={{ fontSize: 12, lineHeight: 1.4, color: C.textMuted }}>{option.description}</span>
       )}
     </button>
   )
@@ -370,10 +370,10 @@ export function QuestionCard({
           )
           return (
             <div key={`${card.requestId}-${qi}`} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: '#777772', letterSpacing: '0.02em' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.faint, letterSpacing: '0.02em' }}>
                 {question.header}
               </div>
-              <div style={{ fontSize: 13.5, lineHeight: 1.45, color: '#D8D8D3' }}>{question.question}</div>
+              <div style={{ fontSize: 13, lineHeight: 1.45, color: C.textSoft }}>{question.question}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {question.options.map((option) => (
                   <QuestionOptionButton
@@ -401,11 +401,11 @@ export function QuestionCard({
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
-                    border: `1px solid ${C.cardBorder}`,
+                    border: `1px solid ${C.border}`,
                     borderRadius: 8,
-                    background: '#181817',
-                    color: '#F0F0EC',
-                    fontSize: 12.5,
+                    background: C.terminal,
+                    color: C.text,
+                    fontSize: 12,
                     padding: '7px 10px',
                     outline: 'none',
                     fontFamily: 'inherit'
@@ -413,7 +413,7 @@ export function QuestionCard({
                 />
               )}
               {locked && extras.length > 0 && (
-                <div style={{ fontSize: 12, color: '#A1A19A' }}>{extras.join(', ')}</div>
+                <div style={{ fontSize: 12, color: C.textMuted }}>{extras.join(', ')}</div>
               )}
             </div>
           )

@@ -23,10 +23,10 @@ function fallbackUi(
         style={{
           marginLeft: 41,
           padding: '8px 12px',
-          borderRadius: 9,
-          background: '#232322',
+          borderRadius: 8,
+          background: C.sidebar,
           border: '1px solid #3E3E3A',
-          fontSize: 12.5,
+          fontSize: 12,
           lineHeight: 1.45,
           color: C.textMuted
         }}
@@ -41,7 +41,7 @@ function fallbackUi(
               marginLeft: 8,
               border: 'none',
               background: 'transparent',
-              color: C.accentBright,
+              color: C.accent,
               cursor: 'pointer',
               fontSize: 'inherit',
               padding: 0
@@ -65,14 +65,14 @@ function fallbackUi(
         gap: 16,
         padding: 32,
         boxSizing: 'border-box',
-        background: '#181817',
+        background: C.terminal,
         color: C.text,
         fontFamily: UI,
-        fontSize: 14,
+        fontSize: 13,
         textAlign: 'center'
       }}
     >
-      <div style={{ fontSize: 17, fontWeight: 600, color: C.textSoft }}>Farol hit an error</div>
+      <div style={{ fontSize: 16, fontWeight: 600, color: C.textSoft }}>Farol hit an error</div>
       <div style={{ maxWidth: 480, lineHeight: 1.5, color: C.textMuted }}>
         The workspace stopped updating. Your terminals and agent processes may still be running in the
         background.
@@ -85,11 +85,11 @@ function fallbackUi(
             onClick={onReset}
             style={{
               border: '1px solid #3E3E3A',
-              borderRadius: 9,
+              borderRadius: 8,
               padding: '10px 18px',
               background: 'transparent',
               color: C.textSoft,
-              fontSize: 13.5,
+              fontSize: 13,
               fontWeight: 600,
               cursor: 'pointer'
             }}
@@ -103,11 +103,11 @@ function fallbackUi(
           onClick={onReload}
           style={{
             border: 'none',
-            borderRadius: 9,
+            borderRadius: 8,
             padding: '10px 18px',
             background: C.accent,
             color: C.accentInk,
-            fontSize: 13.5,
+            fontSize: 13,
             fontWeight: 600,
             cursor: 'pointer'
           }}

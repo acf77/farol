@@ -42,9 +42,9 @@ export function Turn({
             maxWidth: 430,
             padding: '11px 15px',
             background: C.panel,
-            border: `1px solid ${C.cardBorder}`,
+            border: `1px solid ${C.border}`,
             borderRadius: 12,
-            fontSize: 13.5,
+            fontSize: 13,
             lineHeight: 1.5,
             whiteSpace: 'pre-wrap',
             overflowWrap: 'anywhere',
@@ -54,7 +54,7 @@ export function Turn({
           {m.text}
         </div>
         {m.at && (
-          <span style={{ fontSize: 11, color: '#777772' }}>{fmtClock(m.at)}</span>
+          <span style={{ fontSize: 11, color: C.faint }}>{fmtClock(m.at)}</span>
         )}
       </div>
     )
@@ -75,9 +75,9 @@ export function Turn({
       ) : (
         <div
           style={{
-            fontSize: 13.5,
+            fontSize: 13,
             lineHeight: 1.6,
-            color: '#A1A19A',
+            color: C.textMuted,
             textWrap: 'pretty',
             whiteSpace: 'pre-wrap',
             overflowWrap: 'anywhere',

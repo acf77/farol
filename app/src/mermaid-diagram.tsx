@@ -59,7 +59,7 @@ function Fallback({ source, failed }: { source: string; failed: boolean }) {
         color: C.textRow
       }}
     >
-      <div style={{ fontSize: 10.5, color: C.faint, marginBottom: 8, userSelect: 'none' }}>
+      <div style={{ fontSize: 10, color: C.faint, marginBottom: 8, userSelect: 'none' }}>
         {failed ? 'mermaid — could not render' : 'mermaid'}
       </div>
       <code style={{ fontFamily: 'inherit', whiteSpace: 'pre' }}>{source.replace(/\n$/, '')}</code>

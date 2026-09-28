@@ -43,9 +43,9 @@ const OPENROUTER_AGENT_OPTIONS = OPENROUTER_AGENTS.map((value) => ({
 }))
 
 const card: React.CSSProperties = {
-  border: `1px solid ${C.cardBorder}`,
+  border: `1px solid ${C.border}`,
   borderRadius: 12,
-  background: C.card,
+  background: C.sidebar,
   padding: 16,
   minWidth: 0
 }
@@ -53,11 +53,11 @@ const card: React.CSSProperties = {
 const field: React.CSSProperties = {
   height: 28,
   padding: '0 8px',
-  borderRadius: 7,
-  border: `1px solid ${C.cardBorder}`,
+  borderRadius: 6,
+  border: `1px solid ${C.border}`,
   background: C.terminal,
   color: C.text,
-  fontSize: 12.5
+  fontSize: 12
 }
 
 /** Save, replace, or clear one encrypted provider key. */
@@ -81,7 +81,7 @@ function ApiKeyField({
   if (configured && !replace) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 12.5, color: C.textSoft }}>API key saved</span>
+        <span style={{ fontSize: 12, color: C.textSoft }}>API key saved</span>
         <Button variant="ghost" onClick={() => setReplace(true)}>
           Replace
         </Button>
@@ -174,9 +174,9 @@ function JevSection({
         >
           Test
         </Button>
-        {busy && <span style={{ fontSize: 11.5, color: C.textMuted }}>Working…</span>}
+        {busy && <span style={{ fontSize: 11, color: C.textMuted }}>Working…</span>}
         {!busy && configured && probed && !error && (
-          <span style={{ fontSize: 11.5, color: C.textSoft }}>
+          <span style={{ fontSize: 11, color: C.textSoft }}>
             Jev answered the check question.
           </span>
         )}
@@ -261,7 +261,7 @@ function ModeChain({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {chain.map((rung, i) => (
         <div key={`${rung.agent}:${rung.model ?? ''}`} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ width: 18, flex: 'none', fontSize: 11.5, color: C.faint }}>{i + 1}.</span>
+          <span style={{ width: 18, flex: 'none', fontSize: 11, color: C.faint }}>{i + 1}.</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <CliModelDropdown
               label={`${mode === 'plan' ? 'Plan' : 'Build'} model ${i + 1}`}
@@ -386,7 +386,7 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
         zIndex: 90,
         display: 'flex',
         flexDirection: 'column',
-        background: C.appBg,
+        background: C.terminal,
         color: C.text,
         fontFamily: UI
       }}
@@ -486,9 +486,9 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
                   <Button variant="secondary" disabled={busy} onClick={refreshLists}>
                     Refresh model lists
                   </Button>
-                  {busy && <span style={{ fontSize: 11.5, color: C.textMuted }}>Working…</span>}
+                  {busy && <span style={{ fontSize: 11, color: C.textMuted }}>Working…</span>}
                   {!busy && listsHint && (
-                    <span style={{ fontSize: 11.5, color: listsHint === 'Updated' ? C.textSoft : C.red }}>
+                    <span style={{ fontSize: 11, color: listsHint === 'Updated' ? C.textSoft : C.red }}>
                       {listsHint}
                     </span>
                   )}
@@ -562,7 +562,7 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
                   >
                     Refresh catalog
                   </Button>
-                  {busy && <span style={{ fontSize: 11.5, color: C.textMuted }}>Working…</span>}
+                  {busy && <span style={{ fontSize: 11, color: C.textMuted }}>Working…</span>}
                 </div>
                 {error && <div style={{ fontSize: 12, color: C.red, marginBottom: 8 }}>{error}</div>}
               </Section>

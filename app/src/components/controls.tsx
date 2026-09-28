@@ -73,7 +73,7 @@ export function Button({
         height: HEIGHT[size],
         padding: size === 'sm' ? '0 11px' : '0 16px',
         borderRadius: size === 'sm' ? 8 : 12,
-        fontSize: 12.5,
+        fontSize: 12,
         cursor: rest.disabled ? 'default' : 'pointer',
         display: 'inline-flex',
         alignItems: 'center',
@@ -209,7 +209,7 @@ export function SegmentedControl<T extends string>({
       style={{
         display: 'flex',
         border: '1px solid #3E3E3A',
-        borderRadius: 7,
+        borderRadius: 6,
         overflow: 'hidden',
         ...style
       }}
@@ -250,7 +250,7 @@ export function SegmentedControl<T extends string>({
               letterSpacing: '0.4px',
               cursor: 'pointer',
               background: on ? activeBg : 'transparent',
-              color: on ? activeFg : C.dim
+              color: on ? activeFg : C.textMuted
             }}
           >
             {o.label}
@@ -282,7 +282,7 @@ export function Checkbox({
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        fontSize: 11.5,
+        fontSize: 11,
         color: C.textSoft,
         cursor: 'pointer',
         ...style
@@ -329,7 +329,7 @@ function ModelMenuItem({
       role="menuitem"
       className="bf-focus bf-menu-item"
       onClick={onPick}
-      style={{ ...menuItem, color: selected ? C.textStrong : C.textMuted }}
+      style={{ ...menuItem, color: selected ? C.text : C.textMuted }}
     >
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
       {selected && <CheckIcon size={12} />}
@@ -462,7 +462,7 @@ export function CliModelMenu({
           flexDirection: 'column',
           overflow: 'hidden',
           background: C.panel,
-          border: `1px solid ${C.cardBorder}`,
+          border: `1px solid ${C.border}`,
           borderRadius: 8,
           boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
           padding: 4
@@ -481,7 +481,7 @@ export function CliModelMenu({
                 }}
                 style={{
                   ...menuItem,
-                  color: p === current ? C.textStrong : C.textMuted
+                  color: p === current ? C.text : C.textMuted
                 }}
               >
                 <span>{AI_LABELS[p]}</span>
@@ -523,7 +523,7 @@ export function CliModelMenu({
                     margin: '4px 4px 6px',
                     padding: '0 8px',
                     borderRadius: 6,
-                    border: `1px solid ${C.cardBorder}`,
+                    border: `1px solid ${C.border}`,
                     background: C.terminal,
                     color: C.text,
                     fontSize: 12,
@@ -601,7 +601,7 @@ export function CliModelDropdown({
         style={{
           height: 24,
           padding: '0 8px',
-          borderRadius: 5,
+          borderRadius: 4,
           border: '1px solid rgba(255,255,255,0.1)',
           background: 'rgba(255,255,255,0.05)',
           color: C.text,

@@ -139,7 +139,6 @@ function ClearChatOverlay({
         padding: 20,
         boxSizing: 'border-box',
         background: 'rgba(12, 12, 10, 0.55)',
-        backdropFilter: 'blur(2px)',
         animation: 'bfOverlayIn 120ms ease-out'
       }}
     >
@@ -151,17 +150,17 @@ function ClearChatOverlay({
           maxWidth: 360,
           boxSizing: 'border-box',
           padding: '16px 18px',
-          borderRadius: 14,
-          background: C.card,
+          borderRadius: 12,
+          background: C.sidebar,
           border: `1px solid ${C.red}`,
           boxShadow: '0 20px 48px rgba(0,0,0,0.5)',
           animation: 'bfOverlayCardIn 140ms ease-out'
         }}
       >
-        <div id="clear-chat-title" style={{ fontSize: 14.5, fontWeight: 700, color: C.textStrong }}>
+        <div id="clear-chat-title" style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
           Clear this conversation?
         </div>
-        <div id="clear-chat-desc" style={{ fontSize: 12.5, lineHeight: 1.45, color: C.textMuted, marginTop: 6 }}>
+        <div id="clear-chat-desc" style={{ fontSize: 12, lineHeight: 1.45, color: C.textMuted, marginTop: 6 }}>
           Clearing permanently deletes this branch&apos;s current messages. This can&apos;t be undone.
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
@@ -182,7 +181,7 @@ function ClearChatOverlay({
 function ChatClearedBanner({ onDismissChatCleared }: { onDismissChatCleared?: () => void }) {
   return (
     <ChatBanner role="status">
-      <span style={{ flex: 1, fontSize: 12.5, lineHeight: 1.45, color: C.textMuted }}>
+      <span style={{ flex: 1, fontSize: 12, lineHeight: 1.45, color: C.textMuted }}>
         Conversation cleared. Previous messages were removed from this branch. Switch to another
         branch in the sidebar to see its chat.
       </span>
@@ -243,7 +242,7 @@ function FreshStartBanner({
 }) {
   return (
     <ChatBanner role="status" style={{ borderColor: C.yellowDim }}>
-      <span style={{ flex: 1, fontSize: 12.5, lineHeight: 1.45, color: C.textMuted }}>
+      <span style={{ flex: 1, fontSize: 12, lineHeight: 1.45, color: C.textMuted }}>
         <span style={{ color: C.yellow }}>{reason}</span> Answers get less precise as it grows. Fresh
         start keeps this chat and continues in a new session from the agent&apos;s handoff note.
       </span>
@@ -285,7 +284,7 @@ function ChatGreeting({ availableCount, mode }: { availableCount: number; mode: 
         width={36}
         height={36}
         draggable={false}
-        style={{ borderRadius: 10, display: 'block' }}
+        style={{ borderRadius: 8, display: 'block' }}
       />
       <div
         style={{
@@ -293,7 +292,7 @@ function ChatGreeting({ availableCount, mode }: { availableCount: number; mode: 
           fontWeight: 600,
           letterSpacing: '-0.4px',
           marginTop: 18,
-          color: C.textStrong
+          color: C.text
         }}
       >
         {greetingFor(new Date())}
@@ -333,17 +332,17 @@ function SuggestionList({ onPick }: { onPick: (prompt: string) => void }) {
             minHeight: 92,
             padding: '14px 14px 12px',
             margin: 0,
-            background: C.card,
-            border: `1px solid ${C.cardBorder}`,
+            background: C.sidebar,
+            border: `1px solid ${C.border}`,
             borderRadius: 12,
             cursor: 'pointer',
             textAlign: 'left',
-            color: C.textStrong,
+            color: C.text,
             fontFamily: 'inherit'
           }}
         >
-          <span style={{ color: '#A1A19A', display: 'grid' }}>
-            <Icon size={16} color="#A1A19A" />
+          <span style={{ color: C.textMuted, display: 'grid' }}>
+            <Icon size={16} color={C.textMuted} />
           </span>
           <span>
             <span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>{label}</span>

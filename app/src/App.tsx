@@ -712,7 +712,7 @@ function handleRunStepStart(ctx: RunEventCtx, e: Extract<RunEvent, { kind: 'step
   deps.lastRunOut.current = null
   const name = byId.get(e.nodeId)?.name || e.nodeId
   stepAt(e.nodeId, 'running')
-  deps.pushLog(`Starting step: ${name}`, '#A1A19A')
+  deps.pushLog(`Starting step: ${name}`, C.textMuted)
   term((pane) => ({
     ...pane,
     term: writeLine(ensureNewline(clearIndent(pane.term)), `[${e.index + 1}/${total}] ${name}`, seg('step'))
@@ -753,7 +753,7 @@ function handleRunStepEnd(ctx: RunEventCtx, e: Extract<RunEvent, { kind: 'step-e
   stepAt(e.nodeId, st)
   const name = byId.get(e.nodeId)?.name || e.nodeId
   const text = stepEndText(name, e)
-  const color = e.ok ? '#87C9AE' : e.skipped || e.cancelled ? '#A1A19A' : '#FF625A'
+  const color = e.ok ? C.green : e.skipped || e.cancelled ? C.textMuted : C.red
   deps.pushLog(text, color)
   term((pane) => ({
     ...pane,
@@ -793,7 +793,7 @@ function handleRunEnd(ctx: RunEventCtx, e: Extract<RunEvent, { kind: 'end' }>): 
   const summary = runEndSummary(branch, total, failedName, e)
   deps.pushLog(
     e.ok ? 'Pipeline finished — all steps passed' : e.cancelled ? 'Pipeline cancelled' : 'Pipeline failed',
-    e.ok ? '#87C9AE' : e.cancelled ? '#A1A19A' : '#FF625A'
+    e.ok ? C.green : e.cancelled ? C.textMuted : C.red
   )
   deps.patchTab(tabId, (t) => ({ ...t, status: e.cancelled ? 'cancelled' : e.ok ? 'pass' : 'fail' }))
   // Only runs a person started hand off; otherwise an agent that runs
@@ -2529,7 +2529,7 @@ export function ProjectWorkspace({
             zIndex: 80,
             display: 'flex',
             flexDirection: 'column',
-            background: '#181817'
+            background: C.terminal
           }}
         >
           <PipelineCanvas
@@ -2721,9 +2721,9 @@ export default function App() {
               WebkitAppRegion: 'no-drag',
               width: 28,
               height: 28,
-              borderRadius: 7,
+              borderRadius: 6,
               border: `1px solid ${C.border}`,
-              background: C.card,
+              background: C.sidebar,
               color: C.text,
               display: 'grid',
               placeItems: 'center',
