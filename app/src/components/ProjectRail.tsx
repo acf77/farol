@@ -458,6 +458,7 @@ export default function ProjectRail({
           return (
             <div key={group.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <div
+                className="bf-reveal-host"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -504,7 +505,7 @@ export default function ProjectRail({
                 {hasRepo && (
                   <button
                     type="button"
-                    className="bf-icon-btn"
+                    className="bf-icon-btn bf-reveal"
                     title="Open branch as project"
                     onClick={() => {
                       const preferred =
@@ -539,7 +540,7 @@ export default function ProjectRail({
                       key={project.path}
                       role="button"
                       tabIndex={0}
-                      className="bf-focus"
+                      className="bf-focus bf-reveal-host"
                       title={activityTip(project.display, busy, unread)}
                       onClick={() => onSelect(project.path)}
                       onKeyDown={(e) => {
@@ -590,7 +591,7 @@ export default function ProjectRail({
                       </span>
                       <button
                         type="button"
-                        className="bf-icon-btn"
+                        className="bf-icon-btn bf-reveal"
                         title="Clear this branch's chat (does not create a second chat)"
                         aria-label="Clear this branch's chat"
                         onClick={(e) => {
@@ -606,15 +607,14 @@ export default function ProjectRail({
                           color: C.textMuted,
                           cursor: 'pointer',
                           display: 'grid',
-                          placeItems: 'center',
-                          opacity: active ? 1 : 0.7
+                          placeItems: 'center'
                         }}
                       >
                         <ClearChatIcon size={13} color={C.textMuted} />
                       </button>
                       <button
                         type="button"
-                        className="bf-tab-close"
+                        className="bf-tab-close bf-reveal"
                         title="Close project"
                         onClick={(e) => {
                           e.stopPropagation()
@@ -628,8 +628,7 @@ export default function ProjectRail({
                           background: 'transparent',
                           color: C.textMuted,
                           fontSize: 13,
-                          cursor: 'pointer',
-                          opacity: active ? 1 : 0.55
+                          cursor: 'pointer'
                         }}
                       >
                         ×

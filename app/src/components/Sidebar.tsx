@@ -117,7 +117,7 @@ function CollapsedRail({
 
       {running ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-          <Spinner size={16} />
+          <Spinner size={14} />
           <RailLabel color={C.text} weight={500}>
             {running.name}
           </RailLabel>
@@ -302,7 +302,7 @@ function PipelineCard({
               cursor: 'pointer'
             }}
           >
-            <StopIcon size={10} />
+            <StopIcon size={12} />
           </button>
         ) : (
           <button

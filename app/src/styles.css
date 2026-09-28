@@ -630,3 +630,12 @@ button:disabled {
   max-width: 100%;
   height: auto;
 }
+
+/* Row actions stay out of sight until the row is hovered or holds focus. */
+.bf-reveal {
+  opacity: 0;
+}
+.bf-reveal-host:hover .bf-reveal,
+.bf-reveal-host:focus-within .bf-reveal {
+  opacity: 1;
+}

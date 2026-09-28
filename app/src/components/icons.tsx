@@ -89,46 +89,30 @@ export function BranchIcon({ size = 13, color = '#A1A19A' }: IconProps) {
   )
 }
 
-export function ChevronDown({ size = 10, color = '#A1A19A' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 12 12" fill="none" stroke={color} strokeWidth={1.5}>
-      <path d="M2 4.5 6 8.5l4-4" />
-    </svg>
-  )
-}
+type Dir = 'up' | 'down' | 'left' | 'right'
+const ROTATE: Record<Dir, number> = { right: 0, down: 90, left: 180, up: 270 }
 
-export function ChevronRight({ size = 12, color = 'currentColor' }: IconProps) {
+/** The one disclosure/collapse arrow; every direction is a rotation of it. */
+function Chevron({ dir, size, color, style }: IconProps & { dir: Dir }) {
   return (
-    <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.5}>
+    <svg
+      {...S(size!)}
+      viewBox="0 0 14 14"
+      fill="none"
+      stroke={color}
+      strokeWidth={1.5}
+      style={{ transform: `rotate(${ROTATE[dir]}deg)`, ...style }}
+    >
       <path d="M5 2.5 9.5 7 5 11.5" />
     </svg>
   )
 }
 
-export function ChevronUp({ size = 13, color = '#A1A19A', style }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.5} style={style}>
-      <path d="M2.5 8.5 7 4l4.5 4.5" />
-    </svg>
-  )
-}
-
-/** Panel collapse chevrons — heavier stroke than the disclosure ones. */
-export function CaretLeft({ size = 14, color = 'currentColor' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.5}>
-      <path d="M8.5 2.5 4 7l4.5 4.5" />
-    </svg>
-  )
-}
-
-export function CaretRight({ size = 14, color = 'currentColor' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.5}>
-      <path d="M5.5 2.5 10 7l-4.5 4.5" />
-    </svg>
-  )
-}
+export const ChevronDown = ({ size = 10, color = '#A1A19A' }: IconProps) => <Chevron dir="down" size={size} color={color} />
+export const ChevronRight = ({ size = 12, color = 'currentColor' }: IconProps) => <Chevron dir="right" size={size} color={color} />
+export const ChevronUp = ({ size = 13, color = '#A1A19A', style }: IconProps) => <Chevron dir="up" size={size} color={color} style={style} />
+export const CaretLeft = ({ size = 14, color = 'currentColor' }: IconProps) => <Chevron dir="left" size={size} color={color} />
+export const CaretRight = ({ size = 14, color = 'currentColor' }: IconProps) => <Chevron dir="right" size={size} color={color} />
 
 export function SearchIcon({ size = 13 }: IconProps) {
   return (
