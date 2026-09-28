@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { C, MONO, UI } from '../theme'
+import { C, MONO, UI, ELLIPSIS } from '../theme'
 
 export interface PaletteItem {
   id: string
@@ -210,9 +210,7 @@ export default function CommandPalette({ open, items, onClose }: Props) {
                         color: C.textMuted,
                         fontFamily: item.detail ? MONO : undefined,
                         marginTop: 2,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
+                        ...ELLIPSIS
                       }}
                     >
                       {item.group && !item.detail ? item.group : item.detail}

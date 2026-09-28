@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { GitInfo, Project } from '@shared/types'
 import { groupOpenProjects, shortPath } from '@shared/project-groups'
-import { C, UI } from '../theme'
+import { C, UI, ELLIPSIS } from '../theme'
 import {
   CHROME_ROW,
   PANEL_INSET,
@@ -495,9 +495,7 @@ export default function ProjectRail({
                     fontSize: 12,
                     fontWeight: 600,
                     color: C.textSoft,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
+                    ...ELLIPSIS
                   }}
                   title={group.label}
                 >
@@ -573,9 +571,7 @@ export default function ProjectRail({
                             display: 'block',
                             fontSize: 12,
                             fontWeight: active ? 600 : 500,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
+                            ...ELLIPSIS
                           }}
                         >
                           {branch}
@@ -586,9 +582,7 @@ export default function ProjectRail({
                             fontSize: 10,
                             fontFamily: UI,
                             color: C.faint,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
+                            ...ELLIPSIS
                           }}
                         >
                           {shortPath(project.path)}

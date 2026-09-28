@@ -27,7 +27,7 @@ import {
 import { tags as t } from '@lezer/highlight'
 import { detectIndent, fileName, isDirty, languageFromPath, type EditorLanguage } from '../code'
 import type { CodeNotice, CodeTab } from '../hooks/useCodeWorkspace'
-import { C, MONO, PANE } from '../theme'
+import { C, MONO, PANE, ELLIPSIS } from '../theme'
 import { ChevronDown, ChevronRight, FileIcon, FolderIcon } from './icons'
 
 const api = window.farol
@@ -202,7 +202,7 @@ function DirNode({
       >
         {open ? <ChevronDown size={10} color="currentColor" /> : <ChevronRight size={10} />}
         <FolderIcon size={12} />
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+        <span style={{ ...ELLIPSIS }}>{label}</span>
       </button>
       {open &&
         entries?.map((entry) =>
@@ -238,7 +238,7 @@ function DirNode({
               }}
             >
               <FileIcon size={12} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ ...ELLIPSIS }}>
                 {entry.name}
               </span>
             </button>

@@ -15,7 +15,7 @@ import {
   contextShortLabel,
   type ContextUsage
 } from '@shared/agent-context'
-import { C, MONO } from '../../theme'
+import { C, MONO, ELLIPSIS } from '../../theme'
 import { CLI_MODEL_MENU_WIDTH, CliModelMenu } from '../controls'
 import UsageBar from '../UsageBar'
 import TodoList from '../TodoList'
@@ -96,9 +96,7 @@ function AttachmentStrip({
             <div style={{ flex: 1, minWidth: 0 }}>
               <div
                 style={{
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
+                  ...ELLIPSIS,
                   fontSize: 12,
                   fontWeight: 600,
                   color: C.textSoft
@@ -557,9 +555,7 @@ function ComposerToolbar({
         <span
           style={{
             maxWidth: 168,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
+            ...ELLIPSIS
           }}
         >
           {aiSelectionLabel(provider, model)}

@@ -77,6 +77,13 @@ export const PANE: React.CSSProperties = {
   overflow: 'hidden'
 }
 
+/** Single-line truncation. */
+export const ELLIPSIS: React.CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap'
+}
+
 export const MONO = 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas, monospace'
 export const UI =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif'

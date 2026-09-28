@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { AiProvider } from '@shared/types'
 import { AI_LABELS } from '@shared/ai'
 import type { AgentMessage } from '../../types'
-import { C, MONO } from '../../theme'
+import { C, MONO, ELLIPSIS } from '../../theme'
 import { stripControlMarkers } from '../../markdown'
 import { Button } from '../controls'
 import {
@@ -127,9 +127,7 @@ export function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool
                 fontSize: 11,
                 color: C.textMuted,
                 minWidth: 0,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
+                ...ELLIPSIS,
                 userSelect: 'text'
               }}
             >

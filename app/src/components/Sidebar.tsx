@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Pipeline, PipelineNode, StepState } from '@shared/types'
 import { topoSort } from '@shared/graph'
-import { C, MONO } from '../theme'
+import { C, MONO, ELLIPSIS } from '../theme'
 import {
   RailLabel,
   sidePanelShellStyle,
@@ -220,9 +220,7 @@ function StepRow({
           flex: 1,
           minWidth: 0,
           fontSize: 11,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap'
+          ...ELLIPSIS
         }}
       >
         {node.name}

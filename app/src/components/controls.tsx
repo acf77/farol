@@ -12,7 +12,7 @@ import {
   type AiProvider
 } from '@shared/ai'
 import { filterModels, groupModels } from '@shared/agent-models'
-import { C } from '../theme'
+import { C, ELLIPSIS } from '../theme'
 import { CaretLeft, CheckIcon, ChevronDown, ChevronRight } from './icons'
 
 /**
@@ -331,7 +331,7 @@ function ModelMenuItem({
       onClick={onPick}
       style={{ ...menuItem, color: selected ? C.text : C.textMuted }}
     >
-      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      <span style={{ ...ELLIPSIS }}>{label}</span>
       {selected && <CheckIcon size={12} />}
     </button>
   )
@@ -617,9 +617,7 @@ export function CliModelDropdown({
       >
         <span
           style={{
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
+            ...ELLIPSIS
           }}
         >
           {trigger}

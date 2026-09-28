@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import type { AppSettings, PipelineNode, StepType } from '@shared/types'
 import { GIT_HOOK_EVENTS, aiSelectionLabel, normalizeAi } from '@shared/types'
 import { defaultGate, newPipelineNode, nodeGate, parallelAsClashIds, sanitizeAs, topoSort } from '@shared/graph'
-import { C, MONO, UI } from '../theme'
+import { C, MONO, UI, ELLIPSIS } from '../theme'
 import { Checkbox, CliModelDropdown, ConfirmButton, SegmentedControl } from './controls'
 import type { EditorState } from '../types'
 
@@ -587,9 +587,7 @@ export default function PipelineCanvas({
                     style={{
                       flex: 1,
                       minWidth: 0,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap'
+                      ...ELLIPSIS
                     }}
                   >
                     {ai ? `AI · ${aiSelectionLabel(normalizeAi(n.ai), n.model)}` : 'SHELL'}

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef } from 'react'
-import { C } from '../theme'
+import { C, ELLIPSIS } from '../theme'
 import type { Tab } from '../types'
 import { computeLayout, dragToSize, leaves, type Divider } from '../layout'
 import XtermPane from './XtermPane'
@@ -106,9 +106,7 @@ export default function PaneGrid({
                   style={{
                     flex: 1,
                     minWidth: 0,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
+                    ...ELLIPSIS
                   }}
                 >
                   {pane.title}

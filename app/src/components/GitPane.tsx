@@ -27,7 +27,7 @@ import {
   type PrDraft
 } from '@shared/types'
 import { useGitPanel, type GitAction, type GitLogEntry } from '../hooks/useGitPanel'
-import { C, MONO, UI } from '../theme'
+import { C, MONO, UI, ELLIPSIS } from '../theme'
 import { Button, Checkbox, CliModelDropdown } from './controls'
 import { CheckIcon, GitIcon, RefreshIcon, Spinner } from './icons'
 
@@ -329,7 +329,7 @@ function ChangesCard({
                 <span style={{ width: 13, flex: 'none', color: kind.color, fontFamily: MONO, fontWeight: 700 }}>
                   {kind.letter}
                 </span>
-                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: MONO }}>
+                <span style={{ minWidth: 0, ...ELLIPSIS, fontFamily: MONO }}>
                   {file.path}
                 </span>
               </Checkbox>
@@ -464,7 +464,7 @@ function RecentCommitsCard({ commits }: { commits: ReturnType<typeof useGitPanel
               )}
               <span style={{ width: 7, height: 7, marginTop: 5, borderRadius: '50%', background: index === 0 ? C.green : C.sidebar, border: `1px solid ${index === 0 ? C.green : C.faint}`, zIndex: 1 }} />
               <div style={{ minWidth: 0 }}>
-                <div title={commit.subject} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.textSoft, fontSize: 12, fontWeight: 600 }}>
+                <div title={commit.subject} style={{ ...ELLIPSIS, color: C.textSoft, fontSize: 12, fontWeight: 600 }}>
                   {commit.subject}
                 </div>
                 <div style={{ marginTop: 3, color: C.textMuted, fontSize: 11 }}>
@@ -486,7 +486,7 @@ function ConflictPaths({ title, files }: { title: string; files: string[] }) {
     <div style={{ marginTop: 10 }}>
       <div style={{ color: C.red, fontSize: 11, marginBottom: 5 }}>{title}</div>
       {files.map((file) => (
-        <div key={file} title={file} style={{ color: C.textMuted, fontFamily: MONO, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div key={file} title={file} style={{ color: C.textMuted, fontFamily: MONO, fontSize: 10, ...ELLIPSIS }}>
           {file}
         </div>
       ))}
@@ -538,7 +538,7 @@ function CheckRows({ checks }: { checks: PrCheck[] }) {
             </span>
             <span
               title={check.name}
-              style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              style={{ minWidth: 0, ...ELLIPSIS }}
             >
               {check.name}
               {check.required ? ' · required' : ''}
@@ -971,7 +971,7 @@ export default function GitPane({
       <header style={{ height: 52, flex: 'none', display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', borderBottom: `1px solid ${C.border}` }}>
         <GitIcon size={14} color={C.textMuted} />
         <span style={{ fontSize: 13, fontWeight: 650 }}>Source Control</span>
-        <span style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '5px 9px', border: `1px solid ${C.border}`, borderRadius: 6, background: C.sidebar, color: C.textSoft, fontFamily: MONO, fontSize: 11 }}>
+        <span style={{ maxWidth: 320, ...ELLIPSIS, padding: '5px 9px', border: `1px solid ${C.border}`, borderRadius: 6, background: C.sidebar, color: C.textSoft, fontFamily: MONO, fontSize: 11 }}>
           {branch}{base ? ` → ${base}` : ''}
         </span>
         <span style={{ flex: 1 }} />
