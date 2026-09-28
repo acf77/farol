@@ -29,7 +29,7 @@ import {
 import { useGitPanel, type GitAction, type GitLogEntry } from '../hooks/useGitPanel'
 import { C, MONO, UI, ELLIPSIS } from '../theme'
 import { Button, Checkbox, CliModelDropdown } from './controls'
-import { CheckIcon, GitIcon, RefreshIcon, Spinner } from './icons'
+import { CheckIcon, RefreshIcon, Spinner } from './icons'
 
 interface Props extends ReturnType<typeof useGitPanel> {
   branch: string
@@ -969,7 +969,6 @@ export default function GitPane({
       style={{ position: 'fixed', inset: 0, zIndex: 90, display: 'flex', flexDirection: 'column', background: C.terminal, color: C.text, fontFamily: UI }}
     >
       <header style={{ height: 52, flex: 'none', display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', borderBottom: `1px solid ${C.border}` }}>
-        <GitIcon size={14} color={C.textMuted} />
         <span style={{ fontSize: 13, fontWeight: 650 }}>Source Control</span>
         <span style={{ maxWidth: 320, ...ELLIPSIS, padding: '5px 9px', border: `1px solid ${C.border}`, borderRadius: 6, background: C.sidebar, color: C.textSoft, fontFamily: MONO, fontSize: 11 }}>
           {branch}{base ? ` → ${base}` : ''}

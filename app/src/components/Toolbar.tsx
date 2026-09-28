@@ -4,7 +4,7 @@ import { C, MONO, glass as G } from '../theme'
 import type { View } from '../types'
 import { Checkbox } from './controls'
 import { CHROME_ROW } from './side-panel'
-import { BellIcon, ChatIcon, CodeIcon, FolderPlusIcon, SettingsIcon, SplitIcon, TerminalIcon } from './icons'
+import { FolderPlusIcon, SettingsIcon } from './icons'
 
 interface Props {
   liquid?: boolean
@@ -43,11 +43,11 @@ const menuItem: React.CSSProperties = {
   color: C.text
 }
 
-const VIEWS: { key: View; label: string; Icon: (p: { size?: number }) => JSX.Element }[] = [
-  { key: 'chat', label: 'Chat', Icon: ChatIcon },
-  { key: 'code', label: 'Code', Icon: CodeIcon },
-  { key: 'terminal', label: 'Terminal', Icon: TerminalIcon },
-  { key: 'split', label: 'Split 50/50', Icon: SplitIcon }
+const VIEWS: { key: View; label: string }[] = [
+  { key: 'chat', label: 'Chat' },
+  { key: 'code', label: 'Code' },
+  { key: 'terminal', label: 'Terminal' },
+  { key: 'split', label: 'Split 50/50' }
 ]
 
 export default function Toolbar({
@@ -145,8 +145,7 @@ export default function Toolbar({
                 color: on ? C.text : C.textMuted
               }}
             >
-              <v.Icon />
-              <span>{v.label}</span>
+              {v.label}
             </div>
           )
         })}
@@ -184,10 +183,30 @@ export default function Toolbar({
               gap: 6
             }}
           >
-            <TerminalIcon size={12} />
-            <span>New terminal</span>
+            New terminal
           </button>
         )}
+        <button
+          type="button"
+          className="bf-focus bf-icon-btn"
+          onClick={onOpenProject}
+          title="Open repository…"
+          aria-label="Open repository"
+          style={{
+            ...noDrag,
+            width: 28,
+            height: 28,
+            borderRadius: 6,
+            border: `1px solid ${C.border}`,
+            background: C.sidebar,
+            color: C.text,
+            display: 'grid',
+            placeItems: 'center',
+            cursor: 'pointer'
+          }}
+        >
+          <FolderPlusIcon size={14} />
+        </button>
       </div>
 
       <div
@@ -202,6 +221,29 @@ export default function Toolbar({
           zIndex: 2
         }}
       >
+        {updateVersion && (
+          <button
+            type="button"
+            className="bf-focus bf-btn-primary"
+            onClick={onInstallUpdate}
+            title={`Install Farol ${updateVersion} and restart`}
+            style={{
+              ...noDrag,
+              height: 24,
+              padding: '0 10px',
+              borderRadius: 8,
+              border: 'none',
+              background: C.accent,
+              color: C.accentInk,
+              fontSize: 11,
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            Update
+          </button>
+        )}
+
         <button
           type="button"
           className="bf-focus bf-icon-btn"
@@ -224,51 +266,6 @@ export default function Toolbar({
           <SettingsIcon size={14} />
         </button>
 
-        <button
-          type="button"
-          className="bf-focus bf-icon-btn"
-          onClick={onOpenProject}
-          title="Open repository…"
-          aria-label="Open repository"
-          style={{
-            ...noDrag,
-            width: 28,
-            height: 28,
-            borderRadius: 6,
-            border: `1px solid ${C.border}`,
-            background: C.sidebar,
-            color: C.text,
-            display: 'grid',
-            placeItems: 'center',
-            cursor: 'pointer'
-          }}
-        >
-          <FolderPlusIcon size={14} />
-        </button>
-
-        {updateVersion && (
-          <span
-            className="bf-focus"
-            role="button"
-            tabIndex={0}
-            onClick={onInstallUpdate}
-            title={`Install Farol ${updateVersion} and restart`}
-            style={{ ...noDrag, position: 'relative', display: 'grid', placeItems: 'center', cursor: 'pointer' }}
-          >
-            <BellIcon />
-            <span
-              style={{
-                position: 'absolute',
-                top: -1,
-                right: -1,
-                width: 7,
-                height: 7,
-                borderRadius: '50%',
-                background: C.accent
-              }}
-            />
-          </span>
-        )}
 
         <button
           id={TRIGGER_ID}

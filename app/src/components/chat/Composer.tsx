@@ -628,9 +628,9 @@ function SendButton({
       title={isBusy ? 'Stop' : 'Send'}
       aria-label={isBusy ? 'Stop the agent' : 'Send message'}
       style={{
-        width: 34,
+        width: 30,
         height: 30,
-        borderRadius: 8,
+        borderRadius: '50%',
         border: 'none',
         background: isBusy ? C.red : canSend ? C.accent : C.panel,
         color: !isBusy && canSend ? C.accentInk : C.text,

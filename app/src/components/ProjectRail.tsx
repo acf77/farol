@@ -282,8 +282,9 @@ export default function ProjectRail({
           position: 'relative'
         }}
       >
-        <GitIcon size={14} color={C.textMuted} />
-        {!rail && (
+        {rail ? (
+          <GitIcon size={14} color={C.textMuted} />
+        ) : (
           <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em' }}>Git</span>
         )}
         {gitDotColor && (
@@ -485,9 +486,8 @@ export default function ProjectRail({
                     flex: 'none'
                   }}
                 >
-                  {isCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={10} />}
+                  {isCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
                 </button>
-                <ProjectIcon size={13} />
                 <span
                   style={{
                     flex: 1,
