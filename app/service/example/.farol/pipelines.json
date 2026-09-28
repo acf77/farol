@@ -1,0 +1,66 @@
+[
+  {
+    "id": "hello-sandbox",
+    "name": "Hello Sandbox",
+    "nodes": [
+      {
+        "id": "n1",
+        "name": "Where am I",
+        "type": "shell",
+        "cmd": "pwd && node -v && ls -la",
+        "after": [],
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "n2",
+        "name": "Uncommitted file arrived",
+        "type": "shell",
+        "cmd": "cat hello.txt",
+        "after": [
+          "n1"
+        ],
+        "x": 0,
+        "y": 120
+      },
+      {
+        "id": "n3",
+        "name": "Named output",
+        "type": "shell",
+        "cmd": "echo sandbox-ok",
+        "as": "status",
+        "after": [
+          "n2"
+        ],
+        "x": 0,
+        "y": 240
+      },
+      {
+        "id": "n4",
+        "name": "Use output",
+        "type": "shell",
+        "cmd": "echo \"previous step said: ${status}\"",
+        "after": [
+          "n3"
+        ],
+        "x": 0,
+        "y": 360
+      }
+    ]
+  },
+  {
+    "id": "lint",
+    "name": "Lint",
+    "nodes": [
+      {
+        "id": "n1",
+        "name": "Lint script",
+        "type": "shell",
+        "cmd": "sh lint.sh",
+        "after": [],
+        "x": 0,
+        "y": 0
+      }
+    ]
+  }
+]

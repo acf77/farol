@@ -5,6 +5,7 @@ import {
   modeFallbacks,
   modeSelectionForPane,
   sanitizeSettings,
+  withVercelTokenFlag,
   withAgentModel,
   withCommitMessageModel,
   withModeChain
@@ -209,5 +210,21 @@ describe('mode defaults', () => {
       provider: 'codex',
       model: 'gpt-plan'
     })
+  })
+})
+
+describe('Vercel Sandbox settings', () => {
+  it('keeps trimmed ids and drops incomplete config', () => {
+    expect(sanitizeSettings({ vercel: { teamId: ' team_1 ', projectId: 'prj_1', token: 'x' } }).vercel).toEqual({
+      teamId: 'team_1',
+      projectId: 'prj_1'
+    })
+    expect(sanitizeSettings({ vercel: { teamId: 'team_1', projectId: ' ' } }).vercel).toBeUndefined()
+  })
+
+  it('flags a stored token only when ids exist', () => {
+    const withIds = sanitizeSettings({ vercel: { teamId: 't', projectId: 'p' } })
+    expect(withVercelTokenFlag(withIds, true).vercel?.hasToken).toBe(true)
+    expect(withVercelTokenFlag(defaultSettings(), true).vercel).toBeUndefined()
   })
 })

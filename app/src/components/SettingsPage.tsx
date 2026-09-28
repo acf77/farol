@@ -175,6 +175,85 @@ function JevSection({
   )
 }
 
+/**
+ * Remote pipelines start a throwaway Vercel Sandbox per run. The token is
+ * stored encrypted on this machine; team and project ids are plain settings.
+ */
+function VercelSection({
+  settings,
+  onAdoptSettings
+}: {
+  settings: AppSettings
+  onAdoptSettings: (next: AppSettings) => void
+}) {
+  const api = window.farol
+  const saved = settings.vercel
+  const [teamId, setTeamId] = useState(saved?.teamId ?? '')
+  const [projectId, setProjectId] = useState(saved?.projectId ?? '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [probed, setProbed] = useState(false)
+  const hasToken = !!saved?.hasToken
+  const idsChanged = teamId.trim() !== (saved?.teamId ?? '') || projectId.trim() !== (saved?.projectId ?? '')
+
+  const run = (call: Promise<SettingsResult>): Promise<boolean> => {
+    setBusy(true)
+    return call.then((result) => {
+      onAdoptSettings(result.settings)
+      setError(result.error ?? null)
+      setProbed(!result.error)
+      setBusy(false)
+      return !result.error
+    })
+  }
+
+  return (
+    <Section
+      title="Vercel Sandbox"
+      hint="Pipelines set to run on Vercel Sandbox execute their shell steps in a fresh sandbox holding a snapshot of the current checkout, uncommitted work included. Ignored and secret-looking files stay behind. AI steps still run on this machine."
+    >
+      <ApiKeyField
+        configured={hasToken}
+        placeholder="Vercel access token"
+        busy={busy}
+        onSave={(token) => run(api.vercel.save({ teamId, projectId, token }))}
+        onClear={() => void run(api.vercel.clear())}
+      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input
+          className="bf-input bf-focus"
+          spellCheck={false}
+          placeholder="Team id (team_…)"
+          value={teamId}
+          onChange={(e) => setTeamId(e.target.value)}
+          style={{ ...field, flex: 1 }}
+        />
+        <input
+          className="bf-input bf-focus"
+          spellCheck={false}
+          placeholder="Project id (prj_…)"
+          value={projectId}
+          onChange={(e) => setProjectId(e.target.value)}
+          style={{ ...field, flex: 1 }}
+        />
+        {hasToken && idsChanged && (
+          <Button variant="primary" disabled={busy} onClick={() => void run(api.vercel.save({ teamId, projectId }))}>
+            Save
+          </Button>
+        )}
+        <Button variant="secondary" disabled={busy || !hasToken || idsChanged} onClick={() => void run(api.vercel.check())}>
+          Test
+        </Button>
+      </div>
+      {busy && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 8 }}>Working…</div>}
+      {!busy && hasToken && probed && !error && !idsChanged && (
+        <div style={{ fontSize: 11.5, color: C.textSoft, marginTop: 8 }}>Vercel Sandbox is ready.</div>
+      )}
+      {error && <div style={{ fontSize: 12, color: C.red, marginTop: 8 }}>{error}</div>}
+    </Section>
+  )
+}
+
 function Section({
   title,
   hint,
@@ -435,6 +514,8 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
             </Section>
 
             <JevSection settings={settings} onAdoptSettings={onAdoptSettings} />
+
+            <VercelSection settings={settings} onAdoptSettings={onAdoptSettings} />
           </div>
         ) : (
           <div

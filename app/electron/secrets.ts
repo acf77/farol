@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 
 /** One entry per provider Farol holds a key for, each encrypted at rest. */
-export type SecretName = 'openrouterApiKey' | 'aiGatewayApiKey'
+export type SecretName = 'openrouterApiKey' | 'aiGatewayApiKey' | 'vercelSandboxToken'
 
 type SecretsFile = Partial<Record<SecretName, string>>
 

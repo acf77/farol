@@ -1,0 +1,9 @@
+# Remote pipelines run shell steps in a Vercel Sandbox with a snapshot of the checkout
+
+Pipelines only ran on the developer's machine, so long or heavy checks tied up the laptop and could not run somewhere clean. We chose a managed sandbox over a self-hosted runner or Firecracker fleet: Vercel Sandbox is already a microVM, needs only an access token, team id and project id, and removes any infrastructure for Farol to operate.
+
+We decided that a pipeline carries a `target` (`local` by default, or `vercel`), owned by the pipeline like `mandatory`. The same `PipelineRunner` runs both, so the UI, MCP and Chat see identical run events. A remote run creates one non-persistent sandbox, uploads a gzipped tar of the current checkout, runs shell steps there through `bash -lc`, and stops the sandbox on success, failure, cancellation, or any thrown error. The snapshot is `git ls-files --cached --others --exclude-standard` minus secret-looking paths and anything that is not a file or symlink (submodule contents are not uploaded), so uncommitted work travels but ignored files and secrets do not; a checkout that is not a Git repository, or larger than 256 MB, fails the run with a message. Credentials are machine-local: the token in the encrypted secret store, team and project ids in workspace settings — never in `.farol/pipelines.json`, which is committed.
+
+AI steps stay on the local machine even in a remote pipeline, because the agent CLIs and their logins live there. Remote runs are read-only with respect to the local checkout: no artifacts or edits come back, and the failure report is still written locally from streamed output.
+
+We rejected a per-run target chosen at click time (hides a cost and privacy decision), snapshotting only committed state (the point is to check work in progress), a persistent sandbox per project (stale state and leaked cost), and running AI CLIs inside the sandbox (needs installing and authenticating them per run).

@@ -75,7 +75,8 @@ export function describePipeline(pipeline: Pipeline): string {
       return `${node.name} [${node.type}]: ${cmd}${ellipsis}`
     })
     .join('; ')
-  const body = `${pipeline.name} (${pipeline.id})${steps ? `: ${steps}` : ''}`
+  const remote = pipeline.target === 'vercel' ? ' [remote: Vercel Sandbox]' : ''
+  const body = `${pipeline.name} (${pipeline.id})${remote}${steps ? `: ${steps}` : ''}`
   return body.length > PIPELINE_DESC_CAP ? `${body.slice(0, PIPELINE_DESC_CAP - 1)}…` : body
 }
 
@@ -87,7 +88,7 @@ export interface PipelineSelectionContext {
   mandatory: Pipeline[]
 }
 
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
   const trimmed = text.trim()
   return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed
 }

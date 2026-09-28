@@ -1,4 +1,12 @@
-import type { AgentMode, AgentQuestion, AgentTaskStatus, AiProvider, PipelineNode, StepState } from '@shared/types'
+import type {
+  AgentMode,
+  AgentQuestion,
+  AgentTaskStatus,
+  AiProvider,
+  PipelineNode,
+  PipelineTarget,
+  StepState
+} from '@shared/types'
 import type { TermState } from './ansi'
 import type { PaneNode } from './layout'
 
@@ -131,4 +139,6 @@ export interface EditorState {
   mandatory?: boolean
   /** When true, Jev may auto-add this pipeline in Chat. */
   autoSelectable?: boolean
+  /** `vercel` runs shell steps in a Vercel Sandbox. */
+  target?: PipelineTarget
 }

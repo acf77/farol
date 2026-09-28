@@ -10,7 +10,9 @@ import type {
   JevSettings,
   ModelChoice,
   OpenRouterSettings,
-  SettingsResult
+  SettingsResult,
+  VercelConfig,
+  VercelSettings
 } from './settings'
 import type { ProviderUsage } from './usage'
 import type { Todo } from './todos'
@@ -27,6 +29,8 @@ export type {
   OpenRouterSettings,
   ProjectSession,
   SettingsResult,
+  VercelConfig,
+  VercelSettings,
   WorktreeRequest
 }
 export { aiFixCommand } from './ai'
@@ -78,10 +82,18 @@ export interface PipelineNode extends Step {
   y: number
 }
 
+/** Where shell steps run. Only `vercel` is stored; absent means this machine. */
+export type PipelineTarget = 'vercel'
+
 export interface Pipeline {
   id: string
   name: string
   nodes: PipelineNode[]
+  /**
+   * `vercel` runs shell steps in a fresh Vercel Sandbox holding a snapshot of
+   * the current checkout (uncommitted work included). AI steps still run here.
+   */
+  target?: PipelineTarget
   /** When true, managed Chat always runs this pipeline after code-changing turns. */
   mandatory?: boolean
   /**
@@ -505,6 +517,13 @@ export interface FarolApi {
   /** Refresh live `--model` lists from each installed coding CLI. */
   agentModels: {
     refresh(force?: boolean): Promise<SettingsResult>
+  }
+  /** Machine-local Vercel Sandbox credentials for remote pipelines. */
+  vercel: {
+    save(config: VercelConfig): Promise<SettingsResult>
+    clear(): Promise<SettingsResult>
+    /** Create and stop a throwaway sandbox to prove the credentials work. */
+    check(): Promise<SettingsResult>
   }
   /** Jev is internal-only: a key to store and a probe to prove it works. */
   jev: {

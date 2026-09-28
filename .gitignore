@@ -1,6 +1,10 @@
 node_modules/
 out/
 dist/
+.env
+.env.*
+!.env.example
+!.env.sample
 .DS_Store
 *.log
 .farol/last-failure.md

@@ -30,11 +30,14 @@ import { defaultShell, pipelineEnv, PtySession } from './session'
 import { killPidTree, killPty } from './kill'
 import { verdictFromOutput } from './jev'
 import { shellFamily } from './protocol'
+import { openVercelWorkspace, type OpenRemote, type RemoteWorkspace } from './remote'
 
 /**
  * Runs a pipeline DAG. Ready nodes start together; a gated shell failure
  * skips its descendants, while AI nodes finish without blocking siblings.
  * Shell cmds and AI prompts expand `${name}` from ancestor named outputs.
+ * A `vercel` pipeline runs its shell steps in a sandbox holding a snapshot of
+ * the checkout; AI steps always run here, where the agent CLIs are signed in.
  */
 
 /** Live per-step stdout kept for named vars, failure reports, and settled results. */
@@ -94,6 +97,9 @@ interface Active {
   branch: string
   origin: RunOrigin
   session: PtySession | null
+  remote: RemoteWorkspace | null
+  /** Aborts sandbox creation and in-flight remote commands on cancel. */
+  abort: AbortController
   sessionBusy: boolean
   currentShellId: string | null
   aiProcs: Map<string, pty.IPty>
@@ -130,7 +136,10 @@ export class PipelineRunner {
   private waiters = new Map<string, ((result: PipelineRunResult) => void)[]>()
   private finished = new Map<string, PipelineRunResult>()
 
-  constructor(private emit: (e: RunEvent) => void) {}
+  constructor(
+    private emit: (e: RunEvent) => void,
+    private openRemote: OpenRemote = openVercelWorkspace
+  ) {}
 
   async run(
     pipeline: Pipeline,
@@ -194,6 +203,8 @@ export class PipelineRunner {
       branch,
       origin,
       session: null,
+      remote: null,
+      abort: new AbortController(),
       sessionBusy: false,
       currentShellId: null,
       aiProcs: new Map(),
@@ -210,6 +221,8 @@ export class PipelineRunner {
     const state = this.active.get(pipelineId)
     if (!state) return
     state.cancelled = true
+    state.abort.abort()
+    void state.remote?.close()
     state.session?.interrupt()
     for (const proc of state.aiProcs.values()) killPty(proc)
     state.aiProcs.clear()
@@ -277,6 +290,7 @@ export class PipelineRunner {
     } finally {
       // Only drop active when this run still owns the slot — a newer re-run may
       // have replaced us while we were winding down.
+      void state.remote?.close()
       if (this.active.get(pipelineId)?.runId === runId) {
         this.active.delete(pipelineId)
       }
@@ -308,7 +322,11 @@ export class PipelineRunner {
       return
     }
 
-    if (!(await this.openRunShell(cwd, state, graph))) return
+    const opened =
+      pipeline.target === 'vercel'
+        ? await this.openRemoteWorkspace(cwd, state, graph)
+        : await this.openRunShell(cwd, state, graph)
+    if (!opened) return
 
     const inflight = new Map<string, Promise<void>>()
     const pump = (): void => this.pumpReady(cwd, state, graph, inflight)
@@ -323,6 +341,7 @@ export class PipelineRunner {
       pump()
     }
 
+    await state.remote?.close()
     this.finalizeGraph(pipeline, cwd, state, graph)
   }
 
@@ -372,8 +391,53 @@ export class PipelineRunner {
     })
   }
 
-  private async openRunShell(cwd: string, state: Active, graph: RunGraph): Promise<boolean> {
+  /** End a run that could not start any step, saying why when there is a reason. */
+  private failRun(state: Active, graph: RunGraph, reason?: string): void {
     const { runId, branch, origin } = state
+    const nodeId = graph.nodes[0]?.id
+    if (reason) this.emitOut(state, graph, nodeId ?? 'n1', `farol: ${reason}\r\n`)
+    this.emit({
+      kind: 'end',
+      runId,
+      pipelineId: graph.pipelineId,
+      branch,
+      origin,
+      ok: false,
+      failedAt: 0,
+      failedNodeId: nodeId,
+      cancelled: state.cancelled || undefined
+    })
+    this.settle({
+      runId,
+      pipelineId: graph.pipelineId,
+      ok: false,
+      cancelled: state.cancelled || undefined,
+      failedNodeId: nodeId,
+      steps: []
+    })
+  }
+
+  private async openRemoteWorkspace(cwd: string, state: Active, graph: RunGraph): Promise<boolean> {
+    const first = graph.nodes[0]?.id ?? 'n1'
+    this.emitOut(state, graph, first, 'farol: starting Vercel Sandbox…\r\n')
+    try {
+      state.remote = await this.openRemote(cwd, state.abort.signal)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.failRun(state, graph, state.cancelled ? undefined : `remote run could not start: ${message}`)
+      return false
+    }
+    if (state.cancelled) {
+      await state.remote.close()
+      state.remote = null
+      this.markUnstartedCancelled(state, graph)
+    } else {
+      this.emitOut(state, graph, first, `farol: running on Vercel Sandbox (${state.remote.summary})\r\n`)
+    }
+    return true
+  }
+
+  private async openRunShell(cwd: string, state: Active, graph: RunGraph): Promise<boolean> {
     try {
       state.session = new PtySession({
         cwd,
@@ -387,26 +451,7 @@ export class PipelineRunner {
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      this.emitOut(state, graph, graph.nodes[0]?.id ?? 'n1', `farol: failed to spawn login shell: ${message}\r\n`)
-      this.emit({
-        kind: 'end',
-        runId,
-        pipelineId: graph.pipelineId,
-        branch,
-        origin,
-        ok: false,
-        failedAt: 0,
-        failedNodeId: graph.nodes[0]?.id,
-        cancelled: state.cancelled || undefined
-      })
-      this.settle({
-        runId,
-        pipelineId: graph.pipelineId,
-        ok: false,
-        cancelled: state.cancelled || undefined,
-        failedNodeId: graph.nodes[0]?.id,
-        steps: []
-      })
+      this.failRun(state, graph, `failed to spawn login shell: ${message}`)
       return false
     }
 
@@ -590,39 +635,70 @@ export class PipelineRunner {
     })
   }
 
-  private async runStep(
+  private runStep(
     node: PipelineNode,
     cwd: string,
     state: Active,
     onChunk: (chunk: string) => void,
     vars: Readonly<Record<string, string>>
   ): Promise<number> {
-    const cmd =
-      node.type === 'shell' ? expandVars(node.cmd, vars, { quote: quoteShellArg }) : expandVars(node.cmd, vars)
-    if (node.type === 'shell') {
-      if (state.cancelled) return 130
-      const takeSession = !!state.session && !state.sessionBusy
-      if (takeSession && state.session) {
-        state.sessionBusy = true
-        state.currentShellId = node.id
-        try {
-          const { code } = await state.session.exec(cmd)
-          return code
-        } finally {
-          if (state.currentShellId === node.id) state.currentShellId = null
-          state.sessionBusy = false
-        }
-      }
-      return this.runOneshot(node.id, cmd, cwd, state, onChunk)
-    }
+    return node.type === 'shell'
+      ? this.runShellStep(node, expandVars(node.cmd, vars, { quote: quoteShellArg }), cwd, state, onChunk)
+      : this.runAiStep(node, expandVars(node.cmd, vars), cwd, state, onChunk)
+  }
 
+  private async runShellStep(
+    node: PipelineNode,
+    cmd: string,
+    cwd: string,
+    state: Active,
+    onChunk: (chunk: string) => void
+  ): Promise<number> {
+    if (state.cancelled) return 130
+    if (state.remote) return this.runRemoteStep(state.remote, cmd, state, onChunk)
+    if (state.session && !state.sessionBusy) {
+      state.sessionBusy = true
+      state.currentShellId = node.id
+      try {
+        const { code } = await state.session.exec(cmd)
+        return code
+      } finally {
+        if (state.currentShellId === node.id) state.currentShellId = null
+        state.sessionBusy = false
+      }
+    }
+    return this.runOneshot(node.id, cmd, cwd, state, onChunk)
+  }
+
+  private async runRemoteStep(
+    remote: RemoteWorkspace,
+    cmd: string,
+    state: Active,
+    onChunk: (chunk: string) => void
+  ): Promise<number> {
+    try {
+      return await remote.exec(cmd, onChunk)
+    } catch (error) {
+      if (state.cancelled) return 130
+      onChunk(`farol: ${error instanceof Error ? error.message : String(error)}\r\n`)
+      return 127
+    }
+  }
+
+  private runAiStep(
+    node: PipelineNode,
+    cmd: string,
+    cwd: string,
+    state: Active,
+    onChunk: (chunk: string) => void
+  ): Promise<number> {
     const prompt = [cmd, verdictPromptSuffix()].join('\n')
     const spec = aiCommand(normalizeAi(node.ai), prompt, node.model)
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       const listed = spec.bins.map((b) => `'${b}'`).join(' or ')
       onChunk(`farol: ${listed} is not on PATH. ${spec.hint}\r\n`)
-      return 127
+      return Promise.resolve(127)
     }
 
     return new Promise<number>((resolve) => {

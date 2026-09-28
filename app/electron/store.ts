@@ -15,6 +15,7 @@ import {
   sanitizeSettings,
   withJevKeyFlag,
   withOpenRouterKeyFlag,
+  withVercelTokenFlag,
   type AppSettings
 } from '../shared/settings'
 import { hasSecret } from './secrets'
@@ -470,9 +471,12 @@ export async function saveProjectSession(
 
 export async function loadSettings(): Promise<AppSettings> {
   const stored = sanitizeSettings((await readWorkspace()).settings)
-  return withJevKeyFlag(
-    withOpenRouterKeyFlag(stored, hasSecret('openrouterApiKey')),
-    hasSecret('aiGatewayApiKey')
+  return withVercelTokenFlag(
+    withJevKeyFlag(
+      withOpenRouterKeyFlag(stored, hasSecret('openrouterApiKey')),
+      hasSecret('aiGatewayApiKey')
+    ),
+    hasSecret('vercelSandboxToken')
   )
 }
 

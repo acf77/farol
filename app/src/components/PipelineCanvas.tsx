@@ -270,6 +270,12 @@ export default function PipelineCanvas({
         >
           Allow Chat to auto-select
         </Checkbox>
+        <Checkbox
+          checked={editor.target === 'vercel'}
+          onChange={(v) => updateEditor((current) => ({ ...current, target: v ? 'vercel' : undefined }))}
+        >
+          Run shell steps on Vercel Sandbox
+        </Checkbox>
         <button type="button" className="bf-hover-fill" onClick={() => addNode('shell')} style={toolBtn}>
           + Shell
         </button>

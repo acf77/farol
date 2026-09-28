@@ -302,7 +302,9 @@ function selectedPipelines(
 function pipelineCatalog(pipelines: Pipeline[]): string {
   return pipelines
     .map((pipeline) => {
-      const tag = pipeline.mandatory ? ' [mandatory]' : ''
+      const tag =
+        (pipeline.mandatory ? ' [mandatory]' : '') +
+        (pipeline.target === 'vercel' ? ' [remote: Vercel Sandbox]' : '')
       const steps = pipeline.nodes
         .map((node) => {
           const model = normalizeModel(node.model)

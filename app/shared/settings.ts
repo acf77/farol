@@ -34,6 +34,24 @@ export interface JevSettings {
   hasKey: boolean
 }
 
+/**
+ * Vercel Sandbox project for remote pipelines. Team and project ids live in the
+ * workspace file; the access token stays in the encrypted store, and `hasToken`
+ * is a runtime flag that is never persisted.
+ */
+export interface VercelSettings {
+  teamId: string
+  projectId: string
+  hasToken?: boolean
+}
+
+/** What the Settings form submits. An empty token keeps the stored one. */
+export interface VercelConfig {
+  teamId: string
+  projectId: string
+  token?: string
+}
+
 /** What a key mutation hands back: the settings to adopt, plus why it failed. */
 export interface SettingsResult {
   settings: AppSettings
@@ -68,6 +86,8 @@ export interface AppSettings {
   catalogs?: AgentCatalogs
   /** Absent until an AI Gateway key is stored. */
   jev?: JevSettings
+  /** Absent until Vercel Sandbox credentials are stored. */
+  vercel?: VercelSettings
 }
 
 export function defaultSettings(): AppSettings {
@@ -219,6 +239,18 @@ export function withJevKeyFlag(settings: AppSettings, hasKey: boolean): AppSetti
   return next
 }
 
+export function sanitizeVercel(raw: unknown): VercelSettings | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const { teamId, projectId } = raw as Record<string, unknown>
+  const team = typeof teamId === 'string' ? teamId.trim() : ''
+  const project = typeof projectId === 'string' ? projectId.trim() : ''
+  return team && project ? { teamId: team, projectId: project } : undefined
+}
+
+export function withVercelTokenFlag(settings: AppSettings, hasToken: boolean): AppSettings {
+  return settings.vercel ? { ...settings, vercel: { ...settings.vercel, hasToken } } : settings
+}
+
 export function withOpenRouterKeyFlag(settings: AppSettings, hasKey: boolean): AppSettings {
   if (!hasKey && !settings.openrouter) return settings
   return {
@@ -276,6 +308,7 @@ export function sanitizeSettings(raw: unknown): AppSettings {
   const commitModel = normalizeModel(commit.model) ?? (hasCommitMessage ? undefined : models[commitAgent])
   const openrouter = sanitizeOpenRouter(s.openrouter)
   const catalogs = sanitizeCatalogs(s.catalogs)
+  const vercel = sanitizeVercel(s.vercel)
   return {
     agent,
     models,
@@ -286,6 +319,7 @@ export function sanitizeSettings(raw: unknown): AppSettings {
     autoFix: typeof s.autoFix === 'boolean' ? s.autoFix : d.autoFix,
     modeDefaults: sanitizeModeDefaults(s.modeDefaults),
     ...(openrouter ? { openrouter } : {}),
-    ...(catalogs ? { catalogs } : {})
+    ...(catalogs ? { catalogs } : {}),
+    ...(vercel ? { vercel } : {})
   }
 }

@@ -388,7 +388,8 @@ export function sanitizePipeline(raw: unknown): Pipeline | null {
     name: p.name,
     nodes: normalizeGraph(nodesFromPersisted(p)),
     ...(p.mandatory === true ? { mandatory: true } : {}),
-    ...(p.autoSelectable === true ? { autoSelectable: true } : {})
+    ...(p.autoSelectable === true ? { autoSelectable: true } : {}),
+    ...(p.target === 'vercel' ? { target: 'vercel' as const } : {})
   }
 }
 

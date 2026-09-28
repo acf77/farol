@@ -26,6 +26,7 @@ vi.mock('./session', () => ({
 }))
 vi.mock('./kill', () => ({ killPty: vi.fn(), killPidTree: vi.fn() }))
 vi.mock('./jev', () => ({ verdictFromOutput }))
+vi.mock('./remote', () => ({ openVercelWorkspace: vi.fn() }))
 vi.mock('fs', () => ({
   default: {
     mkdirSync: vi.fn(),
@@ -208,4 +209,73 @@ describe('PipelineRunner async Jev verdict fallback', () => {
       expect(verdictFromOutput).toHaveBeenCalledTimes(1)
     }
   )
+})
+
+describe('PipelineRunner remote target', () => {
+  const remotePipeline: Pipeline = {
+    id: 'remote',
+    name: 'Remote',
+    target: 'vercel',
+    nodes: [
+      { id: 'lint', name: 'Lint', type: 'shell', cmd: 'npm run lint', after: [], x: 0, y: 0 },
+      { id: 'test', name: 'Test', type: 'shell', cmd: 'npm test', after: ['lint'], x: 0, y: 0 }
+    ]
+  }
+
+  function workspace(codes: Record<string, number> = {}) {
+    return {
+      summary: '2 files, 0.1 MB',
+      exec: vi.fn(async (cmd: string, onChunk: (chunk: string) => void) => {
+        onChunk(`ran ${cmd}\r\n`)
+        return codes[cmd] ?? 0
+      }),
+      close: vi.fn().mockResolvedValue(undefined)
+    }
+  }
+
+  it('runs shell steps in the sandbox and stops it afterwards', async () => {
+    const remote = workspace()
+    const events: RunEvent[] = []
+    const runner = new PipelineRunner((event) => events.push(event), async () => remote)
+
+    const result = await runner.run(remotePipeline, '/mock/project', 'main')
+
+    expect(remote.exec.mock.calls.map(([cmd]) => cmd)).toEqual(['npm run lint', 'npm test'])
+    expect(result.ok).toBe(true)
+    expect(result.steps[1].output).toBe('ran npm test\r\n')
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: 'output', chunk: expect.stringContaining('2 files, 0.1 MB') })
+    )
+    expect(remote.close).toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('fails the step and skips its descendants on a non-zero remote exit', async () => {
+    const remote = workspace({ 'npm run lint': 2 })
+    const runner = new PipelineRunner(() => undefined, async () => remote)
+
+    const result = await runner.run(remotePipeline, '/mock/project', 'main')
+
+    expect(result).toMatchObject({ ok: false, failedNodeId: 'lint' })
+    expect(remote.exec).toHaveBeenCalledTimes(1)
+    expect(remote.close).toHaveBeenCalled()
+  })
+
+  it('ends the run with the reason when the sandbox cannot start', async () => {
+    const events: RunEvent[] = []
+    const runner = new PipelineRunner(
+      (event) => events.push(event),
+      async () => {
+        throw new Error('Vercel Sandbox is not configured.')
+      }
+    )
+
+    const result = await runner.run(remotePipeline, '/mock/project', 'main')
+
+    expect(result).toMatchObject({ ok: false, cancelled: undefined })
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: 'output', chunk: expect.stringContaining('Vercel Sandbox is not configured.') })
+    )
+    expect(events.at(-1)).toMatchObject({ kind: 'end', ok: false })
+  })
 })
