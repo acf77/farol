@@ -17,3 +17,6 @@ dist-alpha/
 # Written into the project by Farol at runtime: absolute app path + per-launch socket.
 .mcp.json
 **/.cursor/mcp.json
+
+# TypeScript build cache
+*.tsbuildinfo

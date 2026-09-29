@@ -282,6 +282,14 @@ export default function PipelineCanvas({
           value={editor.target ?? 'local'}
           onChange={(v) => updateEditor((current) => ({ ...current, target: v === 'remote' ? 'remote' : undefined }))}
         />
+        {editor.target === 'remote' && (
+          <Checkbox
+            checked={editor.fallbackLocal === true}
+            onChange={(v) => updateEditor((current) => ({ ...current, fallbackLocal: v }))}
+          >
+            Fall back to this machine if remote fails (runs without sandbox isolation)
+          </Checkbox>
+        )}
         <button type="button" className="bf-hover-fill" onClick={() => addNode('shell')} style={toolBtn}>
           + Shell
         </button>

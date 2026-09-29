@@ -141,4 +141,6 @@ export interface EditorState {
   autoSelectable?: boolean
   /** `remote` runs shell steps on the Farol service. */
   target?: PipelineTarget
+  /** With a `remote` target: run locally when the sandbox cannot start. */
+  fallbackLocal?: boolean
 }

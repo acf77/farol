@@ -95,6 +95,8 @@ export interface Pipeline {
    * AI steps still run here.
    */
   target?: PipelineTarget
+  /** With a `remote` target: run on this machine instead when the sandbox cannot be started. */
+  fallbackLocal?: boolean
   /** When true, managed Chat always runs this pipeline after code-changing turns. */
   mandatory?: boolean
   /**

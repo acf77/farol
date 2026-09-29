@@ -45,6 +45,9 @@ const LIVE_OUTPUT_LIMIT = Math.max(12_000, REPORT_OUTPUT_LIMIT)
 /** Trailing window for AI verdict parsing — only the end of the stream matters. */
 const VERDICT_SCAN_LIMIT = 16_384
 const STEP_RESULT_LIMIT = 4000
+/** Tries to start a remote sandbox before the run fails (or falls back to this machine). */
+const REMOTE_START_ATTEMPTS = 3
+const REMOTE_START_BACKOFF_MS = 500
 
 /**
  * Leave a failed step somewhere an agent can read it. The file lives in the
@@ -324,7 +327,7 @@ export class PipelineRunner {
 
     const opened =
       pipeline.target === 'remote'
-        ? await this.openRemoteWorkspace(cwd, state, graph)
+        ? await this.openRemoteWorkspace(cwd, state, graph, pipeline.fallbackLocal === true)
         : await this.openRunShell(cwd, state, graph)
     if (!opened) return
 
@@ -417,14 +420,42 @@ export class PipelineRunner {
     })
   }
 
-  private async openRemoteWorkspace(cwd: string, state: Active, graph: RunGraph): Promise<boolean> {
+  /** Tries to open the remote sandbox up to REMOTE_START_ATTEMPTS times; returns the last failure message. */
+  private async retryOpenRemote(cwd: string, state: Active, graph: RunGraph, first: string): Promise<string> {
+    let failure = ''
+    for (let attempt = 1; attempt <= REMOTE_START_ATTEMPTS && !state.remote; attempt++) {
+      const retry = attempt > 1 ? ` (attempt ${attempt}/${REMOTE_START_ATTEMPTS})` : ''
+      this.emitOut(state, graph, first, `farol: starting remote sandbox${retry}…\r\n`)
+      try {
+        state.remote = await this.openRemote(cwd, state.abort.signal)
+      } catch (error) {
+        if (state.cancelled) break
+        failure = String((error as Error)?.message ?? error)
+        this.emitOut(state, graph, first, `farol: remote sandbox failed to start: ${failure}\r\n`)
+        if (attempt < REMOTE_START_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, REMOTE_START_BACKOFF_MS * attempt))
+      }
+    }
+    return failure
+  }
+
+  private async openRemoteWorkspace(
+    cwd: string,
+    state: Active,
+    graph: RunGraph,
+    fallbackLocal: boolean
+  ): Promise<boolean> {
     const first = graph.nodes[0]?.id ?? 'n1'
-    this.emitOut(state, graph, first, 'farol: starting remote sandbox…\r\n')
-    try {
-      state.remote = await this.openRemote(cwd, state.abort.signal)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      this.failRun(state, graph, state.cancelled ? undefined : `remote run could not start: ${message}`)
+    const failure = await this.retryOpenRemote(cwd, state, graph, first)
+    if (!state.remote) {
+      if (state.cancelled) {
+        this.failRun(state, graph, undefined)
+        return false
+      }
+      if (fallbackLocal) {
+        this.emitOut(state, graph, first, 'farol: falling back to this machine\r\n')
+        return this.openRunShell(cwd, state, graph)
+      }
+      this.failRun(state, graph, `remote run could not start after ${REMOTE_START_ATTEMPTS} attempts: ${failure}`)
       return false
     }
     if (state.cancelled) {

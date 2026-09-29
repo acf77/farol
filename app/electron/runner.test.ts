@@ -278,4 +278,40 @@ describe('PipelineRunner remote target', () => {
     )
     expect(events.at(-1)).toMatchObject({ kind: 'end', ok: false })
   })
+
+  it('retries the sandbox start up to three times, then fails', async () => {
+    const open = vi.fn().mockRejectedValue(new Error('boot failed'))
+    const runner = new PipelineRunner(() => undefined, open)
+
+    const result = await runner.run(remotePipeline, '/mock/project', 'main')
+
+    expect(open).toHaveBeenCalledTimes(3)
+    expect(result.ok).toBe(false)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('succeeds when a retry brings the sandbox up', async () => {
+    const remote = workspace()
+    const open = vi.fn().mockRejectedValueOnce(new Error('flaky')).mockResolvedValue(remote)
+    const runner = new PipelineRunner(() => undefined, open)
+
+    const result = await runner.run(remotePipeline, '/mock/project', 'main')
+
+    expect(open).toHaveBeenCalledTimes(2)
+    expect(result.ok).toBe(true)
+  })
+
+  it('runs on this machine after three failed starts when fallbackLocal is set', async () => {
+    const open = vi.fn().mockRejectedValue(new Error('boot failed'))
+    const events: RunEvent[] = []
+    const runner = new PipelineRunner((event) => events.push(event), open)
+
+    await runner.run({ ...remotePipeline, fallbackLocal: true }, '/mock/project', 'main')
+
+    expect(open).toHaveBeenCalledTimes(3)
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: 'output', chunk: expect.stringContaining('falling back to this machine') })
+    )
+    expect(spawn).toHaveBeenCalled()
+  })
 })

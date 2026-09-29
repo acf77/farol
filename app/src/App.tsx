@@ -1245,7 +1245,9 @@ function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               nodes: p.nodes.map((n) => ({ ...n })),
               ...(p.mandatory === true ? { mandatory: true } : {}),
               ...(p.autoSelectable === true ? { autoSelectable: true } : {}),
-              ...(p.target === 'remote' ? { target: 'remote' as const } : {})
+              ...(p.target === 'remote'
+                ? { target: 'remote' as const, ...(p.fallbackLocal === true ? { fallbackLocal: true } : {}) }
+                : {})
             })
           }
           onDelete={deletePipeline}
@@ -2524,7 +2526,9 @@ export function ProjectWorkspace({
       nodes,
       ...(editor.mandatory === true ? { mandatory: true } : {}),
       ...(editor.autoSelectable === true ? { autoSelectable: true } : {}),
-      ...(editor.target === 'remote' ? { target: 'remote' as const } : {})
+      ...(editor.target === 'remote'
+        ? { target: 'remote' as const, ...(editor.fallbackLocal === true ? { fallbackLocal: true } : {}) }
+        : {})
     })
     if (editor.id) {
       persist(pipelines.map((p) => (p.id === editor.id ? saved(p.id) : p)))
