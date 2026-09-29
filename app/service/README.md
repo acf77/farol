@@ -32,6 +32,7 @@ node service/dist/farol-service.cjs
 | `FAROL_KEYS_FILE` | `./farol-keys.json` | API key store (mode 0600) |
 | `FAROL_MAX_RUNS` | `4` | Concurrent runs; more get `429` with `Retry-After` |
 | `FAROL_ALLOWED_ORIGINS` | none | Comma-separated browser origins allowed by CORS |
+| `FAROL_ALLOW_ANONYMOUS` | off | Set to `1` to accept requests without an API key. Anyone who can reach the URL can then start sandboxes on your account, so use it only on a private or short-lived deployment |
 
 With neither provider configured the service starts in receipt mode: it accepts `POST /v1/receipts`
 and reports what arrived, running nothing.
@@ -57,7 +58,7 @@ Keys look like `frl_<id>_<secret>`. Only a hash is stored. Send one as
 | `GET /healthz` | Liveness, no key needed |
 | `POST /v1/runs` | Start a run. Body: the snapshot `.tar.gz`. Header `X-Farol-Pipeline`: pipeline id or name. `202 { runId, status, pipelineId }` |
 | `GET /v1/ping` | Check that the API key works |
-| `POST /v1/workspaces` | Open a sandbox from the snapshot in the body, for a client that drives its own steps (the Farol desktop app's remote pipelines). `201 { id }`. Stopped after 10 idle minutes |
+| `POST /v1/workspaces` | Open a sandbox from the snapshot in the body, for a client that drives its own steps (the Farol desktop app's remote pipelines). `201 { id }`. Stopped after 45 idle minutes, never while a command is running |
 | `POST /v1/workspaces/:id/exec` | Run the command in the body. Streams NDJSON: `{"chunk": "…"}` lines, then `{"code": n}` |
 | `DELETE /v1/workspaces/:id` | Stop the sandbox |
 | `GET /v1/runs/:id` | Status, and `result` (per-step `ok`, `code`, `skipped`, `output`) once finished |

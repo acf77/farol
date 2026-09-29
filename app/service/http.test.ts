@@ -132,3 +132,20 @@ describe('workspaces', () => {
     expect((await call('/v1/ping', { token: 'nope' })).status).toBe(401)
   })
 })
+
+describe('anonymous mode', () => {
+  it('accepts requests without a key only when enabled', async () => {
+    const keysFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'farol-anon-')), 'keys.json')
+    const registry = new RunRegistry(async () => workspace, { maxActive: 1, retentionMs: 60_000 })
+    const workspaces = new WorkspaceRegistry(async () => workspace, { maxActive: 1, idleMs: 60_000, inUse: () => 0 })
+    const anonymous = createServer(
+      createHandler({ keysFile, registry, workspaces, snapshotLimit: 1024, allowedOrigins: [], anonymous: true })
+    )
+    await new Promise<void>((resolve) => anonymous.listen(0, '127.0.0.1', resolve))
+    const url = `http://127.0.0.1:${(anonymous.address() as AddressInfo).port}/v1/ping`
+    expect((await fetch(url)).status).toBe(200)
+    await new Promise<void>((resolve) => anonymous.close(() => resolve()))
+    expect((await fetch(`${base}/v1/ping`)).status).toBe(401)
+  })
+})
+

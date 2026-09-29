@@ -117,7 +117,7 @@ const api: FarolApi = {
   },
   remote: {
     save: (config) => ipcRenderer.invoke('remote:save', config),
-    clear: () => ipcRenderer.invoke('remote:clear'),
+    clearKey: () => ipcRenderer.invoke('remote:clearKey'),
     check: () => ipcRenderer.invoke('remote:check')
   },
   jev: {

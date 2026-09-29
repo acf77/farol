@@ -1,5 +1,5 @@
 import { createServer } from 'http'
-import { SNAPSHOT_LIMIT_BYTES, snapshotSummary } from '../shared/remote'
+import { SANDBOX_TIMEOUT_MS, SNAPSHOT_LIMIT_BYTES, snapshotSummary } from '../shared/remote'
 import { openSandbox, type SandboxCredentials } from '../electron/sandbox'
 import { createHandler } from './http'
 import { createKey, listKeys, revokeKey } from './keys'
@@ -72,13 +72,14 @@ function serve(): void {
   // Runs and workspaces draw on one pool of sandboxes.
   const inUse = (): number => registry.active + workspaces.active
   const registry = new RunRegistry(open, { maxActive, retentionMs: 60 * 60_000, inUse })
-  const workspaces = new WorkspaceRegistry(open, { maxActive, idleMs: 10 * 60_000, inUse })
+  const workspaces = new WorkspaceRegistry(open, { maxActive, idleMs: SANDBOX_TIMEOUT_MS, inUse })
   const server = createServer(
     createHandler({
       keysFile,
       registry,
       workspaces,
       snapshotLimit: SNAPSHOT_LIMIT_BYTES,
+      anonymous: env.FAROL_ALLOW_ANONYMOUS === '1',
       allowedOrigins: (env.FAROL_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean)
     })
   )

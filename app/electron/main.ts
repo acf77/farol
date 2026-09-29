@@ -24,7 +24,7 @@ import {
 } from './openrouter'
 import { refreshAgentCatalogs } from './agent-models'
 import { checkJev, clearJev, saveJevKey } from './jev'
-import { checkRemote, clearRemoteConfig, saveRemoteConfig } from './remote'
+import { checkRemote, clearRemoteKey, saveRemoteConfig } from './remote'
 import { configureJevLogs } from './jev-log'
 import { listProjectFiles, saveChatAttachment } from './files'
 import { listAgentSkills } from './skills'
@@ -752,7 +752,7 @@ function registerTaskIpc(): void {
 
 function registerRemoteIpc(): void {
   ipcMain.handle('remote:save', (_e, config: unknown) => saveRemoteConfig(config))
-  ipcMain.handle('remote:clear', () => clearRemoteConfig())
+  ipcMain.handle('remote:clearKey', () => clearRemoteKey())
   ipcMain.handle('remote:check', () => checkRemote())
 }
 

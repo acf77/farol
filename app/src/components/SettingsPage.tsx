@@ -195,28 +195,34 @@ function RemoteSection({
   const hasKey = !!saved?.hasKey
   const urlChanged = url.trim() !== (saved?.url ?? '')
 
-  const run = (call: Promise<SettingsResult>): Promise<boolean> => {
+  const run = (call: Promise<SettingsResult>, probe = false): Promise<boolean> => {
     setBusy(true)
-    return call.then((result) => {
-      onAdoptSettings(result.settings)
-      setError(result.error ?? null)
-      setProbed(!result.error)
-      setBusy(false)
-      return !result.error
-    })
+    return call
+      .then((result) => {
+        onAdoptSettings(result.settings)
+        if (result.settings.remote) setUrl(result.settings.remote.url)
+        setError(result.error ?? null)
+        setProbed(probe && !result.error)
+        return !result.error
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : String(err))
+        return false
+      })
+      .finally(() => setBusy(false))
   }
 
   return (
     <Section
       title="Remote service"
-      hint="Pipelines set to run remotely execute their shell steps in a fresh sandbox on your Farol service, holding a snapshot of the current checkout, uncommitted work included. Ignored and secret-looking files stay behind. AI steps still run on this machine."
+      hint="Pipelines set to run remotely execute their shell steps in a fresh sandbox on your Farol service, holding a snapshot of the current checkout, uncommitted work included. Ignored and secret-looking files stay behind. AI steps still run on this machine, so later remote steps do not see edits they make."
     >
       <ApiKeyField
         configured={hasKey}
-        placeholder="Service API key (frl_…)"
+        placeholder="API key (optional, frl_…)"
         busy={busy}
-        onSave={(key) => run(api.remote.save({ url, key }))}
-        onClear={() => void run(api.remote.clear())}
+        onSave={(key) => run(api.remote.save({ url: url || saved?.url || '', key }))}
+        onClear={() => void run(api.remote.clearKey())}
       />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <input
@@ -227,17 +233,17 @@ function RemoteSection({
           onChange={(e) => setUrl(e.target.value)}
           style={{ ...field, flex: 1 }}
         />
-        {hasKey && urlChanged && (
-          <Button variant="primary" disabled={busy} onClick={() => void run(api.remote.save({ url }))}>
+        {(urlChanged || !saved) && (
+          <Button variant="primary" disabled={busy || !url.trim()} onClick={() => void run(api.remote.save({ url }))}>
             Save
           </Button>
         )}
-        <Button variant="secondary" disabled={busy || !hasKey || urlChanged} onClick={() => void run(api.remote.check())}>
+        <Button variant="secondary" disabled={busy || !saved || urlChanged} onClick={() => void run(api.remote.check(), true)}>
           Test
         </Button>
       </div>
       {busy && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 8 }}>Working…</div>}
-      {!busy && hasKey && probed && !error && !urlChanged && (
+      {!busy && saved && probed && !error && !urlChanged && (
         <div style={{ fontSize: 11.5, color: C.textSoft, marginTop: 8 }}>Remote service is ready.</div>
       )}
       {error && <div style={{ fontSize: 12, color: C.red, marginTop: 8 }}>{error}</div>}

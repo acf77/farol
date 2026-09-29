@@ -38,11 +38,20 @@ export class WorkspaceRegistry {
     }
   }
 
-  get(id: string, keyId: string): RemoteWorkspace | undefined {
-    const held = this.held.get(id)
-    if (held?.keyId !== keyId) return undefined
-    this.touch(id)
-    return held.workspace
+  /** Whether `keyId` owns the workspace. */
+  owns(id: string, keyId: string): boolean {
+    return this.held.get(id)?.keyId === keyId
+  }
+
+  /** Run `fn` on the workspace; it cannot go idle while `fn` runs, and its idle clock restarts after. */
+  async use<T>(id: string, fn: (workspace: RemoteWorkspace) => Promise<T>): Promise<T> {
+    const held = this.held.get(id) as Held
+    clearTimeout(held.idle)
+    try {
+      return await fn(held.workspace)
+    } finally {
+      this.touch(id)
+    }
   }
 
   async close(id: string, keyId: string): Promise<boolean> {

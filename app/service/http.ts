@@ -15,7 +15,11 @@ export interface ServiceDeps {
   snapshotLimit: number
   /** Browser origins allowed to call the API. */
   allowedOrigins: string[]
+  /** Accept requests without an API key; every caller then shares one identity. */
+  anonymous?: boolean
 }
+
+const ANONYMOUS: ApiKeyRecord = { id: 'anonymous', name: 'anonymous', hash: '', createdAt: '' }
 
 class HttpError extends Error {
   constructor(
@@ -103,23 +107,22 @@ async function createWorkspace(ctx: Context): Promise<void> {
   json(ctx.res, 201, { id })
 }
 
-function findWorkspace({ deps, key, params }: Context) {
-  const workspace = deps.workspaces.get(params[0], key.id)
-  if (!workspace) throw new HttpError(404, 'Workspace not found')
-  return workspace
+function requireWorkspace({ deps, key, params }: Context): string {
+  if (!deps.workspaces.owns(params[0], key.id)) throw new HttpError(404, 'Workspace not found')
+  return params[0]
 }
 
 /** Run one command; the reply is NDJSON — `{chunk}` lines, then a single `{code}` line. */
 async function execInWorkspace(ctx: Context): Promise<void> {
-  const workspace = findWorkspace(ctx)
   const cmd = (await readBody(ctx.req, EXEC_COMMAND_LIMIT).catch((error: unknown) => {
     throw error instanceof TooLargeError ? new HttpError(413, 'Command is too large') : error
   })).toString('utf8')
   if (!cmd.trim()) throw new HttpError(400, 'Send the command as the request body')
+  const id = requireWorkspace(ctx)
   ctx.res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'X-Accel-Buffering': 'no' })
   const send = (event: { chunk: string } | { code: number }): void => void ctx.res.write(`${JSON.stringify(event)}\n`)
   try {
-    send({ code: await workspace.exec(cmd, (chunk) => send({ chunk })) })
+    send({ code: await ctx.deps.workspaces.use(id, (workspace) => workspace.exec(cmd, (chunk) => send({ chunk }))) })
   } catch (error) {
     send({ chunk: `farol: ${error instanceof Error ? error.message : String(error)}\n` })
     send({ code: 127 })
@@ -140,14 +143,12 @@ async function createRun(ctx: Context): Promise<void> {
     throw new HttpError(422, error.message)
   })
   const pipeline = requestedPipeline(pipelines, query)
-  const record = (() => {
-    try {
-      return ctx.deps.registry.start(ctx.key.id, pipeline, archive)
-    } catch (error) {
-      return busy(error)
-    }
-  })()
-  json(ctx.res, 202, { runId: record.id, status: record.status, pipelineId: record.pipelineId })
+  try {
+    const record = ctx.deps.registry.start(ctx.key.id, pipeline, archive)
+    json(ctx.res, 202, { runId: record.id, status: record.status, pipelineId: record.pipelineId })
+  } catch (error) {
+    busy(error)
+  }
 }
 
 function showRun(ctx: Context): void {
@@ -212,7 +213,7 @@ const routes: { method: string; pattern: RegExp; handler: (ctx: Context) => Prom
 async function dispatch(deps: ServiceDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const { pathname } = new URL(req.url ?? '/', 'http://localhost')
   if (req.method === 'GET' && pathname === '/healthz') return json(res, 200, { ok: true })
-  const key = verifyKey(deps.keysFile, bearer(req))
+  const key = deps.anonymous ? ANONYMOUS : verifyKey(deps.keysFile, bearer(req))
   if (!key) throw new HttpError(401, 'Missing or invalid API key', {}, { 'WWW-Authenticate': 'Bearer' })
   for (const { method, pattern, handler } of routes) {
     const match = pattern.exec(pathname)

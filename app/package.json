@@ -1,6 +1,6 @@
 {
   "name": "farol",
-  "version": "3.0.0-alpha-v1",
+  "version": "3.0.0-alpha-v3",
   "private": true,
   "author": "Farol",
   "description": "A terminal workspace with runnable shell + AI pipelines.",
@@ -63,9 +63,11 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@vercel/sandbox": "^3.5.1",
     "ai": "^7.0.105",
-    "electron-liquid-glass": "^1.1.1",
     "node-pty": "^1.0.0",
     "zod": "^4.4.3"
+  },
+  "optionalDependencies": {
+    "electron-liquid-glass": "^1.1.1"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.0",

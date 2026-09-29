@@ -522,8 +522,8 @@ export interface FarolApi {
   /** Machine-local Farol service connection for remote pipelines. */
   remote: {
     save(config: RemoteConfig): Promise<SettingsResult>
-    clear(): Promise<SettingsResult>
-    /** Ping the service to prove the URL and key work. */
+    clearKey(): Promise<SettingsResult>
+    /** Ping the service to prove the URL (and key, if any) work. */
     check(): Promise<SettingsResult>
   }
   /** Jev is internal-only: a key to store and a probe to prove it works. */

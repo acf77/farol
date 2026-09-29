@@ -1,9 +1,9 @@
 {
   "mcpServers": {
     "farol": {
-      "command": "/Applications/Farol.app/Contents/MacOS/Farol",
+      "command": "/Applications/Farol Alpha.app/Contents/MacOS/Farol Alpha",
       "args": [
-        "/Applications/Farol.app/Contents/Resources/app.asar/out/main/mcp.js"
+        "/Applications/Farol Alpha.app/Contents/Resources/app.asar/out/main/mcp.js"
       ],
       "env": {
         "ELECTRON_RUN_AS_NODE": "1",

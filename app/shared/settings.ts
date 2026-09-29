@@ -36,7 +36,7 @@ export interface JevSettings {
 
 /**
  * The Farol service that runs remote pipelines. The URL lives in the workspace
- * file; the API key stays in the encrypted store, and `hasKey` is a runtime
+ * file; the optional API key stays in the encrypted store, and `hasKey` is a runtime
  * flag that is never persisted.
  */
 export interface RemoteSettings {
