@@ -59,12 +59,12 @@ import type {
   RunPane,
   RunState,
   RunsByBranch,
-  Tab,
-  View
+  Tab
 } from './types'
-import { showsChat, showsTerminal } from './types'
 import { fileName } from './code'
 import { handleWorkspaceKeyDown } from './workspace-keys'
+import { useWorkspaceLayout } from './hooks/useWorkspaceLayout'
+import type { Surface } from './workspace-layout'
 import Toolbar from './components/Toolbar'
 import ErrorBoundary from './ErrorBoundary'
 import EmptyState from './components/EmptyState'
@@ -72,6 +72,7 @@ import NewTabDialog from './components/NewTabDialog'
 import ChatPane from './components/ChatPane'
 import CodePane from './components/CodePane'
 import TerminalPane from './components/TerminalPane'
+import WorkspaceGrid from './components/WorkspaceGrid'
 import ProjectRail from './components/ProjectRail'
 import Sidebar from './components/Sidebar'
 import GitPane, { gitStatusDotColor } from './components/GitPane'
@@ -912,6 +913,9 @@ interface ProjectWorkspaceProps {
   onAgentUnreadChange?: (projectPath: string, unread: boolean) => void
 }
 
+/** A terminal keeps its PTY scrollback while off screen; chat and code mount only when shown. */
+const KEEP_MOUNTED: readonly Surface[] = ['terminal']
+
 export function ProjectWorkspace({
   project,
   visible,
@@ -939,8 +943,9 @@ export function ProjectWorkspace({
   const [newTabError, setNewTabError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
-  /** Which surfaces are on screen — Chat / Code / Terminal / Split. */
-  const [view, setView] = useState<View>('chat')
+  /** Which surfaces are on screen, and how Chat / Code / Terminal are split. */
+  const workspace = useWorkspaceLayout()
+  const { reveal, split: splitSurface, surfaces } = workspace
   const code = useCodeWorkspace(project.path)
 
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
@@ -1080,7 +1085,7 @@ export function ProjectWorkspace({
 
   const worktreeBusyFlag = agentBusy || pipelineBusy
   const wasWorktreeBusy = useRef(false)
-  const chatOpen = visible && showsChat(view)
+  const chatOpen = visible && surfaces.includes('chat')
 
   useEffect(() => {
     onAgentBusyChange?.(project.path, worktreeBusyFlag)
@@ -1103,12 +1108,11 @@ export function ProjectWorkspace({
     setGit(await api.git.info(projectPath))
   }, [])
 
-  /** Bring the terminal on screen — split keeps chat visible; terminal is logs-only. */
-  const showTerminal = useCallback((tabId?: string, mode: 'split' | 'terminal' = 'split') => {
+  /** Bring the terminal on screen beside whatever is already showing. */
+  const showTerminal = useCallback((tabId?: string) => {
     if (tabId) setActiveTab(tabId)
-    if (mode === 'terminal') setView('terminal')
-    else setView((v) => (showsTerminal(v) ? v : 'split'))
-  }, [])
+    reveal('terminal')
+  }, [reveal])
 
   /** Returns the pane that will take input, so callers can write into it. */
   const openShellTab = useCallback(
@@ -1175,8 +1179,8 @@ export function ProjectWorkspace({
     }
     setClearChatConfirm(false)
     if (hadMessages) setChatClearedNotice(true)
-    setView((v) => (v === 'terminal' ? 'split' : v))
-  }, [chatOwner])
+    reveal('chat')
+  }, [chatOwner, reveal])
 
   /** One chat per branch — this clears it and shows a blank composer, not a second tab. */
   const requestNewChat = useCallback(() => {
@@ -1186,11 +1190,11 @@ export function ProjectWorkspace({
     if (hasMessages) {
       setChatClearedNotice(false)
       setClearChatConfirm(true)
-      setView('chat')
+      reveal('chat')
       return
     }
     clearChat(false)
-  }, [chatOwner, clearChat])
+  }, [chatOwner, clearChat, reveal])
 
   /** Tabs share this project's checkout — no worktree, no branch switch. */
   const newShellTab = useCallback(() => {
@@ -1239,9 +1243,9 @@ export function ProjectWorkspace({
     if (workspaceAction.kind === 'branch') void openBranchDialog()
     else {
       requestNewChat()
-      setView('chat')
+      reveal('chat')
     }
-  }, [visible, workspaceAction, openBranchDialog, requestNewChat])
+  }, [visible, workspaceAction, openBranchDialog, requestNewChat, reveal])
 
   const openWorktreeProject = useCallback(
     async (req: WorktreeRequest): Promise<{ ok: boolean; message: string }> => {
@@ -1339,9 +1343,9 @@ export function ProjectWorkspace({
         focus: paneId,
         panes: { ...t.panes, [paneId]: shellPane(paneId, focus.cwd) }
       }))
-      setView((v) => (showsTerminal(v) ? v : 'split'))
+      reveal('terminal')
     },
-    [activeTab, patchTab]
+    [activeTab, patchTab, reveal]
   )
 
   const closePane = useCallback(
@@ -1772,7 +1776,7 @@ export function ProjectWorkspace({
   )
   askAiRef.current = (prompt) => {
     onGitOpenChange(false)
-    setView('chat')
+    reveal('chat')
     sendAgentMessage(prompt)
   }
 
@@ -1790,7 +1794,7 @@ export function ProjectWorkspace({
         shells[0]
       if (owner) setActiveTab(owner.id)
       else openShellTab(cwd, branch)
-      setView('chat')
+      reveal('chat')
       sendAgentMessage(aiFixPrompt(), undefined, owner, cwd)
     },
     [openShellTab, sendAgentMessage]
@@ -1935,7 +1939,7 @@ export function ProjectWorkspace({
       setDetailLogs([])
       setTabs((prev) => (prev.some((tab) => tab.id === tabId) ? prev : [...prev, runLogTab(p, pipelineId, branch, cwd)]))
       setActiveTab(tabId)
-      setView('terminal')
+      reveal('terminal')
 
       const runtimeId = runtimePipelineId(pipelineId)
       const gen = (runStartGen.current[pipelineId] = (runStartGen.current[pipelineId] ?? 0) + 1)
@@ -2055,14 +2059,16 @@ export function ProjectWorkspace({
         setSettingsOpen,
         activeTab,
         active,
-        view,
+        focus: workspace.layout.focus,
+        surfaces,
         termTabs,
         tabsRef,
         newShellTab,
         splitPane,
         closePane,
         closeTab,
-        setView,
+        revealSurface: reveal,
+        splitSurface,
         setPaletteOpen,
         setActiveTab,
         saveCodeFile: () => {
@@ -2080,7 +2086,10 @@ export function ProjectWorkspace({
     termTabs,
     activeTab,
     active,
-    view,
+    workspace.layout.focus,
+    surfaces,
+    reveal,
+    splitSurface,
     newTabOpen,
     editor,
     paletteOpen,
@@ -2198,8 +2207,8 @@ export function ProjectWorkspace({
       termTabs.find((t) => t.id === `run:${selId}:${runBranch}`) ??
       termTabs.find((t) => t.id.startsWith(`run:${selId}:`))
     if (tab) setActiveTab(tab.id)
-    setView('terminal')
-  }, [selId, runBranch, termTabs])
+    reveal('terminal')
+  }, [selId, runBranch, termTabs, reveal])
 
   const paletteItems = useMemo((): PaletteItem[] => {
     const items: PaletteItem[] = [
@@ -2207,25 +2216,25 @@ export function ProjectWorkspace({
         id: 'view-chat',
         label: 'Chat view',
         group: 'View',
-        run: () => setView('chat')
+        run: () => workspace.show('chat')
       },
       {
         id: 'view-code',
         label: 'Code view',
         group: 'View',
-        run: () => setView('code')
+        run: () => workspace.show('code')
       },
       {
         id: 'view-terminal',
         label: 'Terminal view',
         group: 'View',
-        run: () => setView('terminal')
+        run: () => workspace.show('terminal')
       },
       {
         id: 'view-split',
         label: 'Split view',
         group: 'View',
-        run: () => setView('split')
+        run: () => workspace.show('split')
       },
       {
         id: 'new-terminal',
@@ -2257,7 +2266,7 @@ export function ProjectWorkspace({
         label: 'Focus chat composer',
         group: 'Actions',
         run: () => {
-          setView((v) => (showsChat(v) ? v : 'split'))
+          reveal('chat')
           window.setTimeout(() => composerRef.current?.focus(), 0)
         }
       }
@@ -2289,7 +2298,7 @@ export function ProjectWorkspace({
         detail: tab.kind,
         run: () => {
           setActiveTab(tab.id)
-          setView((v) => (showsTerminal(v) ? v : 'terminal'))
+          reveal('terminal')
         }
       })
     }
@@ -2300,7 +2309,7 @@ export function ProjectWorkspace({
         group: 'Files',
         detail: file,
         run: () => {
-          setView('code')
+          reveal('code')
           void code.openFile(file)
         }
       })
@@ -2344,8 +2353,12 @@ export function ProjectWorkspace({
       <Toolbar
         liquid={liquid}
         project={project}
-        view={view}
-        onView={setView}
+        view={workspace.view}
+        onView={workspace.show}
+        focus={workspace.layout.focus}
+        surfaces={surfaces}
+        onSplit={splitSurface}
+        onCloseSurface={workspace.close}
         onNewTerminal={newShellTab}
         recents={recents}
         menuOpen={menuOpen}
@@ -2369,99 +2382,95 @@ export function ProjectWorkspace({
       />
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 8, padding: PANEL_INSET }}>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 8 }}>
-          {showsChat(view) && (
-            <ErrorBoundary compact>
-              <ChatPane
-                key={`${project.path}:${chatOwner?.id ?? 'chat'}`}
-                pane={chatPane}
-                pipelines={pipelines}
-                view={view}
-                projectPath={project.path}
-                defaultProvider={defaultChoice.agent}
-                defaultModel={defaultChoice.model}
-                settings={settings}
-                usage={usage}
-                onRefreshUsage={onRefreshUsage}
-                onMessage={(text, provider, model, mode) =>
-                  sendAgentMessage(text, provider, undefined, undefined, model ?? null, mode)
-                }
-                onAnswer={(requestId, answers) => {
-                  if (chatPane) void api.agent.answer(chatPane.taskId, requestId, answers)
-                }}
-                onCancel={cancelAgent}
-                onFreshStart={freshStartChat}
-                onProviderChange={setAgentProvider}
-                onModeChange={setAgentMode}
-                onExecutePlan={executePlan}
-                onOpenPipeline={(tabId) => showTerminal(tabId, 'terminal')}
-                onNewChat={requestNewChat}
-                clearChatConfirm={clearChatConfirm}
-                onConfirmClearChat={() => clearChat(true)}
-                onCancelClearChat={() => setClearChatConfirm(false)}
-                chatClearedNotice={chatClearedNotice}
-                onDismissChatCleared={() => setChatClearedNotice(false)}
-                composerRef={composerRef}
-              />
-            </ErrorBoundary>
-          )}
-          {/* Keep terminals mounted in Chat view so PTY scrollback is not lost. */}
-          <div
-            style={{
-              flex: view === 'split' ? '1 1 50%' : '1 1 100%',
-              minWidth: 0,
-              minHeight: 0,
-              display: showsTerminal(view) ? 'flex' : 'none',
-              flexDirection: 'column'
+        <div style={{ flex: 1, minWidth: 0, display: 'flex' }}>
+          <WorkspaceGrid
+            layout={workspace.layout}
+            keepMounted={KEEP_MOUNTED}
+            onFocus={workspace.focus}
+            onResize={workspace.resize}
+            surfaces={{
+              chat: (
+                <ErrorBoundary compact>
+                  <ChatPane
+                    key={`${project.path}:${chatOwner?.id ?? 'chat'}`}
+                    pane={chatPane}
+                    pipelines={pipelines}
+                    projectPath={project.path}
+                    defaultProvider={defaultChoice.agent}
+                    defaultModel={defaultChoice.model}
+                    settings={settings}
+                    usage={usage}
+                    onRefreshUsage={onRefreshUsage}
+                    onMessage={(text, provider, model, mode) =>
+                      sendAgentMessage(text, provider, undefined, undefined, model ?? null, mode)
+                    }
+                    onAnswer={(requestId, answers) => {
+                      if (chatPane) void api.agent.answer(chatPane.taskId, requestId, answers)
+                    }}
+                    onCancel={cancelAgent}
+                    onFreshStart={freshStartChat}
+                    onProviderChange={setAgentProvider}
+                    onModeChange={setAgentMode}
+                    onExecutePlan={executePlan}
+                    onOpenPipeline={showTerminal}
+                    onNewChat={requestNewChat}
+                    clearChatConfirm={clearChatConfirm}
+                    onConfirmClearChat={() => clearChat(true)}
+                    onCancelClearChat={() => setClearChatConfirm(false)}
+                    chatClearedNotice={chatClearedNotice}
+                    onDismissChatCleared={() => setChatClearedNotice(false)}
+                    composerRef={composerRef}
+                  />
+                </ErrorBoundary>
+              ),
+              code: (
+                <ErrorBoundary compact>
+                  <CodePane
+                    projectPath={project.path}
+                    tabs={code.tabs}
+                    activePath={code.activePath}
+                    active={code.active}
+                    notice={code.notice}
+                    onOpen={(path) => void code.openFile(path)}
+                    onSelect={code.setActive}
+                    onChange={code.updateContent}
+                    onClose={code.requestClose}
+                    onSave={() => void code.saveActive()}
+                    onRevert={code.revertActive}
+                    onDiscard={code.confirmClose}
+                    onOverwrite={() => void code.overwriteSave()}
+                    onCancelNotice={code.cancelNotice}
+                  />
+                </ErrorBoundary>
+              ),
+              terminal: (
+                <TerminalPane
+                  key={project.path}
+                  tabs={termTabs}
+                  activeId={active?.id ?? ''}
+                  workspaceVisible={visible && surfaces.includes('terminal')}
+                  branch={runBranch}
+                  cwd={cwdLabel}
+                  onSelect={setActiveTab}
+                  onClose={closeTab}
+                  onNew={newShellTab}
+                  onFocusPane={(tabId, paneId) =>
+                    patchTab(tabId, (tab) => (tab.focus === paneId ? tab : { ...tab, focus: paneId }))
+                  }
+                  onClosePane={closePane}
+                  onResize={(tabId, nodeId, size) =>
+                    patchTab(tabId, (tab) => ({
+                      ...tab,
+                      root: setSize(tab.root, nodeId, size)
+                    }))
+                  }
+                  onSplitRight={() => splitPane('row')}
+                  onSplitDown={() => splitPane('col')}
+                  canSplit={!!active && active.kind === 'shell' && active.panes[active.focus]?.kind === 'shell'}
+                />
+              )
             }}
-            aria-hidden={!showsTerminal(view)}
-          >
-            <TerminalPane
-              key={project.path}
-              tabs={termTabs}
-              activeId={active?.id ?? ''}
-              view={showsTerminal(view) ? view : 'terminal'}
-              workspaceVisible={visible && showsTerminal(view)}
-              branch={runBranch}
-              cwd={cwdLabel}
-              onSelect={setActiveTab}
-              onClose={closeTab}
-              onNew={newShellTab}
-              onFocusPane={(tabId, paneId) =>
-                patchTab(tabId, (tab) => (tab.focus === paneId ? tab : { ...tab, focus: paneId }))
-              }
-              onClosePane={closePane}
-              onResize={(tabId, nodeId, size) =>
-                patchTab(tabId, (tab) => ({
-                  ...tab,
-                  root: setSize(tab.root, nodeId, size)
-                }))
-              }
-              onSplitRight={() => splitPane('row')}
-              onSplitDown={() => splitPane('col')}
-              canSplit={!!active && active.kind === 'shell' && active.panes[active.focus]?.kind === 'shell'}
-            />
-          </div>
-          {view === 'code' && (
-            <ErrorBoundary compact>
-              <CodePane
-                projectPath={project.path}
-                tabs={code.tabs}
-                activePath={code.activePath}
-                active={code.active}
-                notice={code.notice}
-                onOpen={(path) => void code.openFile(path)}
-                onSelect={code.setActive}
-                onChange={code.updateContent}
-                onClose={code.requestClose}
-                onSave={() => void code.saveActive()}
-                onRevert={code.revertActive}
-                onDiscard={code.confirmClose}
-                onOverwrite={() => void code.overwriteSave()}
-                onCancelNotice={code.cancelNotice}
-              />
-            </ErrorBoundary>
-          )}
+          />
         </div>
 
         <Sidebar

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeRelPath } from '@shared/rel-path'
 import { detectIndent, fileName, isDirty, languageFromPath } from './code'
-import { showsChat, showsTerminal } from './types'
 
 describe('languageFromPath', () => {
   it('maps known extensions and falls back to text', () => {
@@ -23,17 +22,6 @@ describe('detectIndent', () => {
     expect(detectIndent('function x() {\n\treturn 1\n}\n')).toBe('\t')
     expect(detectIndent('{\n    "a": 1\n}\n')).toBe('    ')
     expect(detectIndent('if (x) {\n  return 1\n}\n')).toBe('  ')
-  })
-})
-
-describe('workspace views', () => {
-  it('shows chat and terminal only on their surfaces', () => {
-    expect(showsChat('chat')).toBe(true)
-    expect(showsChat('split')).toBe(true)
-    expect(showsChat('code')).toBe(false)
-    expect(showsTerminal('terminal')).toBe(true)
-    expect(showsTerminal('split')).toBe(true)
-    expect(showsTerminal('code')).toBe(false)
   })
 })
 

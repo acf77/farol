@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AGENT_LIVE, type AgentMode, type AiProvider, type AppSettings, type Pipeline, type ProviderUsage } from '@shared/types'
 import { normalizeAi, normalizeModel } from '@shared/ai'
 import { contextIsHigh, contextLongLabel, isContextOverflow, type ContextUsage } from '@shared/agent-context'
-import type { AgentMessage, AgentPane, View } from '../types'
+import type { AgentMessage, AgentPane } from '../types'
 import { C, PANE } from '../theme'
 import { MessageErrorBoundary } from '../ErrorBoundary'
 import { Button } from './controls'
@@ -15,7 +15,6 @@ import { Turn } from './chat/Turn'
 interface Props {
   pane: AgentPane | null
   pipelines: Pipeline[]
-  view: View
   projectPath: string
   /** Settings default used when no chat pane exists yet. */
   defaultProvider: AiProvider
@@ -359,7 +358,6 @@ function SuggestionList({ onPick }: { onPick: (prompt: string) => void }) {
 export default function ChatPane({
   pane,
   pipelines,
-  view,
   projectPath,
   defaultProvider,
   defaultModel,
@@ -423,10 +421,8 @@ export default function ChatPane({
     return () => ro.disconnect()
   }, [messages])
 
-  const flex = view === 'split' ? '1 1 50%' : '1 1 100%'
-
   return (
-    <div style={{ ...PANE, flex, position: 'relative' }}>
+    <div style={{ ...PANE, flex: '1 1 100%', position: 'relative' }}>
       {clearChatConfirm && (
         <ClearChatOverlay
           onCancelClearChat={onCancelClearChat}

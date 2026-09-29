@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useRef } from 'react'
+import { useMemo, useRef } from 'react'
 import { C, ELLIPSIS } from '../theme'
 import type { Tab } from '../types'
-import { computeLayout, dragToSize, leaves, type Divider } from '../layout'
+import { computeLayout, leaves } from '../layout'
+import Dividers from './Dividers'
 import XtermPane from './XtermPane'
 import LogPane from './LogPane'
 
@@ -27,37 +28,8 @@ export default function PaneGrid({
   onContextMenu
 }: Props) {
   const areaRef = useRef<HTMLDivElement>(null)
-  const dragRef = useRef<{ d: Divider; box: DOMRect } | null>(null)
   const layout = useMemo(() => computeLayout(tab.root), [tab.root])
   const multi = leaves(tab.root).length > 1
-
-  const onDividerDown = useCallback(
-    (d: Divider, e: React.MouseEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
-      const box = areaRef.current?.getBoundingClientRect()
-      if (!box) return
-      dragRef.current = { d, box }
-
-      const onMove = (ev: PointerEvent): void => {
-        const cur = dragRef.current
-        if (!cur) return
-        const frac =
-          cur.d.dir === 'row'
-            ? (ev.clientX - cur.box.left) / cur.box.width
-            : (ev.clientY - cur.box.top) / cur.box.height
-        onResize(cur.d.id, dragToSize(cur.d, frac))
-      }
-      const onUp = (): void => {
-        dragRef.current = null
-        window.removeEventListener('pointermove', onMove)
-        window.removeEventListener('pointerup', onUp)
-      }
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-    },
-    [onResize]
-  )
 
   return (
     <div
@@ -163,22 +135,7 @@ export default function PaneGrid({
         )
       })}
 
-      {layout.dividers.map((d) => (
-        <div
-          key={d.id}
-          onMouseDown={(e) => onDividerDown(d, e)}
-          style={{
-            position: 'absolute',
-            left: d.dir === 'row' ? `calc(${d.x}% - 2px)` : `${d.x}%`,
-            top: d.dir === 'col' ? `calc(${d.y}% - 2px)` : `${d.y}%`,
-            width: d.dir === 'row' ? 4 : `${d.w}%`,
-            height: d.dir === 'col' ? 4 : `${d.h}%`,
-            cursor: d.dir === 'row' ? 'col-resize' : 'row-resize',
-            zIndex: 5,
-            background: 'transparent'
-          }}
-        />
-      ))}
+      <Dividers dividers={layout.dividers} areaRef={areaRef} onResize={onResize} />
     </div>
   )
 }

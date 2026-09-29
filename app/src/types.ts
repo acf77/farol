@@ -114,19 +114,8 @@ export interface RunState {
 /** Runs are tracked per pipeline, then per branch. */
 export type RunsByBranch = Record<string, Record<string, RunState>>
 
-/**
- * Which surfaces are on screen. `split` is the spec's own split — chat beside
- * terminal at 58/42 — not a split within a terminal tab.
- */
+/** The toolbar's layout presets. `split` is chat beside terminal — not a split within a terminal tab. */
 export type View = 'chat' | 'code' | 'terminal' | 'split'
-
-export function showsChat(view: View): boolean {
-  return view === 'chat' || view === 'split'
-}
-
-export function showsTerminal(view: View): boolean {
-  return view === 'terminal' || view === 'split'
-}
 
 /** One line in the pipelines rail's live log block. */
 export interface DetailLog {

@@ -1,7 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { AppSettings, Project } from '@shared/types'
 import { C, MONO, glass as G } from '../theme'
 import type { View } from '../types'
+import { SURFACES, SURFACE_LABEL, type Surface } from '../workspace-layout'
 import { Checkbox } from './controls'
 import { CHROME_ROW } from './side-panel'
 import { FolderPlusIcon, SettingsIcon } from './icons'
@@ -9,8 +10,14 @@ import { FolderPlusIcon, SettingsIcon } from './icons'
 interface Props {
   liquid?: boolean
   project: Project | null
-  view: View
+  /** The preset the layout matches; null once the panels are split some other way. */
+  view: View | null
   onView: (v: View) => void
+  /** Surface that Split and Close act on, and the surfaces currently on screen. */
+  focus: Surface
+  surfaces: Surface[]
+  onSplit: (dir: 'row' | 'col', surface: Surface) => void
+  onCloseSurface: (surface: Surface) => void
   /** New shell tab in the active project (always available). */
   onNewTerminal: () => void
   recents: Project[]
@@ -50,11 +57,102 @@ const VIEWS: { key: View; label: string }[] = [
   { key: 'split', label: 'Split 50/50' }
 ]
 
+const DIRECTIONS = [
+  { dir: 'row', label: 'right' },
+  { dir: 'col', label: 'down' }
+] as const
+
+/** Splits the focused surface with any other; a surface already on screen moves beside it. */
+function SplitMenu({
+  liquid,
+  focus,
+  surfaces,
+  onSplit,
+  onCloseSurface,
+  onClose
+}: {
+  liquid?: boolean
+  focus: Surface
+  surfaces: Surface[]
+  onSplit: (dir: 'row' | 'col', surface: Surface) => void
+  onCloseSurface: (surface: Surface) => void
+  onClose: () => void
+}) {
+  const run = (action: () => void) => () => {
+    onClose()
+    action()
+  }
+  return (
+    <>
+      <div aria-hidden onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+      <div
+        role="menu"
+        aria-label="Split panel"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onClose()
+        }}
+        style={{
+          ...noDrag,
+          position: 'absolute',
+          top: CHROME_ROW,
+          left: 16,
+          zIndex: 50,
+          width: 220,
+          background: liquid ? G.panel : C.sidebar,
+          border: `1px solid ${C.border}`,
+          borderRadius: 12,
+          boxShadow: '0 18px 44px rgba(0,0,0,0.55)',
+          padding: 5
+        }}
+      >
+        {DIRECTIONS.map(({ dir, label }) => (
+          <div key={dir} role="group" aria-label={`Split ${SURFACE_LABEL[focus]} ${label}`}>
+            <div style={{ padding: '6px 10px 2px', fontSize: 10.5, color: C.faint }}>
+              Split {SURFACE_LABEL[focus]} {label} with
+            </div>
+            {SURFACES.filter((s) => s !== focus).map((s) => (
+              <button
+                key={s}
+                type="button"
+                role="menuitem"
+                className="bf-focus bf-menu-item"
+                onClick={run(() => onSplit(dir, s))}
+                style={{ ...menuItem, display: 'flex', justifyContent: 'space-between' }}
+              >
+                <span>{SURFACE_LABEL[s]}</span>
+                {surfaces.includes(s) && <span style={{ fontSize: 10.5, color: C.faint }}>moves here</span>}
+              </button>
+            ))}
+          </div>
+        ))}
+        {surfaces.length > 1 && (
+          <>
+            <div role="separator" style={{ height: 1, background: C.border, margin: '5px 6px' }} />
+            <button
+              type="button"
+              role="menuitem"
+              className="bf-focus bf-menu-item"
+              onClick={run(() => onCloseSurface(focus))}
+              style={menuItem}
+            >
+              Close {SURFACE_LABEL[focus]} panel
+            </button>
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
 export default function Toolbar({
   liquid,
   project,
   view,
   onView,
+  focus,
+  surfaces,
+  onSplit,
+  onCloseSurface,
   onNewTerminal,
   recents,
   menuOpen,
@@ -70,6 +168,8 @@ export default function Toolbar({
   onSettings,
   onOpenSettings
 }: Props) {
+  const [splitOpen, setSplitOpen] = useState(false)
+
   /** Escape dismisses the file menu and returns focus to its trigger. */
   useEffect(() => {
     if (!menuOpen) return
@@ -186,6 +286,30 @@ export default function Toolbar({
             New terminal
           </button>
         )}
+        {project && (
+          <button
+            type="button"
+            className="bf-focus"
+            onClick={() => setSplitOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={splitOpen}
+            title="Split the focused panel"
+            style={{
+              ...noDrag,
+              height: 28,
+              padding: '0 10px',
+              borderRadius: 6,
+              border: '1px solid #3E3E3A',
+              background: C.panel,
+              color: C.text,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            Split
+          </button>
+        )}
         <button
           type="button"
           className="bf-focus bf-icon-btn"
@@ -208,6 +332,17 @@ export default function Toolbar({
           <FolderPlusIcon size={14} />
         </button>
       </div>
+
+      {splitOpen && (
+        <SplitMenu
+          liquid={liquid}
+          focus={focus}
+          surfaces={surfaces}
+          onSplit={onSplit}
+          onCloseSurface={onCloseSurface}
+          onClose={() => setSplitOpen(false)}
+        />
+      )}
 
       <div
         style={{

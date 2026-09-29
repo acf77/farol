@@ -37,7 +37,6 @@ export function renderChatPane(props: Partial<ComponentProps<typeof ChatPane>> =
     createElement(ChatPane, {
       pane: makeAgentPane(),
       pipelines: [],
-      view: 'chat',
       projectPath: '/Users/dev/repo',
       defaultProvider: 'claude',
       usage: [],

@@ -56,6 +56,7 @@ shared/types.ts   contract shared by main, preload and renderer
 src/
   App.tsx      state: tabs, panes, runs per branch
   layout.ts    pane split tree and geometry (tested)
+  workspace-layout.ts  how Chat / Code / Terminal are split (tested)
   ansi.ts      parser for pipeline step output (tested)
   components/  Toolbar, TabStrip, PaneGrid, XtermPane, LogPane, Sidebar…
 ```
@@ -85,6 +86,16 @@ new pane gets its own shell starting in the same directory. Drag the divider
 between panes to resize (clamped to 15–85%); `⇧⌘W` closes a pane, and closing
 the last one closes the tab. Once a tab is split, panes get a title bar and the
 focused pane is outlined.
+
+### Splitting the workspace
+
+The toolbar's **Split** menu splits the focused panel — Chat, Code or
+Terminal — right or down with either of the others. A panel that is already
+showing moves beside the focused one instead of being duplicated, and **Close
+panel** hands its space to its sibling. Drag a divider to resize. With Chat or
+Code focused, `⌘D` / `⇧⌘D` splits beside the next panel not on screen (Terminal
+first); with a shell focused it still splits the shell. The arrangement is kept
+across restarts (`src/workspace-layout.ts`, pure and unit-tested).
 
 ### Branches
 

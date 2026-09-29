@@ -3,6 +3,7 @@ import { shortPath } from '@shared/project-groups'
 import type { GitInfo, WorktreeRequest } from '@shared/types'
 import { branchNameError, worktreeFolderName } from '@shared/worktree'
 import { C, MONO, glass as G } from '../theme'
+import { BranchDropdown } from './controls'
 
 interface Props {
   liquid?: boolean
@@ -162,31 +163,26 @@ function BaseBranchSelect({
   return (
     <div style={row}>
       <label htmlFor={selectId} style={label}>From branch</label>
-      <select
+      <BranchDropdown
         id={selectId}
-        className="bf-input bf-focus"
         value={base}
         disabled={!!existing}
-        onChange={(e) => onChange(e.target.value)}
-        style={{ ...field, fontSize: 11, opacity: existing ? 0.45 : 1 }}
-      >
-        <optgroup label="Local">
-          {git.branches.map((b) => (
-            <option key={b} value={b}>
-              {b}
-            </option>
-          ))}
-        </optgroup>
-        {!!git.remotes?.length && (
-          <optgroup label="Remote">
-            {git.remotes.map((b) => (
-              <option key={b} value={b}>
-                {b}
-              </option>
-            ))}
-          </optgroup>
-        )}
-      </select>
+        groups={[
+          { label: 'Local', branches: git.branches },
+          ...(git.remotes?.length ? [{ label: 'Remote', branches: git.remotes }] : [])
+        ]}
+        onChange={onChange}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          height: 26,
+          borderRadius: 6,
+          border: '1px solid #3E3E3A',
+          fontSize: 11,
+          fontFamily: MONO,
+          opacity: existing ? 0.45 : 1
+        }}
+      />
     </div>
   )
 }

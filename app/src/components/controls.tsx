@@ -314,7 +314,178 @@ const menuItem: React.CSSProperties = {
   cursor: 'pointer'
 }
 
-function ModelMenuItem({
+function menuPosFor(rect: DOMRect): MenuPos {
+  const width = Math.min(Math.max(rect.width, CLI_MODEL_MENU_WIDTH), window.innerWidth - 16)
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+  const below = window.innerHeight - rect.bottom
+  const maxHeight = Math.max(220, (below >= 220 ? below : rect.top) - 12)
+  return below >= 220
+    ? { left, top: rect.bottom + 4, width, maxHeight }
+    : { left, bottom: Math.max(8, window.innerHeight - rect.top + 4), width, maxHeight }
+}
+
+/** A menu is open exactly while it has a position under its trigger. */
+function useMenuAnchor() {
+  const [pos, setPos] = useState<MenuPos | null>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const toggle = (): void => {
+    const rect = btnRef.current?.getBoundingClientRect()
+    setPos(pos || !rect ? null : menuPosFor(rect))
+  }
+  return { btnRef, pos, toggle, close: () => setPos(null) }
+}
+
+function MenuTrigger({
+  anchor,
+  id,
+  label,
+  disabled,
+  style,
+  children
+}: {
+  anchor: ReturnType<typeof useMenuAnchor>
+  id?: string
+  label?: string
+  disabled?: boolean
+  style?: React.CSSProperties
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      ref={anchor.btnRef}
+      id={id}
+      type="button"
+      className="bf-focus"
+      aria-label={label}
+      aria-expanded={!!anchor.pos}
+      aria-haspopup="menu"
+      disabled={disabled}
+      onClick={anchor.toggle}
+      style={{
+        height: 24,
+        padding: '0 8px',
+        borderRadius: 4,
+        border: '1px solid rgba(255,255,255,0.1)',
+        background: 'rgba(255,255,255,0.05)',
+        color: C.text,
+        fontSize: 12,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+        cursor: 'pointer',
+        width: '100%',
+        textAlign: 'left',
+        ...style
+      }}
+    >
+      <span style={{ ...ELLIPSIS }}>{children}</span>
+      <ChevronDown size={10} color={C.textMuted} />
+    </button>
+  )
+}
+
+/** Click-away backdrop plus the floating panel; Escape closes only the menu. */
+function MenuShell({
+  pos,
+  label,
+  onClose,
+  children
+}: {
+  pos: MenuPos
+  label: string
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  const place: React.CSSProperties =
+    'bottom' in pos ? { left: pos.left, bottom: pos.bottom } : { left: pos.left, top: pos.top }
+  return (
+    <>
+      <div
+        aria-hidden
+        onMouseDown={(e) => {
+          e.preventDefault()
+          onClose()
+        }}
+        style={{ position: 'fixed', inset: 0, zIndex: 65 }}
+      />
+      <div
+        role="menu"
+        aria-label={label}
+        onMouseDown={(e) => {
+          if ((e.target as HTMLElement).closest('input')) return
+          e.preventDefault()
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape') return
+          e.preventDefault()
+          e.stopPropagation()
+          onClose()
+        }}
+        style={{
+          position: 'fixed',
+          ...place,
+          zIndex: 70,
+          width: `min(${pos.width}px, calc(100vw - 16px))`,
+          maxHeight: pos.maxHeight,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          background: C.panel,
+          border: `1px solid ${C.border}`,
+          borderRadius: 8,
+          boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+          padding: 4
+        }}
+      >
+        {children}
+      </div>
+    </>
+  )
+}
+
+/** Enter never submits an enclosing form; `onEnter` lets a list take the first match. */
+function MenuFilter({
+  value,
+  onChange,
+  label,
+  onEnter
+}: {
+  value: string
+  onChange: (v: string) => void
+  label: string
+  onEnter?: () => void
+}) {
+  return (
+    <input
+      className="bf-input bf-focus"
+      autoFocus
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter') return
+        e.preventDefault()
+        onEnter?.()
+      }}
+      placeholder={`${label}…`}
+      spellCheck={false}
+      aria-label={label}
+      style={{
+        height: 24,
+        margin: '4px 4px 6px',
+        padding: '0 8px',
+        borderRadius: 6,
+        border: `1px solid ${C.border}`,
+        background: C.terminal,
+        color: C.text,
+        fontSize: 12,
+        flex: 'none'
+      }}
+    />
+  )
+}
+
+function MenuItem({
   label,
   selected,
   onPick
@@ -334,6 +505,23 @@ function ModelMenuItem({
       <span style={{ ...ELLIPSIS }}>{label}</span>
       {selected && <CheckIcon size={12} />}
     </button>
+  )
+}
+
+function MenuGroupLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        padding: '6px 10px 2px',
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: '0.04em',
+        textTransform: 'uppercase',
+        color: C.faint
+      }}
+    >
+      {children}
+    </div>
   )
 }
 
@@ -362,7 +550,7 @@ function ModelList({
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
       {page !== 'cursor' && !query.trim() && (
-        <ModelMenuItem
+        <MenuItem
           label="Default"
           selected={page === current && !selectedModel}
           onPick={() => onPick(page, undefined)}
@@ -373,22 +561,9 @@ function ModelList({
       )}
       {groups.map((group) => (
         <div key={group.key || 'models'}>
-          {showHeaders && group.label ? (
-            <div
-              style={{
-                padding: '6px 10px 2px',
-                fontSize: 10,
-                fontWeight: 600,
-                letterSpacing: '0.04em',
-                textTransform: 'uppercase',
-                color: C.faint
-              }}
-            >
-              {group.label}
-            </div>
-          ) : null}
+          {showHeaders && group.label ? <MenuGroupLabel>{group.label}</MenuGroupLabel> : null}
           {group.models.map((m) => (
-            <ModelMenuItem
+            <MenuItem
               key={m.id}
               label={m.label}
               selected={page === current && selectedId === m.id}
@@ -429,119 +604,66 @@ export function CliModelMenu({
   const selectedModel = normalizeModel(model)
   const providers = pickerProviders(settings?.openrouter)
 
-  const place: React.CSSProperties =
-    'bottom' in pos ? { left: pos.left, bottom: pos.bottom } : { left: pos.left, top: pos.top }
-
   const listed =
     page === 'cli' ? [] : providerModels(page, page === current ? selectedModel : undefined, settings)
 
   return (
-    <>
-      <div
-        aria-hidden
-        onMouseDown={(e) => {
-          e.preventDefault()
-          onClose()
-        }}
-        style={{ position: 'fixed', inset: 0, zIndex: 65 }}
-      />
-      <div
-        role="menu"
-        aria-label={page === 'cli' ? 'Provider' : `${AI_LABELS[page]} model`}
-        onMouseDown={(e) => {
-          if ((e.target as HTMLElement).closest('input')) return
-          e.preventDefault()
-        }}
-        style={{
-          position: 'fixed',
-          ...place,
-          zIndex: 70,
-          width: `min(${pos.width}px, calc(100vw - 16px))`,
-          maxHeight: pos.maxHeight,
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          background: C.panel,
-          border: `1px solid ${C.border}`,
-          borderRadius: 8,
-          boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
-          padding: 4
-        }}
-      >
-        {page === 'cli'
-          ? providers.map((p) => (
-              <button
-                key={p}
-                type="button"
-                role="menuitem"
-                className="bf-focus bf-menu-item"
-                onClick={() => {
-                  setQuery('')
-                  setPage(p)
-                }}
-                style={{
-                  ...menuItem,
-                  color: p === current ? C.text : C.textMuted
-                }}
-              >
-                <span>{AI_LABELS[p]}</span>
-                <ChevronRight size={11} color="currentColor" />
-              </button>
-            ))
-          : (
-              <>
-                {!locked && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="bf-focus bf-menu-item"
-                    onClick={() => {
-                      setQuery('')
-                      setPage('cli')
-                    }}
-                    style={{
-                      ...menuItem,
-                      justifyContent: 'flex-start',
-                      gap: 6,
-                      color: C.textMuted,
-                      flex: 'none'
-                    }}
-                  >
-                    <CaretLeft size={12} />
-                    <span>{AI_LABELS[page]}</span>
-                  </button>
-                )}
-                <input
-                  className="bf-input bf-focus"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Filter models…"
-                  spellCheck={false}
-                  aria-label="Filter models"
+    <MenuShell pos={pos} label={page === 'cli' ? 'Provider' : `${AI_LABELS[page]} model`} onClose={onClose}>
+      {page === 'cli'
+        ? providers.map((p) => (
+            <button
+              key={p}
+              type="button"
+              role="menuitem"
+              className="bf-focus bf-menu-item"
+              onClick={() => {
+                setQuery('')
+                setPage(p)
+              }}
+              style={{
+                ...menuItem,
+                color: p === current ? C.text : C.textMuted
+              }}
+            >
+              <span>{AI_LABELS[p]}</span>
+              <ChevronRight size={11} color="currentColor" />
+            </button>
+          ))
+        : (
+            <>
+              {!locked && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="bf-focus bf-menu-item"
+                  onClick={() => {
+                    setQuery('')
+                    setPage('cli')
+                  }}
                   style={{
-                    height: 24,
-                    margin: '4px 4px 6px',
-                    padding: '0 8px',
-                    borderRadius: 6,
-                    border: `1px solid ${C.border}`,
-                    background: C.terminal,
-                    color: C.text,
-                    fontSize: 12,
+                    ...menuItem,
+                    justifyContent: 'flex-start',
+                    gap: 6,
+                    color: C.textMuted,
                     flex: 'none'
                   }}
-                />
-                <ModelList
-                  page={page}
-                  current={current}
-                  selectedModel={selectedModel}
-                  query={query}
-                  listed={listed}
-                  onPick={onPick}
-                />
-              </>
-            )}
-      </div>
-    </>
+                >
+                  <CaretLeft size={12} />
+                  <span>{AI_LABELS[page]}</span>
+                </button>
+              )}
+              <MenuFilter value={query} onChange={setQuery} label="Filter models" />
+              <ModelList
+                page={page}
+                current={current}
+                selectedModel={selectedModel}
+                query={query}
+                listed={listed}
+                onPick={onPick}
+              />
+            </>
+          )}
+    </MenuShell>
   )
 }
 
@@ -561,81 +683,118 @@ export function CliModelDropdown({
   onChange: (provider: AiProvider, model: string | undefined) => void
   label?: string
 }) {
-  const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState<MenuPos | null>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
+  const anchor = useMenuAnchor()
   const listed = providerModels(provider, model, settings)
   const trigger = locked
     ? (aiModelLabel(provider, model, listed) ?? 'Default — the CLI decides')
     : aiSelectionLabel(provider, model, listed)
 
-  const toggle = (): void => {
-    if (open) {
-      setOpen(false)
-      return
-    }
-    const rect = btnRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const width = Math.min(Math.max(rect.width, CLI_MODEL_MENU_WIDTH), window.innerWidth - 16)
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
-    const below = window.innerHeight - rect.bottom
-    const maxHeight = Math.max(220, (below >= 220 ? below : rect.top) - 12)
-    setPos(
-      below >= 220
-        ? { left, top: rect.bottom + 4, width, maxHeight }
-        : { left, bottom: Math.max(8, window.innerHeight - rect.top + 4), width, maxHeight }
-    )
-    setOpen(true)
-  }
-
   return (
     <>
-      <button
-        ref={btnRef}
-        type="button"
-        className="bf-focus"
-        aria-label={label}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={toggle}
-        style={{
-          height: 24,
-          padding: '0 8px',
-          borderRadius: 4,
-          border: '1px solid rgba(255,255,255,0.1)',
-          background: 'rgba(255,255,255,0.05)',
-          color: C.text,
-          fontSize: 12,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-          cursor: 'pointer',
-          width: '100%',
-          textAlign: 'left'
-        }}
-      >
-        <span
-          style={{
-            ...ELLIPSIS
-          }}
-        >
-          {trigger}
-        </span>
-        <ChevronDown size={10} color={C.textMuted} />
-      </button>
-      {open && pos && (
+      <MenuTrigger anchor={anchor} label={label}>
+        {trigger}
+      </MenuTrigger>
+      {anchor.pos && (
         <CliModelMenu
           provider={provider}
           model={model}
           settings={settings}
           locked={locked}
-          pos={pos}
+          pos={anchor.pos}
           onPick={(p, m) => {
             onChange(p, m)
-            setOpen(false)
+            anchor.close()
           }}
-          onClose={() => setOpen(false)}
+          onClose={anchor.close}
+        />
+      )}
+    </>
+  )
+}
+
+type BranchGroup = { label: string; branches: readonly string[] }
+
+function BranchMenu({
+  pos,
+  value,
+  groups,
+  onPick,
+  onClose
+}: {
+  pos: MenuPos
+  value: string
+  groups: readonly BranchGroup[]
+  onPick: (branch: string) => void
+  onClose: () => void
+}) {
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  const shown = groups
+    .map((g) => ({ ...g, branches: g.branches.filter((b) => b.toLowerCase().includes(q)) }))
+    .filter((g) => g.branches.length)
+  return (
+    <MenuShell pos={pos} label="Branch" onClose={onClose}>
+      <MenuFilter
+        value={query}
+        onChange={setQuery}
+        label="Filter branches"
+        onEnter={() => {
+          const first = shown[0]?.branches[0]
+          if (first) onPick(first)
+        }}
+      />
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        {shown.length === 0 && (
+          <div style={{ padding: '8px 10px', fontSize: 12, color: C.faint }}>No matching branches</div>
+        )}
+        {shown.map((g) => (
+          <div key={g.label}>
+            <MenuGroupLabel>{g.label}</MenuGroupLabel>
+            {g.branches.map((b) => (
+              <MenuItem key={b} label={b} selected={b === value} onPick={() => onPick(b)} />
+            ))}
+          </div>
+        ))}
+      </div>
+    </MenuShell>
+  )
+}
+
+/**
+ * Searchable single-select over grouped branch names, built from the same
+ * menu chrome as {@link CliModelMenu}. A native <select> cannot filter.
+ */
+export function BranchDropdown({
+  id,
+  value,
+  groups,
+  disabled,
+  onChange,
+  style
+}: {
+  id?: string
+  value: string
+  groups: readonly BranchGroup[]
+  disabled?: boolean
+  onChange: (branch: string) => void
+  style?: React.CSSProperties
+}) {
+  const anchor = useMenuAnchor()
+  return (
+    <>
+      <MenuTrigger anchor={anchor} id={id} disabled={disabled} style={style}>
+        {value}
+      </MenuTrigger>
+      {anchor.pos && (
+        <BranchMenu
+          pos={anchor.pos}
+          value={value}
+          groups={groups}
+          onPick={(b) => {
+            onChange(b)
+            anchor.close()
+          }}
+          onClose={anchor.close}
         />
       )}
     </>

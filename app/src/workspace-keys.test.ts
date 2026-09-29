@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { Tab } from './types'
 import { handleWorkspaceKeyDown, type WorkspaceKeyCtx } from './workspace-keys'
 
 function makeCtx(overrides: Partial<WorkspaceKeyCtx> = {}): WorkspaceKeyCtx {
@@ -12,14 +13,16 @@ function makeCtx(overrides: Partial<WorkspaceKeyCtx> = {}): WorkspaceKeyCtx {
     setSettingsOpen: vi.fn(),
     activeTab: 'tab-1',
     active: undefined,
-    view: 'code',
+    focus: 'code',
+    surfaces: ['code'],
     termTabs: [],
     tabsRef: { current: [] },
     newShellTab: vi.fn(),
     splitPane: vi.fn(),
     closePane: vi.fn(),
     closeTab: vi.fn(),
-    setView: vi.fn(),
+    revealSurface: vi.fn(),
+    splitSurface: vi.fn(),
     setPaletteOpen: vi.fn(),
     setActiveTab: vi.fn(),
     saveCodeFile: vi.fn(),
@@ -40,23 +43,23 @@ function modKey(key: string, opts: Partial<KeyboardEvent> = {}): KeyboardEvent {
   } as unknown as KeyboardEvent
 }
 
-describe('code view shortcuts', () => {
-  it('saves the active file on Mod+S only in code view', () => {
-    const inCode = makeCtx({ view: 'code' })
+describe('code shortcuts', () => {
+  it('saves the active file on Mod+S only while Code is focused', () => {
+    const inCode = makeCtx({ focus: 'code' })
     const saveEvent = modKey('s')
     handleWorkspaceKeyDown(saveEvent, inCode)
     expect(inCode.saveCodeFile).toHaveBeenCalledTimes(1)
     expect(saveEvent.preventDefault).toHaveBeenCalled()
 
-    const inChat = makeCtx({ view: 'chat' })
+    const inChat = makeCtx({ focus: 'chat' })
     const chatEvent = modKey('s')
     handleWorkspaceKeyDown(chatEvent, inChat)
     expect(inChat.saveCodeFile).not.toHaveBeenCalled()
     expect(chatEvent.preventDefault).not.toHaveBeenCalled()
   })
 
-  it('closes the active code tab on Mod+W in code view', () => {
-    const ctx = makeCtx({ view: 'code', activeTab: 'tab-1' })
+  it('closes the active code tab on Mod+W while Code is focused', () => {
+    const ctx = makeCtx({ focus: 'code', activeTab: 'tab-1' })
     const event = modKey('w')
     handleWorkspaceKeyDown(event, ctx)
     expect(ctx.closeCodeTab).toHaveBeenCalledTimes(1)
@@ -64,8 +67,8 @@ describe('code view shortcuts', () => {
     expect(event.preventDefault).toHaveBeenCalled()
   })
 
-  it('closes the workspace tab on Mod+W outside code view', () => {
-    const ctx = makeCtx({ view: 'chat' })
+  it('closes the workspace tab on Mod+W when Code is not focused', () => {
+    const ctx = makeCtx({ focus: 'chat' })
     handleWorkspaceKeyDown(modKey('w'), ctx)
     expect(ctx.closeTab).toHaveBeenCalledWith('tab-1')
     expect(ctx.closeCodeTab).not.toHaveBeenCalled()
@@ -88,5 +91,40 @@ describe('code view shortcuts', () => {
 
     handleWorkspaceKeyDown(modKey('k'), ctx)
     expect(ctx.setPaletteOpen).toHaveBeenCalledWith(true)
+  })
+})
+
+describe('split shortcut', () => {
+  const shell = { id: 'tab-1', kind: 'shell' } as Tab
+
+  it('splits shell panes when the terminal is focused', () => {
+    const ctx = makeCtx({ focus: 'terminal', surfaces: ['terminal'], tabsRef: { current: [shell] } })
+    handleWorkspaceKeyDown(modKey('d', { shiftKey: true }), ctx)
+    expect(ctx.splitPane).toHaveBeenCalledWith('col')
+    expect(ctx.splitSurface).not.toHaveBeenCalled()
+  })
+
+  it('splits Code or Chat beside the terminal', () => {
+    const inCode = makeCtx({ focus: 'code', surfaces: ['code'] })
+    handleWorkspaceKeyDown(modKey('d'), inCode)
+    expect(inCode.splitSurface).toHaveBeenCalledWith('row', 'terminal')
+
+    const inChat = makeCtx({ focus: 'chat', surfaces: ['chat'], tabsRef: { current: [shell] } })
+    handleWorkspaceKeyDown(modKey('d'), inChat)
+    expect(inChat.splitSurface).toHaveBeenCalledWith('row', 'terminal')
+    expect(inChat.splitPane).not.toHaveBeenCalled()
+  })
+
+  it('does nothing once every surface is showing', () => {
+    const ctx = makeCtx({ focus: 'chat', surfaces: ['chat', 'code', 'terminal'] })
+    handleWorkspaceKeyDown(modKey('d'), ctx)
+    expect(ctx.splitSurface).not.toHaveBeenCalled()
+  })
+
+  it('brings the terminal on screen for Mod+digit', () => {
+    const ctx = makeCtx({ termTabs: [shell] })
+    handleWorkspaceKeyDown(modKey('1'), ctx)
+    expect(ctx.setActiveTab).toHaveBeenCalledWith('tab-1')
+    expect(ctx.revealSurface).toHaveBeenCalledWith('terminal')
   })
 })

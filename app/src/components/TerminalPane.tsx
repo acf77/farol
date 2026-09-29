@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { C, MONO, PANE } from '../theme'
-import type { Tab, View } from '../types'
+import type { Tab } from '../types'
 import { leaves } from '../layout'
 import PaneGrid from './PaneGrid'
 import { SplitDownIcon, SplitRightIcon } from './icons'
@@ -8,7 +8,6 @@ import { SplitDownIcon, SplitRightIcon } from './icons'
 interface Props {
   tabs: Tab[]
   activeId: string
-  view: View
   workspaceVisible?: boolean
   /** Branch of the active checkout — run tabs from another branch are marked. */
   branch: string
@@ -39,7 +38,6 @@ interface CtxMenu {
 export default function TerminalPane({
   tabs,
   activeId,
-  view: _view,
   workspaceVisible = true,
   branch,
   cwd,

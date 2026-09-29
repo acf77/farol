@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react'
-import type { EditorState, Tab, View } from './types'
-import { showsTerminal } from './types'
+import type { EditorState, Tab } from './types'
+import { splitPartner, type Surface } from './workspace-layout'
 
 export interface WorkspaceKeyCtx {
   visible: boolean
@@ -12,14 +12,17 @@ export interface WorkspaceKeyCtx {
   setSettingsOpen: Dispatch<SetStateAction<boolean>>
   activeTab: string
   active: Tab | undefined
-  view: View
+  /** The focused surface — what split, close and save act on. */
+  focus: Surface
+  surfaces: Surface[]
   termTabs: Tab[]
   tabsRef: { current: Tab[] }
   newShellTab: () => void
   splitPane: (dir: 'row' | 'col') => void
   closePane: (tabId: string, paneId: string) => void
   closeTab: (id: string) => void
-  setView: Dispatch<SetStateAction<View>>
+  revealSurface: (surface: Surface) => void
+  splitSurface: (dir: 'row' | 'col', surface: Surface) => void
   setPaletteOpen: Dispatch<SetStateAction<boolean>>
   setActiveTab: Dispatch<SetStateAction<string>>
   saveCodeFile: () => void
@@ -36,20 +39,21 @@ function hasModKey(e: KeyboardEvent): boolean {
 }
 
 function handleSplitShortcut(e: KeyboardEvent, ctx: WorkspaceKeyCtx): void {
-  if (ctx.view === 'code') return
   e.preventDefault()
-  // Pane splits when a shell is active; otherwise toggle chat/terminal split.
+  const dir = e.shiftKey ? 'col' : 'row'
+  // A focused shell splits into panes; any other surface splits beside the next one not showing.
   const tab = ctx.tabsRef.current.find((t) => t.id === ctx.activeTab)
-  if (tab?.kind === 'shell' && showsTerminal(ctx.view)) {
-    ctx.splitPane(e.shiftKey ? 'col' : 'row')
-  } else {
-    ctx.setView((v) => (v === 'split' ? 'chat' : 'split'))
+  if (ctx.focus === 'terminal' && tab?.kind === 'shell') {
+    ctx.splitPane(dir)
+    return
   }
+  const partner = splitPartner(ctx.surfaces)
+  if (partner) ctx.splitSurface(dir, partner)
 }
 
 function handleCloseShortcut(e: KeyboardEvent, ctx: WorkspaceKeyCtx): void {
   e.preventDefault()
-  if (ctx.view === 'code') {
+  if (ctx.focus === 'code') {
     ctx.closeCodeTab()
     return
   }
@@ -65,7 +69,7 @@ function handleDigitShortcut(e: KeyboardEvent, ctx: WorkspaceKeyCtx, digit: stri
   if (!tab) return
   e.preventDefault()
   ctx.setActiveTab(tab.id)
-  ctx.setView((v) => (showsTerminal(v) ? v : 'split'))
+  ctx.revealSurface('terminal')
 }
 
 export function handleWorkspaceKeyDown(e: KeyboardEvent, ctx: WorkspaceKeyCtx): void {
@@ -81,7 +85,7 @@ export function handleWorkspaceKeyDown(e: KeyboardEvent, ctx: WorkspaceKeyCtx): 
     ctx.newShellTab()
     return
   }
-  if (k === 's' && ctx.view === 'code') {
+  if (k === 's' && ctx.focus === 'code') {
     e.preventDefault()
     ctx.saveCodeFile()
     return
