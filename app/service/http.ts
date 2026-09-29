@@ -1,3 +1,4 @@
+import { errorMessage } from '../shared/jev'
 import type { IncomingMessage, RequestListener, ServerResponse } from 'http'
 import { resolvePipeline, validateRunnable } from '../shared/graph'
 import type { Pipeline } from '../shared/types'
@@ -124,7 +125,7 @@ async function execInWorkspace(ctx: Context): Promise<void> {
   try {
     send({ code: await ctx.deps.workspaces.use(id, (workspace) => workspace.exec(cmd, (chunk) => send({ chunk }))) })
   } catch (error) {
-    send({ chunk: `farol: ${error instanceof Error ? error.message : String(error)}\n` })
+    send({ chunk: `farol: ${errorMessage(error)}\n` })
     send({ code: 127 })
   }
   ctx.res.end()

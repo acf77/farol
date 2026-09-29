@@ -280,7 +280,7 @@ export default function PipelineCanvas({
           label="Run shell steps on"
           options={RUN_TARGETS}
           value={editor.target ?? 'local'}
-          onChange={(v) => updateEditor((current) => ({ ...current, target: v === 'remote' ? 'remote' : undefined }))}
+          onChange={(v) => updateEditor((current) => v === 'remote' ? { ...current, target: 'remote' } : { ...current, target: undefined, fallbackLocal: undefined })}
         />
         {editor.target === 'remote' && (
           <Checkbox

@@ -1,3 +1,4 @@
+import { errorMessage } from '../shared/jev'
 import { randomBytes } from 'crypto'
 import type { Pipeline } from '../shared/types'
 import type { RemoteWorkspace } from '../electron/sandbox'
@@ -131,7 +132,7 @@ export class RunRegistry {
       workspace = await this.open(archive, abort.signal)
       summary = await executePipeline(pipeline, workspace, emit, abort.signal)
     } catch (error) {
-      if (!abort.signal.aborted) emit({ type: 'error', message: error instanceof Error ? error.message : String(error) })
+      if (!abort.signal.aborted) emit({ type: 'error', message: errorMessage(error) })
     } finally {
       await workspace?.close()
       this.log(`[run ${record.id}] sandbox stopped`)

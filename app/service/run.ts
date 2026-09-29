@@ -1,3 +1,4 @@
+import { errorMessage } from '../shared/jev'
 import type { Pipeline, PipelineNode, PipelineStepResult } from '../shared/types'
 import { ancestorVars, descendants, expandVars, nodeGate, quoteShellArg, readyIds, topoSort } from '../shared/graph'
 import { appendTail } from '../shared/terminal'
@@ -98,7 +99,7 @@ class Execution {
       return await this.workspace.exec(cmd, (chunk) => this.output(nodeId, chunk))
     } catch (error) {
       if (this.signal.aborted) return CANCELLED
-      this.output(nodeId, `farol: ${error instanceof Error ? error.message : String(error)}\n`)
+      this.output(nodeId, `farol: ${errorMessage(error)}\n`)
       return 127
     }
   }

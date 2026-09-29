@@ -1,3 +1,4 @@
+import { errorMessage } from '../shared/jev'
 import type { SettingsResult } from '../shared/types'
 import { checkoutSnapshot } from './checkout-snapshot'
 import { snapshotSummary } from '../shared/remote'
@@ -9,8 +10,6 @@ import { loadSettings, saveSettings } from './store'
 export type { RemoteWorkspace }
 
 export type OpenRemote = (cwd: string, signal: AbortSignal) => Promise<RemoteWorkspace>
-
-const message = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
 type Connection = { url: string; key?: string }
 
@@ -90,7 +89,7 @@ export async function saveRemoteConfig(raw: unknown): Promise<SettingsResult> {
   try {
     if (secret) setSecret('remoteApiKey', secret)
   } catch (err) {
-    return result(message(err))
+    return result(errorMessage(err))
   }
   await saveSettings({ ...(await loadSettings()), remote })
   return result()
@@ -107,6 +106,6 @@ export async function checkRemote(): Promise<SettingsResult> {
     await serviceCall(await connection(), '/v1/ping', { method: 'GET', signal: AbortSignal.timeout(15_000) })
     return result()
   } catch (err) {
-    return result(message(err))
+    return result(errorMessage(err))
   }
 }
