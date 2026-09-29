@@ -35,21 +35,19 @@ export interface JevSettings {
 }
 
 /**
- * Vercel Sandbox project for remote pipelines. Team and project ids live in the
- * workspace file; the access token stays in the encrypted store, and `hasToken`
- * is a runtime flag that is never persisted.
+ * The Farol service that runs remote pipelines. The URL lives in the workspace
+ * file; the API key stays in the encrypted store, and `hasKey` is a runtime
+ * flag that is never persisted.
  */
-export interface VercelSettings {
-  teamId: string
-  projectId: string
-  hasToken?: boolean
+export interface RemoteSettings {
+  url: string
+  hasKey?: boolean
 }
 
-/** What the Settings form submits. An empty token keeps the stored one. */
-export interface VercelConfig {
-  teamId: string
-  projectId: string
-  token?: string
+/** What the Settings form submits. An empty key keeps the stored one. */
+export interface RemoteConfig {
+  url: string
+  key?: string
 }
 
 /** What a key mutation hands back: the settings to adopt, plus why it failed. */
@@ -86,8 +84,8 @@ export interface AppSettings {
   catalogs?: AgentCatalogs
   /** Absent until an AI Gateway key is stored. */
   jev?: JevSettings
-  /** Absent until Vercel Sandbox credentials are stored. */
-  vercel?: VercelSettings
+  /** Absent until a Farol service URL is stored. */
+  remote?: RemoteSettings
 }
 
 export function defaultSettings(): AppSettings {
@@ -239,16 +237,19 @@ export function withJevKeyFlag(settings: AppSettings, hasKey: boolean): AppSetti
   return next
 }
 
-export function sanitizeVercel(raw: unknown): VercelSettings | undefined {
-  if (!raw || typeof raw !== 'object') return undefined
-  const { teamId, projectId } = raw as Record<string, unknown>
-  const team = typeof teamId === 'string' ? teamId.trim() : ''
-  const project = typeof projectId === 'string' ? projectId.trim() : ''
-  return team && project ? { teamId: team, projectId: project } : undefined
+export function sanitizeRemote(raw: unknown): RemoteSettings | undefined {
+  const url = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).url : undefined
+  if (typeof url !== 'string') return undefined
+  try {
+    const { protocol, origin } = new URL(url.trim())
+    return protocol === 'http:' || protocol === 'https:' ? { url: origin } : undefined
+  } catch {
+    return undefined
+  }
 }
 
-export function withVercelTokenFlag(settings: AppSettings, hasToken: boolean): AppSettings {
-  return settings.vercel ? { ...settings, vercel: { ...settings.vercel, hasToken } } : settings
+export function withRemoteKeyFlag(settings: AppSettings, hasKey: boolean): AppSettings {
+  return settings.remote ? { ...settings, remote: { ...settings.remote, hasKey } } : settings
 }
 
 export function withOpenRouterKeyFlag(settings: AppSettings, hasKey: boolean): AppSettings {
@@ -308,7 +309,7 @@ export function sanitizeSettings(raw: unknown): AppSettings {
   const commitModel = normalizeModel(commit.model) ?? (hasCommitMessage ? undefined : models[commitAgent])
   const openrouter = sanitizeOpenRouter(s.openrouter)
   const catalogs = sanitizeCatalogs(s.catalogs)
-  const vercel = sanitizeVercel(s.vercel)
+  const remote = sanitizeRemote(s.remote)
   return {
     agent,
     models,
@@ -320,6 +321,6 @@ export function sanitizeSettings(raw: unknown): AppSettings {
     modeDefaults: sanitizeModeDefaults(s.modeDefaults),
     ...(openrouter ? { openrouter } : {}),
     ...(catalogs ? { catalogs } : {}),
-    ...(vercel ? { vercel } : {})
+    ...(remote ? { remote } : {})
   }
 }

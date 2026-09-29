@@ -30,13 +30,13 @@ import { defaultShell, pipelineEnv, PtySession } from './session'
 import { killPidTree, killPty } from './kill'
 import { verdictFromOutput } from './jev'
 import { shellFamily } from './protocol'
-import { openVercelWorkspace, type OpenRemote, type RemoteWorkspace } from './remote'
+import { openRemote as openRemoteWorkspace, type OpenRemote, type RemoteWorkspace } from './remote'
 
 /**
  * Runs a pipeline DAG. Ready nodes start together; a gated shell failure
  * skips its descendants, while AI nodes finish without blocking siblings.
  * Shell cmds and AI prompts expand `${name}` from ancestor named outputs.
- * A `vercel` pipeline runs its shell steps in a sandbox holding a snapshot of
+ * A `remote` pipeline runs its shell steps in a sandbox on the Farol service holding a snapshot of
  * the checkout; AI steps always run here, where the agent CLIs are signed in.
  */
 
@@ -138,7 +138,7 @@ export class PipelineRunner {
 
   constructor(
     private emit: (e: RunEvent) => void,
-    private openRemote: OpenRemote = openVercelWorkspace
+    private openRemote: OpenRemote = openRemoteWorkspace
   ) {}
 
   async run(
@@ -323,7 +323,7 @@ export class PipelineRunner {
     }
 
     const opened =
-      pipeline.target === 'vercel'
+      pipeline.target === 'remote'
         ? await this.openRemoteWorkspace(cwd, state, graph)
         : await this.openRunShell(cwd, state, graph)
     if (!opened) return
@@ -419,7 +419,7 @@ export class PipelineRunner {
 
   private async openRemoteWorkspace(cwd: string, state: Active, graph: RunGraph): Promise<boolean> {
     const first = graph.nodes[0]?.id ?? 'n1'
-    this.emitOut(state, graph, first, 'farol: starting Vercel Sandbox…\r\n')
+    this.emitOut(state, graph, first, 'farol: starting remote sandbox…\r\n')
     try {
       state.remote = await this.openRemote(cwd, state.abort.signal)
     } catch (error) {
@@ -432,7 +432,7 @@ export class PipelineRunner {
       state.remote = null
       this.markUnstartedCancelled(state, graph)
     } else {
-      this.emitOut(state, graph, first, `farol: running on Vercel Sandbox (${state.remote.summary})\r\n`)
+      this.emitOut(state, graph, first, `farol: running on remote sandbox (${state.remote.summary})\r\n`)
     }
     return true
   }

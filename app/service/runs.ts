@@ -55,13 +55,13 @@ export class RunRegistry {
 
   constructor(
     private open: OpenWorkspace,
-    private limits: { maxActive: number; retentionMs: number },
+    private limits: { maxActive: number; retentionMs: number; inUse?: () => number },
     private log: (line: string) => void = console.log
   ) {}
 
   /** Start a run in the background. Throws BusyError when too many runs are active. */
   start(keyId: string, pipeline: Pipeline, archive: Buffer): RunRecord {
-    if (this.live.size >= this.limits.maxActive) throw new BusyError('Too many runs in progress')
+    if ((this.limits.inUse?.() ?? this.live.size) >= this.limits.maxActive) throw new BusyError('Too many runs in progress')
     const record: RunRecord = {
       id: randomBytes(8).toString('hex'),
       keyId,

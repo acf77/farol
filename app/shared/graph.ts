@@ -389,7 +389,7 @@ export function sanitizePipeline(raw: unknown): Pipeline | null {
     nodes: normalizeGraph(nodesFromPersisted(p)),
     ...(p.mandatory === true ? { mandatory: true } : {}),
     ...(p.autoSelectable === true ? { autoSelectable: true } : {}),
-    ...(p.target === 'vercel' ? { target: 'vercel' as const } : {})
+    ...(p.target === 'remote' || p.target === 'vercel' ? { target: 'remote' as const } : {})
   }
 }
 

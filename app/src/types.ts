@@ -139,6 +139,6 @@ export interface EditorState {
   mandatory?: boolean
   /** When true, Jev may auto-add this pipeline in Chat. */
   autoSelectable?: boolean
-  /** `vercel` runs shell steps in a Vercel Sandbox. */
+  /** `remote` runs shell steps on the Farol service. */
   target?: PipelineTarget
 }

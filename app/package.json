@@ -1,6 +1,6 @@
 {
   "name": "farol",
-  "version": "1.20.2",
+  "version": "3.0.0-alpha-v1",
   "private": true,
   "author": "Farol",
   "description": "A terminal workspace with runnable shell + AI pipelines.",
@@ -14,6 +14,7 @@
     "postinstall": "electron-rebuild -f -w node-pty",
     "test": "vitest run",
     "dist": "electron-vite build && electron-builder --mac dmg zip && node scripts/publish-local.mjs",
+    "dist:alpha": "electron-vite build && electron-builder --mac dmg zip -c.appId=com.farol.app.alpha \"-c.productName=Farol Alpha\" -c.directories.output=dist-alpha \"-c.dmg.title=Farol Alpha ${version}\"",
     "service:build": "esbuild service/main.ts --bundle --platform=node --target=node22 --format=cjs --outfile=service/dist/farol-service.cjs",
     "install:app": "npm run dist && node scripts/install-app.mjs"
   },

@@ -9,6 +9,7 @@ import type { RemoteWorkspace } from '../electron/sandbox'
 import { createHandler } from './http'
 import { createKey } from './keys'
 import { RunRegistry } from './runs'
+import { WorkspaceRegistry } from './workspaces'
 
 const step = (id: string, type: 'shell' | 'ai', cmd: string) => ({ id, name: id, type, cmd, after: [], x: 0, y: 0 })
 
@@ -41,7 +42,14 @@ beforeEach(async () => {
   key = createKey(keysFile, 'web').key
   other = createKey(keysFile, 'other').key
   const registry = new RunRegistry(async () => workspace, { maxActive: 1, retentionMs: 60_000 })
-  server = createServer(createHandler({ keysFile, registry, snapshotLimit: 1024 * 1024, allowedOrigins: [] }))
+  const workspaces: WorkspaceRegistry = new WorkspaceRegistry(async () => workspace, {
+    maxActive: 1,
+    idleMs: 60_000,
+    inUse: () => workspaces.active
+  })
+  server = createServer(
+    createHandler({ keysFile, registry, workspaces, snapshotLimit: 1024 * 1024, allowedOrigins: [] })
+  )
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
 })
@@ -92,5 +100,35 @@ describe('run service', () => {
   it('rejects an upload with no pipelines file', async () => {
     const res = await call('/v1/runs', { method: 'POST', body: 'not a tarball', headers: { 'X-Farol-Pipeline': 'ci' } })
     expect(res.status).toBe(422)
+  })
+})
+
+describe('workspaces', () => {
+  const open = async (token?: string) =>
+    call('/v1/workspaces', { method: 'POST', body: new Uint8Array(snapshot([])), token })
+
+  it('execs commands and streams output with the exit code, then closes', async () => {
+    const created = await open()
+    expect(created.status).toBe(201)
+    const { id } = (await created.json()) as { id: string }
+
+    const exec = await call(`/v1/workspaces/${id}/exec`, { method: 'POST', body: 'npm test' })
+    const lines = (await exec.text()).trim().split('\n').map((line) => JSON.parse(line))
+    expect(workspace.exec).toHaveBeenCalledWith('npm test', expect.any(Function))
+    expect(lines).toEqual([{ chunk: 'all good\n' }, { code: 0 }])
+
+    expect((await call(`/v1/workspaces/${id}`, { method: 'DELETE' })).status).toBe(204)
+    expect((await call(`/v1/workspaces/${id}/exec`, { method: 'POST', body: 'x' })).status).toBe(404)
+  })
+
+  it('hides a workspace from other keys and limits how many are open', async () => {
+    const { id } = (await (await open()).json()) as { id: string }
+    expect((await call(`/v1/workspaces/${id}`, { method: 'DELETE', token: other })).status).toBe(404)
+    expect((await open(other)).status).toBe(429)
+  })
+
+  it('answers authenticated pings', async () => {
+    expect((await call('/v1/ping')).status).toBe(200)
+    expect((await call('/v1/ping', { token: 'nope' })).status).toBe(401)
   })
 })

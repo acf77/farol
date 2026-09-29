@@ -3,11 +3,14 @@ import { SNAPSHOT_LIMIT_BYTES, snapshotSummary } from '../shared/remote'
 import { openSandbox, type SandboxCredentials } from '../electron/sandbox'
 import { createHandler } from './http'
 import { createKey, listKeys, revokeKey } from './keys'
-import { RunRegistry } from './runs'
+import { openRailwaySandbox } from './railway'
+import { createReceiptHandler } from './receipt'
+import { RunRegistry, type OpenWorkspace } from './runs'
+import { WorkspaceRegistry } from './workspaces'
 
 /**
- * Farol run service: starts pipeline runs in Vercel Sandboxes for web and mobile
- * clients. `farol-service` serves; `farol-service keys create|list|revoke` manages API keys.
+ * Farol run service: starts pipeline runs in Vercel or Railway Sandboxes for web and
+ * mobile clients. `farol-service` serves; `farol-service keys create|list|revoke` manages API keys.
  */
 
 const env = process.env
@@ -39,7 +42,7 @@ function keysCommand([action, arg = '']: string[]): number {
   return 2
 }
 
-function credentials(): SandboxCredentials {
+function vercelCredentials(): SandboxCredentials {
   const { VERCEL_TOKEN: token, VERCEL_TEAM_ID: teamId, VERCEL_PROJECT_ID: projectId } = env
   if (!token || !teamId || !projectId) {
     throw new Error('Set VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID.')
@@ -47,16 +50,34 @@ function credentials(): SandboxCredentials {
   return { token, teamId, projectId }
 }
 
-function serve(): void {
-  const creds = credentials()
-  const registry = new RunRegistry(
-    (archive, signal) => openSandbox(creds, archive, snapshotSummary(0, archive.length), signal),
-    { maxActive: Number(env.FAROL_MAX_RUNS) || 4, retentionMs: 60 * 60_000 }
+/** Railway is preferred when its token is set; the CLI reads RAILWAY_API_TOKEN itself. */
+function openWorkspace(): OpenWorkspace {
+  if (env.RAILWAY_API_TOKEN) {
+    return (archive, signal) => openRailwaySandbox(archive, snapshotSummary(0, archive.length), signal)
+  }
+  const creds = vercelCredentials()
+  return (archive, signal) => openSandbox(creds, archive, snapshotSummary(0, archive.length), signal)
+}
+
+function serveReceipts(): void {
+  const port = Number(env.PORT) || 8787
+  createServer(createReceiptHandler(SNAPSHOT_LIMIT_BYTES)).listen(port, env.HOST ?? '0.0.0.0', () =>
+    console.log(`farol-service (receipt mode, no sandbox credentials) listening on :${port}`)
   )
+}
+
+function serve(): void {
+  const open = openWorkspace()
+  const maxActive = Number(env.FAROL_MAX_RUNS) || 4
+  // Runs and workspaces draw on one pool of sandboxes.
+  const inUse = (): number => registry.active + workspaces.active
+  const registry = new RunRegistry(open, { maxActive, retentionMs: 60 * 60_000, inUse })
+  const workspaces = new WorkspaceRegistry(open, { maxActive, idleMs: 10 * 60_000, inUse })
   const server = createServer(
     createHandler({
       keysFile,
       registry,
+      workspaces,
       snapshotLimit: SNAPSHOT_LIMIT_BYTES,
       allowedOrigins: (env.FAROL_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean)
     })
@@ -68,8 +89,9 @@ function serve(): void {
   const shutdown = (): void => {
     server.close()
     registry.cancelAll()
+    void workspaces.closeAll()
     setInterval(() => {
-      if (!registry.active) process.exit(0)
+      if (!registry.active && !workspaces.active) process.exit(0)
     }, 250)
     setTimeout(() => process.exit(1), 30_000).unref()
   }
@@ -79,4 +101,5 @@ function serve(): void {
 
 const [command, ...rest] = process.argv.slice(2)
 if (command === 'keys') process.exit(keysCommand(rest))
-else serve()
+else if (env.RAILWAY_API_TOKEN || env.VERCEL_TOKEN) serve()
+else serveReceipts()

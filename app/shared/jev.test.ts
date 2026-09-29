@@ -86,7 +86,7 @@ describe('describePipeline', () => {
   })
 
   it('marks remote pipelines so Jev does not treat them as local', () => {
-    expect(describePipeline({ ...pipeline('r'), target: 'vercel' })).toContain('[remote: Vercel Sandbox]')
+    expect(describePipeline({ ...pipeline('r'), target: 'remote' })).toContain('[remote]')
     expect(describePipeline(pipeline('r'))).not.toContain('remote')
   })
 })

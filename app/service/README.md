@@ -1,6 +1,6 @@
 # Farol run service
 
-A standalone HTTP service that runs a project's pipelines in Vercel Sandboxes, so a
+A standalone HTTP service that runs a project's pipelines in Vercel or Railway Sandboxes, so a
 web or mobile app can start a run and watch it without the Farol desktop app. The
 client uploads a snapshot of the project (a `.tar.gz`); the service starts one
 throwaway sandbox for the run, unpacks the snapshot, runs the pipeline's shell steps,
@@ -26,13 +26,17 @@ node service/dist/farol-service.cjs
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | required | Credentials the service creates sandboxes with |
+| `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | one provider required | Create sandboxes on Vercel |
+| `RAILWAY_API_TOKEN` | one provider required | Create sandboxes on Railway through the `railway` CLI (in the `Dockerfile`; install it yourself when running the bundle directly). Takes precedence over Vercel. Inside a Railway service the project and environment are picked up automatically |
 | `PORT`, `HOST` | `8787`, `0.0.0.0` | Listen address |
 | `FAROL_KEYS_FILE` | `./farol-keys.json` | API key store (mode 0600) |
 | `FAROL_MAX_RUNS` | `4` | Concurrent runs; more get `429` with `Retry-After` |
 | `FAROL_ALLOWED_ORIGINS` | none | Comma-separated browser origins allowed by CORS |
 
-A `Dockerfile` in this folder packages the bundle. Put `/data` on a volume so keys
+With neither provider configured the service starts in receipt mode: it accepts `POST /v1/receipts`
+and reports what arrived, running nothing.
+
+The `Dockerfile` in `app/` (build context = `app/`) packages the bundle. Put `/data` on a volume so keys
 survive restarts, and terminate TLS in front of the service — API keys are bearer tokens.
 
 ## API keys
@@ -52,6 +56,10 @@ Keys look like `frl_<id>_<secret>`. Only a hash is stored. Send one as
 | --- | --- |
 | `GET /healthz` | Liveness, no key needed |
 | `POST /v1/runs` | Start a run. Body: the snapshot `.tar.gz`. Header `X-Farol-Pipeline`: pipeline id or name. `202 { runId, status, pipelineId }` |
+| `GET /v1/ping` | Check that the API key works |
+| `POST /v1/workspaces` | Open a sandbox from the snapshot in the body, for a client that drives its own steps (the Farol desktop app's remote pipelines). `201 { id }`. Stopped after 10 idle minutes |
+| `POST /v1/workspaces/:id/exec` | Run the command in the body. Streams NDJSON: `{"chunk": "…"}` lines, then `{"code": n}` |
+| `DELETE /v1/workspaces/:id` | Stop the sandbox |
 | `GET /v1/runs/:id` | Status, and `result` (per-step `ok`, `code`, `skipped`, `output`) once finished |
 | `GET /v1/runs/:id/events` | Server-sent events; replays from `Last-Event-ID` |
 | `POST /v1/runs/:id/cancel` | Stop the run and its sandbox |

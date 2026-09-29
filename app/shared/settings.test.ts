@@ -5,7 +5,7 @@ import {
   modeFallbacks,
   modeSelectionForPane,
   sanitizeSettings,
-  withVercelTokenFlag,
+  withRemoteKeyFlag,
   withAgentModel,
   withCommitMessageModel,
   withModeChain
@@ -213,18 +213,18 @@ describe('mode defaults', () => {
   })
 })
 
-describe('Vercel Sandbox settings', () => {
-  it('keeps trimmed ids and drops incomplete config', () => {
-    expect(sanitizeSettings({ vercel: { teamId: ' team_1 ', projectId: 'prj_1', token: 'x' } }).vercel).toEqual({
-      teamId: 'team_1',
-      projectId: 'prj_1'
+describe('Remote service settings', () => {
+  it('keeps the origin of a valid http(s) url and drops anything else', () => {
+    expect(sanitizeSettings({ remote: { url: ' https://farol.up.railway.app/v1 ', key: 'x' } }).remote).toEqual({
+      url: 'https://farol.up.railway.app'
     })
-    expect(sanitizeSettings({ vercel: { teamId: 'team_1', projectId: ' ' } }).vercel).toBeUndefined()
+    expect(sanitizeSettings({ remote: { url: 'ftp://farol.dev' } }).remote).toBeUndefined()
+    expect(sanitizeSettings({ remote: { url: 'nope' } }).remote).toBeUndefined()
   })
 
-  it('flags a stored token only when ids exist', () => {
-    const withIds = sanitizeSettings({ vercel: { teamId: 't', projectId: 'p' } })
-    expect(withVercelTokenFlag(withIds, true).vercel?.hasToken).toBe(true)
-    expect(withVercelTokenFlag(defaultSettings(), true).vercel).toBeUndefined()
+  it('flags a stored key only when a url exists', () => {
+    const withUrl = sanitizeSettings({ remote: { url: 'http://localhost:8787' } })
+    expect(withRemoteKeyFlag(withUrl, true).remote?.hasKey).toBe(true)
+    expect(withRemoteKeyFlag(defaultSettings(), true).remote).toBeUndefined()
   })
 })

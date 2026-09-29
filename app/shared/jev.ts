@@ -75,7 +75,7 @@ export function describePipeline(pipeline: Pipeline): string {
       return `${node.name} [${node.type}]: ${cmd}${ellipsis}`
     })
     .join('; ')
-  const remote = pipeline.target === 'vercel' ? ' [remote: Vercel Sandbox]' : ''
+  const remote = pipeline.target === 'remote' ? ' [remote]' : ''
   const body = `${pipeline.name} (${pipeline.id})${remote}${steps ? `: ${steps}` : ''}`
   return body.length > PIPELINE_DESC_CAP ? `${body.slice(0, PIPELINE_DESC_CAP - 1)}…` : body
 }

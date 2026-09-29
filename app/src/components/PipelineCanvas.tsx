@@ -24,6 +24,12 @@ const NODE_H = 72
  */
 const PORT_GROW = 1.5
 const PORT_MOTION = 'transform 160ms cubic-bezier(0.22,1,0.36,1)'
+/** Where a pipeline's shell steps run; `local` is stored as no target. */
+const RUN_TARGETS = [
+  { value: 'local', label: 'This machine' },
+  { value: 'remote', label: 'Remote' }
+] as const
+
 const inputStyle: React.CSSProperties = {
   height: 24,
   padding: '0 8px',
@@ -270,12 +276,12 @@ export default function PipelineCanvas({
         >
           Allow Chat to auto-select
         </Checkbox>
-        <Checkbox
-          checked={editor.target === 'vercel'}
-          onChange={(v) => updateEditor((current) => ({ ...current, target: v ? 'vercel' : undefined }))}
-        >
-          Run shell steps on Vercel Sandbox
-        </Checkbox>
+        <SegmentedControl
+          label="Run shell steps on"
+          options={RUN_TARGETS}
+          value={editor.target ?? 'local'}
+          onChange={(v) => updateEditor((current) => ({ ...current, target: v === 'remote' ? 'remote' : undefined }))}
+        />
         <button type="button" className="bf-hover-fill" onClick={() => addNode('shell')} style={toolBtn}>
           + Shell
         </button>

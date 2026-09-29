@@ -11,8 +11,8 @@ import type {
   ModelChoice,
   OpenRouterSettings,
   SettingsResult,
-  VercelConfig,
-  VercelSettings
+  RemoteConfig,
+  RemoteSettings
 } from './settings'
 import type { ProviderUsage } from './usage'
 import type { Todo } from './todos'
@@ -29,8 +29,8 @@ export type {
   OpenRouterSettings,
   ProjectSession,
   SettingsResult,
-  VercelConfig,
-  VercelSettings,
+  RemoteConfig,
+  RemoteSettings,
   WorktreeRequest
 }
 export { aiFixCommand } from './ai'
@@ -82,16 +82,17 @@ export interface PipelineNode extends Step {
   y: number
 }
 
-/** Where shell steps run. Only `vercel` is stored; absent means this machine. */
-export type PipelineTarget = 'vercel'
+/** Where shell steps run. Only `remote` is stored; absent means this machine. */
+export type PipelineTarget = 'remote'
 
 export interface Pipeline {
   id: string
   name: string
   nodes: PipelineNode[]
   /**
-   * `vercel` runs shell steps in a fresh Vercel Sandbox holding a snapshot of
-   * the current checkout (uncommitted work included). AI steps still run here.
+   * `remote` runs shell steps in a fresh sandbox on the configured Farol service,
+   * holding a snapshot of the current checkout (uncommitted work included).
+   * AI steps still run here.
    */
   target?: PipelineTarget
   /** When true, managed Chat always runs this pipeline after code-changing turns. */
@@ -518,11 +519,11 @@ export interface FarolApi {
   agentModels: {
     refresh(force?: boolean): Promise<SettingsResult>
   }
-  /** Machine-local Vercel Sandbox credentials for remote pipelines. */
-  vercel: {
-    save(config: VercelConfig): Promise<SettingsResult>
+  /** Machine-local Farol service connection for remote pipelines. */
+  remote: {
+    save(config: RemoteConfig): Promise<SettingsResult>
     clear(): Promise<SettingsResult>
-    /** Create and stop a throwaway sandbox to prove the credentials work. */
+    /** Ping the service to prove the URL and key work. */
     check(): Promise<SettingsResult>
   }
   /** Jev is internal-only: a key to store and a probe to prove it works. */

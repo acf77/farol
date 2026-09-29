@@ -281,9 +281,10 @@ describe('sanitizePipeline', () => {
     ).toBeUndefined()
   })
 
-  it('persists target only when vercel', () => {
+  it('persists target only when remote', () => {
     const nodes = [{ id: 'a', name: 'A', type: 'shell', cmd: 'a', after: [], x: 0, y: 0 }]
-    expect(sanitizePipeline({ id: 'r', name: 'R', target: 'vercel', nodes })?.target).toBe('vercel')
+    expect(sanitizePipeline({ id: 'r', name: 'R', target: 'remote', nodes })?.target).toBe('remote')
+    expect(sanitizePipeline({ id: 'r', name: 'R', target: 'vercel', nodes })?.target).toBe('remote')
     expect(sanitizePipeline({ id: 'x', name: 'X', target: 'local', nodes })?.target).toBeUndefined()
     expect(sanitizePipeline({ id: 'y', name: 'Y', target: 'aws', nodes })?.target).toBeUndefined()
   })

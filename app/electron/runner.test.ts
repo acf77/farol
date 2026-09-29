@@ -26,7 +26,7 @@ vi.mock('./session', () => ({
 }))
 vi.mock('./kill', () => ({ killPty: vi.fn(), killPidTree: vi.fn() }))
 vi.mock('./jev', () => ({ verdictFromOutput }))
-vi.mock('./remote', () => ({ openVercelWorkspace: vi.fn() }))
+vi.mock('./remote', () => ({ openRemote: vi.fn() }))
 vi.mock('fs', () => ({
   default: {
     mkdirSync: vi.fn(),
@@ -215,7 +215,7 @@ describe('PipelineRunner remote target', () => {
   const remotePipeline: Pipeline = {
     id: 'remote',
     name: 'Remote',
-    target: 'vercel',
+    target: 'remote',
     nodes: [
       { id: 'lint', name: 'Lint', type: 'shell', cmd: 'npm run lint', after: [], x: 0, y: 0 },
       { id: 'test', name: 'Test', type: 'shell', cmd: 'npm test', after: ['lint'], x: 0, y: 0 }
@@ -266,7 +266,7 @@ describe('PipelineRunner remote target', () => {
     const runner = new PipelineRunner(
       (event) => events.push(event),
       async () => {
-        throw new Error('Vercel Sandbox is not configured.')
+        throw new Error('Remote service is not configured.')
       }
     )
 
@@ -274,7 +274,7 @@ describe('PipelineRunner remote target', () => {
 
     expect(result).toMatchObject({ ok: false, cancelled: undefined })
     expect(events).toContainEqual(
-      expect.objectContaining({ kind: 'output', chunk: expect.stringContaining('Vercel Sandbox is not configured.') })
+      expect.objectContaining({ kind: 'output', chunk: expect.stringContaining('Remote service is not configured.') })
     )
     expect(events.at(-1)).toMatchObject({ kind: 'end', ok: false })
   })
