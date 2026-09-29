@@ -713,7 +713,7 @@ export class PipelineRunner {
       return await remote.exec(cmd, onChunk)
     } catch (error) {
       if (state.cancelled) return 130
-      onChunk(`farol: ${error instanceof Error ? error.message : String(error)}\r\n`)
+      onChunk(`farol: ${errorMessage(error)}\r\n`)
       return 127
     }
   }

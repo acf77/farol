@@ -9,7 +9,7 @@ import {
   pickerProviders,
   type AiProvider
 } from '@shared/ai'
-import { AI_GATEWAY_API_URL, JEV_MODEL_ID } from '@shared/jev'
+import { AI_GATEWAY_API_URL, errorMessage, JEV_MODEL_ID } from '@shared/jev'
 import { OPENROUTER_API_URL } from '@shared/openrouter'
 import {
   withAgentModel,
@@ -217,7 +217,7 @@ function RemoteSection({
         return !result.error
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : String(err))
+        setError(errorMessage(err))
         return false
       })
       .finally(() => setBusy(false))

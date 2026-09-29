@@ -386,6 +386,11 @@ function sanitizeGitHooks(raw: unknown): GitHookEvent[] | undefined {
   return events.length ? events : undefined
 }
 
+/** The persisted remote-run fields: `fallbackLocal` only means something with a `remote` target. */
+export function remoteFields(p: { target?: unknown; fallbackLocal?: unknown }): Pick<Pipeline, 'target' | 'fallbackLocal'> {
+  return p.target === 'remote' ? { target: 'remote', ...(p.fallbackLocal === true ? { fallbackLocal: true } : {}) } : {}
+}
+
 export function sanitizePipeline(raw: unknown): Pipeline | null {
   if (!raw || typeof raw !== 'object') return null
   const p = raw as Record<string, unknown>
@@ -397,9 +402,7 @@ export function sanitizePipeline(raw: unknown): Pipeline | null {
     nodes: normalizeGraph(nodesFromPersisted(p)),
     ...(p.mandatory === true ? { mandatory: true } : {}),
     ...(p.autoSelectable === true ? { autoSelectable: true } : {}),
-    ...(p.target === 'remote' || p.target === 'vercel'
-      ? { target: 'remote' as const, ...(p.fallbackLocal === true ? { fallbackLocal: true } : {}) }
-      : {}),
+    ...remoteFields(p.target === 'vercel' ? { ...p, target: 'remote' } : p),
     ...(gitHooks ? { gitHooks } : {})
   }
 }
