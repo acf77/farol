@@ -2,14 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 import type { AppSettings } from '@shared/types'
 import {
   AI_LABELS,
+  aiModelLabel,
   aiSelectionLabel,
   normalizeAi,
   normalizeModel,
   pickerProviders,
   providerModels,
+  type AiModel,
   type AiProvider
 } from '@shared/ai'
-import { C } from '../theme'
+import { filterModels, groupModels } from '@shared/agent-models'
+import { C, ELLIPSIS } from '../theme'
 import { CaretLeft, CheckIcon, ChevronDown, ChevronRight } from './icons'
 
 /**
@@ -70,7 +73,7 @@ export function Button({
         height: HEIGHT[size],
         padding: size === 'sm' ? '0 11px' : '0 16px',
         borderRadius: size === 'sm' ? 8 : 12,
-        fontSize: 12.5,
+        fontSize: 12,
         cursor: rest.disabled ? 'default' : 'pointer',
         display: 'inline-flex',
         alignItems: 'center',
@@ -206,7 +209,7 @@ export function SegmentedControl<T extends string>({
       style={{
         display: 'flex',
         border: '1px solid #3E3E3A',
-        borderRadius: 7,
+        borderRadius: 6,
         overflow: 'hidden',
         ...style
       }}
@@ -247,7 +250,7 @@ export function SegmentedControl<T extends string>({
               letterSpacing: '0.4px',
               cursor: 'pointer',
               background: on ? activeBg : 'transparent',
-              color: on ? activeFg : C.dim
+              color: on ? activeFg : C.textMuted
             }}
           >
             {o.label}
@@ -279,7 +282,7 @@ export function Checkbox({
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        fontSize: 11.5,
+        fontSize: 11,
         color: C.textSoft,
         cursor: 'pointer',
         ...style
@@ -299,37 +302,103 @@ export function Checkbox({
 
 type MenuPos = { left: number; width: number; maxHeight: number } & ({ top: number } | { bottom: number })
 
-/**
- * Two-step picker: choose a provider, then one of its supported model ids.
- * `Default` leaves model selection to that provider; Cursor's default is Auto.
- */
-export function CliModelMenu({
-  provider,
-  model,
-  pos,
-  settings,
-  only,
-  onPick,
-  onClose
-}: {
-  provider: AiProvider
-  model?: string
-  pos: MenuPos
-  settings?: AppSettings
-  /** Narrows the provider page — Plan mode only offers review-gated CLIs. */
-  only?: (provider: AiProvider) => boolean
-  onPick: (provider: AiProvider, model: string | undefined) => void
-  onClose: () => void
-}) {
-  const [page, setPage] = useState<AiProvider | 'cli'>('cli')
-  const current = normalizeAi(provider)
-  const selectedModel = normalizeModel(model)
-  const all = pickerProviders(settings?.openrouter)
-  const providers = only ? all.filter(only) : all
+export const CLI_MODEL_MENU_WIDTH = 260
 
+const menuItem: React.CSSProperties = {
+  display: 'flex',
+  width: '100%',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  border: 'none',
+  background: 'transparent',
+  cursor: 'pointer'
+}
+
+function menuPosFor(rect: DOMRect): MenuPos {
+  const width = Math.min(Math.max(rect.width, CLI_MODEL_MENU_WIDTH), window.innerWidth - 16)
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+  const below = window.innerHeight - rect.bottom
+  const maxHeight = Math.max(220, (below >= 220 ? below : rect.top) - 12)
+  return below >= 220
+    ? { left, top: rect.bottom + 4, width, maxHeight }
+    : { left, bottom: Math.max(8, window.innerHeight - rect.top + 4), width, maxHeight }
+}
+
+/** A menu is open exactly while it has a position under its trigger. */
+function useMenuAnchor() {
+  const [pos, setPos] = useState<MenuPos | null>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const toggle = (): void => {
+    const rect = btnRef.current?.getBoundingClientRect()
+    setPos(pos || !rect ? null : menuPosFor(rect))
+  }
+  return { btnRef, pos, toggle, close: () => setPos(null) }
+}
+
+function MenuTrigger({
+  anchor,
+  id,
+  label,
+  disabled,
+  style,
+  children
+}: {
+  anchor: ReturnType<typeof useMenuAnchor>
+  id?: string
+  label?: string
+  disabled?: boolean
+  style?: React.CSSProperties
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      ref={anchor.btnRef}
+      id={id}
+      type="button"
+      className="bf-focus"
+      aria-label={label}
+      aria-expanded={!!anchor.pos}
+      aria-haspopup="menu"
+      disabled={disabled}
+      onClick={anchor.toggle}
+      style={{
+        height: 24,
+        padding: '0 8px',
+        borderRadius: 4,
+        border: '1px solid rgba(255,255,255,0.1)',
+        background: 'rgba(255,255,255,0.05)',
+        color: C.text,
+        fontSize: 12,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+        cursor: 'pointer',
+        width: '100%',
+        textAlign: 'left',
+        ...style
+      }}
+    >
+      <span style={{ ...ELLIPSIS }}>{children}</span>
+      <ChevronDown size={10} color={C.textMuted} />
+    </button>
+  )
+}
+
+/** Click-away backdrop plus the floating panel; Escape closes only the menu. */
+function MenuShell({
+  pos,
+  label,
+  onClose,
+  children
+}: {
+  pos: MenuPos
+  label: string
+  onClose: () => void
+  children: React.ReactNode
+}) {
   const place: React.CSSProperties =
     'bottom' in pos ? { left: pos.left, bottom: pos.bottom } : { left: pos.left, top: pos.top }
-
   return (
     <>
       <div
@@ -342,123 +411,259 @@ export function CliModelMenu({
       />
       <div
         role="menu"
-        aria-label={page === 'cli' ? 'Provider' : `${AI_LABELS[page]} model`}
-        onMouseDown={(e) => e.preventDefault()}
+        aria-label={label}
+        onMouseDown={(e) => {
+          if ((e.target as HTMLElement).closest('input')) return
+          e.preventDefault()
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape') return
+          e.preventDefault()
+          e.stopPropagation()
+          onClose()
+        }}
         style={{
           position: 'fixed',
           ...place,
           zIndex: 70,
           width: `min(${pos.width}px, calc(100vw - 16px))`,
           maxHeight: pos.maxHeight,
-          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
           background: C.panel,
-          border: `1px solid ${C.cardBorder}`,
+          border: `1px solid ${C.border}`,
           borderRadius: 8,
           boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
           padding: 4
         }}
       >
-        {page === 'cli'
-          ? providers.map((p) => (
-              <button
-                key={p}
-                type="button"
-                role="menuitem"
-                className="bf-focus bf-menu-item"
-                onClick={() => setPage(p)}
-                style={{
-                  display: 'flex',
-                  width: '100%',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  border: 'none',
-                  background: 'transparent',
-                  color: p === current ? C.textStrong : C.textMuted,
-                  cursor: 'pointer'
-                }}
-              >
-                <span>{AI_LABELS[p]}</span>
-                <ChevronRight size={11} color="currentColor" />
-              </button>
-            ))
-          : [
-              <button
-                key="back"
-                type="button"
-                role="menuitem"
-                className="bf-focus bf-menu-item"
-                onClick={() => setPage('cli')}
-                style={{
-                  display: 'flex',
-                  width: '100%',
-                  alignItems: 'center',
-                  gap: 6,
-                  border: 'none',
-                  background: 'transparent',
-                  color: C.textMuted,
-                  cursor: 'pointer'
-                }}
-              >
-                <CaretLeft size={12} />
-                <span>{AI_LABELS[page]}</span>
-              </button>,
-              /** Cursor's Auto row comes from its model catalog; other CLIs keep an omit-model Default row. */
-              ...(page === 'cursor'
-                ? []
-                : [
-                    <button
-                      key="default"
-                      type="button"
-                      role="menuitem"
-                      className="bf-focus bf-menu-item"
-                      onClick={() => onPick(page, undefined)}
-                      style={{
-                        display: 'flex',
-                        width: '100%',
-                        justifyContent: 'space-between',
-                        border: 'none',
-                        background: 'transparent',
-                        color: page === current && !selectedModel ? C.textStrong : C.textMuted,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <span>Default</span>
-                      {page === current && !selectedModel && <CheckIcon size={12} />}
-                    </button>
-                  ]),
-              ...providerModels(
-                page,
-                page === current ? selectedModel : undefined,
-                settings
-              ).map((m) => {
-                const isSelected =
-                  page === current &&
-                  (page === 'cursor' ? (selectedModel ?? 'auto') === m.id : selectedModel === m.id)
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    role="menuitem"
-                    className="bf-focus bf-menu-item"
-                    onClick={() => onPick(page, m.id)}
-                    style={{
-                      display: 'flex',
-                      width: '100%',
-                      justifyContent: 'space-between',
-                      border: 'none',
-                      background: 'transparent',
-                      color: isSelected ? C.textStrong : C.textMuted,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    <span>{m.label}</span>
-                    {isSelected && <CheckIcon size={12} />}
-                  </button>
-                )
-              })
-            ]}
+        {children}
       </div>
     </>
+  )
+}
+
+/** Enter never submits an enclosing form; `onEnter` lets a list take the first match. */
+function MenuFilter({
+  value,
+  onChange,
+  label,
+  onEnter
+}: {
+  value: string
+  onChange: (v: string) => void
+  label: string
+  onEnter?: () => void
+}) {
+  return (
+    <input
+      className="bf-input bf-focus"
+      autoFocus
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter') return
+        e.preventDefault()
+        onEnter?.()
+      }}
+      placeholder={`${label}…`}
+      spellCheck={false}
+      aria-label={label}
+      style={{
+        height: 24,
+        margin: '4px 4px 6px',
+        padding: '0 8px',
+        borderRadius: 6,
+        border: `1px solid ${C.border}`,
+        background: C.terminal,
+        color: C.text,
+        fontSize: 12,
+        flex: 'none'
+      }}
+    />
+  )
+}
+
+function MenuItem({
+  label,
+  selected,
+  onPick
+}: {
+  label: string
+  selected: boolean
+  onPick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      className="bf-focus bf-menu-item"
+      onClick={onPick}
+      style={{ ...menuItem, color: selected ? C.text : C.textMuted }}
+    >
+      <span style={{ ...ELLIPSIS }}>{label}</span>
+      {selected && <CheckIcon size={12} />}
+    </button>
+  )
+}
+
+function MenuGroupLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        padding: '6px 10px 2px',
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: '0.04em',
+        textTransform: 'uppercase',
+        color: C.faint
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
+function ModelList({
+  page,
+  current,
+  selectedModel,
+  query,
+  listed,
+  onPick
+}: {
+  page: AiProvider
+  current: AiProvider
+  selectedModel?: string
+  query: string
+  listed: readonly AiModel[]
+  onPick: (provider: AiProvider, model: string | undefined) => void
+}) {
+  const selectedId = page === 'cursor' ? (selectedModel ?? 'auto') : selectedModel
+  const filtered = filterModels(listed, query)
+  const selectedRow = listed.find((m) => m.id === selectedId)
+  const visible =
+    selectedRow && !filtered.some((m) => m.id === selectedRow.id) ? [selectedRow, ...filtered] : filtered
+  const groups = groupModels(visible)
+  const showHeaders = groups.length > 1 && groups.some((g) => g.key)
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      {page !== 'cursor' && !query.trim() && (
+        <MenuItem
+          label="Default"
+          selected={page === current && !selectedModel}
+          onPick={() => onPick(page, undefined)}
+        />
+      )}
+      {visible.length === 0 && (
+        <div style={{ padding: '8px 10px', fontSize: 12, color: C.faint }}>No matching models</div>
+      )}
+      {groups.map((group) => (
+        <div key={group.key || 'models'}>
+          {showHeaders && group.label ? <MenuGroupLabel>{group.label}</MenuGroupLabel> : null}
+          {group.models.map((m) => (
+            <MenuItem
+              key={m.id}
+              label={m.label}
+              selected={page === current && selectedId === m.id}
+              onPick={() => onPick(page, m.id)}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Two-step picker: choose a provider, then one of its supported model ids.
+ * `Default` leaves model selection to that provider; Cursor's default is Auto.
+ * `locked` skips the provider page — Settings default-model rows stay on one CLI.
+ */
+export function CliModelMenu({
+  provider,
+  model,
+  pos,
+  settings,
+  locked,
+  onPick,
+  onClose
+}: {
+  provider: AiProvider
+  model?: string
+  pos: MenuPos
+  settings?: AppSettings
+  locked?: boolean
+  onPick: (provider: AiProvider, model: string | undefined) => void
+  onClose: () => void
+}) {
+  const current = normalizeAi(provider)
+  const [page, setPage] = useState<AiProvider | 'cli'>(locked ? current : 'cli')
+  const [query, setQuery] = useState('')
+  const selectedModel = normalizeModel(model)
+  const providers = pickerProviders(settings?.openrouter)
+
+  const listed =
+    page === 'cli' ? [] : providerModels(page, page === current ? selectedModel : undefined, settings)
+
+  return (
+    <MenuShell pos={pos} label={page === 'cli' ? 'Provider' : `${AI_LABELS[page]} model`} onClose={onClose}>
+      {page === 'cli'
+        ? providers.map((p) => (
+            <button
+              key={p}
+              type="button"
+              role="menuitem"
+              className="bf-focus bf-menu-item"
+              onClick={() => {
+                setQuery('')
+                setPage(p)
+              }}
+              style={{
+                ...menuItem,
+                color: p === current ? C.text : C.textMuted
+              }}
+            >
+              <span>{AI_LABELS[p]}</span>
+              <ChevronRight size={11} color="currentColor" />
+            </button>
+          ))
+        : (
+            <>
+              {!locked && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="bf-focus bf-menu-item"
+                  onClick={() => {
+                    setQuery('')
+                    setPage('cli')
+                  }}
+                  style={{
+                    ...menuItem,
+                    justifyContent: 'flex-start',
+                    gap: 6,
+                    color: C.textMuted,
+                    flex: 'none'
+                  }}
+                >
+                  <CaretLeft size={12} />
+                  <span>{AI_LABELS[page]}</span>
+                </button>
+              )}
+              <MenuFilter value={query} onChange={setQuery} label="Filter models" />
+              <ModelList
+                page={page}
+                current={current}
+                selectedModel={selectedModel}
+                query={query}
+                listed={listed}
+                onPick={onPick}
+              />
+            </>
+          )}
+    </MenuShell>
   )
 }
 
@@ -467,90 +672,129 @@ export function CliModelDropdown({
   provider,
   model,
   settings,
-  only,
+  locked,
   onChange,
   label
 }: {
   provider: AiProvider
   model?: string
   settings?: AppSettings
-  only?: (provider: AiProvider) => boolean
+  locked?: boolean
   onChange: (provider: AiProvider, model: string | undefined) => void
   label?: string
 }) {
-  const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState<MenuPos | null>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-
-  const toggle = (): void => {
-    if (open) {
-      setOpen(false)
-      return
-    }
-    const rect = btnRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const width = Math.min(Math.max(rect.width, 168), window.innerWidth - 16)
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
-    const below = window.innerHeight - rect.bottom
-    const maxHeight = Math.max(96, (below >= 220 ? below : rect.top) - 12)
-    setPos(
-      below >= 220
-        ? { left, top: rect.bottom + 4, width, maxHeight }
-        : { left, bottom: Math.max(8, window.innerHeight - rect.top + 4), width, maxHeight }
-    )
-    setOpen(true)
-  }
+  const anchor = useMenuAnchor()
+  const listed = providerModels(provider, model, settings)
+  const trigger = locked
+    ? (aiModelLabel(provider, model, listed) ?? 'Default — the CLI decides')
+    : aiSelectionLabel(provider, model, listed)
 
   return (
     <>
-      <button
-        ref={btnRef}
-        type="button"
-        className="bf-focus"
-        aria-label={label}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={toggle}
-        style={{
-          height: 24,
-          padding: '0 8px',
-          borderRadius: 5,
-          border: '1px solid rgba(255,255,255,0.1)',
-          background: 'rgba(255,255,255,0.05)',
-          color: C.text,
-          fontSize: 12,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-          cursor: 'pointer',
-          width: '100%',
-          textAlign: 'left'
-        }}
-      >
-        <span
-          style={{
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
-          }}
-        >
-          {aiSelectionLabel(provider, model, providerModels(provider, model, settings))}
-        </span>
-        <ChevronDown size={10} color={C.textMuted} />
-      </button>
-      {open && pos && (
+      <MenuTrigger anchor={anchor} label={label}>
+        {trigger}
+      </MenuTrigger>
+      {anchor.pos && (
         <CliModelMenu
           provider={provider}
           model={model}
           settings={settings}
-          only={only}
-          pos={pos}
+          locked={locked}
+          pos={anchor.pos}
           onPick={(p, m) => {
             onChange(p, m)
-            setOpen(false)
+            anchor.close()
           }}
-          onClose={() => setOpen(false)}
+          onClose={anchor.close}
+        />
+      )}
+    </>
+  )
+}
+
+type BranchGroup = { label: string; branches: readonly string[] }
+
+function BranchMenu({
+  pos,
+  value,
+  groups,
+  onPick,
+  onClose
+}: {
+  pos: MenuPos
+  value: string
+  groups: readonly BranchGroup[]
+  onPick: (branch: string) => void
+  onClose: () => void
+}) {
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  const shown = groups
+    .map((g) => ({ ...g, branches: g.branches.filter((b) => b.toLowerCase().includes(q)) }))
+    .filter((g) => g.branches.length)
+  return (
+    <MenuShell pos={pos} label="Branch" onClose={onClose}>
+      <MenuFilter
+        value={query}
+        onChange={setQuery}
+        label="Filter branches"
+        onEnter={() => {
+          const first = shown[0]?.branches[0]
+          if (first) onPick(first)
+        }}
+      />
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        {shown.length === 0 && (
+          <div style={{ padding: '8px 10px', fontSize: 12, color: C.faint }}>No matching branches</div>
+        )}
+        {shown.map((g) => (
+          <div key={g.label}>
+            <MenuGroupLabel>{g.label}</MenuGroupLabel>
+            {g.branches.map((b) => (
+              <MenuItem key={b} label={b} selected={b === value} onPick={() => onPick(b)} />
+            ))}
+          </div>
+        ))}
+      </div>
+    </MenuShell>
+  )
+}
+
+/**
+ * Searchable single-select over grouped branch names, built from the same
+ * menu chrome as {@link CliModelMenu}. A native <select> cannot filter.
+ */
+export function BranchDropdown({
+  id,
+  value,
+  groups,
+  disabled,
+  onChange,
+  style
+}: {
+  id?: string
+  value: string
+  groups: readonly BranchGroup[]
+  disabled?: boolean
+  onChange: (branch: string) => void
+  style?: React.CSSProperties
+}) {
+  const anchor = useMenuAnchor()
+  return (
+    <>
+      <MenuTrigger anchor={anchor} id={id} disabled={disabled} style={style}>
+        {value}
+      </MenuTrigger>
+      {anchor.pos && (
+        <BranchMenu
+          pos={anchor.pos}
+          value={value}
+          groups={groups}
+          onPick={(b) => {
+            onChange(b)
+            anchor.close()
+          }}
+          onClose={anchor.close}
         />
       )}
     </>

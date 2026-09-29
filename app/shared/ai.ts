@@ -6,8 +6,25 @@ import { openCodeModel } from './openrouter'
 export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'omp', 'openrouter'] as const
 export type AiProvider = (typeof AI_PROVIDERS)[number]
 export type AgentMode = 'plan' | 'build'
-/** The binary Farol actually spawns — OpenRouter rides OpenCode. */
-export type AiCli = Exclude<AiProvider, 'openrouter'>
+/**
+ * The binary Farol actually spawns. OpenRouter rides OpenCode or upstream pi
+ * (`@mariozechner/pi-coding-agent`), which is not a provider of its own.
+ */
+export type AiCli = Exclude<AiProvider, 'openrouter'> | 'pi'
+
+/** CLIs that can carry OpenRouter; both read `OPENROUTER_API_KEY` and take `openrouter/<slug>`. */
+export const OPENROUTER_AGENTS = ['opencode', 'pi'] as const
+export type OpenRouterAgent = (typeof OPENROUTER_AGENTS)[number]
+
+export const OPENROUTER_AGENT_LABELS: Record<OpenRouterAgent, string> = {
+  opencode: 'OpenCode',
+  pi: 'Pi'
+}
+
+/** Older settings have no choice stored; they keep running OpenCode. */
+export function normalizeOpenRouterAgent(value: unknown): OpenRouterAgent {
+  return value === 'pi' ? 'pi' : 'opencode'
+}
 
 export const AI_LABELS: Record<AiProvider, string> = {
   claude: 'Claude',
@@ -31,9 +48,9 @@ export interface AiModel {
 export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
   claude: [
     { id: 'sonnet', label: 'Sonnet 5' },
-    { id: 'opus', label: 'Opus 5' },
+    { id: 'opus', label: 'Opus 5.5' },
     { id: 'fable', label: 'Fable 5.1' },
-    { id: 'haiku', label: 'Haiku 5' }
+    { id: 'haiku', label: 'Haiku 4.5' }
   ],
   codex: [
     { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
@@ -82,22 +99,17 @@ export function isAiProvider(value: unknown): value is AiProvider {
   return typeof value === 'string' && (AI_PROVIDERS as readonly string[]).includes(value)
 }
 
-export function cliFor(provider: AiProvider): AiCli {
-  return provider === 'openrouter' ? 'opencode' : provider
+export function cliFor(provider: AiProvider, via: OpenRouterAgent = 'opencode'): AiCli {
+  return provider === 'openrouter' ? via : provider
 }
 
 export function usesOpenRouterEnv(provider: AiProvider): boolean {
   return provider === 'openrouter' || provider === 'opencode'
 }
 
-/** Providers whose managed CLI can enforce Farol's read-only Plan mode. */
-export function hasReviewGate(provider: AiProvider): boolean {
-  return provider === 'codex' || provider === 'cursor' || provider === 'omp'
-}
-
-/** Plan survives only on a provider that can enforce it; everything else is Build. */
-export function normalizeMode(mode: AgentMode | undefined, provider: AiProvider): AgentMode {
-  return mode === 'plan' && hasReviewGate(provider) ? 'plan' : 'build'
+/** Any value other than `'plan'` normalizes to Build. */
+export function normalizeMode(mode: AgentMode | undefined): AgentMode {
+  return mode === 'plan' ? 'plan' : 'build'
 }
 
 /** Older pipelines omit `ai`; they keep running Claude. */
@@ -217,13 +229,34 @@ export function isUnknownJsonFormatError(text: string): boolean {
   return lower.includes('format') && /unknown (option|flag|argument)/.test(lower)
 }
 
+/** `--tools a,b` argv fragment, or empty when the CLI should keep its defaults. */
+function toolsArgv(tools: string | undefined): string[] {
+  return tools ? ['--tools', tools] : []
+}
+
+/** `--flag <id>` to continue the CLI's own saved conversation, or empty for a new one. */
+function resumeArgv(flag: string, resume: string | undefined): string[] {
+  return resume ? [flag, resume] : []
+}
+
+/** OMP has no read-only sandbox, so this allowlist — inspection only, no bash/edit/write — is the gate. */
+const OMP_READONLY_TOOLS = 'read,glob,grep,lsp'
+/** Pi has no sandbox or approval prompts either; its gate is the same kind of allowlist. */
+const PI_READONLY_TOOLS = 'read,grep,find,ls'
+const PI_HINT = 'Install pi (npm i -g @mariozechner/pi-coding-agent) to run OpenRouter through Pi.'
+
 /**
  * Non-interactive argv for each CLI. Cursor runs in ask mode with plain
  * text so a review step returns a string instead of Agent "ACT" chrome.
  * `--force` still auto-approves read tools so it cannot stall on a prompt.
  */
-export function aiCommand(provider: AiProvider, prompt: string, model?: string): AiCommand {
-  const cli = cliFor(provider)
+export function aiCommand(
+  provider: AiProvider,
+  prompt: string,
+  model?: string,
+  via?: OpenRouterAgent
+): AiCommand {
+  const cli = cliFor(provider, via)
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
   switch (cli) {
     case 'codex':
@@ -252,11 +285,16 @@ export function aiCommand(provider: AiProvider, prompt: string, model?: string):
     case 'omp':
       return {
         bins: ['omp'],
-        // omp has no read-only sandbox, so the tool set is the gate: reading and
-        // searching only, no `bash`/`edit`/`write`. --auto-approve keeps it from
-        // waiting on an approval it can never receive.
-        args: withModel(['-p', '--auto-approve', '--tools', 'read,glob,grep,lsp', prompt], passed),
+        // --auto-approve keeps it from waiting on an approval it can never receive.
+        args: withModel(['-p', '--auto-approve', '--tools', OMP_READONLY_TOOLS, prompt], passed),
         hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to run OMP steps.'
+      }
+    case 'pi':
+      return {
+        bins: ['pi'],
+        // Pi never asks for approval, so no auto-approve flag exists or is needed.
+        args: withModel(['-p', '--tools', PI_READONLY_TOOLS, prompt], passed),
+        hint: PI_HINT
       }
     case 'claude':
       return {
@@ -267,120 +305,226 @@ export function aiCommand(provider: AiProvider, prompt: string, model?: string):
   }
 }
 
+function managedCodexCommand(
+  prompt: string,
+  passed: string | undefined,
+  plan: boolean,
+  webSearch?: boolean,
+  resume?: string
+): AiCommand {
+  const sandbox = plan ? 'read-only' : 'workspace-write'
+  if (resume) {
+    // `exec resume` takes no `--sandbox`; the config key sets the same mode.
+    return {
+      bins: ['codex'],
+      args: withModel(
+        [
+          'exec',
+          'resume',
+          '--json',
+          '-c',
+          'approval_policy=never',
+          '-c',
+          `sandbox_mode="${sandbox}"`,
+          ...(webSearch ? ['-c', 'web_search=live'] : []),
+          resume,
+          prompt
+        ],
+        passed
+      ),
+      hint: "Install the Codex CLI (npm i -g @openai/codex) to use managed Chat.",
+      stream: 'ndjson'
+    }
+  }
+  return {
+    bins: ['codex'],
+    // Codex removed `--full-auto` (closer to workspace-write + on-request).
+    // Use approval_policy=never + sandbox so headless Chat never prompts;
+    // do not use --dangerously-bypass-approvals-and-sandbox (no sandbox at all).
+    // Keep workspace-write network_access off (default): never-approve + network
+    // would let model shell commands reach the internet without confirmation.
+    // Native Codex web search is `-c web_search=live`, not sandbox network_access.
+    args: withModel(
+      [
+        'exec',
+        '--json',
+        '-c',
+        'approval_policy=never',
+        '--sandbox',
+        sandbox,
+        ...(webSearch ? ['-c', 'web_search=live'] : []),
+        prompt
+      ],
+      passed
+    ),
+    hint: "Install the Codex CLI (npm i -g @openai/codex) to use managed Chat.",
+    stream: 'ndjson'
+  }
+}
+
+function managedCursorCommand(prompt: string, passed: string | undefined, plan: boolean, resume?: string): AiCommand {
+  return {
+    bins: ['agent', 'cursor-agent'],
+    // Agent mode is the CLI default; `plan` is Cursor's own read-only mode.
+    args: withModel(
+      [
+        '-p',
+        '--force',
+        ...(plan ? ['--mode=plan'] : []),
+        ...resumeArgv('--resume', resume),
+        '--output-format',
+        'stream-json',
+        prompt
+      ],
+      passed
+    ),
+    hint: 'Install the Cursor CLI (https://cursor.com/docs/cli) to use managed Chat.',
+    stream: 'ndjson'
+  }
+}
+
+function managedOpencodeCommand(
+  prompt: string,
+  passed: string | undefined,
+  plan: boolean,
+  jsonFormat: boolean,
+  resume?: string
+): AiCommand {
+  // OpenCode's built-in `plan` agent is read-only; `--dangerously-skip-permissions`
+  // only bypasses tool-approval prompts, it does not grant plan the write tools
+  // it already lacks, so the two flags are safe to combine.
+  const planArgv = [...(plan ? ['--agent', 'plan'] : []), ...resumeArgv('--session', resume)]
+  return {
+    bins: ['opencode'],
+    args: withModel(
+      jsonFormat
+        ? ['run', '--format', 'json', '--dangerously-skip-permissions', ...planArgv, prompt]
+        : ['run', '--dangerously-skip-permissions', ...planArgv, prompt],
+      passed
+    ),
+    hint: 'Install OpenCode (https://opencode.ai) to use managed Chat. Farol needs a build that accepts `opencode run --format json`.',
+    ...(jsonFormat ? { stream: 'ndjson' as const } : {})
+  }
+}
+
+function managedOmpCommand(prompt: string, passed: string | undefined, plan: boolean, tools: string | undefined): AiCommand {
+  return {
+    bins: ['omp'],
+    // `--mode json` is already non-interactive, so `-p` is redundant; it also
+    // routes omp's own banners to stderr, leaving stdout pure NDJSON.
+    // Plan mode defaults to inspection-only when Jev did not supply a list;
+    // Build with an explicit allowlist uses that; otherwise omp keeps all tools.
+    args: withModel(
+      ['--mode', 'json', '--auto-approve', ...toolsArgv(tools ?? (plan ? OMP_READONLY_TOOLS : undefined)), prompt],
+      passed
+    ),
+    hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to use managed Chat.',
+    stream: 'ndjson'
+  }
+}
+
+function managedPiCommand(prompt: string, passed: string | undefined, plan: boolean, tools: string | undefined): AiCommand {
+  return {
+    bins: ['pi'],
+    // `--mode json` is non-interactive on its own. Plan defaults to the
+    // inspection-only allowlist, exactly like OMP.
+    args: withModel(
+      ['--mode', 'json', ...toolsArgv(tools ?? (plan ? PI_READONLY_TOOLS : undefined)), prompt],
+      passed
+    ),
+    hint: PI_HINT,
+    stream: 'ndjson'
+  }
+}
+
+function managedClaudeCommand(
+  prompt: string,
+  passed: string | undefined,
+  plan: boolean,
+  tools: string | undefined,
+  resume?: string
+): AiCommand {
+  return {
+    bins: ['claude'],
+    // `--verbose` is what makes stream-json emit each turn as it happens;
+    // without it the CLI still waits and prints one final event.
+    // `--strict-mcp-config` with no `--mcp-config` loads zero MCP servers.
+    // Claude Code otherwise picks up project `.mcp.json` (Farol's
+    // list_pipelines / run_pipeline) and calls those instead of emitting
+    // FAROL_PIPELINES — so the managed harness never runs validation, and
+    // MCP runs use origin `agent`, which does not hand failures back.
+    args: withModel(
+      [
+        '-p',
+        '--output-format',
+        'stream-json',
+        '--verbose',
+        '--permission-mode',
+        plan ? 'plan' : 'bypassPermissions',
+        '--strict-mcp-config',
+        ...toolsArgv(tools),
+        ...resumeArgv('--resume', resume),
+        prompt
+      ],
+      passed
+    ),
+    hint: 'Install Claude Code (npm i -g @anthropic-ai/claude-code) to use managed Chat.',
+    stream: 'ndjson'
+  }
+}
+
 /**
  * Headless coding commands used by Farol's managed Chat harness.
  * stdin is ignored (see agent-controller.ts), so a mode that can still stop
  * to ask for approval — e.g. Claude's `acceptEdits`, which only auto-accepts
  * edits and leaves Bash pending — would hang forever. Every provider here
- * must therefore auto-approve *all* tool calls, including shell commands.
+ * must therefore auto-approve *all* tool calls, including shell commands,
+ * except in Plan mode (`opts.mode === 'plan'`), where the CLI's own
+ * read-only plan mode replaces full auto-approval.
  *
  * Claude and Cursor print nothing at all under `--output-format text` until
  * the whole run is over, which leaves Chat blank while the agent works, so
  * both run in `stream-json` and are decoded by `shared/agent-stream.ts`.
  * Codex also emits NDJSON when passed `--json`; decoding it lets managed Chat
  * render command, file, MCP, and web-search activity as tool cards.
- * OpenCode (and OpenRouter, which rides it) do the same with `--format json`,
- * and OMP with `--mode json`.
+ * OpenCode does the same with `--format json`, and OMP and pi with `--mode json`;
+ * OpenRouter rides whichever of OpenCode or pi `opts.via` names.
+ *
+ * `opts.resume` continues the CLI's own saved conversation (see
+ * `shared/agent-context.ts`). OMP and pi have no headless resume and ignore it.
  */
 export function managedAiCommand(
   provider: AiProvider,
   prompt: string,
   model?: string,
-  opts?: { jsonFormat?: boolean; mode?: AgentMode }
+  opts?: {
+    jsonFormat?: boolean
+    mode?: AgentMode
+    tools?: string[]
+    webSearch?: boolean
+    via?: OpenRouterAgent
+    resume?: string
+  }
 ): AiCommand {
-  const cli = cliFor(provider)
+  const cli = cliFor(provider, opts?.via)
+  const resume = opts?.resume?.trim() || undefined
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
   const jsonFormat = opts?.jsonFormat !== false
-  const plan = opts?.mode === 'plan' && hasReviewGate(provider)
+  const plan = opts?.mode === 'plan'
+  const tools = opts?.tools?.length ? opts.tools.join(',') : undefined
   switch (cli) {
     case 'codex':
-      return {
-        bins: ['codex'],
-        // Codex removed `--full-auto` (closer to workspace-write + on-request).
-        // Use approval_policy=never + sandbox so headless Chat never prompts;
-        // do not use --dangerously-bypass-approvals-and-sandbox (no sandbox at all).
-        // Keep workspace-write network_access off (default): never-approve + network
-        // would let model shell commands reach the internet without confirmation.
-        // Native Codex web search is `--search`, not sandbox network_access.
-        args: withModel(
-          [
-            'exec',
-            '--json',
-            '-c',
-            'approval_policy=never',
-            '--sandbox',
-            plan ? 'read-only' : 'workspace-write',
-            prompt
-          ],
-          passed
-        ),
-        hint: "Install the Codex CLI (npm i -g @openai/codex) to use managed Chat.",
-        stream: 'ndjson'
-      }
+      return managedCodexCommand(prompt, passed, plan, opts?.webSearch, resume)
     case 'cursor':
-      return {
-        bins: ['agent', 'cursor-agent'],
-        // Agent mode is the CLI default. Current Cursor releases only accept
-        // explicit `plan` and `ask` values for --mode.
-        args: withModel(
-          ['-p', '--force', ...(plan ? ['--mode=ask'] : []), '--output-format', 'stream-json', prompt],
-          passed
-        ),
-        hint: 'Install the Cursor CLI (https://cursor.com/docs/cli) to use managed Chat.',
-        stream: 'ndjson'
-      }
+      return managedCursorCommand(prompt, passed, plan, resume)
     case 'opencode':
-      return {
-        bins: ['opencode'],
-        args: withModel(
-          jsonFormat
-            ? ['run', '--format', 'json', '--dangerously-skip-permissions', prompt]
-            : ['run', '--dangerously-skip-permissions', prompt],
-          passed
-        ),
-        hint: 'Install OpenCode (https://opencode.ai) to use managed Chat. Farol needs a build that accepts `opencode run --format json`.',
-        ...(jsonFormat ? { stream: 'ndjson' as const } : {})
-      }
+      return managedOpencodeCommand(prompt, passed, plan, jsonFormat, resume)
     case 'omp':
-      return {
-        bins: ['omp'],
-        // `--mode json` is already non-interactive, so `-p` is redundant; it also
-        // routes omp's own banners to stderr, leaving stdout pure NDJSON.
-        args: withModel(
-          plan
-            ? ['--mode', 'json', '--auto-approve', '--tools', 'read,glob,grep,lsp', prompt]
-            : ['--mode', 'json', '--auto-approve', prompt],
-          passed
-        ),
-        hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to use managed Chat.',
-        stream: 'ndjson'
-      }
+      return managedOmpCommand(prompt, passed, plan, tools)
+    case 'pi':
+      return managedPiCommand(prompt, passed, plan, tools)
     case 'claude':
-      return {
-        bins: ['claude'],
-        // `--verbose` is what makes stream-json emit each turn as it happens;
-        // without it the CLI still waits and prints one final event.
-        // `--strict-mcp-config` with no `--mcp-config` loads zero MCP servers.
-        // Claude Code otherwise picks up project `.mcp.json` (Farol's
-        // list_pipelines / run_pipeline) and calls those instead of emitting
-        // FAROL_PIPELINES — so the managed harness never runs validation, and
-        // MCP runs use origin `agent`, which does not hand failures back.
-        args: withModel(
-          [
-            '-p',
-            '--output-format',
-            'stream-json',
-            '--verbose',
-            '--permission-mode',
-            'bypassPermissions',
-            '--strict-mcp-config',
-            prompt
-          ],
-          passed
-        ),
-        hint: 'Install Claude Code (npm i -g @anthropic-ai/claude-code) to use managed Chat.',
-        stream: 'ndjson'
-      }
+      return managedClaudeCommand(prompt, passed, plan, tools, resume)
   }
 }
 
@@ -397,9 +541,13 @@ export function aiFixPrompt(reportPath = FAILURE_REPORT_REL): string {
  * The prompt only ever names a fixed path, so there is nothing to quote-escape;
  * everything about the failure lives in the report file itself.
  */
-export function aiFixCommand(provider: AiProvider, reportPath = FAILURE_REPORT_REL): string {
+export function aiFixCommand(
+  provider: AiProvider,
+  reportPath = FAILURE_REPORT_REL,
+  via?: OpenRouterAgent
+): string {
   const ask = aiFixPrompt(reportPath)
-  switch (cliFor(provider)) {
+  switch (cliFor(provider, via)) {
     case 'codex':
       return `codex "${ask}"`
     case 'cursor':
@@ -410,14 +558,16 @@ export function aiFixCommand(provider: AiProvider, reportPath = FAILURE_REPORT_R
       return `opencode run "${ask}"`
     case 'omp':
       return `omp "${ask}"`
+    case 'pi':
+      return `pi "${ask}"`
     case 'claude':
       return `claude "${ask}"`
   }
 }
 
 /** Interactive CLI entry point for a dedicated Terminal agent session. */
-export function interactiveAiCommand(provider: AiProvider): string {
-  switch (cliFor(provider)) {
+export function interactiveAiCommand(provider: AiProvider, via?: OpenRouterAgent): string {
+  switch (cliFor(provider, via)) {
     case 'codex':
       return 'codex'
     case 'cursor':
@@ -426,6 +576,8 @@ export function interactiveAiCommand(provider: AiProvider): string {
       return 'opencode'
     case 'omp':
       return 'omp'
+    case 'pi':
+      return 'pi'
     case 'claude':
       return 'claude'
   }

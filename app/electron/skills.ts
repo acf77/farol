@@ -1,7 +1,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import type { AiProvider } from '../shared/ai'
+import type { AiProvider, OpenRouterAgent } from '../shared/ai'
 import {
   effectiveSkills,
   isSkillName,
@@ -55,11 +55,12 @@ function collectFromRoot(
 export function listAgentSkills(
   cwd: string,
   provider: AiProvider,
-  home = os.homedir()
+  home = os.homedir(),
+  via?: OpenRouterAgent
 ): AgentSkill[] {
   if (typeof cwd !== 'string' || !cwd || !fs.existsSync(cwd)) return []
   const found: Array<AgentSkill & { rank: number }> = []
-  for (const spec of skillRoots(provider)) {
+  for (const spec of skillRoots(provider, via)) {
     const base = spec.kind === 'user' ? home : cwd
     collectFromRoot(path.join(base, ...spec.rel.split('/')), spec.rank, provider, found)
   }

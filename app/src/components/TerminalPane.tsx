@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { C, MONO, PANE } from '../theme'
-import type { Tab, View } from '../types'
+import type { Tab } from '../types'
 import { leaves } from '../layout'
 import PaneGrid from './PaneGrid'
 import { SplitDownIcon, SplitRightIcon } from './icons'
@@ -8,7 +8,6 @@ import { SplitDownIcon, SplitRightIcon } from './icons'
 interface Props {
   tabs: Tab[]
   activeId: string
-  view: View
   workspaceVisible?: boolean
   /** Branch of the active checkout — run tabs from another branch are marked. */
   branch: string
@@ -39,7 +38,6 @@ interface CtxMenu {
 export default function TerminalPane({
   tabs,
   activeId,
-  view: _view,
   workspaceVisible = true,
   branch,
   cwd,
@@ -90,7 +88,7 @@ export default function TerminalPane({
   }
 
   const dotFor = (t: Tab): string =>
-    t.status === 'running' ? C.accentBright : t.status === 'pass' ? C.green : t.status === 'fail' ? C.red : C.faint
+    t.status === 'running' ? C.accent : t.status === 'pass' ? C.green : t.status === 'fail' ? C.red : C.faint
 
   const statusWord = (t: Tab): string =>
     t.status === 'running' ? 'running' : t.status === 'pass' ? 'passed' : t.status === 'fail' ? 'failed' : ''
@@ -110,7 +108,7 @@ export default function TerminalPane({
         flex: 'none',
         padding: 0,
         border: 0,
-        borderRadius: 5,
+        borderRadius: 4,
         background: 'transparent',
         color: canSplit ? C.textMuted : C.faint,
         display: 'grid',
@@ -123,7 +121,7 @@ export default function TerminalPane({
   )
 
   return (
-    <div style={{ ...PANE, flex: 1, minHeight: 0, background: '#181817' }}>
+    <div style={{ ...PANE, flex: 1, minHeight: 0, background: C.terminal }}>
       <div
         style={{
           flex: 'none',
@@ -207,8 +205,8 @@ export default function TerminalPane({
                   minWidth: 0,
                   flex: 'none',
                   maxWidth: 200,
-                  background: on ? '#181817' : 'transparent',
-                  color: on ? '#F0F0EC' : '#A1A19A',
+                  background: on ? C.terminal : 'transparent',
+                  color: on ? C.text : C.textMuted,
                   outline: 'none'
                 }}
               >
@@ -233,12 +231,12 @@ export default function TerminalPane({
                   {t.title}
                 </span>
                 {paneCount > 1 && (
-                  <span style={{ flex: 'none', fontFamily: MONO, fontSize: 9.5, color: '#777772' }}>
+                  <span style={{ flex: 'none', fontFamily: MONO, fontSize: 10, color: C.faint }}>
                     ×{paneCount}
                   </span>
                 )}
                 {t.kind === 'run' && t.branch && t.branch !== branch && (
-                  <span style={{ flex: 'none', fontFamily: MONO, fontSize: 9.5, color: C.yellowDim }}>
+                  <span style={{ flex: 'none', fontFamily: MONO, fontSize: 10, color: C.yellowDim }}>
                     ⑂
                   </span>
                 )}
@@ -291,8 +289,8 @@ export default function TerminalPane({
             borderRadius: 8,
             display: 'grid',
             placeItems: 'center',
-            color: '#A1A19A',
-            fontSize: 15,
+            color: C.textMuted,
+            fontSize: 16,
             cursor: 'pointer'
           }}
         >
@@ -310,7 +308,7 @@ export default function TerminalPane({
           style={{
             fontFamily: MONO,
             fontSize: 11,
-            color: '#777772',
+            color: C.faint,
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -321,7 +319,7 @@ export default function TerminalPane({
         </span>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: '#181817' }}>
+      <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: C.terminal }}>
         {tabs.map((t) => {
           const shown = t.id === activeId
           return (
@@ -336,7 +334,7 @@ export default function TerminalPane({
                 transform: shown ? 'none' : 'translateX(-120%)',
                 pointerEvents: shown ? 'auto' : 'none',
                 zIndex: shown ? 1 : 0,
-                background: '#181817'
+                background: C.terminal
               }}
             >
               <PaneGrid
@@ -362,7 +360,7 @@ export default function TerminalPane({
             top: Math.min(ctx.y, window.innerHeight - 100),
             zIndex: 80,
             minWidth: 180,
-            background: '#2D2D2B',
+            background: C.panel,
             border: '1px solid #3E3E3A',
             borderRadius: 8,
             boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
@@ -384,14 +382,14 @@ export default function TerminalPane({
               gap: 8,
               border: 'none',
               background: 'transparent',
-              color: '#F0F0EC',
+              color: C.text,
               cursor: 'pointer',
               textAlign: 'left'
             }}
           >
             <SplitRightIcon size={13} />
             <span style={{ flex: 1 }}>Split right</span>
-            <span style={{ fontSize: 11, color: '#A1A19A' }}>⌘D</span>
+            <span style={{ fontSize: 11, color: C.textMuted }}>⌘D</span>
           </button>
           <button
             type="button"
@@ -408,14 +406,14 @@ export default function TerminalPane({
               gap: 8,
               border: 'none',
               background: 'transparent',
-              color: '#F0F0EC',
+              color: C.text,
               cursor: 'pointer',
               textAlign: 'left'
             }}
           >
             <SplitDownIcon size={13} />
             <span style={{ flex: 1 }}>Split down</span>
-            <span style={{ fontSize: 11, color: '#A1A19A' }}>⇧⌘D</span>
+            <span style={{ fontSize: 11, color: C.textMuted }}>⇧⌘D</span>
           </button>
         </div>
       )}

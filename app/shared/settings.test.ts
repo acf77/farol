@@ -4,11 +4,13 @@ import {
   modeDefault,
   modeFallbacks,
   modeSelectionForPane,
+  retainCatalogs,
   sanitizeSettings,
   withRemoteKeyFlag,
   withAgentModel,
   withCommitMessageModel,
-  withModeChain
+  withModeChain,
+  withOpenRouterAgent
 } from './settings'
 
 describe('sanitizeSettings', () => {
@@ -114,19 +116,63 @@ describe('commit message selection', () => {
     })
   })
 
+  it('keeps the OpenRouter agent choice and stores OpenCode as absence', () => {
+    expect(sanitizeSettings({ openrouter: { agent: 'pi' } }).openrouter).toEqual({
+      pinned: [],
+      catalog: [],
+      autoPinned: false,
+      agent: 'pi'
+    })
+    expect(sanitizeSettings({ openrouter: { agent: 'opencode' } }).openrouter).toBeUndefined()
+    expect(
+      sanitizeSettings({ openrouter: { agent: 'bogus', pinned: ['openai/gpt-4o'] } }).openrouter
+    ).not.toHaveProperty('agent')
+
+    const pi = withOpenRouterAgent(defaultSettings(), 'pi')
+    expect(pi.openrouter?.agent).toBe('pi')
+    expect(withOpenRouterAgent(pi, 'opencode').openrouter).not.toHaveProperty('agent')
+  })
+
   it('keeps discovered per-agent catalogs', () => {
     const settings = sanitizeSettings({
       agent: 'codex',
       catalogs: {
+        claude: [{ id: 'fable', label: 'Fable 5.1' }],
         codex: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }],
         cursor: [{ id: 'auto', label: 'Auto' }],
         openrouter: [{ id: 'ignored', label: 'Ignored' }]
       }
     })
     expect(settings.catalogs).toEqual({
+      claude: [{ id: 'fable', label: 'Fable 5.1' }],
       codex: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }],
       cursor: [{ id: 'auto', label: 'Auto' }]
     })
+  })
+})
+
+describe('retainCatalogs', () => {
+  it('keeps persisted catalogs when a renderer save sends a stale or empty list', () => {
+    const persisted = sanitizeSettings({
+      agent: 'codex',
+      catalogs: { codex: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }] }
+    })
+    const incoming = sanitizeSettings({
+      agent: 'claude',
+      catalogs: { codex: [{ id: 'gpt-5.5', label: 'GPT-5.5' }] }
+    })
+    expect(retainCatalogs(incoming, persisted).catalogs).toEqual(persisted.catalogs)
+    expect(retainCatalogs(sanitizeSettings({ agent: 'claude' }), persisted).catalogs).toEqual(
+      persisted.catalogs
+    )
+  })
+
+  it('does not let a renderer save invent catalogs', () => {
+    const incoming = sanitizeSettings({
+      agent: 'claude',
+      catalogs: { claude: [{ id: 'fable', label: 'Fable 5.1' }] }
+    })
+    expect(retainCatalogs(incoming, sanitizeSettings({ agent: 'claude' })).catalogs).toBeUndefined()
   })
 })
 
@@ -160,15 +206,19 @@ describe('mode defaults', () => {
           { agent: 'codex', model: 'gpt-5.6-sol' },
           { agent: 'claude' }
         ],
-        // Plan needs a review gate; Claude and OpenCode cannot enforce read-only.
-        plan: [{ agent: 'claude' }, { agent: 'cursor', model: 'composer-2.5' }, { agent: 'omp' }]
+        // OpenRouter rides OpenCode's read-only agent, so it keeps a Plan rung too.
+        plan: [{ agent: 'claude' }, { agent: 'openrouter' }, { agent: 'omp' }]
       }
     })
     expect(s.modeDefaults.build).toEqual([
       { agent: 'codex', model: 'gpt-5.6-sol' },
       { agent: 'claude' }
     ])
-    expect(s.modeDefaults.plan).toEqual([{ agent: 'cursor', model: 'composer-2.5' }, { agent: 'omp' }])
+    expect(s.modeDefaults.plan).toEqual([
+      { agent: 'claude' },
+      { agent: 'openrouter' },
+      { agent: 'omp' }
+    ])
   })
 
   it('opens a mode on its first rung, or the plain agent default without one', () => {

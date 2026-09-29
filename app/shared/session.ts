@@ -1,9 +1,11 @@
 /** Persisted workspace: last project, tabs, split trees, and preferences. */
 
+import { trimSlashes } from './project-groups'
 import type { AppSettings } from './settings'
 import type { AgentMode, AiProvider } from './ai'
 import { normalizeAi, normalizeModel } from './ai'
 import { sanitizePlan } from './questions'
+import { sanitizeSavedAgentContext, type SavedAgentContext } from './agent-context'
 
 export type SavedNode =
   | { t: 'leaf'; id: string }
@@ -33,6 +35,7 @@ export interface SavedAgentPane {
     text: string
     plan?: { finished: true; consumed?: true }
   }[]
+  context?: SavedAgentContext
 }
 
 export type SavedPane = SavedShellPane | SavedAgentPane
@@ -86,8 +89,8 @@ export function sanitizeOpenProjects(
 
 /** Projects that left the workspace between two saved lists. */
 export function closedProjects(previous: string[], next: string[]): string[] {
-  const open = new Set(next.map((projectPath) => projectPath.replace(/[/\\]+$/, '')))
-  return previous.filter((projectPath) => !open.has(projectPath.replace(/[/\\]+$/, '')))
+  const open = new Set(next.map(trimSlashes))
+  return previous.filter((projectPath) => !open.has(trimSlashes(projectPath)))
 }
 
 export function savedLeaves(n: SavedNode, out: string[] = []): string[] {
@@ -141,6 +144,7 @@ function sanitizePane(raw: unknown): SavedPane | null {
   if (pane.kind !== 'agent' || typeof pane.taskId !== 'string') return base
   const messages = Array.isArray(pane.messages) ? sanitizeAgentMessages(pane.messages) : []
   const model = normalizeModel(pane.model)
+  const context = sanitizeSavedAgentContext(pane.context)
   return {
     ...base,
     kind: 'agent',
@@ -150,7 +154,8 @@ function sanitizePane(raw: unknown): SavedPane | null {
     provider: normalizeAi(pane.provider),
     ...(pane.mode === 'plan' ? { mode: 'plan' as const } : {}),
     ...(model ? { model } : {}),
-    messages
+    messages,
+    ...(context ? { context } : {})
   }
 }
 

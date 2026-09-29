@@ -6,13 +6,13 @@ import {
   aiSelectionLabel,
   cliFor,
   interactiveAiCommand,
-  hasReviewGate,
   isAiProvider,
   isUnknownJsonFormatError,
   managedAiCommand,
   modelsFor,
   normalizeAi,
   normalizeModel,
+  normalizeOpenRouterAgent,
   pickerProviders,
   providerModels,
   usesOpenRouterEnv,
@@ -32,17 +32,6 @@ describe('normalizeAi', () => {
     expect(normalizeAi(undefined)).toBe('claude')
     expect(normalizeAi('gpt')).toBe('claude')
     expect(isAiProvider('agent')).toBe(false)
-  })
-})
-
-describe('review gates', () => {
-  it('exposes Plan only where managed Chat can enforce read-only access', () => {
-    expect(hasReviewGate('codex')).toBe(true)
-    expect(hasReviewGate('cursor')).toBe(true)
-    expect(hasReviewGate('omp')).toBe(true)
-    expect(hasReviewGate('claude')).toBe(false)
-    expect(hasReviewGate('opencode')).toBe(false)
-    expect(hasReviewGate('openrouter')).toBe(false)
   })
 })
 
@@ -138,10 +127,80 @@ describe('aiCommand', () => {
 })
 
 describe('managedAiCommand', () => {
-  it('uses each provider review gate for Plan mode', () => {
+  it('continues the CLI session when given one', () => {
+    const claude = managedAiCommand('claude', 'next', 'opus', { resume: 's1' }).args
+    expect(claude.slice(-5)).toEqual(['--resume', 's1', '--model', 'opus', 'next'])
+    expect(managedAiCommand('cursor', 'next', undefined, { resume: 'c1' }).args).toEqual(
+      expect.arrayContaining(['--resume', 'c1'])
+    )
+    expect(managedAiCommand('opencode', 'next', undefined, { resume: 'ses_1' }).args).toEqual(
+      expect.arrayContaining(['--session', 'ses_1'])
+    )
+    expect(managedAiCommand('omp', 'next', undefined, { resume: 'x' }).args).not.toContain('x')
+    expect(managedAiCommand('openrouter', 'next', undefined, { via: 'pi', resume: 'x' }).args).not.toContain(
+      'x'
+    )
+    expect(managedAiCommand('claude', 'next').args).not.toContain('--resume')
+  })
+
+  it('resumes Codex through `exec resume`, which takes the sandbox as config', () => {
+    expect(managedAiCommand('codex', 'next', 'gpt-5.6', { mode: 'plan', resume: 't1' }).args).toEqual([
+      'exec',
+      'resume',
+      '--json',
+      '-c',
+      'approval_policy=never',
+      '-c',
+      'sandbox_mode="read-only"',
+      't1',
+      '--model',
+      'gpt-5.6',
+      'next'
+    ])
+    const build = managedAiCommand('codex', 'next', undefined, { resume: 't1', webSearch: true }).args
+    expect(build).toContain('sandbox_mode="workspace-write"')
+    expect(build).toContain('web_search=live')
+    expect(build).not.toContain('--sandbox')
+  })
+
+  it('switches each provider to its read-only Plan flags', () => {
     expect(managedAiCommand('codex', 'plan this', undefined, { mode: 'plan' }).args).toContain('read-only')
-    expect(managedAiCommand('cursor', 'plan this', undefined, { mode: 'plan' }).args).toContain('--mode=ask')
+    expect(managedAiCommand('cursor', 'plan this', undefined, { mode: 'plan' }).args).toContain(
+      '--mode=plan'
+    )
     expect(managedAiCommand('omp', 'plan this', undefined, { mode: 'plan' }).args).toContain('read,glob,grep,lsp')
+    expect(managedAiCommand('claude', 'plan this', undefined, { mode: 'plan' }).args).toContain('plan')
+    expect(managedAiCommand('claude', 'plan this', undefined, { mode: 'plan' }).args).not.toContain(
+      'bypassPermissions'
+    )
+    expect(managedAiCommand('opencode', 'plan this', undefined, { mode: 'plan' }).args).toEqual([
+      'run',
+      '--format',
+      'json',
+      '--dangerously-skip-permissions',
+      '--agent',
+      'plan',
+      'plan this'
+    ])
+    // OpenRouter rides OpenCode, so it gets the same read-only plan agent.
+    expect(managedAiCommand('openrouter', 'plan this', undefined, { mode: 'plan' }).args).toEqual([
+      'run',
+      '--format',
+      'json',
+      '--dangerously-skip-permissions',
+      '--agent',
+      'plan',
+      'plan this'
+    ])
+  })
+
+  it('enables Codex native web search when the policy allows web', () => {
+    expect(
+      managedAiCommand('codex', 'plan this', undefined, { mode: 'plan', webSearch: true }).args
+    ).toContain('web_search=live')
+    expect(
+      managedAiCommand('codex', 'plan this', undefined, { mode: 'plan' }).args
+    ).not.toContain('web_search=live')
   })
 
   it('auto-approves every provider so headless Chat can use shell tools', () => {
@@ -196,6 +255,28 @@ describe('managedAiCommand', () => {
     ])
   })
 
+  it('passes a native --tools allowlist for Claude and OMP when supplied', () => {
+    expect(
+      managedAiCommand('claude', 'fix this', undefined, {
+        tools: ['Read', 'Glob', 'Grep', 'AskUserQuestion', 'Edit']
+      }).args
+    ).toContain('--tools')
+    expect(
+      managedAiCommand('claude', 'fix this', undefined, {
+        tools: ['Read', 'Edit']
+      }).args
+    ).toContain('Read,Edit')
+    expect(
+      managedAiCommand('omp', 'fix this', undefined, {
+        tools: ['read', 'glob', 'grep', 'lsp', 'edit']
+      }).args
+    ).toEqual(['--mode', 'json', '--auto-approve', '--tools', 'read,glob,grep,lsp,edit', 'fix this'])
+    // Prompt-only providers ignore the allowlist in argv.
+    expect(
+      managedAiCommand('cursor', 'fix this', undefined, { tools: ['Read', 'Edit'] }).args
+    ).not.toContain('--tools')
+  })
+
   it('marks the providers whose stdout has to be decoded as NDJSON', () => {
     // Claude and Cursor print nothing under `text` until the run ends, so
     // Chat would sit blank; OpenCode's default format is formatted prose.
@@ -243,6 +324,38 @@ describe('managedAiCommand', () => {
     expect(interactiveAiCommand('openrouter')).toBe('opencode')
   })
 
+  it('runs OpenRouter through upstream pi when chosen, with the same prefixed --model', () => {
+    expect(normalizeOpenRouterAgent('pi')).toBe('pi')
+    expect(normalizeOpenRouterAgent(undefined)).toBe('opencode')
+    expect(normalizeOpenRouterAgent('omp')).toBe('opencode')
+    expect(cliFor('openrouter', 'pi')).toBe('pi')
+    expect(cliFor('claude', 'pi')).toBe('claude')
+    const oneShot = aiCommand('openrouter', 'review this', 'anthropic/claude-sonnet-4', 'pi')
+    expect(oneShot.bins).toEqual(['pi'])
+    expect(oneShot.args).toEqual([
+      '-p',
+      '--tools',
+      'read,grep,find,ls',
+      '--model',
+      'openrouter/anthropic/claude-sonnet-4',
+      'review this'
+    ])
+    const build = managedAiCommand('openrouter', 'fix this', 'openai/gpt-4o', { via: 'pi' })
+    expect(build.stream).toBe('ndjson')
+    expect(build.args).toEqual(['--mode', 'json', '--model', 'openrouter/openai/gpt-4o', 'fix this'])
+    // Pi's review gate for Plan is the read-only tool allowlist.
+    expect(
+      managedAiCommand('openrouter', 'plan this', undefined, { mode: 'plan', via: 'pi' }).args
+    ).toEqual(['--mode', 'json', '--tools', 'read,grep,find,ls', 'plan this'])
+    expect(
+      managedAiCommand('openrouter', 'x', undefined, { via: 'pi', tools: ['read', 'bash'] }).args
+    ).toEqual(['--mode', 'json', '--tools', 'read,bash', 'x'])
+    expect(interactiveAiCommand('openrouter', 'pi')).toBe('pi')
+    expect(aiFixCommand('openrouter', undefined, 'pi')).toMatch(/^pi "/)
+    // The choice only reroutes OpenRouter; plain OpenCode stays OpenCode.
+    expect(managedAiCommand('opencode', 'x', undefined, { via: 'pi' }).bins).toEqual(['opencode'])
+  })
+
   it('shows OpenRouter after a key and catalog exist, listing only its pins', () => {
     expect(pickerProviders().includes('openrouter')).toBe(false)
     expect(pickerProviders({ hasKey: true, pinned: [] }).includes('openrouter')).toBe(false)
@@ -281,6 +394,11 @@ describe('managedAiCommand', () => {
         catalogs: { codex: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }] }
       }).map((m) => m.id)
     ).toEqual(['gpt-6-astra'])
+    expect(
+      providerModels('claude', undefined, {
+        catalogs: { claude: [{ id: 'fable', label: 'Fable 5.1' }, { id: 'opus', label: 'Opus 5' }] }
+      }).map((m) => m.id)
+    ).toEqual(['fable', 'opus'])
   })
 
   it('passes --model through on managed commands', () => {

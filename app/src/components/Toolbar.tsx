@@ -1,16 +1,23 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { AppSettings, Project } from '@shared/types'
 import { C, MONO, glass as G } from '../theme'
 import type { View } from '../types'
+import { SURFACES, SURFACE_LABEL, type Surface } from '../workspace-layout'
 import { Checkbox } from './controls'
 import { CHROME_ROW } from './side-panel'
-import { BellIcon, ChatIcon, FolderPlusIcon, SettingsIcon, SplitIcon, TerminalIcon } from './icons'
+import { FolderPlusIcon, SettingsIcon } from './icons'
 
 interface Props {
   liquid?: boolean
   project: Project | null
-  view: View
+  /** The preset the layout matches; null once the panels are split some other way. */
+  view: View | null
   onView: (v: View) => void
+  /** Surface that Split and Close act on, and the surfaces currently on screen. */
+  focus: Surface
+  surfaces: Surface[]
+  onSplit: (dir: 'row' | 'col', surface: Surface) => void
+  onCloseSurface: (surface: Surface) => void
   /** New shell tab in the active project (always available). */
   onNewTerminal: () => void
   recents: Project[]
@@ -43,17 +50,109 @@ const menuItem: React.CSSProperties = {
   color: C.text
 }
 
-const VIEWS: { key: View; label: string; Icon: (p: { size?: number }) => JSX.Element }[] = [
-  { key: 'chat', label: 'Chat', Icon: ChatIcon },
-  { key: 'terminal', label: 'Terminal', Icon: TerminalIcon },
-  { key: 'split', label: 'Split 50/50', Icon: SplitIcon }
+const VIEWS: { key: View; label: string }[] = [
+  { key: 'chat', label: 'Chat' },
+  { key: 'code', label: 'Code' },
+  { key: 'terminal', label: 'Terminal' },
+  { key: 'split', label: 'Split 50/50' }
 ]
+
+const DIRECTIONS = [
+  { dir: 'row', label: 'right' },
+  { dir: 'col', label: 'down' }
+] as const
+
+/** Splits the focused surface with any other; a surface already on screen moves beside it. */
+function SplitMenu({
+  liquid,
+  focus,
+  surfaces,
+  onSplit,
+  onCloseSurface,
+  onClose
+}: {
+  liquid?: boolean
+  focus: Surface
+  surfaces: Surface[]
+  onSplit: (dir: 'row' | 'col', surface: Surface) => void
+  onCloseSurface: (surface: Surface) => void
+  onClose: () => void
+}) {
+  const run = (action: () => void) => () => {
+    onClose()
+    action()
+  }
+  return (
+    <>
+      <div aria-hidden onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+      <div
+        role="menu"
+        aria-label="Split panel"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onClose()
+        }}
+        style={{
+          ...noDrag,
+          position: 'absolute',
+          top: CHROME_ROW,
+          left: 16,
+          zIndex: 50,
+          width: 220,
+          background: liquid ? G.panel : C.sidebar,
+          border: `1px solid ${C.border}`,
+          borderRadius: 12,
+          boxShadow: '0 18px 44px rgba(0,0,0,0.55)',
+          padding: 5
+        }}
+      >
+        {DIRECTIONS.map(({ dir, label }) => (
+          <div key={dir} role="group" aria-label={`Split ${SURFACE_LABEL[focus]} ${label}`}>
+            <div style={{ padding: '6px 10px 2px', fontSize: 10.5, color: C.faint }}>
+              Split {SURFACE_LABEL[focus]} {label} with
+            </div>
+            {SURFACES.filter((s) => s !== focus).map((s) => (
+              <button
+                key={s}
+                type="button"
+                role="menuitem"
+                className="bf-focus bf-menu-item"
+                onClick={run(() => onSplit(dir, s))}
+                style={{ ...menuItem, display: 'flex', justifyContent: 'space-between' }}
+              >
+                <span>{SURFACE_LABEL[s]}</span>
+                {surfaces.includes(s) && <span style={{ fontSize: 10.5, color: C.faint }}>moves here</span>}
+              </button>
+            ))}
+          </div>
+        ))}
+        {surfaces.length > 1 && (
+          <>
+            <div role="separator" style={{ height: 1, background: C.border, margin: '5px 6px' }} />
+            <button
+              type="button"
+              role="menuitem"
+              className="bf-focus bf-menu-item"
+              onClick={run(() => onCloseSurface(focus))}
+              style={menuItem}
+            >
+              Close {SURFACE_LABEL[focus]} panel
+            </button>
+          </>
+        )}
+      </div>
+    </>
+  )
+}
 
 export default function Toolbar({
   liquid,
   project,
   view,
   onView,
+  focus,
+  surfaces,
+  onSplit,
+  onCloseSurface,
   onNewTerminal,
   recents,
   menuOpen,
@@ -69,6 +168,8 @@ export default function Toolbar({
   onSettings,
   onOpenSettings
 }: Props) {
+  const [splitOpen, setSplitOpen] = useState(false)
+
   /** Escape dismisses the file menu and returns focus to its trigger. */
   useEffect(() => {
     if (!menuOpen) return
@@ -99,7 +200,7 @@ export default function Toolbar({
         columnGap: 18,
         position: 'relative',
         zIndex: 30,
-        background: liquid ? G.appBg : C.appBg
+        background: liquid ? G.appBg : C.terminal
       }}
     >
       <div
@@ -136,16 +237,15 @@ export default function Toolbar({
                 alignItems: 'center',
                 gap: 7,
                 padding: '6px 12px',
-                borderRadius: 10,
-                fontSize: 12.5,
+                borderRadius: 8,
+                fontSize: 12,
                 fontWeight: 600,
                 cursor: 'pointer',
-                background: on ? '#232322' : 'transparent',
-                color: on ? '#F0F0EC' : '#A1A19A'
+                background: on ? C.sidebar : 'transparent',
+                color: on ? C.text : C.textMuted
               }}
             >
-              <v.Icon />
-              <span>{v.label}</span>
+              {v.label}
             </div>
           )
         })}
@@ -171,10 +271,10 @@ export default function Toolbar({
               ...noDrag,
               height: 28,
               padding: '0 10px',
-              borderRadius: 7,
+              borderRadius: 6,
               border: '1px solid #3E3E3A',
-              background: '#2D2D2B',
-              color: '#F0F0EC',
+              background: C.panel,
+              color: C.text,
               fontSize: 12,
               fontWeight: 600,
               cursor: 'pointer',
@@ -183,11 +283,66 @@ export default function Toolbar({
               gap: 6
             }}
           >
-            <TerminalIcon size={12} />
-            <span>New terminal</span>
+            New terminal
           </button>
         )}
+        {project && (
+          <button
+            type="button"
+            className="bf-focus"
+            onClick={() => setSplitOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={splitOpen}
+            title="Split the focused panel"
+            style={{
+              ...noDrag,
+              height: 28,
+              padding: '0 10px',
+              borderRadius: 6,
+              border: '1px solid #3E3E3A',
+              background: C.panel,
+              color: C.text,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            Split
+          </button>
+        )}
+        <button
+          type="button"
+          className="bf-focus bf-icon-btn"
+          onClick={onOpenProject}
+          title="Open repository…"
+          aria-label="Open repository"
+          style={{
+            ...noDrag,
+            width: 28,
+            height: 28,
+            borderRadius: 6,
+            border: `1px solid ${C.border}`,
+            background: C.sidebar,
+            color: C.text,
+            display: 'grid',
+            placeItems: 'center',
+            cursor: 'pointer'
+          }}
+        >
+          <FolderPlusIcon size={14} />
+        </button>
       </div>
+
+      {splitOpen && (
+        <SplitMenu
+          liquid={liquid}
+          focus={focus}
+          surfaces={surfaces}
+          onSplit={onSplit}
+          onCloseSurface={onCloseSurface}
+          onClose={() => setSplitOpen(false)}
+        />
+      )}
 
       <div
         style={{
@@ -201,6 +356,29 @@ export default function Toolbar({
           zIndex: 2
         }}
       >
+        {updateVersion && (
+          <button
+            type="button"
+            className="bf-focus bf-btn-primary"
+            onClick={onInstallUpdate}
+            title={`Install Farol ${updateVersion} and restart`}
+            style={{
+              ...noDrag,
+              height: 24,
+              padding: '0 10px',
+              borderRadius: 8,
+              border: 'none',
+              background: C.accent,
+              color: C.accentInk,
+              fontSize: 11,
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            Update
+          </button>
+        )}
+
         <button
           type="button"
           className="bf-focus bf-icon-btn"
@@ -211,9 +389,9 @@ export default function Toolbar({
             ...noDrag,
             width: 28,
             height: 28,
-            borderRadius: 7,
+            borderRadius: 6,
             border: `1px solid ${C.border}`,
-            background: C.card,
+            background: C.sidebar,
             color: C.text,
             display: 'grid',
             placeItems: 'center',
@@ -223,51 +401,6 @@ export default function Toolbar({
           <SettingsIcon size={14} />
         </button>
 
-        <button
-          type="button"
-          className="bf-focus bf-icon-btn"
-          onClick={onOpenProject}
-          title="Open repository…"
-          aria-label="Open repository"
-          style={{
-            ...noDrag,
-            width: 28,
-            height: 28,
-            borderRadius: 7,
-            border: `1px solid ${C.border}`,
-            background: C.card,
-            color: C.text,
-            display: 'grid',
-            placeItems: 'center',
-            cursor: 'pointer'
-          }}
-        >
-          <FolderPlusIcon size={14} />
-        </button>
-
-        {updateVersion && (
-          <span
-            className="bf-focus"
-            role="button"
-            tabIndex={0}
-            onClick={onInstallUpdate}
-            title={`Install Farol ${updateVersion} and restart`}
-            style={{ ...noDrag, position: 'relative', display: 'grid', placeItems: 'center', cursor: 'pointer' }}
-          >
-            <BellIcon />
-            <span
-              style={{
-                position: 'absolute',
-                top: -1,
-                right: -1,
-                width: 7,
-                height: 7,
-                borderRadius: '50%',
-                background: C.accent
-              }}
-            />
-          </span>
-        )}
 
         <button
           id={TRIGGER_ID}
@@ -312,9 +445,9 @@ export default function Toolbar({
             right: 16,
             zIndex: 50,
             width: 292,
-            background: liquid ? G.panel : '#232322',
-            border: `1px solid ${C.cardBorder}`,
-            borderRadius: 11,
+            background: liquid ? G.panel : C.sidebar,
+            border: `1px solid ${C.border}`,
+            borderRadius: 12,
             boxShadow: '0 18px 44px rgba(0,0,0,0.55)',
             padding: 5
           }}
@@ -389,7 +522,7 @@ export default function Toolbar({
               checked={settings.autoFix}
               onChange={(autoFix) => onSettings({ ...settings, autoFix })}
               title="On a failed step, send the failure report to Chat"
-              style={{ fontSize: 11.5, color: C.textMuted }}
+              style={{ fontSize: 11, color: C.textMuted }}
             >
               Send failures to the agent
             </Checkbox>

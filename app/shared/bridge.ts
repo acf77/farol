@@ -6,7 +6,13 @@
  * server just asks for it over a local socket. The path is derived from the
  * project so it is stable across app restarts, which keeps the `.mcp.json`
  * the app writes into the project from churning on every launch.
+ *
+ * A Farol-managed git hook is the same idea in reverse: git, not an agent,
+ * asks the running app to run whatever pipelines are configured for that
+ * hook event.
  */
+
+import type { GitHookEvent } from './types'
 
 /** Env var carrying the socket path from `.mcp.json` to the MCP server. */
 export const BRIDGE_ENV = 'FAROL_SOCKET'
@@ -27,16 +33,22 @@ export function socketPathFor(projectPath: string, tmpDir: string, sep = '/'): s
   return `${tmpDir.replace(/[/\\]+$/, '')}${sep}farol-${projectKey(projectPath)}.sock`
 }
 
-/** What the MCP server wants. `cwd` is the agent's directory, not the app's. */
+/**
+ * What a bridge client wants. `cwd` is the caller's directory, not the app's —
+ * the MCP server passes an agent's cwd, and a Farol-managed git hook passes
+ * the repo root git invoked it in.
+ */
 export type BridgeAsk =
   | { op: 'list'; cwd: string }
   | { op: 'run'; cwd: string; pipeline: string }
+  | { op: 'hook'; cwd: string; event: GitHookEvent }
 
 export type BridgeRequest = BridgeAsk & { id: number }
 
 export type BridgeReply =
   | { id: number; ok: true; op: 'list'; pipelines: { id: string; name: string; steps: string[] }[] }
   | { id: number; ok: true; op: 'run'; text: string; failed: boolean }
+  | { id: number; ok: true; op: 'hook'; text: string; failed: boolean }
   | { id: number; ok: false; message: string }
 
 /** Newline-delimited JSON: split a stream buffer into whole messages. */

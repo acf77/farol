@@ -1,7 +1,9 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { shortPath } from '@shared/project-groups'
 import type { GitInfo, WorktreeRequest } from '@shared/types'
 import { branchNameError, worktreeFolderName } from '@shared/worktree'
 import { C, MONO, glass as G } from '../theme'
+import { BranchDropdown } from './controls'
 
 interface Props {
   liquid?: boolean
@@ -22,7 +24,7 @@ interface Props {
 const label: React.CSSProperties = {
   width: 92,
   flex: 'none',
-  fontSize: 11.5,
+  fontSize: 11,
   color: C.textMuted
 }
 
@@ -42,11 +44,6 @@ const field: React.CSSProperties = {
 }
 
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
-
-function shortPath(p: string): string {
-  const parts = p.replace(/[/\\]+$/, '').split(/[/\\]/)
-  return parts.slice(-2).join('/')
-}
 
 type ExistingInfo = { where: string; checkedOut: boolean }
 
@@ -89,7 +86,7 @@ function ExistingWorkspaces({
           value={existingPick}
           disabled={busy}
           onChange={(e) => onPick(e.target.value)}
-          style={{ ...field, fontSize: 11.5 }}
+          style={{ ...field, fontSize: 11 }}
         >
           <option value="">Select workspace…</option>
           {workspaces.map((w) => {
@@ -114,7 +111,7 @@ function ExistingWorkspaces({
             padding: '0 12px',
             borderRadius: 6,
             border: 'none',
-            background: canOpen ? C.accent : '#3E3E3A',
+            background: canOpen ? C.accent : C.border,
             color: canOpen ? C.accentInk : C.faint,
             fontSize: 12,
             fontWeight: 600,
@@ -166,31 +163,26 @@ function BaseBranchSelect({
   return (
     <div style={row}>
       <label htmlFor={selectId} style={label}>From branch</label>
-      <select
+      <BranchDropdown
         id={selectId}
-        className="bf-input bf-focus"
         value={base}
         disabled={!!existing}
-        onChange={(e) => onChange(e.target.value)}
-        style={{ ...field, fontSize: 11.5, opacity: existing ? 0.45 : 1 }}
-      >
-        <optgroup label="Local">
-          {git.branches.map((b) => (
-            <option key={b} value={b}>
-              {b}
-            </option>
-          ))}
-        </optgroup>
-        {!!git.remotes?.length && (
-          <optgroup label="Remote">
-            {git.remotes.map((b) => (
-              <option key={b} value={b}>
-                {b}
-              </option>
-            ))}
-          </optgroup>
-        )}
-      </select>
+        groups={[
+          { label: 'Local', branches: git.branches },
+          ...(git.remotes?.length ? [{ label: 'Remote', branches: git.remotes }] : [])
+        ]}
+        onChange={onChange}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          height: 26,
+          borderRadius: 6,
+          border: '1px solid #3E3E3A',
+          fontSize: 11,
+          fontFamily: MONO,
+          opacity: existing ? 0.45 : 1
+        }}
+      />
     </div>
   )
 }
@@ -263,7 +255,7 @@ function DialogActions({
           padding: '0 14px',
           borderRadius: 6,
           border: 'none',
-          background: canSubmit ? C.accent : '#3E3E3A',
+          background: canSubmit ? C.accent : C.border,
           color: canSubmit ? C.accentInk : C.faint,
           fontSize: 12,
           fontWeight: 600,
@@ -404,7 +396,7 @@ export default function NewTabDialog({
           overflow: 'auto',
           overflowWrap: 'anywhere',
           padding: 16,
-          borderRadius: 10,
+          borderRadius: 8,
           background: liquid ? G.panel : C.panel,
           border: '1px solid #3E3E3A',
           boxShadow: '0 18px 48px rgba(0,0,0,0.55)',
@@ -413,8 +405,8 @@ export default function NewTabDialog({
           gap: 11
         }}
       >
-        <div id={titleId} style={{ fontSize: 13, fontWeight: 600, color: C.textStrong }}>Open branch as project</div>
-        <div id={descriptionId} style={{ fontSize: 11.5, color: C.textMuted, lineHeight: 1.4, marginTop: -4 }}>
+        <div id={titleId} style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Open branch as project</div>
+        <div id={descriptionId} style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.4, marginTop: -4 }}>
           Each branch gets its own worktree and project. Tabs inside a project share that checkout.
         </div>
 

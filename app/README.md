@@ -56,6 +56,7 @@ shared/types.ts   contract shared by main, preload and renderer
 src/
   App.tsx      state: tabs, panes, runs per branch
   layout.ts    pane split tree and geometry (tested)
+  workspace-layout.ts  how Chat / Code / Terminal are split (tested)
   ansi.ts      parser for pipeline step output (tested)
   components/  Toolbar, TabStrip, PaneGrid, XtermPane, LogPane, Sidebar…
 ```
@@ -86,6 +87,16 @@ between panes to resize (clamped to 15–85%); `⇧⌘W` closes a pane, and clos
 the last one closes the tab. Once a tab is split, panes get a title bar and the
 focused pane is outlined.
 
+### Splitting the workspace
+
+The toolbar's **Split** menu splits the focused panel — Chat, Code or
+Terminal — right or down with either of the others. A panel that is already
+showing moves beside the focused one instead of being duplicated, and **Close
+panel** hands its space to its sibling. Drag a divider to resize. With Chat or
+Code focused, `⌘D` / `⇧⌘D` splits beside the next panel not on screen (Terminal
+first); with a shell focused it still splits the shell. The arrangement is kept
+across restarts (`src/workspace-layout.ts`, pure and unit-tested).
+
 ### Branches
 
 When the project is a git repository the status bar shows the current branch,
@@ -115,7 +126,7 @@ that tab stops watching without cancelling the run.
   tab, that's the worktree, not the original checkout.
 - **AI steps** shell out to the CLI chosen on the step — Claude (`claude -p`),
   Codex (`codex exec`), Cursor (`agent -p`), OpenCode (`opencode run`), OMP
-  (`omp -p`), or OpenRouter (OpenCode plus a saved key) — and are handed the
+  (`omp -p`), or OpenRouter (OpenCode or pi plus a saved key) — and are handed the
   run's output so far as context. If that CLI isn't on PATH the step fails with
   a note saying so.
 
@@ -140,9 +151,13 @@ agent that new chats start with and that failed steps are handed to. *Models*
 sets each CLI's default `--model` — leave one on *Default* to let that CLI
 decide — and holds the OpenRouter config: paste an API key, which Farol
 encrypts locally, and Settings fetches tool-capable models from OpenRouter’s
-catalog and pins a short recommended set for Chat and pipeline pickers. The key
-is injected as `OPENROUTER_API_KEY` only into Farol-spawned OpenCode processes
-— not into regular shell panes, and not into OpenCode’s own auth file.
+catalog and pins a short recommended set for Chat and pipeline pickers.
+*Runs through* picks the CLI OpenRouter drives — OpenCode (the default) or
+upstream [pi](https://github.com/badlogic/pi-mono) (`npm i -g @mariozechner/pi-coding-agent`);
+both take the same `openrouter/<slug>` model ids, so pins carry over. The key
+is injected as `OPENROUTER_API_KEY` only into Farol-spawned OpenCode and
+OpenRouter processes — not into regular shell panes, and not into either CLI’s
+own auth file.
 
 The editor is a node canvas. Steps are nodes you drag into position; wires
 between them declare order, dragged from the port on one node's bottom edge to
@@ -168,7 +183,9 @@ Open Chat from the toolbar, or **New agent terminal** from the command palette (
   Farol runs every selection directly; failures are fed into another repair
   turn, and the task is only marked complete after all selected pipelines pass
   — or immediately when none were selected. This does not depend on the
-  provider granting its CLI permission to call Farol's MCP tools.
+  provider granting its CLI permission to call Farol's MCP tools. Assistant
+  replies can include Mermaid diagrams in fenced `mermaid` blocks; Chat
+  renders them in place so a plan and the later change can be read as steps.
 - **Terminal — MCP** opens Claude, Codex, Cursor, OpenCode, or OMP interactively in a
   real terminal. The Farol MCP server is available to list and run
   pipelines, but tool use is controlled by that external CLI and is therefore

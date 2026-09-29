@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { errorMessage } from '@shared/jev'
 import {
   TODO_PRIORITIES,
   TODO_STATUSES,
@@ -20,7 +21,7 @@ const STATUS_LABELS = {
 const fieldStyle: React.CSSProperties = {
   background: C.terminal,
   color: C.text,
-  border: `1px solid ${C.cardBorder}`,
+  border: `1px solid ${C.border}`,
   borderRadius: 6,
   padding: '6px 8px',
   font: 'inherit',
@@ -69,7 +70,7 @@ function TodoEditor({
       <fieldset disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
         <ol style={{ listStyle: 'none', margin: 0, padding: 0 }}>
           {draft.map((todo, index) => index === editIndex && (
-            <li key={index} style={{ padding: '10px 0', borderBottom: `1px solid ${C.cardBorder}` }}>
+            <li key={index} style={{ padding: '10px 0', borderBottom: `1px solid ${C.border}` }}>
               <textarea
                 className="bf-focus"
                 aria-label={`Todo ${index + 1}`}
@@ -162,7 +163,7 @@ export function TodoDockView({
   const showList = open || editing !== null
 
   return (
-    <section className="bf-todo-dock" style={{ maxWidth: 680, margin: '0 auto 10px', color: C.textSoft, fontSize: 12.5 }}>
+    <section className="bf-todo-dock" style={{ maxWidth: 680, margin: '0 auto 10px', color: C.textSoft, fontSize: 12 }}>
       <button
         ref={triggerRef}
         className="bf-focus bf-hover-fill bf-todo-dock-toggle"
@@ -317,7 +318,7 @@ export default function TodoList({
       setSnapshot({ checkout, todos: updates.get(checkout) ?? next.todos })
       updates.clear()
     }).catch((reason: unknown) => {
-      if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load the todo list')
+      if (!cancelled) setError(errorMessage(reason, 'Could not load the todo list'))
     })
     return () => {
       cancelled = true
@@ -336,7 +337,7 @@ export default function TodoList({
         trigger.current?.focus()
       }
     } catch (reason) {
-      if (mounted.current) setError(reason instanceof Error ? reason.message : 'Could not save the todo list')
+      if (mounted.current) setError(errorMessage(reason, 'Could not save the todo list'))
     } finally {
       if (mounted.current) setSaving(false)
     }

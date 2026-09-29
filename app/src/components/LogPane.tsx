@@ -31,7 +31,7 @@ export default function LogPane({ term }: { term: TermState }) {
         overflowY: 'auto',
         padding: '14px 16px 18px',
         fontFamily: MONO,
-        fontSize: 12.5,
+        fontSize: 12,
         lineHeight: 1.6,
         cursor: 'text',
         userSelect: 'text'

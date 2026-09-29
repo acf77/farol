@@ -28,6 +28,10 @@ const api: FarolApi = {
     recents: () => ipcRenderer.invoke('project:recents'),
     openPath: (p: string) => ipcRenderer.invoke('project:openPath', p),
     listFiles: (projectPath, query) => ipcRenderer.invoke('project:listFiles', projectPath, query),
+    listDir: (projectPath, relDir) => ipcRenderer.invoke('project:listDir', projectPath, relDir),
+    readFile: (projectPath, relPath) => ipcRenderer.invoke('project:readFile', projectPath, relPath),
+    writeFile: (projectPath, relPath, content, opts) =>
+      ipcRenderer.invoke('project:writeFile', projectPath, relPath, content, opts),
     listSkills: (projectPath, provider) =>
       ipcRenderer.invoke('project:listSkills', projectPath, provider),
     saveAttachment: (projectPath, name, data) =>
@@ -79,9 +83,14 @@ const api: FarolApi = {
       ipcRenderer.invoke('git:commit', projectPath, message, files),
     push: (projectPath: string) => ipcRenderer.invoke('git:push', projectPath),
     pull: (projectPath: string) => ipcRenderer.invoke('git:pull', projectPath),
+    hooks: (projectPath: string) => ipcRenderer.invoke('git:hooks', projectPath),
     github: (projectPath: string) => ipcRenderer.invoke('git:github', projectPath),
-    createPr: (projectPath: string, base?: string, title?: string) =>
-      ipcRenderer.invoke('git:createPr', projectPath, base, title),
+    createPr: (projectPath: string, base?: string, title?: string, body?: string) =>
+      ipcRenderer.invoke('git:createPr', projectPath, base, title, body),
+    draftPr: (projectPath: string, provider, model, base) =>
+      ipcRenderer.invoke('git:draftPr', projectPath, provider, model, base),
+    mergePr: (projectPath: string, strategy) =>
+      ipcRenderer.invoke('git:mergePr', projectPath, strategy),
     bringConflicts: (projectPath: string) => ipcRenderer.invoke('git:bringConflicts', projectPath),
     onChanged: (cb) => on<GitChanged>('git:changed', cb)
   },
@@ -100,6 +109,7 @@ const api: FarolApi = {
     dispose: (taskId) => ipcRenderer.invoke('agent:dispose', taskId),
     answer: (taskId, requestId, answers) =>
       ipcRenderer.invoke('agent:answer', taskId, requestId, answers),
+    freshStart: (taskId) => ipcRenderer.invoke('agent:freshStart', taskId),
     onEvent: (cb) => on<AgentTaskEvent>('agent:event', cb)
   },
   settings: {

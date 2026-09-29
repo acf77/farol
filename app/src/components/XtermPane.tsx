@@ -70,7 +70,7 @@ export default function XtermPane({ paneId, cwd, agent, visible, focused, onFocu
 
     const term = new Terminal({
       fontFamily: MONO,
-      fontSize: 12.5,
+      fontSize: 12,
       lineHeight: 1.35,
       letterSpacing: 0,
       cursorBlink: true,

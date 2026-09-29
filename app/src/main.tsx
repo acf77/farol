@@ -1,7 +1,10 @@
 import { createRoot } from 'react-dom/client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import ErrorBoundary from './ErrorBoundary'
 import './styles.css'
+
+const queryClient = new QueryClient()
 
 // Block Chromium's default file-drop navigation outside the chat composer.
 document.addEventListener('dragover', (event) => {
@@ -23,6 +26,8 @@ window.addEventListener('unhandledrejection', (event) => {
 // every shell tab in development.
 createRoot(document.getElementById('root') as HTMLElement).render(
   <ErrorBoundary>
-    <App />
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
   </ErrorBoundary>
 )

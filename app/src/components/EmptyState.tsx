@@ -19,12 +19,12 @@ export default function EmptyState({ onOpenProject }: { onOpenProject: () => voi
           width={72}
           height={72}
           draggable={false}
-          style={{ borderRadius: 16, display: 'block' }}
+          style={{ borderRadius: 12, display: 'block' }}
         />
-        <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.35px', color: C.textStrong }}>
+        <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.35px', color: C.text }}>
           No Project Open
         </div>
-        <div style={{ fontSize: 13, lineHeight: 1.5, color: C.dim, maxWidth: 280, textAlign: 'center' }}>
+        <div style={{ fontSize: 13, lineHeight: 1.5, color: C.textMuted, maxWidth: 280, textAlign: 'center' }}>
           Open a folder to start a shell and run pipelines.
         </div>
         <Button variant="primary" size="md" onClick={onOpenProject} style={{ marginTop: 4 }}>

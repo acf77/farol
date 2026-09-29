@@ -9,6 +9,7 @@ export const PIPELINES_MARKER = 'FAROL_PIPELINES:'
 export const BLOCK_MARKER = 'FAROL_BLOCKED:'
 export const PLAN_MARKER = 'FAROL_PLAN:'
 export const TODOS_MARKER = 'FAROL_TODOS:'
+export const HANDOFF_MARKER = 'FAROL_HANDOFF:'
 export const FINISHED_PLAN = `${PLAN_MARKER} finished`
 
 export const CONTROL_MARKERS = [
@@ -16,7 +17,8 @@ export const CONTROL_MARKERS = [
   QUESTIONS_MARKER,
   BLOCK_MARKER,
   PLAN_MARKER,
-  TODOS_MARKER
+  TODOS_MARKER,
+  HANDOFF_MARKER
 ] as const
 
 type ControlMarker = (typeof CONTROL_MARKERS)[number]

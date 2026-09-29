@@ -11,7 +11,8 @@ const { runAiOnce, githubInfo } = vi.hoisted(() => ({
 vi.mock('./ai-oneshot', () => ({ runAiOnce }))
 vi.mock('./github', () => ({ githubInfo }))
 
-import { bringPrConflicts, commitAll, draftCommit, githubStatus, mergeBaseConflicts, mergeForConflicts, parseCommitLog, pull, push, sanitizeCommitMessage, status } from './git'
+import { bringPrConflicts, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, mergeBaseConflicts, mergeForConflicts, parseCommitLog, parsePrDraftResponse, pull, push, sanitizeCommitMessage, sanitizePrDescription, sanitizePrTitle, status, syncManagedHooks } from './git'
+import type { Pipeline } from '../shared/types'
 
 const dirs: string[] = []
 
@@ -69,6 +70,69 @@ describe('sanitizeCommitMessage', () => {
 
   it('returns empty string for whitespace-only input', () => {
     expect(sanitizeCommitMessage('   \n\n  ')).toBe('')
+  })
+})
+
+describe('parsePrDraftResponse', () => {
+  it('reads TITLE and DESCRIPTION labels', () => {
+    expect(
+      parsePrDraftResponse('TITLE: feat: panel\nDESCRIPTION:\n## Summary\n\nAdds the panel.\n')
+    ).toEqual({
+      title: 'feat: panel',
+      description: '## Summary\n\nAdds the panel.'
+    })
+  })
+
+  it('falls back to first paragraph as the title', () => {
+    expect(parsePrDraftResponse('feat: panel\n\nBody line')).toEqual({
+      title: 'feat: panel',
+      description: 'Body line'
+    })
+  })
+
+  it('sanitizes fences and labels', () => {
+    expect(sanitizePrTitle('```\nTitle: hello world\n```')).toBe('hello world')
+    expect(sanitizePrDescription('Description: ship it')).toBe('ship it')
+  })
+})
+
+describe('draftPullRequest', () => {
+  it('builds a prompt from the base log and diff, omitting secrets', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'export const n = 1\n')
+    fs.writeFileSync(path.join(cwd, '.env'), 'SECRET=one\n')
+    git(cwd, ['add', 'app.ts', '.env'])
+    git(cwd, ['commit', '-m', 'init'])
+    git(cwd, ['branch', '-M', 'main'])
+    git(cwd, ['checkout', '-b', 'feat/panel'])
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'export const n = 2\n')
+    fs.writeFileSync(path.join(cwd, '.env'), 'SECRET=SUPER_SECRET_VALUE\n')
+    git(cwd, ['add', 'app.ts', '.env'])
+    git(cwd, ['commit', '-m', 'feat: bump'])
+
+    runAiOnce.mockResolvedValue({
+      ok: true,
+      text: 'TITLE: feat: bump n\nDESCRIPTION:\n## Summary\n\nBump n.\n'
+    })
+    const draft = await draftPullRequest(cwd, 'claude', undefined, 'main')
+    expect(draft).toEqual({
+      ok: true,
+      title: 'feat: bump n',
+      description: '## Summary\n\nBump n.'
+    })
+    const prompt = String(runAiOnce.mock.calls[0]?.[1] ?? '')
+    expect(prompt).toContain('feat: bump')
+    expect(prompt).toContain('app.ts')
+    expect(prompt).not.toContain('SUPER_SECRET_VALUE')
+    expect(prompt).not.toContain('.env')
+  })
+
+  it('requires a base branch', async () => {
+    const cwd = tmpRepo()
+    await expect(draftPullRequest(cwd, 'claude')).resolves.toEqual({
+      ok: false,
+      error: 'Choose a base branch before generating a pull request.'
+    })
   })
 })
 
@@ -144,6 +208,7 @@ describe('commitAll', () => {
     expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('kept.ts')
     const res = await commitAll(cwd, 'feat: change')
     expect(res.ok).toBe(false)
+    expect(res.hookRun).toEqual({ hooks: ['pre-commit'], output: '' })
     expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('kept.ts')
   })
 
@@ -182,6 +247,7 @@ describe('commitAll', () => {
 
     const res = await commitAll(cwd, 'feat: change', ['selected.ts'])
     expect(res.ok).toBe(false)
+    expect(res.hookRun?.hooks).toEqual(['pre-commit'])
     expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('unchecked.ts')
     expect(git(cwd, ['diff', '--cached', '--', 'unchecked.ts'])).toContain('+d')
     expect(git(cwd, ['diff', '--', 'unchecked.ts']).trim()).toBe('')
@@ -210,6 +276,151 @@ describe('commitAll', () => {
     expect(res.ok).toBe(true)
     expect(git(cwd, ['show', '--pretty=', '--name-only', 'HEAD']).trim()).toBe('app.ts')
     expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('')
+  })
+})
+
+describe('hooksInfo', () => {
+  it('reports no hooks for a repo with only samples', async () => {
+    const cwd = tmpRepo()
+    expect(await hooksInfo(cwd)).toEqual([])
+  })
+
+  it('lists an installed executable hook as enabled', async () => {
+    const cwd = tmpRepo()
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+    fs.writeFileSync(hook, '#!/bin/sh\nexit 0\n')
+    fs.chmodSync(hook, 0o755)
+
+    expect(await hooksInfo(cwd)).toEqual([{ name: 'pre-commit', path: hook, enabled: true }])
+  })
+
+  it('lists a non-executable hook as disabled', async () => {
+    const cwd = tmpRepo()
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+    fs.writeFileSync(hook, '#!/bin/sh\nexit 0\n')
+    fs.chmodSync(hook, 0o644)
+
+    expect(await hooksInfo(cwd)).toEqual([{ name: 'pre-commit', path: hook, enabled: false }])
+  })
+
+  it('lists hooks under a tracked core.hooksPath (Husky/lefthook)', async () => {
+    const cwd = tmpRepo()
+    git(cwd, ['config', 'core.hooksPath', '.husky'])
+    const husky = path.join(cwd, '.husky')
+    fs.mkdirSync(husky)
+    const hook = path.join(husky, 'pre-commit')
+    fs.writeFileSync(hook, '#!/bin/sh\nexit 0\n')
+    fs.chmodSync(hook, 0o755)
+
+    expect(await hooksInfo(cwd)).toEqual([{ name: 'pre-commit', path: hook, enabled: true }])
+  })
+})
+
+describe('syncManagedHooks', () => {
+  const runtime = { execPath: '/usr/bin/farol', scriptPath: '/app/git-hook.js', socketPath: '/tmp/farol-test.sock' }
+  const pipeline = (id: string, gitHooks: Pipeline['gitHooks']): Pipeline => ({ id, name: id, nodes: [], gitHooks })
+
+  it('installs a pre-commit script for a pipeline configured with that hook', async () => {
+    const cwd = tmpRepo()
+    await syncManagedHooks(cwd, [pipeline('lint', ['pre-commit'])], runtime)
+
+    const info = await hooksInfo(cwd)
+    expect(info).toEqual([{ name: 'pre-commit', path: path.join(cwd, '.git', 'hooks', 'pre-commit'), enabled: true }])
+    const script = fs.readFileSync(info[0]!.path, 'utf8')
+    expect(script).toContain(runtime.socketPath)
+    expect(script).toContain(runtime.execPath)
+    expect(script).toContain('pre-commit')
+  })
+
+  it('does not overwrite a hand-written hook', async () => {
+    const cwd = tmpRepo()
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+    fs.writeFileSync(hook, '#!/bin/sh\necho mine\n')
+    fs.chmodSync(hook, 0o755)
+
+    await syncManagedHooks(cwd, [pipeline('lint', ['pre-commit'])], runtime)
+
+    expect(fs.readFileSync(hook, 'utf8')).toBe('#!/bin/sh\necho mine\n')
+  })
+
+  it('removes a previously managed hook once no pipeline wants it', async () => {
+    const cwd = tmpRepo()
+    await syncManagedHooks(cwd, [pipeline('lint', ['pre-commit'])], runtime)
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+    expect(fs.existsSync(hook)).toBe(true)
+
+    await syncManagedHooks(cwd, [pipeline('lint', [])], runtime)
+    expect(fs.existsSync(hook)).toBe(false)
+  })
+
+  it('refuses a core.hooksPath that points inside the tracked worktree', async () => {
+    const cwd = tmpRepo()
+    git(cwd, ['config', 'core.hooksPath', '.husky'])
+    const husky = path.join(cwd, '.husky')
+    fs.mkdirSync(husky)
+
+    await syncManagedHooks(cwd, [pipeline('lint', ['pre-commit'])], runtime)
+
+    expect(fs.existsSync(path.join(husky, 'pre-commit'))).toBe(false)
+    expect(await hooksInfo(cwd)).toEqual([])
+  })
+
+  it('does not delete a farol-managed hook that sits under a tracked hooksPath', async () => {
+    const cwd = tmpRepo()
+    git(cwd, ['config', 'core.hooksPath', '.husky'])
+    const husky = path.join(cwd, '.husky')
+    fs.mkdirSync(husky)
+    const hook = path.join(husky, 'pre-commit')
+    fs.writeFileSync(hook, '#!/bin/sh\n# farol-managed-hook\nexit 0\n')
+    fs.chmodSync(hook, 0o755)
+
+    await syncManagedHooks(cwd, [pipeline('lint', [])], runtime)
+
+    expect(fs.existsSync(hook)).toBe(true)
+  })
+
+  it('installs into the shared hooks dir when run from a linked worktree', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'file.txt'), 'a\n')
+    git(cwd, ['add', 'file.txt'])
+    git(cwd, ['commit', '-m', 'init'])
+    const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'bf-git-wt-'))
+    fs.rmdirSync(worktree)
+    dirs.push(worktree)
+    git(cwd, ['worktree', 'add', '-b', 'feat', worktree])
+
+    await syncManagedHooks(worktree, [pipeline('lint', ['pre-commit'])], runtime)
+
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+    expect(fs.existsSync(hook)).toBe(true)
+    expect(await hooksInfo(worktree)).toEqual([{ name: 'pre-commit', path: hook, enabled: true }])
+  })
+})
+
+describe('push blocked by a hook', () => {
+  it('reports the pre-push hook and its output', async () => {
+    const origin = tmpRepo()
+    fs.writeFileSync(path.join(origin, 'file.txt'), 'base\n')
+    git(origin, ['add', 'file.txt'])
+    git(origin, ['commit', '-m', 'init'])
+    git(origin, ['branch', '-M', 'main'])
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'bf-git-'))
+    dirs.push(cwd)
+    execFileSync('git', ['clone', origin, cwd], { encoding: 'utf8' })
+    git(cwd, ['config', 'user.email', 'test@example.com'])
+    git(cwd, ['config', 'user.name', 'Test'])
+    fs.writeFileSync(path.join(cwd, 'feat.txt'), 'new\n')
+    git(cwd, ['add', 'feat.txt'])
+    git(cwd, ['commit', '-m', 'feat'])
+
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-push')
+    fs.writeFileSync(hook, '#!/bin/sh\necho "no pushing today" >&2\nexit 1\n')
+    fs.chmodSync(hook, 0o755)
+
+    const res = await push(cwd)
+    expect(res.ok).toBe(false)
+    expect(res.hookRun?.hooks).toEqual(['pre-push'])
+    expect(res.hookRun?.output).toContain('no pushing today')
   })
 })
 

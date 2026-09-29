@@ -12,61 +12,14 @@
  * handing the failure back to an agent and looping.
  */
 
-import net from 'net'
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { BRIDGE_ENV, takeLines, type BridgeAsk, type BridgeReply } from '../shared/bridge'
-
-/** How long to wait for the app to accept a connection — not for the run. */
-const CONNECT_TIMEOUT_MS = 5000
+import { errorMessage } from '../shared/jev'
+import { requestBridge } from './bridge-client'
 
 const APP_DOWN =
   'Farol is not running, or this project is not open in it. Pipelines run inside the app so their progress is visible, so start Farol and open this project, then try again.'
-
-/**
- * Ask the running app to do the work. Resolves null when there is no app to
- * talk to; the caller turns that into a refusal.
- */
-function askApp(req: BridgeAsk): Promise<BridgeReply | null> {
-  const file = process.env[BRIDGE_ENV]
-  if (!file) return Promise.resolve(null)
-  return new Promise((resolve) => {
-    let settled = false
-    let connected = false
-    let buffer = ''
-    const done = (v: BridgeReply | null): void => {
-      if (settled) return
-      settled = true
-      socket.destroy()
-      resolve(v)
-    }
-    const socket = net.createConnection(file)
-    socket.setTimeout(CONNECT_TIMEOUT_MS, () => {
-      // Only the handshake is time-boxed: a pipeline legitimately takes minutes.
-      if (!connected) done(null)
-    })
-    socket.on('connect', () => {
-      connected = true
-      socket.setTimeout(0)
-      socket.write(JSON.stringify({ ...req, id: 1 }) + '\n')
-    })
-    socket.on('data', (chunk) => {
-      buffer += chunk.toString()
-      const { lines, rest } = takeLines(buffer)
-      buffer = rest
-      for (const line of lines) {
-        try {
-          done(JSON.parse(line) as BridgeReply)
-        } catch {
-          /* partial or malformed frame — keep reading */
-        }
-      }
-    })
-    socket.on('error', () => done(null))
-    socket.on('close', () => done(null))
-  })
-}
 
 const text = (s: string) => ({ content: [{ type: 'text' as const, text: s }] })
 const fail = (s: string) => ({ isError: true, ...text(s) })
@@ -85,7 +38,7 @@ async function main(): Promise<void> {
       annotations: { readOnlyHint: true }
     },
     async () => {
-      const reply = await askApp({ op: 'list', cwd })
+      const reply = await requestBridge({ op: 'list', cwd })
       if (!reply) return fail(APP_DOWN)
       if (!reply.ok) return fail(reply.message)
       if (reply.op !== 'list') return fail('Unexpected reply from Farol')
@@ -109,7 +62,7 @@ async function main(): Promise<void> {
       annotations: { readOnlyHint: false, destructiveHint: true }
     },
     async ({ pipeline }) => {
-      const reply = await askApp({ op: 'run', cwd, pipeline })
+      const reply = await requestBridge({ op: 'run', cwd, pipeline })
       if (!reply) return fail(APP_DOWN)
       if (!reply.ok) return fail(reply.message)
       if (reply.op !== 'run') return fail('Unexpected reply from Farol')
@@ -122,6 +75,6 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   // stdout is the protocol channel; diagnostics must go to stderr.
-  process.stderr.write(`farol-mcp: ${err instanceof Error ? err.message : String(err)}\n`)
+  process.stderr.write(`farol-mcp: ${errorMessage(err)}\n`)
   process.exit(1)
 })

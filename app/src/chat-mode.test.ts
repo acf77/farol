@@ -4,13 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { normalizeMode } from '@shared/ai'
 import { sanitizeSession } from '@shared/session'
 import { modeDefault, sanitizeSettings } from '@shared/settings'
-import ChatPane, { ChatModeSwitch } from './components/ChatPane'
+import { ChatModeSwitch } from './components/ChatPane'
+import { makeAgentPane, renderChatPane } from './components/chat/test-pane'
 import type { AgentPane } from './types'
-
-vi.mock('./components/TerminalPane', () => ({ default: () => null }))
-vi.mock('./hooks/useGitPanel', () => ({
-  useGitPanel: () => ({ status: null, github: null, gitAction: null, log: [], pull: vi.fn() })
-}))
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -24,27 +20,13 @@ function renderChat(pane: AgentPane | null): string {
     modeDefaults: { build: [{ agent: 'cursor', model: 'composer-2.5' }] }
   })
   const choice = modeDefault(settings, 'build')
-  return renderToStaticMarkup(
-    createElement(ChatPane, {
-      pane,
-      pipelines: [],
-      view: 'chat',
-      projectPath: '/repo',
-      defaultProvider: choice.agent,
-      defaultModel: choice.model,
-      settings,
-      usage: [],
-      onRefreshUsage: vi.fn(),
-      onMessage: vi.fn(),
-      onAnswer: vi.fn(),
-      onCancel: vi.fn(),
-      onProviderChange: vi.fn(),
-      onModeChange: vi.fn(),
-      onExecutePlan: vi.fn(),
-      onOpenPipeline: vi.fn(),
-      onNewChat: vi.fn()
-    })
-  )
+  return renderChatPane({
+    pane,
+    projectPath: '/repo',
+    defaultProvider: choice.agent,
+    defaultModel: choice.model,
+    settings
+  })
 }
 
 describe('restored chat model selection', () => {
@@ -54,19 +36,15 @@ describe('restored chat model selection', () => {
     { provider: 'codex' as const, model: undefined, label: 'Codex' },
     { provider: 'codex' as const, model: 'custom-model', label: 'Codex · custom-model' }
   ])('keeps $provider / $model instead of inheriting the settings model', ({ provider, model, label }) => {
-    const pane: AgentPane = {
+    const pane = makeAgentPane({
       id: 'agent-pane',
-      kind: 'agent',
-      title: 'Chat',
       cwd: '/repo',
       taskId: 'agent:sh1',
-      status: 'idle',
       attempt: 0,
       provider,
       model,
-      mode: 'build',
       messages: []
-    }
+    })
     const session = sanitizeSession(JSON.parse(JSON.stringify({
       activeTab: 'sh1',
       tabs: [
@@ -94,7 +72,7 @@ describe('restored chat model selection', () => {
     const restored: AgentPane = {
       ...saved,
       status: 'idle',
-      mode: normalizeMode(saved.mode, saved.provider)
+      mode: normalizeMode(saved.mode)
     }
     expect(restored.model).toBe(model)
     expect(renderChat(restored)).toContain(`title="Agent: ${label}"`)
@@ -110,7 +88,6 @@ describe('ChatModeSwitch', () => {
     const html = renderToStaticMarkup(
       createElement(ChatModeSwitch, {
         mode: 'build',
-        provider: 'codex',
         locked: false,
         onChange: vi.fn()
       })
@@ -121,24 +98,10 @@ describe('ChatModeSwitch', () => {
     expect(html).toMatch(/aria-pressed="true"[^>]*>Build</)
   })
 
-  it('disables Plan with the provider-specific reason when no review gate exists', () => {
-    const html = renderToStaticMarkup(
-      createElement(ChatModeSwitch, {
-        mode: 'build',
-        provider: 'claude',
-        locked: false,
-        onChange: vi.fn()
-      })
-    )
-    expect(html).toContain('title="Claude: Cannot enforce read-only"')
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Plan<\/button>/)
-  })
-
   it('locks both sides while the agent is working', () => {
     const html = renderToStaticMarkup(
       createElement(ChatModeSwitch, {
         mode: 'plan',
-        provider: 'cursor',
         locked: true,
         onChange: vi.fn()
       })
@@ -149,46 +112,46 @@ describe('ChatModeSwitch', () => {
 
 describe('Execute plan handoff', () => {
   it('shows Execute plan under a finished, unconsumed plan message', () => {
-    const pane: AgentPane = {
-      id: 'agent-pane',
-      kind: 'agent',
-      title: 'Chat',
-      cwd: '/repo',
-      taskId: 'agent:sh1',
-      status: 'idle',
-      attempt: 0,
-      provider: 'codex',
-      mode: 'plan',
-      messages: [
-        {
-          role: 'assistant',
-          text: '## Plan\n\n1. Do the work.',
-          plan: { finished: true }
-        }
-      ]
-    }
-    expect(renderChat(pane)).toContain('Execute plan')
+    expect(
+      renderChat(
+        makeAgentPane({
+          id: 'agent-pane',
+          cwd: '/repo',
+          taskId: 'agent:sh1',
+          attempt: 0,
+          provider: 'codex',
+          mode: 'plan',
+          messages: [
+            {
+              role: 'assistant',
+              text: '## Plan\n\n1. Do the work.',
+              plan: { finished: true }
+            }
+          ]
+        })
+      )
+    ).toContain('Execute plan')
   })
 
   it('hides Execute plan once the finished plan is consumed', () => {
-    const pane: AgentPane = {
-      id: 'agent-pane',
-      kind: 'agent',
-      title: 'Chat',
-      cwd: '/repo',
-      taskId: 'agent:sh1',
-      status: 'idle',
-      attempt: 0,
-      provider: 'codex',
-      mode: 'build',
-      messages: [
-        {
-          role: 'assistant',
-          text: '## Plan\n\n1. Do the work.',
-          plan: { finished: true, consumed: true }
-        }
-      ]
-    }
-    expect(renderChat(pane)).not.toContain('Execute plan')
+    expect(
+      renderChat(
+        makeAgentPane({
+          id: 'agent-pane',
+          cwd: '/repo',
+          taskId: 'agent:sh1',
+          attempt: 0,
+          provider: 'codex',
+          mode: 'build',
+          messages: [
+            {
+              role: 'assistant',
+              text: '## Plan\n\n1. Do the work.',
+              plan: { finished: true, consumed: true }
+            }
+          ]
+        })
+      )
+    ).not.toContain('Execute plan')
   })
 })

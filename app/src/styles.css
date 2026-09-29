@@ -1,10 +1,28 @@
+:root {
+  --bf-accent: #D6F23A;
+  --bf-accent-ink: #1B1D13;
+  --bf-text-soft: #D8D8D3;
+  --bf-accent-hover: #E3F86C;
+  --bf-text-muted: #A1A19A;
+  --bf-text-faint: #777772;
+  --bf-text: #F0F0EC;
+  --bf-border: #3E3E3A;
+  --bf-bg: #181817;
+  --bf-surface: #232322;
+  --bf-panel: #2D2D2B;
+  --bf-red: #FF625A;
+  --bf-green: #87C9AE;
+  --bf-amber: #FFBE2E;
+  --bf-violet: #B894FF;
+}
+
 html,
 body,
 #root {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: #181817;
+  background: var(--bf-bg);
   overflow: hidden;
   font-family:
     -apple-system,
@@ -24,7 +42,7 @@ html.bf-glass #root {
 }
 
 a {
-  color: #E3F86C;
+  color: var(--bf-accent-hover);
   text-decoration: none;
 }
 a:hover {
@@ -40,7 +58,7 @@ select {
 
 input::placeholder,
 textarea::placeholder {
-  color: #777772;
+  color: var(--bf-text-faint);
 }
 
 button:disabled {
@@ -67,6 +85,19 @@ button:disabled {
   }
 }
 
+@keyframes bfOverlayIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes bfOverlayCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+}
+
 /*
  * Reduced motion. Both run indicators have to keep reporting "running" once
  * the movement is taken away, so neither of these is a plain `animation:
@@ -81,7 +112,7 @@ button:disabled {
   html.bf-glass,
   html.bf-glass body,
   html.bf-glass #root {
-    background: #181817 !important;
+    background: var(--bf-bg) !important;
   }
 }
 
@@ -145,7 +176,7 @@ button:disabled {
   height: 9px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3E3E3A;
+  background: var(--bf-border);
   border-radius: 6px;
   border: 2px solid transparent;
   background-clip: padding-box;
@@ -173,13 +204,13 @@ button:disabled {
   cursor: pointer;
 }
 .bf-menu-item:hover {
-  background: #D6F23A !important;
-  color: #1B1D13 !important;
+  background: var(--bf-accent) !important;
+  color: var(--bf-accent-ink) !important;
 }
 
 .bf-btn-primary:hover:not(:disabled) {
-  background: #E3F86C !important;
-  color: #1B1D13 !important;
+  background: var(--bf-accent-hover) !important;
+  color: var(--bf-accent-ink) !important;
 }
 
 /*
@@ -226,7 +257,7 @@ button:disabled {
   position: absolute;
   inset: 0 auto 0 0;
   width: 0;
-  background: #D6F23A;
+  background: var(--bf-accent);
   pointer-events: none;
 }
 .bf-hold-btn.is-holding .bf-hold-fill {
@@ -266,7 +297,7 @@ button:disabled {
   width: 100%;
   min-height: 34px;
   padding: 8px 10px;
-  border: 1px solid #3E3E3A;
+  border: 1px solid var(--bf-border);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.02);
   color: inherit;
@@ -277,7 +308,7 @@ button:disabled {
 
 .bf-todo-dock-progress {
   flex: none;
-  color: #F0F0EC;
+  color: var(--bf-text);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -288,7 +319,7 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #A1A19A;
+  color: var(--bf-text-muted);
 }
 
 .bf-todo-dock-chevron {
@@ -329,7 +360,7 @@ button:disabled {
 }
 
 .bf-todo-text.is-done {
-  color: #A1A19A;
+  color: var(--bf-text-muted);
   text-decoration: line-through;
 }
 
@@ -382,7 +413,7 @@ button:disabled {
 }
 
 .bf-input:focus {
-  border-color: #D6F23A !important;
+  border-color: var(--bf-accent) !important;
 }
 
 .bf-split-btn:hover {
@@ -400,7 +431,7 @@ button:disabled {
 
 .bf-suggest:hover {
   background: rgba(255, 255, 255, 0.06) !important;
-  color: #F0F0EC !important;
+  color: var(--bf-text) !important;
 }
 
 .bf-tile:hover {
@@ -416,10 +447,10 @@ button:disabled {
   background: rgba(255, 255, 255, 0.05) !important;
 }
 .bf-term-tab-active:hover {
-  background: #181817 !important;
+  background: var(--bf-bg) !important;
 }
 .bf-term-tab:focus-visible {
-  box-shadow: inset 0 0 0 2px #D6F23A;
+  box-shadow: inset 0 0 0 2px var(--bf-accent);
 }
 
 .bf-composer-btn:hover {
@@ -454,15 +485,7 @@ button:disabled {
   pointer-events: none;
   opacity: 0;
   transition: opacity 160ms cubic-bezier(0.32, 0.72, 0, 1);
-  background: linear-gradient(
-    to bottom,
-    oklch(0.18 0.004 95 / 0) 0%,
-    oklch(0.18 0.004 95 / 0.16) 24%,
-    oklch(0.18 0.004 95 / 0.48) 52%,
-    oklch(0.18 0.004 95 / 0.82) 76%,
-    oklch(0.18 0.004 95 / 0.96) 90%,
-    var(--bf-chat-fade-color) 100%
-  );
+  background: linear-gradient(to bottom, transparent, var(--bf-chat-fade-color));
 }
 
 .bf-chat-fade.is-on {
@@ -473,20 +496,17 @@ button:disabled {
   :root {
     --bf-chat-fade-height: 36px;
   }
-  .bf-chat-fade {
-    background: linear-gradient(to bottom, oklch(0.18 0.004 95 / 0), var(--bf-chat-fade-color));
-  }
 }
 
 .bf-linkish:hover {
-  color: #D8D8D3 !important;
+  color: var(--bf-text-soft) !important;
 }
 
 /* The run button fills in on hover, so an idle pipeline shows how to start it. */
 .bf-runbtn:hover {
-  background: #D6F23A !important;
-  border-color: #D6F23A !important;
-  color: #1B1D13 !important;
+  background: var(--bf-accent) !important;
+  border-color: var(--bf-accent) !important;
+  color: var(--bf-accent-ink) !important;
 }
 .bf-runbtn:hover .bf-runbtn-check {
   display: none !important;
@@ -504,7 +524,7 @@ button:disabled {
   outline: none;
 }
 .bf-focus:focus-visible {
-  outline: 2px solid #D6F23A !important;
+  outline: 2px solid var(--bf-accent) !important;
   outline-offset: 1px !important;
   /*
    * A contrast collar, not elevation: under Liquid Glass the effective
@@ -519,7 +539,7 @@ button:disabled {
  * The primary button is a Signal Lime fill. A dark ring remains visible on it.
  */
 .bf-btn-primary.bf-focus:focus-visible {
-  outline-color: #1B1D13 !important;
+  outline-color: var(--bf-accent-ink) !important;
 }
 
 /*
@@ -537,9 +557,9 @@ button:disabled {
   font-size: 12px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: #181817;
-  border: 1px solid #3E3E3A;
-  color: #F0F0EC;
+  background: var(--bf-bg);
+  border: 1px solid var(--bf-border);
+  color: var(--bf-text);
 }
 
 /* Agent-authored tables stay semantic and scroll within narrow chat panes. */
@@ -548,7 +568,7 @@ button:disabled {
   max-width: 100%;
   box-sizing: border-box;
   overflow-x: auto;
-  border: 1px solid #3E3E3A;
+  border: 1px solid var(--bf-border);
   border-radius: 6px;
 }
 
@@ -566,21 +586,21 @@ button:disabled {
   min-width: 96px;
   max-width: 360px;
   padding: 7px 10px;
-  border-bottom: 1px solid #3E3E3A;
-  border-inline-end: 1px solid #3E3E3A;
+  border-bottom: 1px solid var(--bf-border);
+  border-inline-end: 1px solid var(--bf-border);
   vertical-align: top;
   text-align: left;
   overflow-wrap: anywhere;
 }
 
 .bf-md-table th {
-  background: #232322;
-  color: #F0F0EC;
+  background: var(--bf-surface);
+  color: var(--bf-text);
   font-weight: 600;
 }
 
 .bf-md-table td {
-  color: #D8D8D3;
+  color: var(--bf-text-soft);
 }
 
 .bf-md-table th:last-child,
@@ -590,4 +610,32 @@ button:disabled {
 
 .bf-md-table tbody tr:last-child td {
   border-bottom: 0;
+}
+
+/* Agent Mermaid diagrams: same pitch well as code, scroll if a graph is wide. */
+.bf-md-mermaid {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  margin: 4px 0;
+  padding: 12px 14px;
+  background: var(--bf-bg);
+  border: 1px solid var(--bf-border);
+  border-radius: 8px;
+}
+
+.bf-md-mermaid-svg svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Row actions stay out of sight until the row is hovered or holds focus. */
+.bf-reveal {
+  opacity: 0;
+}
+.bf-reveal-host:hover .bf-reveal,
+.bf-reveal-host:focus-within .bf-reveal {
+  opacity: 1;
 }

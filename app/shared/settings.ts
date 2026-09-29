@@ -1,13 +1,14 @@
 /** Machine-scoped preferences — which agent to hand work to, and when. */
 
 import {
-  hasReviewGate,
   isAiProvider,
   normalizeMode,
   normalizeModel,
+  normalizeOpenRouterAgent,
   type AgentMode,
   type AiModel,
-  type AiProvider
+  type AiProvider,
+  type OpenRouterAgent
 } from './ai'
 import {
   DISCOVERABLE_PROVIDERS,
@@ -21,6 +22,8 @@ export interface OpenRouterSettings {
   catalog: AiModel[]
   /** True after the first successful auto-pin so Refresh does not restore defaults. */
   autoPinned: boolean
+  /** The CLI OpenRouter runs through. Absent means OpenCode, the original backend. */
+  agent?: OpenRouterAgent
   /** Runtime flag from the encrypted store — not persisted. */
   hasKey?: boolean
 }
@@ -98,19 +101,15 @@ export function defaultSettings(): AppSettings {
   }
 }
 
-/**
- * Drop rungs Farol cannot honour: unknown providers, duplicates, and — for
- * Plan — any CLI without a review gate, which `normalizeMode` would silently
- * downgrade to Build.
- */
-export function sanitizeModeChain(raw: unknown, mode: AgentMode): ModelChoice[] {
+/** Drop rungs Farol cannot honour: unknown providers and duplicates. */
+export function sanitizeModeChain(raw: unknown): ModelChoice[] {
   if (!Array.isArray(raw)) return []
   const out: ModelChoice[] = []
   const seen = new Set<string>()
   for (const row of raw) {
     if (!row || typeof row !== 'object') continue
     const { agent, model } = row as { agent?: unknown; model?: unknown }
-    if (!isAiProvider(agent) || (mode === 'plan' && !hasReviewGate(agent))) continue
+    if (!isAiProvider(agent)) continue
     const id = normalizeModel(model)
     const key = `${agent}:${id ?? ''}`
     if (seen.has(key)) continue
@@ -127,7 +126,7 @@ export function withModeChain(
 ): AppSettings {
   return {
     ...settings,
-    modeDefaults: { ...settings.modeDefaults, [mode]: sanitizeModeChain(chain, mode) }
+    modeDefaults: { ...settings.modeDefaults, [mode]: sanitizeModeChain(chain) }
   }
 }
 
@@ -152,7 +151,7 @@ export function modeSelectionForPane(
   const head = settings.modeDefaults[mode][0]
   const provider = head?.agent ?? pane.provider
   const model = head ? head.model : pane.model
-  return { mode: normalizeMode(mode, provider), provider, model }
+  return { mode: normalizeMode(mode), provider, model }
 }
 
 /**
@@ -224,8 +223,9 @@ export function sanitizeOpenRouter(raw: unknown): OpenRouterSettings | undefined
   // as well, so a saved selection survives a temporary catalog outage.
   const pinned = uniqueIds(o.pinned)
   const autoPinned = o.autoPinned === true
-  if (!pinned.length && !catalog.length && !autoPinned) return undefined
-  return { pinned, catalog, autoPinned }
+  const agent = normalizeOpenRouterAgent(o.agent)
+  if (!pinned.length && !catalog.length && !autoPinned && agent === 'opencode') return undefined
+  return { pinned, catalog, autoPinned, ...(agent === 'opencode' ? {} : { agent }) }
 }
 
 /** Jev is on exactly when a key is stored, so the flag is the whole setting. */
@@ -252,6 +252,14 @@ export function withRemoteKeyFlag(settings: AppSettings, hasKey: boolean): AppSe
   return settings.remote ? { ...settings, remote: { ...settings.remote, hasKey } } : settings
 }
 
+/** Pick the CLI OpenRouter runs through; OpenCode is stored as absence. */
+export function withOpenRouterAgent(settings: AppSettings, agent: OpenRouterAgent): AppSettings {
+  const next: OpenRouterSettings = { ...defaultOpenRouter(), ...settings.openrouter }
+  if (agent === 'opencode') delete next.agent
+  else next.agent = agent
+  return { ...settings, openrouter: next }
+}
+
 export function withOpenRouterKeyFlag(settings: AppSettings, hasKey: boolean): AppSettings {
   if (!hasKey && !settings.openrouter) return settings
   return {
@@ -272,7 +280,7 @@ function sanitizeModels(raw: unknown): Partial<Record<AiProvider, string>> {
 
 function sanitizeModeDefaults(raw: unknown): ModeDefaults {
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
-  return { plan: sanitizeModeChain(o.plan, 'plan'), build: sanitizeModeChain(o.build, 'build') }
+  return { plan: sanitizeModeChain(o.plan), build: sanitizeModeChain(o.build) }
 }
 
 function isDiscoverableProvider(value: string): value is DiscoverableProvider {
@@ -323,4 +331,16 @@ export function sanitizeSettings(raw: unknown): AppSettings {
     ...(catalogs ? { catalogs } : {}),
     ...(remote ? { remote } : {})
   }
+}
+
+/**
+ * Renderer saves never own live CLI catalogs — only `refreshAgentCatalogs`
+ * writes them. A stale in-memory list must not overwrite a just-fetched one.
+ */
+export function retainCatalogs(incoming: AppSettings, persisted: AppSettings): AppSettings {
+  if (persisted.catalogs) return { ...incoming, catalogs: persisted.catalogs }
+  if (!incoming.catalogs) return incoming
+  const next = { ...incoming }
+  delete next.catalogs
+  return next
 }

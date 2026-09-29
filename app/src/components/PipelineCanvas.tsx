@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type { AppSettings, PipelineNode, StepType } from '@shared/types'
-import { aiSelectionLabel, normalizeAi } from '@shared/types'
+import { GIT_HOOK_EVENTS, aiSelectionLabel, normalizeAi } from '@shared/types'
 import { defaultGate, newPipelineNode, nodeGate, parallelAsClashIds, sanitizeAs, topoSort } from '@shared/graph'
-import { C, MONO, UI } from '../theme'
+import { C, MONO, UI, ELLIPSIS } from '../theme'
 import { Checkbox, CliModelDropdown, ConfirmButton, SegmentedControl } from './controls'
 import type { EditorState } from '../types'
 
@@ -33,7 +33,7 @@ const RUN_TARGETS = [
 const inputStyle: React.CSSProperties = {
   height: 24,
   padding: '0 8px',
-  borderRadius: 5,
+  borderRadius: 4,
   border: '1px solid rgba(255,255,255,0.1)',
   background: 'rgba(255,255,255,0.05)',
   color: C.text,
@@ -238,7 +238,7 @@ export default function PipelineCanvas({
         display: 'flex',
         flexDirection: 'column',
         // Opaque full-page surface — never inherit Liquid Glass / chrome transparency.
-        background: '#181817',
+        background: C.terminal,
         fontFamily: UI,
         userSelect: 'none'
       }}
@@ -252,10 +252,10 @@ export default function PipelineCanvas({
           gap: 8,
           padding: '0 14px',
           borderBottom: '1px solid rgba(255,255,255,0.08)',
-          background: '#232322'
+          background: C.sidebar
         }}
       >
-        <span style={{ fontSize: 12, fontWeight: 600, color: C.dim }}>Pipeline</span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: C.textMuted }}>Pipeline</span>
         <input
           className="bf-input"
           value={editor.name}
@@ -290,6 +290,23 @@ export default function PipelineCanvas({
             Fall back to this machine if remote fails (runs without sandbox isolation)
           </Checkbox>
         )}
+        <span style={{ width: 1, alignSelf: 'stretch', background: 'rgba(255,255,255,0.08)' }} />
+        {GIT_HOOK_EVENTS.map((event) => (
+          <Checkbox
+            key={event}
+            checked={editor.gitHooks?.includes(event) === true}
+            onChange={(v) =>
+              updateEditor((current) => {
+                const rest = (current.gitHooks ?? []).filter((e) => e !== event)
+                const gitHooks = v ? [...rest, event] : rest
+                return gitHooks.length ? { ...current, gitHooks } : { ...current, gitHooks: undefined }
+              })
+            }
+            title="Runs on this event when Farol is open; skipped otherwise, so the repo stays usable without it."
+          >
+            Run on {event}
+          </Checkbox>
+        ))}
         <button type="button" className="bf-hover-fill" onClick={() => addNode('shell')} style={toolBtn}>
           + Shell
         </button>
@@ -381,7 +398,7 @@ export default function PipelineCanvas({
             position: 'relative',
             overflow: 'hidden',
             cursor: space.current ? 'grab' : 'default',
-            backgroundColor: '#232322',
+            backgroundColor: C.sidebar,
             backgroundImage: 'radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px)',
             backgroundSize: `${22 * cam.z}px ${22 * cam.z}px`,
             backgroundPosition: `${cam.x}px ${cam.y}px`,
@@ -480,7 +497,7 @@ export default function PipelineCanvas({
                     padding: 0,
                     borderRadius: '50%',
                     border: '1px solid rgba(255,255,255,0.18)',
-                    background: '#232322',
+                    background: C.sidebar,
                     color: C.red,
                     fontSize: 13,
                     lineHeight: '16px',
@@ -526,8 +543,8 @@ export default function PipelineCanvas({
                   boxSizing: 'border-box',
                   padding: `${8 * cam.z}px ${10 * cam.z}px`,
                   borderRadius: 8,
-                  border: `1px solid ${ring ?? '#3E3E3A'}`,
-                  background: ai ? 'rgba(184, 148, 255,0.15)' : '#232322',
+                  border: `1px solid ${ring ?? C.border}`,
+                  background: ai ? 'rgba(184, 148, 255,0.15)' : C.sidebar,
                   boxShadow: ring
                     ? `0 0 0 3px ${clash ? 'rgba(255, 107, 107, 0.22)' : 'rgba(214, 242, 58,0.18)'}`
                     : '0 8px 24px rgba(0,0,0,0.35)',
@@ -580,19 +597,17 @@ export default function PipelineCanvas({
                     alignItems: 'center',
                     gap: 6 * cam.z,
                     minWidth: 0,
-                    fontSize: 9 * cam.z,
+                    fontSize: 10 * cam.z,
                     fontWeight: 700,
                     letterSpacing: '0.4px',
-                    color: ai ? C.purpleSoft : C.dim
+                    color: ai ? C.purpleSoft : C.textMuted
                   }}
                 >
                   <span
                     style={{
                       flex: 1,
                       minWidth: 0,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap'
+                      ...ELLIPSIS
                     }}
                   >
                     {ai ? `AI · ${aiSelectionLabel(normalizeAi(n.ai), n.model)}` : 'SHELL'}
@@ -685,7 +700,7 @@ function Inspector({
         flex: 'none',
         width: 280,
         borderLeft: '1px solid rgba(255,255,255,0.08)',
-        background: '#232322',
+        background: C.sidebar,
         padding: 14,
         overflowY: 'auto',
         display: 'flex',

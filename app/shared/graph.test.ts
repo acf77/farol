@@ -236,6 +236,26 @@ describe('sanitizePipeline', () => {
     expect(p?.nodes[0].model).toBeUndefined()
   })
 
+  it('keeps valid git hook events and drops unknown ones', () => {
+    const p = sanitizePipeline({
+      id: 'x',
+      name: 'X',
+      nodes: [{ id: 'a', name: 'A', type: 'shell', cmd: 'a', after: [], x: 0, y: 0 }],
+      gitHooks: ['pre-commit', 'pre-push', 'post-commit', 'pre-commit']
+    })
+    expect(p?.gitHooks).toEqual(['pre-commit', 'pre-push'])
+  })
+
+  it('omits gitHooks entirely once nothing valid is left', () => {
+    const p = sanitizePipeline({
+      id: 'x',
+      name: 'X',
+      nodes: [{ id: 'a', name: 'A', type: 'shell', cmd: 'a', after: [], x: 0, y: 0 }],
+      gitHooks: ['post-commit']
+    })
+    expect(p?.gitHooks).toBeUndefined()
+  })
+
   it('drops duplicate node ids', () => {
     const p = sanitizePipeline({
       id: 'x',

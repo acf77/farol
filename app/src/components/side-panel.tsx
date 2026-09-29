@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties, type TransitionEvent } from 'react'
-import { UI } from '../theme'
+import { C, UI } from '../theme'
 
 export const SIDE_RAIL_WIDTH = 54
 export const SIDE_PANEL_WIDTH = 280
@@ -64,7 +64,7 @@ export function sidePanelShellStyle(
     alignSelf: 'stretch',
     display: 'flex',
     flexDirection: 'column',
-    background: '#232322',
+    background: C.sidebar,
     border: '1px solid #3E3E3A',
     borderRadius: 12,
     overflow: 'hidden',

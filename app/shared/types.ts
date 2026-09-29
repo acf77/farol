@@ -1,6 +1,7 @@
 /** Types shared between the main process, the preload bridge, and the renderer. */
 
 import type { AgentMode, AiProvider } from './ai'
+import type { AgentContext, ContextUsage, SavedAgentContext } from './agent-context'
 import type { AgentQuestion } from './questions'
 import type { ProjectSession } from './session'
 import type { AgentSkill } from './skills'
@@ -84,6 +85,9 @@ export interface PipelineNode extends Step {
 
 /** Where shell steps run. Only `remote` is stored; absent means this machine. */
 export type PipelineTarget = 'remote'
+/** Git hook Farol can stand in for. Kept to the two client-side checks worth blocking on. */
+export type GitHookEvent = 'pre-commit' | 'pre-push'
+export const GIT_HOOK_EVENTS: readonly GitHookEvent[] = ['pre-commit', 'pre-push']
 
 export interface Pipeline {
   id: string
@@ -104,6 +108,12 @@ export interface Pipeline {
    * Defaults to off so release/mutation pipelines stay manual until opted in.
    */
   autoSelectable?: boolean
+  /**
+   * Git hook events that run this pipeline. Farol installs a `.git/hooks` script
+   * for each one — shared with other worktrees of this repo, not with separate
+   * clones. See `syncManagedHooks` for the no-Farol-installed fallback.
+   */
+  gitHooks?: GitHookEvent[]
 }
 
 export type StepState = 'pending' | 'running' | 'pass' | 'fail' | 'skip'
@@ -158,6 +168,52 @@ export interface GitCommit {
   when: string
 }
 
+export interface GitHookInfo {
+  /** Hook filename, e.g. `pre-commit`. */
+  name: string
+  path: string
+  /** Executable and not a `.sample` template — git will actually run it. */
+  enabled: boolean
+}
+
+/** Hooks that were active for a commit/push that failed, and what they printed. */
+export interface GitHookRun {
+  hooks: string[]
+  output: string
+}
+
+
+/** Normalized GitHub Actions / status-check outcome for Source Control. */
+export type PrCheckState = 'pending' | 'passed' | 'failed' | 'skipped' | 'neutral'
+
+export interface PrCheck {
+  name: string
+  state: PrCheckState
+  /** True when branch protection lists this check as required. */
+  required?: boolean
+  url?: string
+}
+
+/** Roll-up of check rows used for merge gating and the Actions summary. */
+export interface PrCheckSummary {
+  /** Overall required-check readiness; `none` when GitHub reported no checks. */
+  state: 'pending' | 'passed' | 'failed' | 'none' | 'unavailable'
+  pending: number
+  passed: number
+  failed: number
+  skipped: number
+  neutral: number
+  checks: PrCheck[]
+}
+
+export const MERGE_STRATEGIES = ['merge', 'squash', 'rebase'] as const
+export type MergeStrategy = (typeof MERGE_STRATEGIES)[number]
+
+/** Session draft for opening a pull request (title + description). */
+export interface PrDraft {
+  title: string
+  description: string
+}
 
 export interface PullRequest {
   number: number
@@ -166,6 +222,10 @@ export interface PullRequest {
   base?: string
   /** GitHub HTML URL for this PR, when `gh` reported it. */
   url?: string
+  /** True when the PR is still a draft on GitHub. */
+  isDraft?: boolean
+  /** GitHub Actions / status checks for this PR, when available. */
+  checks?: PrCheckSummary
 }
 
 export interface GitHubInfo {
@@ -249,6 +309,9 @@ export type AgentTaskStatus =
   | 'cancelled'
   | 'failed'
 
+/** Statuses that mean the agent is still in flight. */
+export const AGENT_LIVE: ReadonlySet<string> = new Set(['working', 'validating', 'repairing'])
+
 export interface AgentTaskRequest {
   id: string
   prompt: string
@@ -267,6 +330,11 @@ export interface AgentTaskRequest {
   checkout: string
   branch: string
   maxAttempts?: number
+  /**
+   * The chat so far, rebuilt from a restored pane when the main process no
+   * longer holds the task (after a restart). Ignored for a task it still has.
+   */
+  context?: AgentContext
 }
 
 export type AgentTaskEvent =
@@ -311,6 +379,10 @@ export type AgentTaskEvent =
       mode: AgentMode
       reason: string
     }
+  /** What the pane saves so the chat can continue after a restart. */
+  | { kind: 'context'; taskId: string; context: SavedAgentContext }
+  /** How full the agent's context is; `null` once the session it measured is gone. */
+  | { kind: 'usage'; taskId: string; usage: ContextUsage | null }
   /** Agent asked the user; `answers` is set when they reply or dismiss. */
   | {
       kind: 'question'
@@ -361,6 +433,35 @@ export type UpdateStatus =
 
 export type Platform = 'darwin' | 'win32' | 'linux' | (string & {})
 
+/** One child of a project directory, relative to the project root. */
+export interface ProjectDirEntry {
+  name: string
+  path: string
+  kind: 'file' | 'dir'
+}
+
+export type ProjectLineEnding = 'lf' | 'crlf'
+
+export interface ProjectFileRead {
+  path: string
+  content: string
+  mtimeMs: number
+  lineEnding: ProjectLineEnding
+}
+
+export interface ProjectFileWrite {
+  mtimeMs: number
+}
+
+export interface ProjectWriteOpts {
+  expectedMtimeMs?: number
+  overwrite?: boolean
+}
+
+export type ProjectFsFailure = { ok: false; error: string; conflict?: boolean }
+export type ProjectFsSuccess<T> = { ok: true } & T
+export type ProjectFsResult<T> = ProjectFsSuccess<T> | ProjectFsFailure
+
 export interface FarolApi {
   platform: Platform
   /** The machine's default shell, e.g. `zsh` — used to label terminal tabs. */
@@ -371,6 +472,17 @@ export interface FarolApi {
     openPath(path: string): Promise<Project | null>
     /** Relative paths under the project root, filtered by an optional query. */
     listFiles(projectPath: string, query?: string): Promise<string[]>
+    /** Immediate children of one directory under the project root. */
+    listDir(projectPath: string, relDir?: string): Promise<ProjectFsResult<{ entries: ProjectDirEntry[] }>>
+    /** UTF-8 text of an existing project file. */
+    readFile(projectPath: string, relPath: string): Promise<ProjectFsResult<ProjectFileRead>>
+    /** Overwrite a file previously read in this session. */
+    writeFile(
+      projectPath: string,
+      relPath: string,
+      content: string,
+      opts?: ProjectWriteOpts
+    ): Promise<ProjectFsResult<ProjectFileWrite>>
     /** User-invocable skills for the selected agent, from its native scopes. */
     listSkills(projectPath: string, provider: AiProvider): Promise<AgentSkill[]>
     /** Persist a dropped chat image; returns the absolute path on disk. */
@@ -459,14 +571,32 @@ export interface FarolApi {
       projectPath: string,
       message: string,
       files?: string[]
-    ): Promise<{ ok: boolean; message?: string; error?: string }>
-    push(projectPath: string): Promise<{ ok: boolean; message: string }>
+    ): Promise<{ ok: boolean; message?: string; error?: string; hookRun?: GitHookRun }>
+    push(projectPath: string): Promise<{ ok: boolean; message: string; hookRun?: GitHookRun }>
     pull(projectPath: string): Promise<{ ok: boolean; message: string }>
+    /** Hooks installed in this repo's hooks directory (respects `core.hooksPath`). */
+    hooks(projectPath: string): Promise<GitHookInfo[]>
     github(projectPath: string): Promise<GitHubInfo>
     createPr(
       projectPath: string,
       base?: string,
+      title?: string,
+      body?: string
+    ): Promise<{ ok: boolean; message: string }>
+    draftPr(
+      projectPath: string,
+      provider: AiProvider,
+      model?: string,
+      base?: string
+    ): Promise<{
+      ok: boolean
       title?: string
+      description?: string
+      error?: string
+    }>
+    mergePr(
+      projectPath: string,
+      strategy: MergeStrategy
     ): Promise<{ ok: boolean; message: string }>
     bringConflicts(projectPath: string): Promise<{ ok: boolean; message: string; prompt?: string }>
     /** Fires when HEAD changes, including from outside the app. */
@@ -505,6 +635,12 @@ export interface FarolApi {
       requestId: string,
       answers: string[][] | null
     ): Promise<{ ok: boolean; message?: string }>
+    /**
+     * Have the agent write a handoff note, then drop its CLI session so the
+     * next message starts a new one from the task, latest requests and note.
+     * `missing` means the main process no longer holds the task (a restart).
+     */
+    freshStart(taskId: string): Promise<{ ok: boolean; message?: string; missing?: boolean }>
     onEvent(cb: (e: AgentTaskEvent) => void): () => void
   }
   settings: {

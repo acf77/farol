@@ -11,14 +11,18 @@ import {
   type ProjectSession,
   type Workspace
 } from '../shared/session'
+import { mergeCatalogs, type AgentCatalogs } from '../shared/agent-models'
 import {
+  retainCatalogs,
   sanitizeSettings,
   withJevKeyFlag,
   withOpenRouterKeyFlag,
   withRemoteKeyFlag,
   type AppSettings
 } from '../shared/settings'
+import { normalizeOpenRouterAgent } from '../shared/ai'
 import { hasSecret } from './secrets'
+import { setOpenRouterAgent } from './openrouter-agent'
 import { pipelineStoreRootFor } from './git'
 import { migrateUserDataFiles } from './user-data-migrate'
 
@@ -400,6 +404,11 @@ function updateWorkspace(mutator: (workspace: Workspace) => void): Promise<void>
   return workspaceMutation
 }
 
+/** Resolves once every workspace write queued so far has hit disk. */
+export function flushWorkspace(): Promise<void> {
+  return workspaceMutation
+}
+
 async function isDir(p: string): Promise<boolean> {
   return (await fs.stat(p).catch(() => null))?.isDirectory() ?? false
 }
@@ -470,7 +479,9 @@ export async function saveProjectSession(
 }
 
 export async function loadSettings(): Promise<AppSettings> {
+  await flushWorkspace()
   const stored = sanitizeSettings((await readWorkspace()).settings)
+  setOpenRouterAgent(normalizeOpenRouterAgent(stored.openrouter?.agent))
   return withRemoteKeyFlag(
     withJevKeyFlag(
       withOpenRouterKeyFlag(stored, hasSecret('openrouterApiKey')),
@@ -481,12 +492,18 @@ export async function loadSettings(): Promise<AppSettings> {
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
+  setOpenRouterAgent(normalizeOpenRouterAgent(settings.openrouter?.agent))
   await updateWorkspace((ws) => {
-    const next = sanitizeSettings(settings)
-    const prev = sanitizeSettings(ws.settings)
-    // Keep discovered catalogs if the renderer has not adopted them yet.
-    if (!next.catalogs && prev.catalogs) next.catalogs = prev.catalogs
-    ws.settings = next
+    ws.settings = retainCatalogs(sanitizeSettings(settings), sanitizeSettings(ws.settings))
+  })
+}
+
+/** Persist discovered CLI catalogs; merges over whatever is already on disk. */
+export async function saveAgentCatalogs(discovered: AgentCatalogs): Promise<void> {
+  await updateWorkspace((ws) => {
+    const next = sanitizeSettings(ws.settings)
+    const catalogs = mergeCatalogs(next.catalogs, discovered)
+    ws.settings = Object.keys(catalogs).length ? { ...next, catalogs } : next
   })
 }
 
@@ -494,9 +511,4 @@ export async function clearLastProject(): Promise<void> {
   await updateWorkspace((ws) => {
     ws.lastProject = null
   })
-}
-
-/** Resolves once every workspace write queued so far has hit disk. */
-export function flushWorkspace(): Promise<void> {
-  return workspaceMutation
 }

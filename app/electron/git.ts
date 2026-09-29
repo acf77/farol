@@ -3,20 +3,41 @@ import fs from 'fs'
 import path from 'path'
 import { runAiOnce } from './ai-oneshot'
 import {
+  activeHooks,
   commitBlockReason,
-  committableFiles,
   conflictMergeBase,
   conflictResolvePrompt,
+  isSecretPath,
   parseAheadBehind,
   parseGitStatus,
   parseMergeTreeConflictPaths,
   pickPushRemote,
-  pushBlockReason
+  pushBlockReason,
+  committableFiles
 } from '../shared/git-status'
-import type { AiProvider, GitCommit, GitHubInfo, GitInfo, GitStatus } from '../shared/types'
+import { GIT_HOOK_EVENTS } from '../shared/types'
+import { quoteShellArg } from '../shared/graph'
+import type {
+  AiProvider,
+  GitCommit,
+  GitHookEvent,
+  GitHookInfo,
+  GitHookRun,
+  GitHubInfo,
+  GitInfo,
+  GitStatus,
+  Pipeline
+} from '../shared/types'
 import { githubInfo } from './github'
 import type { WorktreeRequest } from '../shared/worktree'
-import { parseAlreadyOpenPath, parseWorktreeList, pipelineStoreRoot, worktreeFolderName } from '../shared/worktree'
+import {
+  parseAlreadyOpenPath,
+  parseWorktreeList,
+  pipelineStoreRoot,
+  primaryRepoFolderName,
+  worktreeFolderName,
+  type WorktreeEntry
+} from '../shared/worktree'
 
 /**
  * Real git, read through the CLI. Plain `execFile` rather than a PTY: this is
@@ -176,10 +197,9 @@ async function reuseExistingWorktree(
   cwd: string,
   name: string,
   toplevel: string,
-  bare: boolean
+  bare: boolean,
+  trees: WorktreeEntry[]
 ): Promise<WorktreeResult | null> {
-  const listed = await git(cwd, ['worktree', 'list', '--porcelain'])
-  const trees = parseWorktreeList(listed.out)
   const existing = trees.find((t) => t.branch === name)
   if (existing && fs.existsSync(existing.path)) {
     return { ok: true, path: existing.path, branch: name, reused: true, message: '' }
@@ -196,11 +216,12 @@ async function reuseExistingWorktree(
 async function resolveWorktreeDest(
   toplevel: string,
   name: string,
-  folder: string | undefined
+  folder: string | undefined,
+  repoFolder: string
 ): Promise<{ dest: string } | WorktreeResult> {
   const destBase = path.join(
     path.dirname(toplevel),
-    worktreeFolderName(path.basename(toplevel), name, folder)
+    worktreeFolderName(repoFolder, name, folder)
   )
   if (fs.existsSync(destBase)) {
     const at = await git(destBase, ['rev-parse', '--abbrev-ref', 'HEAD'])
@@ -257,10 +278,14 @@ export async function addWorktree(cwd: string, req: WorktreeRequest): Promise<Wo
   const root = await resolveWorktreeRoot(cwd)
   if ('message' in root) return { ok: false, message: root.message }
 
-  const reused = await reuseExistingWorktree(cwd, name, root.toplevel, root.bare)
+  const listed = await git(cwd, ['worktree', 'list', '--porcelain'])
+  const trees = parseWorktreeList(listed.out)
+  const repoFolder = primaryRepoFolderName(root.toplevel, trees)
+
+  const reused = await reuseExistingWorktree(cwd, name, root.toplevel, root.bare, trees)
   if (reused) return reused
 
-  const destOrReuse = await resolveWorktreeDest(root.toplevel, name, req.folder)
+  const destOrReuse = await resolveWorktreeDest(root.toplevel, name, req.folder, repoFolder)
   if ('ok' in destOrReuse) return destOrReuse
 
   const built = await buildWorktreeArgs(cwd, name, destOrReuse.dest, req.base)
@@ -389,6 +414,151 @@ export async function bringPrConflicts(
   }
 }
 
+/**
+ * Resolves `cwd`'s hooks directory for *writing* Farol-managed scripts. Null
+ * outside a repo, and also null when `core.hooksPath` points outside `.git`
+ * (e.g. a Husky/lefthook `.husky` directory) — that location is tracked,
+ * committable worktree state, and writing or deleting a Farol-managed script
+ * there would land this machine's absolute paths in the repo, or delete a
+ * file another tool owns.
+ *
+ * The safety check compares against `--git-common-dir`, not
+ * `--absolute-git-dir`: in a linked worktree the git-dir is the
+ * worktree-private `.git/worktrees/<name>`, but hooks always live in the
+ * *shared* `.git/hooks` under the common dir (mirrors `pipelineStoreRootFor`,
+ * which has the same worktree/common-dir distinction).
+ */
+async function hooksDirFor(cwd: string): Promise<string | null> {
+  // `--path-format=absolute` matches how `--git-common-dir` resolves symlinks
+  // (e.g. macOS's `/tmp` → `/private/tmp`) so it isn't fooled by a symlink in
+  // `cwd`. The path actually used stays `cwd`-relative, matching every
+  // caller's existing expectations.
+  const [dir, absDir, commonDir] = await Promise.all([
+    git(cwd, ['rev-parse', '--git-path', 'hooks']),
+    git(cwd, ['rev-parse', '--path-format=absolute', '--git-path', 'hooks']),
+    git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
+  ])
+  if (dir.code !== 0 || absDir.code !== 0 || commonDir.code !== 0) return null
+  const absHooks = absDir.out.trim()
+  const commonDirAbs = commonDir.out.trim()
+  if (absHooks !== commonDirAbs && !absHooks.startsWith(commonDirAbs + path.sep)) return null
+  return path.resolve(cwd, dir.out.trim())
+}
+
+/**
+ * Hooks git will actually run for `cwd`'s repo — respects `core.hooksPath`
+ * (e.g. a Husky/lefthook `.husky` directory), skips `.sample` templates.
+ * Used both to list hooks in the UI and to explain a failed commit/push, so
+ * unlike `hooksDirFor` it does NOT restrict to the directory Farol may write
+ * into — a repo using Husky still has real hooks git will run.
+ */
+export async function hooksInfo(cwd: string): Promise<GitHookInfo[]> {
+  const dir = await git(cwd, ['rev-parse', '--git-path', 'hooks'])
+  if (dir.code !== 0) return []
+  const hooksPath = path.resolve(cwd, dir.out.trim())
+
+  let entries: string[]
+  try {
+    entries = fs.readdirSync(hooksPath)
+  } catch {
+    return []
+  }
+
+  return entries
+    .filter((name) => !name.startsWith('.') && !name.endsWith('.sample'))
+    .map((name) => {
+      const full = path.join(hooksPath, name)
+      let enabled: boolean
+      try {
+        fs.accessSync(full, fs.constants.X_OK)
+        enabled = fs.statSync(full).isFile()
+      } catch {
+        enabled = false
+      }
+      return { name, path: full, enabled }
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** Marks a hook script as ours, so a sync never clobbers a hook the user wrote by hand. */
+const MANAGED_HOOK_MARKER = '# farol-managed-hook'
+
+/** Where a hook script finds the app that can run its pipelines. */
+interface ManagedHookRuntime {
+  /** `process.execPath` — the Electron binary, run headless via `ELECTRON_RUN_AS_NODE`. */
+  execPath: string
+  /** Path to the built `git-hook.js` runtime, passed to `execPath` as its one argument. */
+  scriptPath: string
+  /** This project's bridge socket, so the hook can reach the running app without it. */
+  socketPath: string
+}
+
+// No `[ -f scriptPath ]` check: in a packaged build scriptPath lives inside
+// app.asar, which `test -f` cannot see even though Electron's Node can read it.
+// `[ -x execPath ]` already confirms the app binary is installed.
+function managedHookScript(event: GitHookEvent, runtime: ManagedHookRuntime): string {
+  return [
+    '#!/bin/sh',
+    MANAGED_HOOK_MARKER,
+    '# Generated by Farol from .farol/pipelines.json — do not edit by hand.',
+    '# Skips silently when Farol is not open, so this hook is harmless without it.',
+    `[ -S ${quoteShellArg(runtime.socketPath)} ] || exit 0`,
+    `[ -x ${quoteShellArg(runtime.execPath)} ] || exit 0`,
+    `ELECTRON_RUN_AS_NODE=1 FAROL_SOCKET=${quoteShellArg(runtime.socketPath)} ${quoteShellArg(runtime.execPath)} ${quoteShellArg(runtime.scriptPath)} ${event}`,
+    'exit $?',
+    ''
+  ].join('\n')
+}
+
+function isManagedHookFile(file: string): boolean {
+  try {
+    return fs.readFileSync(file, 'utf8').includes(MANAGED_HOOK_MARKER)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Installs or removes Farol-managed hook scripts so `.git/hooks` matches which
+ * events `pipelines` are configured for. Never touches a hook file that isn't
+ * already Farol's — a hand-written hook always wins. `.git` isn't versioned,
+ * so this has to re-run per clone; the pipeline config that drives it is
+ * shared in `.farol/pipelines.json`.
+ */
+export async function syncManagedHooks(
+  cwd: string,
+  pipelines: Pipeline[],
+  runtime: ManagedHookRuntime
+): Promise<void> {
+  const hooksPath = await hooksDirFor(cwd)
+  if (!hooksPath) return
+  fs.mkdirSync(hooksPath, { recursive: true })
+
+  for (const event of GIT_HOOK_EVENTS) {
+    const wanted = pipelines.some((p) => p.gitHooks?.includes(event))
+    const file = path.join(hooksPath, event)
+    const exists = fs.existsSync(file)
+
+    if (!wanted) {
+      if (exists && isManagedHookFile(file)) fs.rmSync(file, { force: true })
+      continue
+    }
+    if (exists && !isManagedHookFile(file)) continue // a real hook the user wrote — leave it alone
+    fs.writeFileSync(file, managedHookScript(event, runtime))
+    fs.chmodSync(file, 0o755) // `mode` on writeFileSync only applies when the file is new
+  }
+}
+
+/** Hooks that could have caused a failed commit/push, with the raw output they (or git) printed. */
+async function hookRunFor(
+  cwd: string,
+  kind: 'commit' | 'push',
+  output: string
+): Promise<GitHookRun | undefined> {
+  const hooks = activeHooks(await hooksInfo(cwd), kind)
+  return hooks.length ? { hooks: hooks.map((hook) => hook.name), output } : undefined
+}
+
 export async function status(cwd: string): Promise<GitStatus> {
   const [porcelain, tracking, baseMerge, remotes, unpublished] = await Promise.all([
     git(cwd, ['status', '--porcelain=v1']),
@@ -457,11 +627,15 @@ async function restoreStagedFiles(
   return removed.length ? stageFiles(cwd, removed) : unstaged
 }
 
-function selectedCommittableFiles(st: GitStatus, requested?: string[]): string[] {
-  const { files } = committableFiles(st)
+/** Keep only `files` that `requested` names, or all of them when nothing is requested. */
+function filterSelected(files: string[], requested?: string[]): string[] {
   if (!requested) return files
   const selected = new Set(requested)
   return files.filter((file) => selected.has(file))
+}
+
+function selectedCommittableFiles(st: GitStatus, requested?: string[]): string[] {
+  return filterSelected(committableFiles(st).files, requested)
 }
 
 function indexChanges(st: GitStatus, selected: string[]): { added: string[]; removed: string[] } {
@@ -478,24 +652,33 @@ async function failedCommit(
   added: string[],
   removed: string[],
   failure: string,
-  fallback: string
-): Promise<{ ok: false; error: string }> {
+  fallback: string,
+  hookRun?: GitHookRun
+): Promise<{ ok: false; error: string; hookRun?: GitHookRun }> {
   const restored = await restoreStagedFiles(cwd, added, removed)
   const message = failure || fallback
   return {
     ok: false,
-    error: restored.ok ? message : `${message}; ${restored.message || 'Could not restore staged files'}`
+    error: restored.ok ? message : `${message}; ${restored.message || 'Could not restore staged files'}`,
+    ...(hookRun ? { hookRun } : {})
   }
 }
 
-export async function push(cwd: string): Promise<{ ok: boolean; message: string }> {
+// A pre-commit/pre-push hook may be a Farol-managed one running a full pipeline
+// (AI review steps included), so give the commit/push itself the same headroom
+// as an agent-triggered pipeline run rather than the usual short CLI timeout.
+const HOOK_RUN_TIMEOUT_MS = 15 * 60_000
+
+export async function push(cwd: string): Promise<{ ok: boolean; message: string; hookRun?: GitHookRun }> {
   const st = await status(cwd)
   const blocked = pushBlockReason(st)
   if (blocked) return { ok: false, message: blocked }
   const args = !st.upstream && st.remote ? ['push', '-u', st.remote, 'HEAD'] : ['push']
-  const res = await git(cwd, args, 120_000)
+  const res = await git(cwd, args, HOOK_RUN_TIMEOUT_MS)
   const line = cliFirstLine(res)
-  return { ok: res.code === 0, message: line || (res.code === 0 ? 'Pushed' : 'Push failed') }
+  if (res.code === 0) return { ok: true, message: line || 'Pushed' }
+  const hookRun = await hookRunFor(cwd, 'push', (res.err || res.out).trim())
+  return { ok: false, message: line || 'Push failed', ...(hookRun ? { hookRun } : {}) }
 }
 
 /** Bring a clean tracking branch forward without creating a merge commit. */
@@ -508,23 +691,31 @@ export async function pull(cwd: string): Promise<{ ok: boolean; message: string 
   return { ok: res.code === 0, message: line || (res.code === 0 ? 'Already up to date' : 'Pull failed') }
 }
 
-async function commit(cwd: string, message: string): Promise<{ ok: boolean; message: string }> {
+async function commit(
+  cwd: string,
+  message: string
+): Promise<{ ok: boolean; message: string; hookRun?: GitHookRun }> {
   const trimmed = message.trim()
   if (!trimmed) return { ok: false, message: 'Commit message is empty' }
-  const res = await git(cwd, ['commit', '-m', trimmed])
+  const res = await git(cwd, ['commit', '-m', trimmed], HOOK_RUN_TIMEOUT_MS)
   const line = cliFirstLine(res)
-  return { ok: res.code === 0, message: line || (res.code === 0 ? 'Committed' : 'Commit failed') }
+  if (res.code === 0) return { ok: true, message: line || 'Committed' }
+  const hookRun = await hookRunFor(cwd, 'commit', (res.err || res.out).trim())
+  return { ok: false, message: line || 'Commit failed', ...(hookRun ? { hookRun } : {}) }
 }
 
 const COMMIT_MSG_LIMIT = 24_000
 
+/** Drop a fenced code block wrapper (` ```lang … ``` `) if the reply is wrapped in one. */
+function stripCodeFence(raw: string): string {
+  const text = raw.trim()
+  if (!text.startsWith('```')) return text
+  return text.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '').trim()
+}
+
 /** Strip markdown fences and cap AI commit output to a short message. */
 export function sanitizeCommitMessage(raw: string): string {
-  let message = raw.trim()
-  if (message.startsWith('```')) {
-    message = message.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '').trim()
-  }
-  return message
+  return stripCodeFence(raw)
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
@@ -578,8 +769,7 @@ export async function draftCommit(
   if (blocked) return { ok: false, error: blocked }
 
   const { files: available, skipped } = committableFiles(st)
-  const selected = selectedFiles ? new Set(selectedFiles) : null
-  const files = selected ? available.filter((file) => selected.has(file)) : available
+  const files = filterSelected(available, selectedFiles)
   if (!files.length) return { ok: false, error: 'Select at least one file to generate a commit message.' }
   const untracked = st.untracked.map((f) => f.path).filter((p) => files.includes(p))
   const tracked = files.filter((p) => !untracked.includes(p))
@@ -595,12 +785,136 @@ export async function draftCommit(
   return { ok: true, message, files, skipped }
 }
 
+const PR_CONTEXT_LIMIT = 48_000
+const PR_TITLE_LIMIT = 120
+const PR_BODY_LIMIT = 8_000
+
+/** Strip fences and labels from an AI PR title. */
+export function sanitizePrTitle(raw: string): string {
+  const title = stripCodeFence(raw)
+    .replace(/^(?:title|pr title)\s*[:\-–]\s*/i, '')
+    .trim()
+  const line = title.split('\n').map((l) => l.trim()).find(Boolean) ?? ''
+  return line.slice(0, PR_TITLE_LIMIT)
+}
+
+/** Strip fences and a leading DESCRIPTION label from an AI PR body. */
+export function sanitizePrDescription(raw: string): string {
+  return stripCodeFence(raw)
+    .replace(/^(?:description|body|pr (?:description|body))\s*[:\-–]\s*/i, '')
+    .trim()
+    .slice(0, PR_BODY_LIMIT)
+}
+
+/** Parse a structured AI reply into title + description. */
+export function parsePrDraftResponse(raw: string): { title: string; description: string } {
+  const text = stripCodeFence(raw)
+
+  const titleMatch = text.match(/^title\s*[:\-–]\s*(.+)$/im)
+  const descMatch = text.match(/^description\s*[:\-–]\s*\n?([\s\S]*)$/im)
+  if (titleMatch || descMatch) {
+    const afterTitle = titleMatch
+      ? text.slice(titleMatch.index! + titleMatch[0].length).replace(/^\n+/, '')
+      : text
+    const description = descMatch
+      ? descMatch[1] ?? ''
+      : afterTitle.replace(/^description\s*[:\-–]\s*/im, '')
+    return {
+      title: sanitizePrTitle(titleMatch?.[1] ?? ''),
+      description: sanitizePrDescription(description)
+    }
+  }
+
+  const [first, ...rest] = text.split(/\n\n+/)
+  return {
+    title: sanitizePrTitle(first ?? ''),
+    description: sanitizePrDescription(rest.join('\n\n'))
+  }
+}
+
+function prDraftPrompt(base: string, log: string, diff: string): string {
+  return [
+    `Write a GitHub pull request title and description for merging the current branch into ${base}.`,
+    'Output exactly this shape (no markdown fences, no extra labels):',
+    'TITLE: <one-line title>',
+    'DESCRIPTION:',
+    '<markdown body with a short summary and, when useful, a test plan>',
+    '',
+    '--- Commits ---',
+    log || '(no commits listed)',
+    '',
+    '--- Diff ---',
+    (diff || '(empty diff)').slice(0, PR_CONTEXT_LIMIT)
+  ].join('\n')
+}
+
+async function prCompareContext(
+  cwd: string,
+  base: string
+): Promise<{ ok: true; log: string; diff: string } | { ok: false; error: string }> {
+  const from = await resolveBase(cwd, base)
+  if (!from) return { ok: false, error: `Unknown base branch ${base.trim()}.` }
+  const range = `${from.ref}...HEAD`
+  const [logRes, namesRes] = await Promise.all([
+    git(cwd, ['log', '--oneline', range, '--', '.'], 30_000),
+    git(cwd, ['diff', '--name-only', range], 30_000)
+  ])
+  const paths = namesRes.out
+    .split('\n')
+    .map((p) => p.trim())
+    .filter((p) => p && !isSecretPath(p))
+  const diffRes = paths.length
+    ? await git(cwd, ['diff', '--stat', '--patch', range, '--', ...paths], 60_000)
+    : { code: 0, out: '', err: '' }
+  return {
+    ok: true,
+    log: logRes.out.trim(),
+    diff: diffRes.out.trim()
+  }
+}
+
+export type PrContentDraft = {
+  ok: boolean
+  title?: string
+  description?: string
+  error?: string
+}
+
+/** Generate a PR title and description from commits + diff vs the chosen base. */
+export async function draftPullRequest(
+  cwd: string,
+  provider: AiProvider,
+  model?: string,
+  base?: string
+): Promise<PrContentDraft> {
+  const baseName = base?.trim()
+  if (!baseName) return { ok: false, error: 'Choose a base branch before generating a pull request.' }
+
+  const context = await prCompareContext(cwd, baseName)
+  if (!context.ok) return context
+  if (!context.log && !context.diff) {
+    return { ok: false, error: `No commits or changes against ${baseName}.` }
+  }
+
+  const ai = await runAiOnce(
+    provider,
+    prDraftPrompt(baseName, context.log, context.diff),
+    cwd,
+    120_000,
+    model
+  )
+  if (!ai.ok) return { ok: false, error: ai.error || 'Could not generate pull request content' }
+  const parsed = parsePrDraftResponse(ai.text)
+  if (!parsed.title) return { ok: false, error: 'AI returned an empty pull request title' }
+  return { ok: true, title: parsed.title, description: parsed.description }
+}
+
 /** Make the index match `files`, commit, and restore its prior state on failure. */
 export async function commitAll(
   cwd: string,
   message: string,
   files?: string[]
-): Promise<{ ok: boolean; message?: string; error?: string }> {
+): Promise<{ ok: boolean; message?: string; error?: string; hookRun?: GitHookRun }> {
   const st = await status(cwd)
   const blocked = commitBlockReason(st)
   if (blocked) return { ok: false, error: blocked }
@@ -623,7 +937,7 @@ export async function commitAll(
   }
   const done = await commit(cwd, text)
   if (!done.ok) {
-    return failedCommit(cwd, added, removed, done.message, 'Commit failed')
+    return failedCommit(cwd, added, removed, done.message, 'Commit failed', done.hookRun)
   }
   return { ok: true, message: text }
 }

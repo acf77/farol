@@ -3,14 +3,20 @@ import { createPortal } from 'react-dom'
 import type { AgentMode, AppSettings, ModelChoice, SettingsResult } from '@shared/types'
 import {
   AI_LABELS,
-  hasReviewGate,
+  normalizeOpenRouterAgent,
+  OPENROUTER_AGENT_LABELS,
+  OPENROUTER_AGENTS,
   pickerProviders,
-  providerModels,
   type AiProvider
 } from '@shared/ai'
 import { AI_GATEWAY_API_URL, JEV_MODEL_ID } from '@shared/jev'
 import { OPENROUTER_API_URL } from '@shared/openrouter'
-import { withAgentModel, withCommitMessageModel, withModeChain } from '@shared/settings'
+import {
+  withAgentModel,
+  withCommitMessageModel,
+  withModeChain,
+  withOpenRouterAgent
+} from '@shared/settings'
 import { C, UI } from '../theme'
 import { Button, Checkbox, CliModelDropdown, SegmentedControl } from './controls'
 import { ChevronDown, ChevronUp } from './icons'
@@ -31,10 +37,15 @@ const TABS: readonly { value: TabKey; label: string }[] = [
   { value: 'models', label: 'Models' }
 ]
 
+const OPENROUTER_AGENT_OPTIONS = OPENROUTER_AGENTS.map((value) => ({
+  value,
+  label: OPENROUTER_AGENT_LABELS[value]
+}))
+
 const card: React.CSSProperties = {
-  border: `1px solid ${C.cardBorder}`,
+  border: `1px solid ${C.border}`,
   borderRadius: 12,
-  background: C.card,
+  background: C.sidebar,
   padding: 16,
   minWidth: 0
 }
@@ -42,11 +53,11 @@ const card: React.CSSProperties = {
 const field: React.CSSProperties = {
   height: 28,
   padding: '0 8px',
-  borderRadius: 7,
-  border: `1px solid ${C.cardBorder}`,
+  borderRadius: 6,
+  border: `1px solid ${C.border}`,
   background: C.terminal,
   color: C.text,
-  fontSize: 12.5
+  fontSize: 12
 }
 
 /** Save, replace, or clear one encrypted provider key. */
@@ -70,7 +81,7 @@ function ApiKeyField({
   if (configured && !replace) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 12.5, color: C.textSoft }}>API key saved</span>
+        <span style={{ fontSize: 12, color: C.textSoft }}>API key saved</span>
         <Button variant="ghost" onClick={() => setReplace(true)}>
           Replace
         </Button>
@@ -163,9 +174,9 @@ function JevSection({
         >
           Test
         </Button>
-        {busy && <span style={{ fontSize: 11.5, color: C.textMuted }}>Working…</span>}
+        {busy && <span style={{ fontSize: 11, color: C.textMuted }}>Working…</span>}
         {!busy && configured && probed && !error && (
-          <span style={{ fontSize: 11.5, color: C.textSoft }}>
+          <span style={{ fontSize: 11, color: C.textSoft }}>
             Jev answered the check question.
           </span>
         )}
@@ -279,26 +290,21 @@ function ModelRow({
   settings: AppSettings
   onChange: (model?: string) => void
 }) {
-  const current = settings.models[provider]
-  const selectValue = provider === 'cursor' ? current || 'auto' : (current ?? '')
   return (
     <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <span style={{ width: 96, flex: 'none', fontSize: 12, color: C.textSoft }}>
         {AI_LABELS[provider]}
       </span>
-      <select
-        className="bf-input bf-focus"
-        value={selectValue}
-        onChange={(e) => onChange(e.target.value || undefined)}
-        style={{ ...field, flex: 1, minWidth: 0 }}
-      >
-        {provider !== 'cursor' && <option value="">Default — the CLI decides</option>}
-        {providerModels(provider, current, settings).map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.label}
-          </option>
-        ))}
-      </select>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <CliModelDropdown
+          label={`${AI_LABELS[provider]} default model`}
+          provider={provider}
+          model={settings.models[provider]}
+          settings={settings}
+          locked
+          onChange={(_agent, model) => onChange(model)}
+        />
+      </div>
     </label>
   )
 }
@@ -318,8 +324,6 @@ function ModeChain({
   onSettings: (next: AppSettings) => void
 }) {
   const chain = settings.modeDefaults[mode]
-  // Plan is only enforceable where the CLI has a read-only review gate.
-  const only = mode === 'plan' ? hasReviewGate : undefined
   const save = (next: ModelChoice[]): void => onSettings(withModeChain(settings, mode, next))
   const move = (from: number, to: number): void => {
     const next = [...chain]
@@ -327,20 +331,19 @@ function ModeChain({
     next.splice(to, 0, rung)
     save(next)
   }
-  const fallback = pickerProviders(settings.openrouter).find((p) => !only || only(p))
+  const fallback = pickerProviders(settings.openrouter)[0]
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {chain.map((rung, i) => (
         <div key={`${rung.agent}:${rung.model ?? ''}`} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ width: 18, flex: 'none', fontSize: 11.5, color: C.faint }}>{i + 1}.</span>
+          <span style={{ width: 18, flex: 'none', fontSize: 11, color: C.faint }}>{i + 1}.</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <CliModelDropdown
               label={`${mode === 'plan' ? 'Plan' : 'Build'} model ${i + 1}`}
               provider={rung.agent}
               model={rung.model}
               settings={settings}
-              only={only}
               onChange={(agent, model) =>
                 save(chain.map((r, at) => (at === i ? { agent, ...(model ? { model } : {}) } : r)))
               }
@@ -388,10 +391,13 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
   const api = window.farol
   const or = settings.openrouter
   const configured = !!or?.hasKey
+  const orAgent = normalizeOpenRouterAgent(or?.agent)
   const [tab, setTab] = useState<TabKey>('general')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [listsHint, setListsHint] = useState<string | null>(null)
+  const listsRefreshed = useRef(false)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -423,6 +429,20 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
     return !result.error
   }
 
+  const refreshLists = (): void => {
+    setBusy(true)
+    setListsHint(null)
+    void api.agentModels.refresh(true).then((result) => {
+      setListsHint(apply(result) ? 'Updated' : (result.error ?? 'Could not refresh'))
+    })
+  }
+
+  useEffect(() => {
+    if (tab !== 'models' || listsRefreshed.current) return
+    listsRefreshed.current = true
+    refreshLists()
+  }, [tab])
+
   const providers = pickerProviders(or)
   const catalog = or?.catalog ?? []
   const pinned = new Set(or?.pinned ?? [])
@@ -442,7 +462,7 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
         zIndex: 90,
         display: 'flex',
         flexDirection: 'column',
-        background: C.appBg,
+        background: C.terminal,
         color: C.text,
         fontFamily: UI
       }}
@@ -540,17 +560,16 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
                     />
                   ))}
                 </div>
-                <div style={{ marginTop: 12 }}>
-                  <Button
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => {
-                      setBusy(true)
-                      void api.agentModels.refresh(true).then(apply)
-                    }}
-                  >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                  <Button variant="secondary" disabled={busy} onClick={refreshLists}>
                     Refresh model lists
                   </Button>
+                  {busy && <span style={{ fontSize: 11, color: C.textMuted }}>Working…</span>}
+                  {!busy && listsHint && (
+                    <span style={{ fontSize: 11, color: listsHint === 'Updated' ? C.textSoft : C.red }}>
+                      {listsHint}
+                    </span>
+                  )}
                 </div>
               </Section>
 
@@ -563,7 +582,7 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
 
               <Section
                 title="Plan mode"
-                hint="Only CLIs that can enforce a read-only gate are offered. Leave empty to keep whichever model the chat is already on."
+                hint="Leave empty to keep whichever model the chat is already on."
               >
                 <ModeChain mode="plan" settings={settings} onSettings={onSettings} />
               </Section>
@@ -583,7 +602,7 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
 
               <Section
                 title="OpenRouter"
-                hint={`Endpoint ${OPENROUTER_API_URL} · runs through OpenCode`}
+                hint={`Endpoint ${OPENROUTER_API_URL} · runs through ${OPENROUTER_AGENT_LABELS[orAgent]}`}
               >
                 <ApiKeyField
                   configured={configured}
@@ -600,6 +619,17 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
                 />
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, color: C.textSoft }}>Runs through</span>
+                  <SegmentedControl
+                    label="OpenRouter agent"
+                    options={OPENROUTER_AGENT_OPTIONS}
+                    value={orAgent}
+                    onChange={(next) => onSettings(withOpenRouterAgent(settings, next))}
+                    style={{ width: 180 }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                   <Button
                     variant="secondary"
                     disabled={busy || !configured}
@@ -610,7 +640,7 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
                   >
                     Refresh catalog
                   </Button>
-                  {busy && <span style={{ fontSize: 11.5, color: C.textMuted }}>Working…</span>}
+                  {busy && <span style={{ fontSize: 11, color: C.textMuted }}>Working…</span>}
                 </div>
                 {error && <div style={{ fontSize: 12, color: C.red, marginBottom: 8 }}>{error}</div>}
               </Section>

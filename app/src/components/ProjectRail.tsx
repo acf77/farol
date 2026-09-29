@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { GitInfo, Project } from '@shared/types'
-import { groupOpenProjects } from '@shared/project-groups'
-import { C, UI } from '../theme'
+import { groupOpenProjects, shortPath } from '@shared/project-groups'
+import { C, UI, ELLIPSIS } from '../theme'
 import {
   CHROME_ROW,
   PANEL_INSET,
@@ -32,13 +32,13 @@ const iconBtn: React.CSSProperties = {
   ...noDrag,
   width: 26,
   height: 26,
-  borderRadius: 7,
+  borderRadius: 6,
   border: 0,
   background: 'transparent',
   display: 'grid',
   placeItems: 'center',
   cursor: 'pointer',
-  color: '#A1A19A'
+  color: C.textMuted
 }
 
 interface Props {
@@ -81,7 +81,7 @@ function PinButton({ pinned, onClick }: { pinned: boolean; onClick: () => void }
       style={{
         ...iconBtn,
         background: pinned ? 'rgba(214, 242, 58, 0.12)' : 'transparent',
-        color: pinned ? C.accent : '#A1A19A'
+        color: pinned ? C.accent : C.textMuted
       }}
     >
       <PinIcon size={13} />
@@ -107,11 +107,6 @@ function ChatActivityDot({ busy, unread }: { busy: boolean; unread: boolean }) {
       }}
     />
   )
-}
-
-function shortPath(p: string): string {
-  const parts = p.replace(/[/\\]+$/, '').split(/[/\\]/)
-  return parts.slice(-2).join('/')
 }
 
 function activityTip(display: string, busy: boolean, unread: boolean): string {
@@ -276,7 +271,7 @@ export default function ProjectRail({
           flex: rail ? 'none' : 1,
           height: 34,
           borderRadius: 8,
-          border: `1px solid ${gitOpen ? C.accent : C.cardBorder}`,
+          border: `1px solid ${gitOpen ? C.accent : C.border}`,
           background: gitOpen ? 'rgba(214, 242, 58,0.12)' : 'rgba(255,255,255,0.03)',
           color: C.textSoft,
           display: 'flex',
@@ -287,9 +282,10 @@ export default function ProjectRail({
           position: 'relative'
         }}
       >
-        <GitIcon size={14} color={C.textMuted} />
-        {!rail && (
-          <span style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: '0.04em' }}>Git</span>
+        {rail ? (
+          <GitIcon size={14} color={C.textMuted} />
+        ) : (
+          <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em' }}>Git</span>
         )}
         {gitDotColor && (
           <span
@@ -319,7 +315,7 @@ export default function ProjectRail({
             width: 34,
             height: 34,
             flex: 'none',
-            border: `1px solid ${C.cardBorder}`,
+            border: `1px solid ${C.border}`,
             color: !gitPulling && gitPullResult?.ok === false ? C.red : C.textMuted,
             opacity: gitBusy && !gitPulling ? 0.5 : 1
           }}
@@ -354,11 +350,11 @@ export default function ProjectRail({
           <CaretRight />
         </button>
         <PinButton pinned={pinned} onClick={togglePin} />
-        <div style={{ width: 22, height: 1, background: '#3E3E3A' }} />
+        <div style={{ width: 22, height: 1, background: C.border }} />
 
         {activeGroup && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-            <ProjectIcon size={14} color={C.accentBright} />
+            <ProjectIcon size={14} color={C.accent} />
             <RailLabel color={C.text} weight={500}>
               {activeGroup.label}
             </RailLabel>
@@ -428,7 +424,7 @@ export default function ProjectRail({
           WebkitAppRegion: 'drag'
         } as React.CSSProperties}
       >
-        <span style={{ flex: 1, fontSize: 10.5, fontWeight: 600, letterSpacing: '0.09em', color: '#A1A19A' }}>
+        <span style={{ flex: 1, fontSize: 10, fontWeight: 600, letterSpacing: '0.09em', color: C.textMuted }}>
           PROJECTS
         </span>
         <PinButton pinned={pinned} onClick={togglePin} />
@@ -462,6 +458,7 @@ export default function ProjectRail({
           return (
             <div key={group.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <div
+                className="bf-reveal-host"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -490,9 +487,8 @@ export default function ProjectRail({
                     flex: 'none'
                   }}
                 >
-                  {isCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={10} />}
+                  {isCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
                 </button>
-                <ProjectIcon size={13} />
                 <span
                   style={{
                     flex: 1,
@@ -500,9 +496,7 @@ export default function ProjectRail({
                     fontSize: 12,
                     fontWeight: 600,
                     color: C.textSoft,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
+                    ...ELLIPSIS
                   }}
                   title={group.label}
                 >
@@ -511,7 +505,7 @@ export default function ProjectRail({
                 {hasRepo && (
                   <button
                     type="button"
-                    className="bf-icon-btn"
+                    className="bf-icon-btn bf-reveal"
                     title="Open branch as project"
                     onClick={() => {
                       const preferred =
@@ -546,7 +540,7 @@ export default function ProjectRail({
                       key={project.path}
                       role="button"
                       tabIndex={0}
-                      className="bf-focus"
+                      className="bf-focus bf-reveal-host"
                       title={activityTip(project.display, busy, unread)}
                       onClick={() => onSelect(project.path)}
                       onKeyDown={(e) => {
@@ -564,9 +558,9 @@ export default function ProjectRail({
                         gap: 8,
                         marginLeft: 10,
                         padding: '6px 8px',
-                        borderRadius: 7,
+                        borderRadius: 6,
                         background: active ? 'rgba(255,255,255,0.08)' : 'transparent',
-                        color: active ? C.textStrong : C.textMuted,
+                        color: active ? C.text : C.textMuted,
                         cursor: 'pointer',
                         minWidth: 0
                       }}
@@ -576,11 +570,9 @@ export default function ProjectRail({
                         <span
                           style={{
                             display: 'block',
-                            fontSize: 12.5,
+                            fontSize: 12,
                             fontWeight: active ? 600 : 500,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
+                            ...ELLIPSIS
                           }}
                         >
                           {branch}
@@ -588,12 +580,10 @@ export default function ProjectRail({
                         <span
                           style={{
                             display: 'block',
-                            fontSize: 10.5,
+                            fontSize: 10,
                             fontFamily: UI,
                             color: C.faint,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
+                            ...ELLIPSIS
                           }}
                         >
                           {shortPath(project.path)}
@@ -601,7 +591,7 @@ export default function ProjectRail({
                       </span>
                       <button
                         type="button"
-                        className="bf-icon-btn"
+                        className="bf-icon-btn bf-reveal"
                         title="Clear this branch's chat (does not create a second chat)"
                         aria-label="Clear this branch's chat"
                         onClick={(e) => {
@@ -617,15 +607,14 @@ export default function ProjectRail({
                           color: C.textMuted,
                           cursor: 'pointer',
                           display: 'grid',
-                          placeItems: 'center',
-                          opacity: active ? 1 : 0.7
+                          placeItems: 'center'
                         }}
                       >
                         <ClearChatIcon size={13} color={C.textMuted} />
                       </button>
                       <button
                         type="button"
-                        className="bf-tab-close"
+                        className="bf-tab-close bf-reveal"
                         title="Close project"
                         onClick={(e) => {
                           e.stopPropagation()
@@ -639,8 +628,7 @@ export default function ProjectRail({
                           background: 'transparent',
                           color: C.textMuted,
                           fontSize: 13,
-                          cursor: 'pointer',
-                          opacity: active ? 1 : 0.55
+                          cursor: 'pointer'
                         }}
                       >
                         ×

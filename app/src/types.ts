@@ -3,10 +3,12 @@ import type {
   AgentQuestion,
   AgentTaskStatus,
   AiProvider,
+  GitHookEvent,
   PipelineNode,
   PipelineTarget,
   StepState
 } from '@shared/types'
+import type { ContextUsage, SavedAgentContext } from '@shared/agent-context'
 import type { TermState } from './ansi'
 import type { PaneNode } from './layout'
 
@@ -85,6 +87,10 @@ export interface AgentPane extends BasePane {
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
   messages: AgentMessage[]
+  /** The agent's handoff note and CLI session, so the chat continues after a restart. */
+  context?: SavedAgentContext
+  /** How full the agent's context was at its latest model call. Not saved. */
+  usage?: ContextUsage
 }
 
 export type Pane = ShellPane | RunPane | AgentPane
@@ -117,11 +123,8 @@ export interface RunState {
 /** Runs are tracked per pipeline, then per branch. */
 export type RunsByBranch = Record<string, Record<string, RunState>>
 
-/**
- * Which surfaces are on screen. `split` is the spec's own split — chat beside
- * terminal at 58/42 — not a split within a terminal tab.
- */
-export type View = 'chat' | 'terminal' | 'split'
+/** The toolbar's layout presets. `split` is chat beside terminal — not a split within a terminal tab. */
+export type View = 'chat' | 'code' | 'terminal' | 'split'
 
 /** One line in the pipelines rail's live log block. */
 export interface DetailLog {
@@ -143,4 +146,6 @@ export interface EditorState {
   target?: PipelineTarget
   /** With a `remote` target: run locally when the sandbox cannot start. */
   fallbackLocal?: boolean
+  /** Git hook events that run this pipeline; see `Pipeline['gitHooks']`. */
+  gitHooks?: GitHookEvent[]
 }

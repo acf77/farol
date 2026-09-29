@@ -1,7 +1,9 @@
 import * as pty from 'node-pty'
 import { interactiveAiCommand, isAiProvider, type AiProvider } from '../shared/ai'
+import { errorMessage } from '../shared/jev'
 import type { ShellCwd, ShellData, ShellExit } from '../shared/types'
 import { aiEnv, resolveBin } from './bin'
+import { openRouterAgent } from './openrouter-agent'
 import { defaultShell, shellEnv } from './session'
 
 /**
@@ -46,7 +48,8 @@ export class ShellManager {
     if (existing) return
 
     const agent = isAiProvider(provider) ? provider : undefined
-    const command = agent ? interactiveAiCommand(agent) : defaultShell()
+    const via = openRouterAgent()
+    const command = agent ? interactiveAiCommand(agent, via) : defaultShell()
     const args = agent || process.platform === 'win32' ? [] : ['-il']
     let proc: pty.IPty
     try {
@@ -54,10 +57,10 @@ export class ShellManager {
         name: 'xterm-256color',
         ...terminalSize(cols, rows),
         cwd,
-        env: agent ? aiEnv(agent) : shellEnv()
+        env: agent ? aiEnv(agent, via) : shellEnv()
       })
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = errorMessage(err)
       this.onData({ tabId: paneId, chunk: `farol: cannot start ${command}: ${message}\r\n` })
       return
     }

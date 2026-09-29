@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { C, MONO, UI } from '../theme'
+import { C, MONO, UI, ELLIPSIS } from '../theme'
 
 export interface PaletteItem {
   id: string
@@ -114,8 +114,8 @@ export default function CommandPalette({ open, items, onClose }: Props) {
           maxHeight: '100%',
           display: 'flex',
           flexDirection: 'column',
-          background: '#232322',
-          border: `1px solid ${C.cardBorder}`,
+          background: C.sidebar,
+          border: `1px solid ${C.border}`,
           borderRadius: 12,
           boxShadow: '0 24px 60px rgba(0,0,0,0.55)',
           overflow: 'hidden'
@@ -161,7 +161,7 @@ export default function CommandPalette({ open, items, onClose }: Props) {
             outlineOffset: -3,
             background: 'transparent',
             color: C.text,
-            fontSize: 14,
+            fontSize: 13,
             padding: '14px 16px',
             borderBottom: '1px solid #3E3E3A'
           }}
@@ -195,8 +195,8 @@ export default function CommandPalette({ open, items, onClose }: Props) {
                   border: 'none',
                   borderRadius: 8,
                   padding: '9px 10px',
-                  background: on ? '#2D2D2B' : 'transparent',
-                  color: on ? C.textStrong : C.textSoft,
+                  background: on ? C.panel : 'transparent',
+                  color: on ? C.text : C.textSoft,
                   cursor: 'pointer'
                 }}
               >
@@ -210,9 +210,7 @@ export default function CommandPalette({ open, items, onClose }: Props) {
                         color: C.textMuted,
                         fontFamily: item.detail ? MONO : undefined,
                         marginTop: 2,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
+                        ...ELLIPSIS
                       }}
                     >
                       {item.group && !item.detail ? item.group : item.detail}
@@ -223,7 +221,7 @@ export default function CommandPalette({ open, items, onClose }: Props) {
             )
           })}
         </div>
-        <div role="status" style={filtered.length ? { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)' } : { padding: '14px 16px', fontSize: 12.5, color: C.textMuted }}>
+        <div role="status" style={filtered.length ? { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)' } : { padding: '14px 16px', fontSize: 12, color: C.textMuted }}>
           {filtered.length ? `${filtered.length} commands available` : 'No matches'}
         </div>
       </div>

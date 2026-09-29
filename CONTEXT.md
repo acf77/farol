@@ -43,8 +43,8 @@ The always-visible recent-commit list on the **Source Control page**.
 _Avoid_: collapsed Recent commits details
 
 **Pull request**:
-The Compare, Base, **Merge status**, **Check conflicts**, title, and Create pull request block on the **Source Control page**. Compare is the current branch. Base is a selector over the known merge/PR base, local branches, and remote-tracking branches, minus the current branch; it defaults to the known base, else a conventional base (`staging`, `main`, `master`, `develop`), else the repository default. The title is an optional input. Create pull request stays hold-to-confirm and runs `gh pr create --fill`, adding `--base` for the chosen base and `--title` when the title is non-empty. Working-tree conflict paths and predicted GitHub conflict paths stay as lists on this block; **Merge status** text stays.
-_Avoid_: Compare as a checkout picker, defaulting Base to the current or most recent feature branch, offering the current branch as its own base, hiding remote-only bases, Base as a fixed read-only field, dropping the title input, moving conflict paths off this block, hiding those paths
+The Compare, Base, **Merge status**, **Check conflicts**, title, description, **Generate with AI**, Create pull request, GitHub Actions checks, merge-strategy, and Merge block on the **Source Control page**. Compare is the current branch. Base is a selector over the known merge/PR base, local branches, and remote-tracking branches, minus the current branch; it defaults to the known base, else a conventional base (`staging`, `main`, `master`, `develop`), else the repository default. Title and description are optional inputs kept on the **Git panel** for the project session (they survive closing the page, reset on project switch, and are not saved to disk). **Generate with AI** replaces both from the commits and diff against the chosen base. Create pull request stays hold-to-confirm and runs `gh pr create --fill`, adding `--base`, `--title`, and `--body` when those fields are non-empty. When a PR is already open, the block shows Actions summary and check rows, a merge-strategy selector that must be chosen each time, and a hold-to-confirm Merge that stays disabled while the PR is draft, conflicting, or waiting on required checks. Working-tree conflict paths and predicted GitHub conflict paths stay as lists on this block; **Merge status** text stays.
+_Avoid_: Compare as a checkout picker, defaulting Base to the current or most recent feature branch, offering the current branch as its own base, hiding remote-only bases, Base as a fixed read-only field, dropping the title or description inputs, moving conflict paths off this block, hiding those paths, merging without an explicit strategy, merging while required checks are pending or failing, merging drafts or conflicting PRs
 
 **Check conflicts**:
 The always-visible **Pull request** action that is today's Resolve with AI: two-click confirm, same block reasons, then merge the PR or base and send files to Chat.
@@ -55,8 +55,12 @@ The **Pull request** line that reports GitHub or base-merge conflict state. Unti
 _Avoid_: hiding merge status when the tree is clean, a second status source
 
 **Git log**:
-The activity transcript on the **Source Control page**. Each line is a timed outcome of commit, push, create pull request, **Check conflicts**, a **Generate with AI** failure, or a status refresh failure. It replaces the single success and error banners. A successful generate is not a line — the **Commit message** box is the success. Refresh failures use one line per streak: append when a refresh fails after a success or on the first fail; stay quiet while it keeps failing; do not log successful polls. It lives on the **Git panel** for the session: it survives closing the **Source Control page**, resets when the project switches, and is not saved to disk. It is not a fetch log and does not add a fetch action.
+The activity transcript on the **Source Control page**. Each line is a timed outcome of commit, push, create pull request, merge pull request, **Check conflicts**, a **Generate with AI** failure (commit or pull request), or a status refresh failure. It replaces the single success and error banners. A successful generate is not a line — the **Commit message** or **Pull request** draft fields are the success. Refresh failures use one line per streak: append when a refresh fails after a success or on the first fail; stay quiet while it keeps failing; do not log successful polls. It lives on the **Git panel** for the session: it survives closing the **Source Control page**, resets when the project switches, and is not saved to disk. It is not a fetch log and does not add a fetch action.
 _Avoid_: a single success/error banner as the only history, fetch lines, treating this as **Latest commits**, persisting the transcript to disk, keeping lastMessage/error as a second history, a line for every failed poll, logging successful refreshes, logging a successful generate, a silent generate failure
+
+**Source Control refresh**:
+The always-visible header control that reloads git status, recent commits, and GitHub PR/check state. It uses the existing refresh icon, stays disabled while an update is active, and surfaces the latest refresh error in its tooltip (and still in **Git log**). It replaces the error-only Retry control.
+_Avoid_: showing Retry only after failure, a second refresh path, hiding refresh while clean
 
 ### Plan mode
 
@@ -108,8 +112,32 @@ The master, machine-scoped switch in Settings that decides whether Farol perform
 _Avoid_: per-project or per-action switches, off by default
 
 **Managed-chat contract**:
-The standing rules Farol gives a managed Chat agent — work only in the project, never run the catalog's commands, end each Build turn with `FAROL_QUESTIONS` or `FAROL_PIPELINES`, and, when the turn changed files, commit them through `FAROL_GIT`.
+The standing rules Farol gives a managed Chat agent — work only in the project, never run the catalog's commands, explain a proposed or completed change with a **Chat diagram**, end each Build turn with `FAROL_QUESTIONS` or `FAROL_PIPELINES`, and, when the turn changed files, commit them through `FAROL_GIT`.
 _Avoid_: relying on the agent to remember to commit, a per-turn reminder to commit
+
+**Chat diagram**:
+A Mermaid flowchart or sequence diagram the agent puts in a ` ```mermaid ` fenced block. Chat renders it as SVG in the message. A finished plan includes one for the intended approach; a Build turn that changed files includes one for what changed and why. Four to twelve well-labeled steps, detailed but not crowded.
+_Avoid_: a new control line, a remote image URL, a 20-node map, a diagram on a questions-only or status-only reply
+
+**CLI session**:
+The conversation a coding CLI saves for a managed Chat, by id. The next turn resumes it when it runs on the same CLI in the same directory, and then sends only the new request. A session the CLI refuses, or one that ran out of context, is dropped once per turn and the turn runs again with the **Rebuilt history**.
+_Avoid_: resuming across providers or directories, spending a same-model retry on a refused resume
+
+**Rebuilt history**:
+What a turn that cannot resume a **CLI session** gets instead: the task, the newest follow-ups that fit a 100k-character budget, and the **Handoff note**. Trimming drops the oldest follow-ups and says so; the task always stays.
+_Avoid_: cutting from the front (losing the task), a Farol summarizer call, resending it to a resumed session
+
+**Handoff note**:
+The agent's own summary for whichever agent takes the next turn — what is done, decisions, dead ends, next step — sent on a hidden `FAROL_HANDOFF:` line when the work's state changed. A new line replaces the note. The chat pane saves it with the **CLI session** reference so the chat continues after a restart.
+_Avoid_: a note on every turn, sharing notes across chats or checkouts, saving the full history to disk
+
+**Context meter**:
+The `ctx` reading in the composer: tokens the agent's latest model call read, as a share of the model's window when known, else a token count. Amber from 70% of the window, or 150k tokens without one. Shown only when the CLI reports usage.
+_Avoid_: estimating from characters, a percentage from a guessed window, a reading for Codex turn totals
+
+**Fresh start**:
+Continuing a chat in a new **CLI session** without clearing it. The agent first writes a **Handoff note** in one read-only turn on the old session; Farol keeps the task, the latest two requests and the note. Suggested when the **Context meter** is amber or the agent stopped on its context limit; never automatic.
+_Avoid_: Clear as the remedy for a full context, a Farol summarizer call, dropping the session when no note was written
 ### Todo list
 
 **Todo list**:
@@ -151,12 +179,16 @@ _Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the s
 - If that commit fails, unchecked files that were staged before the attempt are restored to staged with a whole-file `git add`; files this attempt newly staged are still unstaged
 - An empty or whitespace-only **Commit message** still cannot commit
 - The **Commit message** lives on the **Git panel** like today's draft: it survives close, resets on project switch, clears after a successful commit, and is not saved to disk
-- **Pull request** Compare is the current branch; Base and title are real create inputs: Base picks the `--base` target and title passes `--title` when non-empty to `--fill`; create still does not check out a branch
+- **Pull request** Compare is the current branch; Base, title, and description are real create inputs: Base picks the `--base` target and title/body pass `--title`/`--body` when non-empty to `--fill`; create still does not check out a branch
+- **Pull request** title and description live on the **Git panel** for the session: they survive close, reset on project switch, and are not saved to disk
+- **Generate with AI** on **Pull request** replaces both title and description from the chosen base's commit log and diff, omitting secret-looking paths
+- An open **Pull request** shows GitHub Actions summary and per-check rows; Merge requires an explicit strategy each time and stays blocked while draft, conflicting, or waiting on required checks
 - **Check conflicts** is always on the **Pull request** block and is the same **Git panel** resolve action
 - **Merge status** is Merge status unknown until GitHub or base-merge status has loaded
 - Working-tree and predicted conflict paths stay listed on the **Pull request** block; they are not **Changes** rows
-- **Git log** appends timed outcomes for commit, push, create pull request, **Check conflicts**, **Generate with AI** failures, and refresh failures; it does not add fetch
-- A successful **Generate with AI** is not a **Git log** line; the **Commit message** box is the success
+- **Source Control refresh** is always in the header; it replaces the error-only Retry control and keeps refresh errors in the tooltip and **Git log**
+- **Git log** appends timed outcomes for commit, push, create pull request, merge pull request, **Check conflicts**, **Generate with AI** failures, and refresh failures; it does not add fetch
+- A successful **Generate with AI** is not a **Git log** line; the **Commit message** or **Pull request** draft fields are the success
 - A refresh-failure **Git log** line is one per streak: append on the first fail or after a success, stay quiet while failures continue, and do not log successful polls
 - **Git log** lives on the **Git panel** for the session: it survives close, resets on project switch, and is not saved to disk
 
@@ -166,10 +198,10 @@ _Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the s
 - A new Chat starts in **Build mode**, including after the developer clears the conversation.
 - Selecting **Plan mode** permits reading and planning; it does not authorize implementation.
 - Selecting **Build mode** authorizes implementation.
-- **Plan mode** is available only for providers that have a **Review gate**. Today that is Codex, Cursor, and OMP. Claude, OpenCode, and OpenRouter have no **Review gate**, so **Plan mode** is disabled for them. Instructions to avoid changes alone are not a **Review gate**.
+- **Plan mode** is available only for providers that have a **Review gate**. Today that is every provider — Codex, Cursor, OMP, Claude, OpenCode, and OpenRouter, which rides OpenCode's or pi's CLI (chosen in Settings) and so inherits that CLI's **Review gate**. Instructions to avoid changes alone are not a **Review gate**.
 - When the current provider has no **Review gate**, the **Plan | Build** switch stays visible with both labels. The Plan side is disabled and cannot be selected; the Build side stays selected. Farol does not hide the switch, remove the Plan label, or leave Plan clickable.
 - That unavailable Plan side carries a tooltip that names the current provider and uses the exact reason “Cannot enforce read-only”. Farol does not use a generic phrase that omits the provider, a mention of **Review gate**, or a longer explanation, and it does not add a banner, toast, status line, or other Chat copy for that explanation.
-- Farol Plan uses that same **Review gate**, not a provider-specific planning mode. Cursor reviews already use ask mode; Farol Plan uses that gate rather than Cursor’s native plan mode.
+- Farol Plan uses that same **Review gate**, enforced with each provider's own read-only mode: Codex's `--sandbox read-only`, Cursor's `--mode=plan`, OMP's read-only tool allowlist, Claude's `--permission-mode plan`, and OpenCode's `--agent plan`. OpenRouter runs through the OpenCode or pi CLI, so it uses that CLI's gate — `--agent plan`, or pi's read-only tool allowlist (`read,grep,find,ls`).
 - Selecting a provider that has no **Review gate** while **Plan mode** is selected switches the Chat to **Build mode**; **Plan mode** cannot remain selected for that provider. This does not consume **Execute plan**.
 - That forced switch still happens if the agent is working. Locking the mode selector stops the developer from picking a mode, not Farol from leaving **Plan mode** when the new provider has no **Review gate**.
 - After Farol switches the Chat to **Build mode** because the provider has no **Review gate**, later selecting a provider that has one leaves the Chat in **Build mode**; **Plan mode** is not restored automatically.
@@ -205,6 +237,14 @@ _Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the s
 - Status is read-only; commit, push, and create pull request change the checkout or the remote.
 - **Plan mode** never performs a **Git action**; a `FAROL_GIT` line in Plan mode is ignored the way a non-empty `FAROL_PIPELINES` list is, and the reply is still accepted.
 - The **Git actions toggle** is machine-scoped and is not saved per project.
+
+### Chat diagram
+
+- A **Chat diagram** is a ` ```mermaid ` fenced block in an assistant message; Chat renders it as SVG in `MarkdownBody`.
+- The **Managed-chat contract** asks for one when the agent proposes a plan and again after a Build turn that changed files.
+- Plan mode diagrams the intended approach; a post-change Build diagram shows what changed and why.
+- Questions-only and status-only replies skip a **Chat diagram**.
+- There is no `FAROL_DIAGRAM` line and no remote image; the source stays in the message so copy still gets the Mermaid text.
 ### Todo list
 
 - A **Todo list** belongs to one checkout; every chat in that checkout shares it, and a linked worktree has its own.
@@ -297,16 +337,16 @@ _Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the s
 > **Domain expert:** "Yes, and it can ask questions and propose changes, but it cannot apply those changes while Plan mode is selected."
 
 > **Developer:** "Can I select Plan mode with Claude?"
-> **Domain expert:** "No. Claude has no review gate, so Plan is disabled. Same for OpenCode and OpenRouter. Codex, Cursor, and OMP can use Plan."
+> **Domain expert:** "Yes. Claude, Codex, Cursor, OMP, OpenCode, and OpenRouter can all use Plan today — OpenRouter rides the OpenCode or pi CLI, so it inherits that CLI's review gate."
 
-> **Developer:** "If I'm on Claude, does the Plan | Build switch disappear?"
-> **Domain expert:** "No. Both sides stay. Plan is disabled — you can see it, but you cannot select it."
+> **Developer:** "If a provider had no review gate, would the Plan | Build switch disappear?"
+> **Domain expert:** "No. Both sides stay. Plan would be disabled — visible but not selectable — with a tooltip explaining why."
 
 > **Developer:** "How do I find out why Plan is unavailable?"
 > **Domain expert:** "Hover or focus the Plan side. The tooltip there names the provider and says it cannot enforce read-only. Nothing else in Chat announces it."
 
 > **Developer:** "Cursor has its own plan mode. Does Farol use that?"
-> **Domain expert:** "No. Farol Plan uses the same read-only gate as Cursor reviews — ask mode — not Cursor’s native plan mode."
+> **Domain expert:** "Yes now — Farol Plan drives each provider's own read-only mode, including Cursor's native `--mode=plan`, Claude's `--permission-mode plan`, and OpenCode's `--agent plan`."
 
 > **Developer:** "If Plan is selected and I switch to a provider that cannot enforce read-only access, what happens?"
 > **Domain expert:** "Farol switches the Chat to Build. Plan cannot stay selected. If a finished plan still has Execute, it stays."
@@ -414,6 +454,17 @@ _Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the s
 
 > **Dev:** "Can an agent in a terminal pane use these too?"
 > **Domain expert:** "Yes, through the **Git tools** — `git_status`, `git_commit`, `git_push`, `git_create_pr` — over the bridge to the running app."
+
+### Chat diagram
+
+> **Developer:** "When does Chat show a diagram of the work?"
+> **Domain expert:** "When the agent proposes a plan, and again after it changes files. Both are **Chat diagrams** — Mermaid in the message, rendered in place."
+
+> **Developer:** "Does every reply need one?"
+> **Domain expert:** "No. Skip questions-only and status-only turns. The diagram is for the approach and for what changed."
+
+> **Developer:** "Is that a new control line?"
+> **Domain expert:** "No. It is a ` ```mermaid ` fence. Copy still gets the source."
 ### Todo list
 
 > **Developer:** "Which chat owns a todo list?"
@@ -495,7 +546,7 @@ _Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the s
 - Resolved: A non-empty `FAROL_PIPELINES` list in Plan mode does not start validation; Plan mode never runs pipelines.
 - Resolved: That reply is accepted and shown; Farol ignores the listed IDs instead of rejecting the turn or asking the agent to retry.
 - Resolved: Enforcing read-only access for **Plan mode** means a **Review gate** — the same enforcement pipeline reviews already use — not a prompt. Providers without a **Review gate** cannot use **Plan mode**.
-- Resolved: Farol Plan reuses those review gates rather than a provider-native planning mode; for Cursor that is ask mode, not Cursor’s native plan mode.
+- Resolved: Farol Plan drives each provider's own native read-only mode: Codex's `--sandbox read-only`, Cursor's `--mode=plan`, OMP's read-only tool allowlist, Claude's `--permission-mode plan`, and OpenCode's `--agent plan`.
 - Resolved: A forced switch to **Build mode** because the new provider has no **Review gate** still applies while the agent is working; the mode-selector lock does not defer it.
 - Resolved: When the current provider has no **Review gate**, Farol disables the Plan side of the **Plan | Build** switch. The switch stays visible with both labels; Plan is not hidden and is not left clickable.
 - Resolved: That explanation lives in a tooltip on the disabled Plan side, not in a banner, toast, status line, or other Chat surface.
@@ -514,6 +565,10 @@ _Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the s
 - A **Git action** and the turn's `FAROL_PIPELINES` validation could be conflated — resolved: the hook pipeline is chosen by `.farol` per action, the agent does not select it, and ordinary validation still runs.
 - The agent's **Git action** could be invisible to the UI — resolved: it appears on the existing **Git panel**, and the **Git log** records its outcome.
 - Plan mode could still allow status (read-only) — resolved: **Plan mode** performs no **Git action**; a `FAROL_GIT` line there is ignored the way a non-empty `FAROL_PIPELINES` list is.
+
+### Chat diagram
+
+- Explaining a change could mean a new control line or a remote image — resolved: a **Chat diagram** is a ` ```mermaid ` fence in the message; Chat renders it, and the contract asks for one before implementation and after file changes.
 ### Todo list
 
 - The **Todo list** could hang off a chat, a repository, or a checkout — resolved: per checkout, so a linked worktree keeps its own list and every chat on a checkout shares one.
@@ -528,7 +583,16 @@ _Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the s
 ### Jev pipeline auto-selection
 
 - Jev could be asked about every non-mandatory catalog pipeline — resolved: only pipelines with **Allow Chat to auto-select** (`autoSelectable`) are offered; the flag defaults to off so release/mutation pipelines stay manual.
-- A mid-range probability (for example 0.3) could be treated as inconclusive the way step verdicts are — resolved: selection is one-sided (`probability >=` the selection threshold adds the pipeline; anything lower is do-not-add).
-- Questions that name only the pipeline id leave Jev guessing what the pipeline does — resolved: each question includes a compact, length-capped description of step names, types, and command/prompt excerpts.
+- A mid-range probability (for example 0.3) could be treated as inconclusive the way step verdicts are — resolved: selection is one Choice over opted-in candidates plus `none`; the winner applies only when prepared and `probability >=` the selection threshold (anything lower, `none`, or an unknown id is do-not-add).
+- Questions that name only the pipeline id leave Jev guessing what the pipeline does — resolved: each Choice option includes a compact, length-capped description of step names, types, and command/prompt excerpts.
 - The decision state was only the task prompt plus assistant text — resolved: it also includes changed write targets and compact definitions of already-selected and mandatory pipelines so redundancy can be judged; that state is never written to Jev logs.
-- Below-threshold selection scores were logged as `inconclusive` — resolved: logs use `selected` / `not-selected` (plus missing-answer and gateway fallbacks) with candidate metadata and a state size summary, not prompts or secrets.
+- Below-threshold selection scores were logged as `inconclusive` — resolved: logs use Choice outcomes (`selected` / `none` / `not-selected` / `low-confidence` / `unknown-id`) with candidate metadata and a state size summary, not prompts or secrets.
+- Independent booleans per candidate could over-add — resolved: one relative Choice with a `none` escape hatch; the host re-checks the returned id against the prepared set.
+
+### Jev tool focus selection
+
+- Managed Chat could ship every CLI with its full default tool set — resolved: before each turn Jev picks one host-prepared focus; Build uses `inspect` / `implement` / `verify` / `answer`, Plan uses only read-only `inspect` / `answer`.
+- Uncertain scores could strand a coding turn — resolved: Build mid-band, unknown id, fingerprint drift, timeout, and missing key fail open to the full tool set; Plan soft-fails to `inspect` so optional families never open.
+- Absolute yes/no per optional family (`edit` / `shell` / `web`) does not compete — resolved: one Choice over foci; the host maps the focus to kept/omitted families and re-validates before native `--tools` or the prompt clause.
+- Plan mode could skip tools entirely — resolved: Plan uses read/search tools under a read-only focus; `inspect` may use web search/fetch for research; edit and mutating shell stay off; provider review gates stay the hard write block.
+- Prompt-policy violations could kill the run mid-tool — deferred: v1 logs omitted-family tool cards for diagnosis only.

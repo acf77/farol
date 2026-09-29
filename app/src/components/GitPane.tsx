@@ -2,19 +2,34 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefO
 import { createPortal } from 'react-dom'
 import { aiSelectionLabel, normalizeModel } from '@shared/ai'
 import {
+  activeHooks,
   committableChanges,
   commitBlockReason,
   conflictMergeBase,
   conflictSignals,
   conflictStatusItems,
+  mergePullRequestBlockReason,
   pullRequestBlockReason,
   pushBlockReason
 } from '@shared/git-status'
-import type { AiProvider, AppSettings, GitFileKind, GitHubInfo, GitStatus } from '@shared/types'
+import {
+  MERGE_STRATEGIES,
+  type AiProvider,
+  type AppSettings,
+  type GitFileKind,
+  type GitHookInfo,
+  type GitHubInfo,
+  type GitStatus,
+  type MergeStrategy,
+  type PrCheck,
+  type PrCheckState,
+  type PrCheckSummary,
+  type PrDraft
+} from '@shared/types'
 import { useGitPanel, type GitAction, type GitLogEntry } from '../hooks/useGitPanel'
-import { C, MONO, UI } from '../theme'
+import { C, MONO, UI, ELLIPSIS } from '../theme'
 import { Button, Checkbox, CliModelDropdown } from './controls'
-import { CheckIcon, GitIcon, Spinner } from './icons'
+import { CheckIcon, RefreshIcon, Spinner } from './icons'
 
 interface Props extends ReturnType<typeof useGitPanel> {
   branch: string
@@ -36,16 +51,16 @@ export function gitStatusDotColor(status: GitStatus | null, github: GitHubInfo |
 }
 
 const card: CSSProperties = {
-  border: `1px solid ${C.cardBorder}`,
+  border: `1px solid ${C.border}`,
   borderRadius: 12,
-  background: C.card,
+  background: C.sidebar,
   padding: 16,
   minWidth: 0
 }
 
 const sectionLabel: CSSProperties = {
   color: C.textMuted,
-  fontSize: 10.5,
+  fontSize: 10,
   fontWeight: 700,
   letterSpacing: '0.1em',
   textTransform: 'uppercase'
@@ -54,7 +69,7 @@ const sectionLabel: CSSProperties = {
 const input: CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
-  border: `1px solid ${C.cardBorder}`,
+  border: `1px solid ${C.border}`,
   borderRadius: 8,
   background: C.terminal,
   color: C.textSoft,
@@ -67,7 +82,7 @@ const KIND: Record<GitFileKind, { letter: string; color: string }> = {
   added: { letter: 'A', color: C.green },
   deleted: { letter: 'D', color: C.red },
   renamed: { letter: 'R', color: C.purpleSoft },
-  untracked: { letter: 'U', color: C.accentBright },
+  untracked: { letter: 'U', color: C.accent },
   conflict: { letter: '!', color: C.red }
 }
 
@@ -314,7 +329,7 @@ function ChangesCard({
                 <span style={{ width: 13, flex: 'none', color: kind.color, fontFamily: MONO, fontWeight: 700 }}>
                   {kind.letter}
                 </span>
-                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: MONO }}>
+                <span style={{ minWidth: 0, ...ELLIPSIS, fontFamily: MONO }}>
                   {file.path}
                 </span>
               </Checkbox>
@@ -445,18 +460,18 @@ function RecentCommitsCard({ commits }: { commits: ReturnType<typeof useGitPanel
           {commits.map((commit, index) => (
             <div key={commit.hash} style={{ position: 'relative', display: 'grid', gridTemplateColumns: '14px minmax(0, 1fr) auto', columnGap: 10, paddingBottom: index === commits.length - 1 ? 0 : 16 }}>
               {index < commits.length - 1 && (
-                <span style={{ position: 'absolute', top: 9, bottom: -2, left: 4, width: 1, background: C.cardBorder }} />
+                <span style={{ position: 'absolute', top: 9, bottom: -2, left: 4, width: 1, background: C.border }} />
               )}
-              <span style={{ width: 7, height: 7, marginTop: 5, borderRadius: '50%', background: index === 0 ? C.green : C.card, border: `1px solid ${index === 0 ? C.green : C.faint}`, zIndex: 1 }} />
+              <span style={{ width: 7, height: 7, marginTop: 5, borderRadius: '50%', background: index === 0 ? C.green : C.sidebar, border: `1px solid ${index === 0 ? C.green : C.faint}`, zIndex: 1 }} />
               <div style={{ minWidth: 0 }}>
-                <div title={commit.subject} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.textSoft, fontSize: 12, fontWeight: 600 }}>
+                <div title={commit.subject} style={{ ...ELLIPSIS, color: C.textSoft, fontSize: 12, fontWeight: 600 }}>
                   {commit.subject}
                 </div>
                 <div style={{ marginTop: 3, color: C.textMuted, fontSize: 11 }}>
                   {commit.author}{commit.when ? ` · ${commit.when}` : ''}
                 </div>
               </div>
-              <span style={{ color: C.textMuted, fontFamily: MONO, fontSize: 10.5 }}>{commit.hash}</span>
+              <span style={{ color: C.textMuted, fontFamily: MONO, fontSize: 10 }}>{commit.hash}</span>
             </div>
           ))}
         </div>
@@ -471,10 +486,67 @@ function ConflictPaths({ title, files }: { title: string; files: string[] }) {
     <div style={{ marginTop: 10 }}>
       <div style={{ color: C.red, fontSize: 11, marginBottom: 5 }}>{title}</div>
       {files.map((file) => (
-        <div key={file} title={file} style={{ color: C.textMuted, fontFamily: MONO, fontSize: 10.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div key={file} title={file} style={{ color: C.textMuted, fontFamily: MONO, fontSize: 10, ...ELLIPSIS }}>
           {file}
         </div>
       ))}
+    </div>
+  )
+}
+
+const CHECK_GLYPH: Record<PrCheckState, { mark: string; color: string }> = {
+  passed: { mark: '✓', color: C.green },
+  failed: { mark: '✕', color: C.red },
+  pending: { mark: '●', color: C.yellow },
+  skipped: { mark: '–', color: C.textMuted },
+  neutral: { mark: '○', color: C.textMuted }
+}
+
+/** Human-readable Actions roll-up for the Pull request card. */
+function checksSummaryLabel(summary: PrCheckSummary): string {
+  if (summary.state === 'unavailable') return 'GitHub Actions status unavailable'
+  if (summary.state === 'none') return 'No GitHub Actions checks'
+  if (summary.state === 'pending') {
+    return `Checks running · ${summary.pending} pending`
+  }
+  if (summary.state === 'failed') {
+    return `Checks failing · ${summary.failed} failed`
+  }
+  return `Checks passed · ${summary.passed} passed`
+}
+
+function CheckRows({ checks }: { checks: PrCheck[] }) {
+  if (!checks.length) return null
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+      {checks.map((check) => {
+        const glyph = CHECK_GLYPH[check.state]
+        return (
+          <div
+            key={check.name}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '14px minmax(0, 1fr) auto',
+              gap: 8,
+              alignItems: 'center',
+              color: C.textMuted,
+              fontSize: 11
+            }}
+          >
+            <span aria-hidden style={{ color: glyph.color, fontFamily: MONO, fontWeight: 700 }}>
+              {glyph.mark}
+            </span>
+            <span
+              title={check.name}
+              style={{ minWidth: 0, ...ELLIPSIS }}
+            >
+              {check.name}
+              {check.required ? ' · required' : ''}
+            </span>
+            <span style={{ color: glyph.color, textTransform: 'capitalize' }}>{check.state}</span>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -487,11 +559,20 @@ function PullRequestCard({
   github,
   gitAction,
   base: userBase,
-  title,
+  prDraft,
+  provider,
+  model,
+  settings,
+  mergeStrategy,
   onBase,
-  onTitle,
+  onPrTitle,
+  onPrDescription,
+  onSelectionChange,
+  onPreparePr,
+  onMergeStrategy,
   onCheckConflicts,
-  onCreatePr
+  onCreatePr,
+  onMergePr
 }: {
   branch: string
   branches: string[]
@@ -500,11 +581,20 @@ function PullRequestCard({
   github: GitHubInfo | null
   gitAction: GitAction | null
   base: string | null
-  title: string
+  prDraft: PrDraft
+  provider: AiProvider
+  model?: string
+  settings: AppSettings
+  mergeStrategy: MergeStrategy | ''
   onBase: (base: string) => void
-  onTitle: (title: string) => void
+  onPrTitle: (title: string) => void
+  onPrDescription: (description: string) => void
+  onSelectionChange: (provider: AiProvider, model: string | undefined) => void
+  onPreparePr: (base: string) => void
+  onMergeStrategy: (strategy: MergeStrategy | '') => void
   onCheckConflicts: () => void
-  onCreatePr: (base: string, title: string) => void
+  onCreatePr: (base: string, title: string, body: string) => void
+  onMergePr: (strategy: MergeStrategy) => void
 }) {
   const attached = github?.available ? github.prs[0] : undefined
   const knownBase = attached?.base ?? status?.baseMerge?.base ?? ''
@@ -544,10 +634,44 @@ function PullRequestCard({
       ? github.message || 'GitHub is unavailable.'
       : pullRequestBlockReason(status)
   const canCreatePr = !attached && !prReason && !gitAction
+  const canGeneratePr = !attached && !!base && !gitAction
+  const mergeReason = attached
+    ? mergePullRequestBlockReason(attached, mergeStrategy || null)
+    : 'No open pull request from this branch.'
+  const canMerge = !!attached && !mergeReason && !gitAction
+  const checks = attached?.checks
 
   return (
     <section style={card}>
-      <div style={{ ...sectionLabel, marginBottom: 14 }}>Pull request</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+        <div style={sectionLabel}>Pull request</div>
+        {!attached && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CliModelDropdown
+              label="Pull request model"
+              provider={provider}
+              model={model}
+              settings={settings}
+              onChange={onSelectionChange}
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={!canGeneratePr}
+              title={
+                !base
+                  ? 'Choose a base branch before generating.'
+                  : gitAction
+                    ? 'Wait for the current Git action to finish'
+                    : `Generate with ${aiSelectionLabel(provider, model)}`
+              }
+              onClick={() => onPreparePr(base)}
+            >
+              {gitAction === 'generatePr' ? <><Spinner /> Generating…</> : 'Generate with AI'}
+            </Button>
+          </div>
+        )}
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <label style={{ minWidth: 0, color: C.textMuted, fontSize: 11 }}>
           Compare
@@ -571,9 +695,9 @@ function PullRequestCard({
         </label>
       </div>
 
-      <div style={{ marginTop: 12, padding: '5px 6px 5px 11px', minHeight: 32, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${C.cardBorder}`, borderRadius: 8, background: C.terminal }}>
+      <div style={{ marginTop: 12, padding: '5px 6px 5px 11px', minHeight: 32, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${C.border}`, borderRadius: 8, background: C.terminal }}>
         <span style={{ width: 8, height: 8, flex: 'none', borderRadius: '50%', background: mergeItems.some((item) => item.tone === 'conflict') ? C.red : mergeItems.some((item) => item.tone === 'ok') ? C.green : C.faint }} />
-        <span style={{ flex: 1, minWidth: 0, color: C.textMuted, fontSize: 11.5 }}>
+        <span style={{ flex: 1, minWidth: 0, color: C.textMuted, fontSize: 11 }}>
           {mergeItems[0]?.text ?? 'Merge status unknown'}
         </span>
         <ConfirmButton
@@ -595,34 +719,113 @@ function PullRequestCard({
       <ConflictPaths title="Working tree conflicts" files={working} />
       <ConflictPaths title="Predicted conflicts" files={predicted} />
 
-      <input
-        className="bf-input bf-focus"
-        value={title}
-        onChange={(event) => onTitle(event.target.value)}
-        placeholder="Pull request title (optional)"
-        aria-label="Pull request title"
-        style={{ ...input, height: 36, marginTop: 12 }}
-      />
-      {attached?.url ? (
-        <Button
-          variant="secondary"
-          size="md"
-          title={`Open pull request #${attached.number} on GitHub`}
-          onClick={() => window.open(attached.url, '_blank', 'noopener,noreferrer')}
-          style={{ width: '100%', height: 38, marginTop: 10, borderRadius: 8 }}
-        >
-          Open pull request #{attached.number}
-        </Button>
-      ) : (
-        <HoldButton
-          label="Create pull request"
-          busyLabel="Creating pull request…"
-          busy={gitAction === 'pr'}
-          disabled={!canCreatePr}
-          title={prReason ?? 'Hold to create a pull request on GitHub'}
-          onConfirm={() => onCreatePr(base, title)}
-          style={{ width: '100%', height: 38, marginTop: 10, borderRadius: 8 }}
-        />
+      {attached && checks && (
+        <div style={{ marginTop: 12, padding: '10px 12px', border: `1px solid ${C.border}`, borderRadius: 8, background: C.terminal }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                flex: 'none',
+                borderRadius: '50%',
+                background:
+                  checks.state === 'passed' || checks.state === 'none'
+                    ? C.green
+                    : checks.state === 'failed'
+                      ? C.red
+                      : checks.state === 'pending'
+                        ? C.yellow
+                        : C.faint
+              }}
+            />
+            <span style={{ color: C.textSoft, fontSize: 11, fontWeight: 600 }}>
+              {checksSummaryLabel(checks)}
+            </span>
+          </div>
+          <CheckRows checks={checks.checks} />
+        </div>
+      )}
+
+      {!attached && (
+        <>
+          <input
+            className="bf-input bf-focus"
+            value={prDraft.title}
+            onChange={(event) => onPrTitle(event.target.value)}
+            placeholder="Pull request title (optional)"
+            aria-label="Pull request title"
+            style={{ ...input, height: 36, marginTop: 12 }}
+          />
+          <textarea
+            className="bf-input bf-focus"
+            value={prDraft.description}
+            onChange={(event) => onPrDescription(event.target.value)}
+            rows={4}
+            placeholder="Pull request description (optional)"
+            aria-label="Pull request description"
+            spellCheck={false}
+            style={{
+              ...input,
+              minHeight: 88,
+              maxHeight: 180,
+              resize: 'vertical',
+              marginTop: 8,
+              padding: '10px 12px',
+              lineHeight: 1.5
+            }}
+          />
+          <HoldButton
+            label="Create pull request"
+            busyLabel="Creating pull request…"
+            busy={gitAction === 'pr'}
+            disabled={!canCreatePr}
+            title={prReason ?? 'Hold to create a pull request on GitHub'}
+            onConfirm={() => onCreatePr(base, prDraft.title, prDraft.description)}
+            style={{ width: '100%', height: 38, marginTop: 10, borderRadius: 8 }}
+          />
+        </>
+      )}
+
+      {attached && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <select
+            className="bf-input bf-focus"
+            value={mergeStrategy}
+            onChange={(event) => onMergeStrategy(event.target.value as MergeStrategy | '')}
+            aria-label="Merge strategy"
+            style={{ ...input, height: 38, flex: '0 0 140px', fontFamily: MONO }}
+          >
+            <option value="">Strategy…</option>
+            {MERGE_STRATEGIES.map((strategy) => (
+              <option key={strategy} value={strategy}>
+                {strategy}
+              </option>
+            ))}
+          </select>
+          <HoldButton
+            label={`Merge #${attached.number}`}
+            busyLabel="Merging…"
+            busy={gitAction === 'merge'}
+            disabled={!canMerge}
+            title={mergeReason ?? `Hold to ${mergeStrategy} merge pull request #${attached.number}`}
+            onConfirm={() => {
+              if (!mergeStrategy) return
+              onMergePr(mergeStrategy)
+            }}
+            style={{ flex: 1, height: 38, borderRadius: 8 }}
+          />
+          {attached.url && (
+            <Button
+              variant="secondary"
+              size="md"
+              title={`Open pull request #${attached.number} on GitHub`}
+              onClick={() => window.open(attached.url, '_blank', 'noopener,noreferrer')}
+              style={{ flex: 'none', height: 38, borderRadius: 8 }}
+            >
+              Open
+            </Button>
+          )}
+        </div>
       )}
     </section>
   )
@@ -632,16 +835,62 @@ function GitLogCard({ log }: { log: GitLogEntry[] }) {
   return (
     <section style={{ ...card, flex: 1, minHeight: 144 }}>
       <div style={{ ...sectionLabel, marginBottom: 14 }}>Git log</div>
-      <div role="log" aria-live="polite" style={{ minHeight: 84, maxHeight: 220, overflow: 'auto', borderRadius: 8, background: C.terminal, padding: '11px 12px', boxSizing: 'border-box', fontFamily: MONO, fontSize: 10.5, lineHeight: 1.6 }}>
+      <div role="log" aria-live="polite" style={{ minHeight: 84, maxHeight: 220, overflow: 'auto', borderRadius: 8, background: C.terminal, padding: '11px 12px', boxSizing: 'border-box', fontFamily: MONO, fontSize: 10, lineHeight: 1.6 }}>
         {!log.length && <span style={{ color: C.faint }}>No Git actions this session.</span>}
         {log.map((entry) => (
           <div key={entry.id} style={{ display: 'grid', gridTemplateColumns: '58px max-content minmax(0, 1fr)', gap: 8, color: entry.ok ? C.textMuted : C.red }}>
             <span style={{ color: C.faint }}>{entry.time}</span>
             <span style={{ color: entry.ok ? C.green : C.red }}>{entry.action}</span>
-            <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{entry.message}</span>
+            <span style={{ minWidth: 0, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{entry.message}</span>
           </div>
         ))}
       </div>
+    </section>
+  )
+}
+
+function HooksCard({ hooks }: { hooks: GitHookInfo[] | null }) {
+  const list = hooks ?? []
+  const commitHooks = new Set(activeHooks(list, 'commit').map((hook) => hook.name))
+  const pushHooks = new Set(activeHooks(list, 'push').map((hook) => hook.name))
+
+  return (
+    <section style={card}>
+      <div style={{ ...sectionLabel, marginBottom: 14 }}>Git hooks</div>
+      {!hooks && <div style={{ color: C.textMuted, fontSize: 12 }}>Reading hooks…</div>}
+      {hooks && !list.length && (
+        <div style={{ color: C.textMuted, fontSize: 12 }}>No hooks installed in this repository.</div>
+      )}
+      {list.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {list.map((hook) => {
+            const blocks = [
+              ...(commitHooks.has(hook.name) ? ['commit'] : []),
+              ...(pushHooks.has(hook.name) ? ['push'] : [])
+            ]
+            return (
+              <div key={hook.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }} title={hook.path}>
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    flex: 'none',
+                    borderRadius: '50%',
+                    background: hook.enabled ? C.green : C.faint
+                  }}
+                />
+                <span style={{ fontFamily: MONO, fontSize: 12, color: C.textSoft }}>{hook.name}</span>
+                {!hook.enabled && <span style={{ color: C.textMuted, fontSize: 10 }}>disabled</span>}
+                {blocks.length > 0 && (
+                  <span style={{ color: C.yellow, fontSize: 10 }}>
+                    blocks {blocks.join(' & ')}
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 }
@@ -657,20 +906,26 @@ export default function GitPane({
   status,
   commits,
   github,
+  hooks,
   loading,
   gitAction,
   draft,
+  prDraft,
   selectedFiles,
   log,
   refreshError,
   refresh,
   prepareCommit,
+  preparePr,
   setDraftMessage,
+  setPrTitle,
+  setPrDescription,
   setFileSelected,
   selectAllFiles,
   confirmCommit,
   push,
   createPr,
+  mergePr,
   resolveConflicts,
   open,
   onClose,
@@ -678,15 +933,19 @@ export default function GitPane({
 }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const [prBase, setPrBase] = useState<string | null>(null)
-  const [prTitle, setPrTitle] = useState('')
+  const [mergeStrategy, setMergeStrategy] = useState<MergeStrategy | ''>('')
   useEscapeClose(open, onClose)
   useFocusTrap(open, dialogRef)
   const [commitProvider, setCommitProvider] = useState(provider)
   const [commitModel, setCommitModel] = useState<string | undefined>(normalizeModel(model))
+  const [prProvider, setPrProvider] = useState(provider)
+  const [prModel, setPrModel] = useState<string | undefined>(normalizeModel(model))
 
   useEffect(() => {
     setCommitProvider(provider)
     setCommitModel(normalizeModel(model))
+    setPrProvider(provider)
+    setPrModel(normalizeModel(model))
   }, [provider, model])
 
   useEffect(() => {
@@ -707,26 +966,30 @@ export default function GitPane({
       aria-modal="true"
       aria-label="Source Control"
       tabIndex={-1}
-      style={{ position: 'fixed', inset: 0, zIndex: 90, display: 'flex', flexDirection: 'column', background: C.appBg, color: C.text, fontFamily: UI }}
+      style={{ position: 'fixed', inset: 0, zIndex: 90, display: 'flex', flexDirection: 'column', background: C.terminal, color: C.text, fontFamily: UI }}
     >
       <header style={{ height: 52, flex: 'none', display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', borderBottom: `1px solid ${C.border}` }}>
-        <GitIcon size={14} color={C.textMuted} />
         <span style={{ fontSize: 13, fontWeight: 650 }}>Source Control</span>
-        <span style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '5px 9px', border: `1px solid ${C.cardBorder}`, borderRadius: 7, background: C.card, color: C.textSoft, fontFamily: MONO, fontSize: 11 }}>
+        <span style={{ maxWidth: 320, ...ELLIPSIS, padding: '5px 9px', border: `1px solid ${C.border}`, borderRadius: 6, background: C.sidebar, color: C.textSoft, fontFamily: MONO, fontSize: 11 }}>
           {branch}{base ? ` → ${base}` : ''}
         </span>
         <span style={{ flex: 1 }} />
         {loading && <span style={{ color: C.textMuted, fontSize: 11 }}>Updating…</span>}
-        {refreshError && (
-          <Button variant="ghost" size="sm" disabled={loading} onClick={refresh} title={refreshError}>
-            Retry
-          </Button>
-        )}
         {status && status.ahead > 0 && (
           <span style={{ color: C.textMuted, fontSize: 11 }}>
             {status.ahead} {status.ahead === 1 ? 'commit' : 'commits'} ahead
           </span>
         )}
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={loading}
+          onClick={refresh}
+          title={refreshError ?? 'Refresh status and GitHub checks'}
+          aria-label="Refresh"
+        >
+          <RefreshIcon size={13} />
+        </Button>
         <Button variant="ghost" size="sm" autoFocus onClick={onClose}>Done</Button>
       </header>
 
@@ -765,12 +1028,28 @@ export default function GitPane({
               github={github}
               gitAction={gitAction}
               base={prBase}
-              title={prTitle}
+              prDraft={prDraft}
+              provider={prProvider}
+              model={prModel}
+              settings={settings}
+              mergeStrategy={mergeStrategy}
               onBase={setPrBase}
-              onTitle={setPrTitle}
+              onPrTitle={setPrTitle}
+              onPrDescription={setPrDescription}
+              onSelectionChange={(nextProvider, nextModel) => {
+                setPrProvider(nextProvider)
+                setPrModel(nextModel)
+              }}
+              onPreparePr={(nextBase) => void preparePr(nextBase, prProvider, prModel)}
+              onMergeStrategy={setMergeStrategy}
               onCheckConflicts={resolveConflicts}
               onCreatePr={createPr}
+              onMergePr={(strategy) => {
+                void mergePr(strategy)
+                setMergeStrategy('')
+              }}
             />
+            <HooksCard hooks={hooks} />
             <GitLogCard log={log} />
           </div>
         </div>

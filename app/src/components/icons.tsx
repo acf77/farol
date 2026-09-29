@@ -14,14 +14,6 @@ interface IconProps {
 
 const S = (n: number) => ({ width: n, height: n })
 
-export function ChatIcon({ size = 13 }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>
-      <path d="M2.5 4.2A1.7 1.7 0 0 1 4.2 2.5h7.6A1.7 1.7 0 0 1 13.5 4.2v4.6a1.7 1.7 0 0 1-1.7 1.7H7l-3.2 2.6v-2.6a1.3 1.3 0 0 1-1.3-1.3Z" />
-    </svg>
-  )
-}
-
 export function TerminalIcon({ size = 13 }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>
@@ -31,11 +23,19 @@ export function TerminalIcon({ size = 13 }: IconProps) {
   )
 }
 
-export function SplitIcon({ size = 13 }: IconProps) {
+export function FileIcon({ size = 13 }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>
-      <rect x="2" y="3" width="12" height="10" rx="2" />
-      <path d="M8 3v10" />
+      <path d="M4.5 2.5h5l3 3v8a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1Z" />
+      <path d="M9.5 2.5v3h3" />
+    </svg>
+  )
+}
+
+export function FolderIcon({ size = 13 }: IconProps) {
+  return (
+    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>
+      <path d="M2.5 5.2A1.2 1.2 0 0 1 3.7 4h3.2l1.4 1.6h4.2a1.2 1.2 0 0 1 1.2 1.2v5.4a1.2 1.2 0 0 1-1.2 1.2H3.7a1.2 1.2 0 0 1-1.2-1.2Z" />
     </svg>
   )
 }
@@ -89,61 +89,36 @@ export function BranchIcon({ size = 13, color = '#A1A19A' }: IconProps) {
   )
 }
 
-export function ChevronDown({ size = 10, color = '#A1A19A' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 12 12" fill="none" stroke={color} strokeWidth={1.5}>
-      <path d="M2 4.5 6 8.5l4-4" />
-    </svg>
-  )
-}
+type Dir = 'up' | 'down' | 'left' | 'right'
+const ROTATE: Record<Dir, number> = { right: 0, down: 90, left: 180, up: 270 }
 
-export function ChevronRight({ size = 12, color = 'currentColor' }: IconProps) {
+/** The one disclosure/collapse arrow; every direction is a rotation of it. */
+function Chevron({ dir, size, color, style }: IconProps & { dir: Dir }) {
   return (
-    <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.5}>
+    <svg
+      {...S(size!)}
+      viewBox="0 0 14 14"
+      fill="none"
+      stroke={color}
+      strokeWidth={1.5}
+      style={{ transform: `rotate(${ROTATE[dir]}deg)`, ...style }}
+    >
       <path d="M5 2.5 9.5 7 5 11.5" />
     </svg>
   )
 }
 
-export function ChevronUp({ size = 13, color = '#A1A19A', style }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.5} style={style}>
-      <path d="M2.5 8.5 7 4l4.5 4.5" />
-    </svg>
-  )
-}
-
-/** Panel collapse chevrons — heavier stroke than the disclosure ones. */
-export function CaretLeft({ size = 14, color = 'currentColor' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.6}>
-      <path d="M8.5 2.5 4 7l4.5 4.5" />
-    </svg>
-  )
-}
-
-export function CaretRight({ size = 14, color = 'currentColor' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 14 14" fill="none" stroke={color} strokeWidth={1.6}>
-      <path d="M5.5 2.5 10 7l-4.5 4.5" />
-    </svg>
-  )
-}
+export const ChevronDown = ({ size = 10, color = '#A1A19A' }: IconProps) => <Chevron dir="down" size={size} color={color} />
+export const ChevronRight = ({ size = 12, color = 'currentColor' }: IconProps) => <Chevron dir="right" size={size} color={color} />
+export const ChevronUp = ({ size = 13, color = '#A1A19A', style }: IconProps) => <Chevron dir="up" size={size} color={color} style={style} />
+export const CaretLeft = ({ size = 14, color = 'currentColor' }: IconProps) => <Chevron dir="left" size={size} color={color} />
+export const CaretRight = ({ size = 14, color = 'currentColor' }: IconProps) => <Chevron dir="right" size={size} color={color} />
 
 export function SearchIcon({ size = 13 }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
       <circle cx="6.8" cy="6.8" r="4.3" />
       <path d="M10 10l3.2 3.2" />
-    </svg>
-  )
-}
-
-export function BellIcon({ size = 17, color = '#A1A19A' }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 18 18" fill="none" stroke={color} strokeWidth={1.4}>
-      <path d="M9 2.5a4 4 0 0 0-4 4v3l-1.3 2.2h10.6L13 9.5v-3a4 4 0 0 0-4-4Z" />
-      <path d="M7.3 14a1.8 1.8 0 0 0 3.4 0" />
     </svg>
   )
 }
@@ -252,7 +227,7 @@ export function StopIcon({ size = 9, color = '#fff' }: IconProps) {
 export function SendIcon({ size = 15 }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.7}>
-      <path d="M4 12.5 11.5 8 4 3.5" />
+      <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
     </svg>
   )
 }

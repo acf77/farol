@@ -4,7 +4,10 @@ import fs from 'fs'
 import type {
   AgentTaskRequest,
   AppSettings,
+  GitHookEvent,
+  MergeStrategy,
   Pipeline,
+  ProjectWriteOpts,
   RunEvent,
   ShellCwd,
   ShellData,
@@ -12,8 +15,8 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, githubStatus, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus } from './git'
-import { createPullRequest } from './github'
+import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus, syncManagedHooks } from './git'
+import { createPullRequest, mergePullRequest } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, flushWorkspace, PipelineWatcher } from './store'
 import {
@@ -23,11 +26,14 @@ import {
   setOpenRouterPinned
 } from './openrouter'
 import { refreshAgentCatalogs } from './agent-models'
+import { errorMessage } from '../shared/jev'
 import { checkJev, clearJev, saveJevKey } from './jev'
 import { checkRemote, clearRemoteKey, saveRemoteConfig } from './remote'
 import { configureJevLogs } from './jev-log'
-import { listProjectFiles, saveChatAttachment } from './files'
+import { configureAgentFailureLogs } from './agent-failure-log'
+import { listProjectDir, listProjectFiles, readProjectFile, saveChatAttachment, writeProjectFile } from './files'
 import { listAgentSkills } from './skills'
+import { openRouterAgent } from './openrouter-agent'
 import { AppUpdater } from './update'
 import { applyGlass, glassAvailable } from './glass'
 import { providerUsage } from './usage'
@@ -70,9 +76,10 @@ const agents = new AgentController(runner, (event) => send('agent:event', event)
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
 )
-const pipelineFiles = new PipelineWatcher((projectPath, pipelines) =>
+const pipelineFiles = new PipelineWatcher((projectPath, pipelines) => {
   send('pipelines:changed', { projectPath, pipelines })
-)
+  void syncProjectGitHooks(projectPath, projectPath, pipelines)
+})
 const updater = new AppUpdater((s) => send('update:status', s))
 
 function brandIconCandidates(): string[] {
@@ -254,6 +261,7 @@ async function openProjectDialog() {
   await pushRecent(project)
   installMcpConfig(project.path)
   startBridge(project.path)
+  void syncProjectGitHooks(project.path)
   return project
 }
 
@@ -404,6 +412,28 @@ async function openProjectCwd(
   return { path: path.resolve(match) }
 }
 
+/** Run every pipeline configured for `event`, stopping at the first failure like a shell `&&` chain. */
+async function runHookPipelines(
+  req: { id: number; cwd: string },
+  event: GitHookEvent,
+  pipelines: Pipeline[],
+  projectPath: string
+): Promise<BridgeReply> {
+  const matches = pipelines.filter((p) => p.gitHooks?.includes(event))
+  if (!matches.length) return { id: req.id, ok: true, op: 'hook', text: '', failed: false }
+  const git = await gitInfo(req.cwd)
+  const branch = git.branch || '(no branch)'
+  const parts: string[] = []
+  let failed = false
+  for (const pipeline of matches) {
+    const result = await runForAgent(pipeline, req.cwd, branch, projectPath)
+    parts.push(result.text)
+    failed = result.failed
+    if (failed) break
+  }
+  return { id: req.id, ok: true, op: 'hook', text: parts.join('\n\n'), failed }
+}
+
 async function handleBridge(req: BridgeRequest, projectPath: string): Promise<BridgeReply> {
   if (!(await cwdAllowedForProject(projectPath, req.cwd))) {
     return {
@@ -425,6 +455,9 @@ async function handleBridge(req: BridgeRequest, projectPath: string): Promise<Br
         steps: (topoSort(p.nodes) ?? p.nodes).map((n) => `${n.name || n.id} (${n.type})`)
       }))
     }
+  }
+  if (req.op === 'hook') {
+    return runHookPipelines(req, req.event, pipelines, projectPath)
   }
   const found = resolvePipeline(pipelines, req.pipeline)
   if (!found.ok) {
@@ -477,7 +510,7 @@ function startBridge(projectPath: string): void {
               JSON.stringify({
                 id: req.id,
                 ok: false,
-                message: err instanceof Error ? err.message : String(err)
+                message: errorMessage(err)
               }) + '\n'
             )
           )
@@ -504,6 +537,20 @@ function mcpEntry(projectPath: string): McpServerEntry {
     args: [path.join(app.getAppPath(), 'out', 'main', 'mcp.js')],
     env: { ELECTRON_RUN_AS_NODE: '1', [BRIDGE_ENV]: socketPath(projectPath) }
   }
+}
+
+/**
+ * Brings `.git/hooks` in line with which pipelines have `gitHooks` set, for
+ * the project whose app instance serves `socketFor`'s bridge (see
+ * `installMcpConfig` for why those two paths can differ, e.g. a worktree).
+ */
+async function syncProjectGitHooks(dir: string, socketFor = dir, pipelines?: Pipeline[]): Promise<void> {
+  const list = pipelines ?? (await loadPipelines(dir))
+  await syncManagedHooks(dir, list, {
+    execPath: process.execPath,
+    scriptPath: path.join(app.getAppPath(), 'out', 'main', 'git-hook.js'),
+    socketPath: socketPath(socketFor)
+  })
 }
 
 /**
@@ -542,15 +589,33 @@ function registerProjectIpc(): void {
     await pushRecent(project)
     installMcpConfig(project.path)
     startBridge(project.path)
+    void syncProjectGitHooks(project.path)
     return project
   })
   ipcMain.handle('project:recents', () => readRecents())
   ipcMain.handle('project:listFiles', (_e, projectPath: string, query?: string) =>
     listProjectFiles(projectPath, typeof query === 'string' ? query : '')
   )
+  ipcMain.handle('project:listDir', (_e, projectPath: string, relDir?: string) =>
+    typeof projectPath === 'string'
+      ? listProjectDir(projectPath, typeof relDir === 'string' ? relDir : '')
+      : { ok: false, error: 'Path is outside the project.' }
+  )
+  ipcMain.handle('project:readFile', (_e, projectPath: string, relPath: string) =>
+    typeof projectPath === 'string' && typeof relPath === 'string'
+      ? readProjectFile(projectPath, relPath)
+      : { ok: false, error: 'Path is outside the project.' }
+  )
+  ipcMain.handle(
+    'project:writeFile',
+    (_e, projectPath: string, relPath: string, content: string, opts?: ProjectWriteOpts) =>
+      typeof projectPath === 'string' && typeof relPath === 'string' && typeof content === 'string'
+        ? writeProjectFile(projectPath, relPath, content, opts ?? {})
+        : { ok: false, error: 'Path is outside the project.' }
+  )
   ipcMain.handle('project:listSkills', (_e, projectPath: string, provider: unknown) =>
     typeof projectPath === 'string' && isAiProvider(provider)
-      ? listAgentSkills(projectPath, provider)
+      ? listAgentSkills(projectPath, provider, undefined, openRouterAgent())
       : []
   )
   ipcMain.handle(
@@ -625,7 +690,9 @@ function registerSessionIpc(): void {
   })
   ipcMain.handle('pipelines:load', async (_e, projectPath: string) => {
     void pipelineFiles.watch(projectPath)
-    return loadPipelines(projectPath)
+    const pipelines = await loadPipelines(projectPath)
+    void syncProjectGitHooks(projectPath, projectPath, pipelines)
+    return pipelines
   })
   ipcMain.handle('pipelines:save', (_e, projectPath: string, pipelines: Pipeline[]) =>
     savePipelines(projectPath, pipelines)
@@ -656,7 +723,10 @@ function registerGitIpc(): void {
   )
   ipcMain.handle('git:worktree', async (_e, projectPath: string, req: WorktreeRequest) => {
     const res = await addWorktree(projectPath, req)
-    if (res.ok && res.path && res.path !== projectPath) installMcpConfig(res.path, projectPath)
+    if (res.ok && res.path && res.path !== projectPath) {
+      installMcpConfig(res.path, projectPath)
+      void syncProjectGitHooks(res.path, projectPath)
+    }
     return res
   })
   ipcMain.handle('git:status', (_e, projectPath: string) => gitStatus(projectPath))
@@ -702,11 +772,44 @@ function registerGitIpc(): void {
     if ('error' in cwd) return { ok: false, message: cwd.error }
     return gitPull(cwd.path)
   })
+  ipcMain.handle('git:hooks', (_e, projectPath: string) => hooksInfo(projectPath))
   ipcMain.handle('git:github', (_e, projectPath: string) => githubStatus(projectPath))
-  ipcMain.handle('git:createPr', async (_e, projectPath: string, base?: string, title?: string) => {
+  ipcMain.handle(
+    'git:createPr',
+    async (_e, projectPath: string, base?: string, title?: string, body?: string) => {
+      const cwd = await openProjectCwd(projectPath)
+      if ('error' in cwd) return { ok: false, message: cwd.error }
+      return createPullRequest(
+        cwd.path,
+        typeof base === 'string' ? base : undefined,
+        typeof title === 'string' ? title : undefined,
+        typeof body === 'string' ? body : undefined
+      )
+    }
+  )
+  ipcMain.handle(
+    'git:draftPr',
+    async (
+      _e,
+      projectPath: string,
+      provider: AgentTaskRequest['provider'],
+      model?: string,
+      base?: string
+    ) => {
+      const cwd = await openProjectCwd(projectPath)
+      if ('error' in cwd) return cwd
+      return draftPullRequest(
+        cwd.path,
+        provider,
+        typeof model === 'string' ? model : undefined,
+        typeof base === 'string' ? base : undefined
+      )
+    }
+  )
+  ipcMain.handle('git:mergePr', async (_e, projectPath: string, strategy: MergeStrategy) => {
     const cwd = await openProjectCwd(projectPath)
     if ('error' in cwd) return { ok: false, message: cwd.error }
-    return createPullRequest(cwd.path, base, title)
+    return mergePullRequest(cwd.path, strategy)
   })
   ipcMain.handle('git:bringConflicts', async (_e, projectPath: string) => {
     const cwd = await openProjectCwd(projectPath)
@@ -721,6 +824,7 @@ function registerTaskIpc(): void {
   )
   ipcMain.handle('run:cancel', (_e, pipelineId: string) => runner.cancelAndWait(pipelineId))
   ipcMain.handle('agent:start', (_e, request: AgentTaskRequest) => agents.start(request))
+  ipcMain.handle('agent:freshStart', (_e, taskId: string) => agents.freshStart(taskId))
   ipcMain.handle(
     'agent:message',
     (
@@ -806,9 +910,13 @@ function applyBrandIcon(): void {
 }
 
 app.whenReady().then(() => {
-  configureJevLogs(() => app.getPath('userData'))
+  const userData = () => app.getPath('userData')
+  configureJevLogs(userData)
+  configureAgentFailureLogs(userData)
   applyBrandIcon()
   registerIpc()
+  // Mirrors the OpenRouter CLI choice before anything spawns an agent.
+  void loadSettings()
   buildMenu()
   createWindow()
   if (app.isPackaged) setTimeout(() => void updater.check(), 2500)

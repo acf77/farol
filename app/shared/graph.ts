@@ -1,4 +1,4 @@
-import type { Pipeline, PipelineNode, PipelineStepResult, Step, StepType } from './types'
+import { GIT_HOOK_EVENTS, type GitHookEvent, type Pipeline, type PipelineNode, type PipelineStepResult, type Step, type StepType } from './types'
 import { normalizeAi, normalizeModel, type AiProvider } from './ai'
 import { stripVerdictLine } from './verdict'
 
@@ -379,10 +379,18 @@ function normalizeGraph(nodes: PipelineNode[]): PipelineNode[] {
   }))
 }
 
+function sanitizeGitHooks(raw: unknown): GitHookEvent[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const valid = new Set<string>(GIT_HOOK_EVENTS)
+  const events = [...new Set(raw.filter((e): e is GitHookEvent => valid.has(e as string)))]
+  return events.length ? events : undefined
+}
+
 export function sanitizePipeline(raw: unknown): Pipeline | null {
   if (!raw || typeof raw !== 'object') return null
   const p = raw as Record<string, unknown>
   if (typeof p.id !== 'string' || typeof p.name !== 'string') return null
+  const gitHooks = sanitizeGitHooks(p.gitHooks)
   return {
     id: p.id,
     name: p.name,
@@ -391,7 +399,8 @@ export function sanitizePipeline(raw: unknown): Pipeline | null {
     ...(p.autoSelectable === true ? { autoSelectable: true } : {}),
     ...(p.target === 'remote' || p.target === 'vercel'
       ? { target: 'remote' as const, ...(p.fallbackLocal === true ? { fallbackLocal: true } : {}) }
-      : {})
+      : {}),
+    ...(gitHooks ? { gitHooks } : {})
   }
 }
 
