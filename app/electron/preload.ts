@@ -125,6 +125,11 @@ const api: FarolApi = {
   agentModels: {
     refresh: (force) => ipcRenderer.invoke('agentModels:refresh', force === true)
   },
+  remote: {
+    save: (config) => ipcRenderer.invoke('remote:save', config),
+    clearKey: () => ipcRenderer.invoke('remote:clearKey'),
+    check: () => ipcRenderer.invoke('remote:check')
+  },
   jev: {
     saveKey: (key) => ipcRenderer.invoke('jev:saveKey', key),
     clearKey: () => ipcRenderer.invoke('jev:clearKey'),

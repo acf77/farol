@@ -4,11 +4,23 @@
     "name": "Lint & Typecheck",
     "nodes": [
       {
+        "id": "n1",
+        "name": "Install",
+        "type": "shell",
+        "cmd": "cd app && npm ci --ignore-scripts --force",
+        "after": [],
+        "gate": true,
+        "x": 150,
+        "y": 145
+      },
+      {
         "id": "n2",
         "name": "TypeScript",
         "type": "shell",
-        "cmd": "tsc --noEmit",
-        "after": [],
+        "cmd": "app/node_modules/.bin/tsc --noEmit",
+        "after": [
+          "n1"
+        ],
         "gate": true,
         "x": 355,
         "y": 145
@@ -17,8 +29,10 @@
         "id": "n3",
         "name": "Lint",
         "type": "shell",
-        "cmd": "npx eslint . --max-warnings 0",
-        "after": [],
+        "cmd": "app/node_modules/.bin/eslint . --max-warnings 0",
+        "after": [
+          "n1"
+        ],
         "gate": true,
         "x": 563,
         "y": 143
@@ -109,7 +123,7 @@
         "id": "n1",
         "name": "Update version (SEMVER)",
         "type": "ai",
-        "cmd": "Analyze the git diff and choose a SEMVER bump for app/package.json (repo root has no package.json).\n\nRules:\n1 - Compare app/package.json to HEAD. If it is already bumped appropriately for this diff, return exactly: none\n2 - Otherwise return exactly one of: patch, minor, major\n3 - Do not edit files or run npm version — the next shell step applies the bump.\n\nRETURN ONLY one word: patch, minor, major, or none.",
+        "cmd": "Analyze the git diff and choose a SEMVER bump for app/package.json (repo root has no package.json).\n\nRules:\n1 - Compare app/package.json to HEAD. If it is already bumped appropriately for this diff, return exactly: none\n2 - Otherwise return exactly one of: patch, minor, major\n3 - Do not edit files or run npm version \u2014 the next shell step applies the bump.\n\nRETURN ONLY one word: patch, minor, major, or none.",
         "ai": "openrouter",
         "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "after": [],

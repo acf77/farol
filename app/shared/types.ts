@@ -11,7 +11,9 @@ import type {
   JevSettings,
   ModelChoice,
   OpenRouterSettings,
-  SettingsResult
+  SettingsResult,
+  RemoteConfig,
+  RemoteSettings
 } from './settings'
 import type { ProviderUsage } from './usage'
 import type { Todo } from './todos'
@@ -28,6 +30,8 @@ export type {
   OpenRouterSettings,
   ProjectSession,
   SettingsResult,
+  RemoteConfig,
+  RemoteSettings,
   WorktreeRequest
 }
 export { aiFixCommand } from './ai'
@@ -79,6 +83,8 @@ export interface PipelineNode extends Step {
   y: number
 }
 
+/** Where shell steps run. Only `remote` is stored; absent means this machine. */
+export type PipelineTarget = 'remote'
 /** Git hook Farol can stand in for. Kept to the two client-side checks worth blocking on. */
 export type GitHookEvent = 'pre-commit' | 'pre-push'
 export const GIT_HOOK_EVENTS: readonly GitHookEvent[] = ['pre-commit', 'pre-push']
@@ -87,6 +93,14 @@ export interface Pipeline {
   id: string
   name: string
   nodes: PipelineNode[]
+  /**
+   * `remote` runs shell steps in a fresh sandbox on the configured Farol service,
+   * holding a snapshot of the current checkout (uncommitted work included).
+   * AI steps still run here.
+   */
+  target?: PipelineTarget
+  /** With a `remote` target: run on this machine instead when the sandbox cannot be started. */
+  fallbackLocal?: boolean
   /** When true, managed Chat always runs this pipeline after code-changing turns. */
   mandatory?: boolean
   /**
@@ -642,6 +656,13 @@ export interface FarolApi {
   /** Refresh live `--model` lists from each installed coding CLI. */
   agentModels: {
     refresh(force?: boolean): Promise<SettingsResult>
+  }
+  /** Machine-local Farol service connection for remote pipelines. */
+  remote: {
+    save(config: RemoteConfig): Promise<SettingsResult>
+    clearKey(): Promise<SettingsResult>
+    /** Ping the service to prove the URL (and key, if any) work. */
+    check(): Promise<SettingsResult>
   }
   /** Jev is internal-only: a key to store and a probe to prove it works. */
   jev: {

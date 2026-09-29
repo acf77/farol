@@ -382,7 +382,9 @@ function selectedPipelines(
 function pipelineCatalog(pipelines: Pipeline[]): string {
   return pipelines
     .map((pipeline) => {
-      const tag = pipeline.mandatory ? ' [mandatory]' : ''
+      const tag =
+        (pipeline.mandatory ? ' [mandatory]' : '') +
+        (pipeline.target === 'remote' ? ' [remote]' : '')
       const steps = pipeline.nodes
         .map((node) => {
           const model = normalizeModel(node.model)

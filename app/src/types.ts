@@ -1,4 +1,13 @@
-import type { AgentMode, AgentQuestion, AgentTaskStatus, AiProvider, GitHookEvent, PipelineNode, StepState } from '@shared/types'
+import type {
+  AgentMode,
+  AgentQuestion,
+  AgentTaskStatus,
+  AiProvider,
+  GitHookEvent,
+  PipelineNode,
+  PipelineTarget,
+  StepState
+} from '@shared/types'
 import type { ContextUsage, SavedAgentContext } from '@shared/agent-context'
 import type { TermState } from './ansi'
 import type { PaneNode } from './layout'
@@ -133,6 +142,10 @@ export interface EditorState {
   mandatory?: boolean
   /** When true, Jev may auto-add this pipeline in Chat. */
   autoSelectable?: boolean
+  /** `remote` runs shell steps on the Farol service. */
+  target?: PipelineTarget
+  /** With a `remote` target: run locally when the sandbox cannot start. */
+  fallbackLocal?: boolean
   /** Git hook events that run this pipeline; see `Pipeline['gitHooks']`. */
   gitHooks?: GitHookEvent[]
 }

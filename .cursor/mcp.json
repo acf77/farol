@@ -7,7 +7,7 @@
       ],
       "env": {
         "ELECTRON_RUN_AS_NODE": "1",
-        "FAROL_SOCKET": "/var/folders/8c/dnq_8d0j6b10xklrxyqdt1fh0000gn/T/farol-gvim3m1ishf1m.sock"
+        "FAROL_SOCKET": "/var/folders/8c/dnq_8d0j6b10xklrxyqdt1fh0000gn/T/farol-1fupw321ur5k96.sock"
       }
     }
   }

@@ -144,6 +144,20 @@ _Avoid_: Clear as the remedy for a full context, a Farol summarizer call, droppi
 The task list a managed agent maintains with a hidden `FAROL_TODOS:` control line — Farol's stand-in for OpenCode's `todowrite`, because managed Chat runs every CLI with project MCP disabled. One line carries the whole list as JSON; a valid line replaces it and `FAROL_TODOS: []` clears it. It belongs to a checkout, so every chat in that checkout reads and writes the same list.
 _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo tool, partial updates or per-item edits, storing the list in `.farol` or committing it
 
+### Remote pipelines
+
+**Remote pipeline**:
+A pipeline whose target is Vercel Sandbox. Its shell steps run in a fresh sandbox holding a **Checkout snapshot**; its AI steps still run on this machine. A run creates one sandbox and stops it when the run ends, fails, or is cancelled.
+_Avoid_: cloud pipeline, remote checkout, persistent sandbox, running a pipeline "on a server"
+
+**Checkout snapshot**:
+The current checkout as uploaded to a sandbox: tracked files plus untracked files Git does not ignore, so uncommitted work is included. Ignored files and secret-looking paths are not. Nothing is copied back.
+_Avoid_: commit upload, git clone of the branch, syncing results back
+
+**Run service**:
+The standalone HTTP service in `app/service` that starts **Remote pipeline** runs for web and mobile clients. A client uploads a **Checkout snapshot** and an API key; the pipeline is the one committed in that snapshot. It runs shell steps only, and refuses pipelines with AI steps.
+_Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the service
+
 ## Relationships
 
 ### Source Control page

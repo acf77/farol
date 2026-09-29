@@ -9,7 +9,7 @@ import {
   pickerProviders,
   type AiProvider
 } from '@shared/ai'
-import { AI_GATEWAY_API_URL, JEV_MODEL_ID } from '@shared/jev'
+import { AI_GATEWAY_API_URL, errorMessage, JEV_MODEL_ID } from '@shared/jev'
 import { OPENROUTER_API_URL } from '@shared/openrouter'
 import {
   withAgentModel,
@@ -181,6 +181,82 @@ function JevSection({
           </span>
         )}
       </div>
+      {error && <div style={{ fontSize: 12, color: C.red, marginTop: 8 }}>{error}</div>}
+    </Section>
+  )
+}
+
+/**
+ * Remote pipelines run their shell steps in a sandbox on a Farol service. The
+ * API key is stored encrypted on this machine; the URL is a plain setting.
+ */
+function RemoteSection({
+  settings,
+  onAdoptSettings
+}: {
+  settings: AppSettings
+  onAdoptSettings: (next: AppSettings) => void
+}) {
+  const api = window.farol
+  const saved = settings.remote
+  const [url, setUrl] = useState(saved?.url ?? '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [probed, setProbed] = useState(false)
+  const hasKey = !!saved?.hasKey
+  const urlChanged = url.trim() !== (saved?.url ?? '')
+
+  const run = (call: Promise<SettingsResult>, probe = false): Promise<boolean> => {
+    setBusy(true)
+    return call
+      .then((result) => {
+        onAdoptSettings(result.settings)
+        if (result.settings.remote) setUrl(result.settings.remote.url)
+        setError(result.error ?? null)
+        setProbed(probe && !result.error)
+        return !result.error
+      })
+      .catch((err: unknown) => {
+        setError(errorMessage(err))
+        return false
+      })
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <Section
+      title="Remote service"
+      hint="Pipelines set to run remotely execute their shell steps in a fresh sandbox on your Farol service, holding a snapshot of the current checkout, uncommitted work included. Ignored and secret-looking files stay behind. AI steps still run on this machine, so later remote steps do not see edits they make."
+    >
+      <ApiKeyField
+        configured={hasKey}
+        placeholder="API key (optional, frl_…)"
+        busy={busy}
+        onSave={(key) => run(api.remote.save({ url: url || saved?.url || '', key }))}
+        onClear={() => void run(api.remote.clearKey())}
+      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input
+          className="bf-input bf-focus"
+          spellCheck={false}
+          placeholder="https://your-service.up.railway.app"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          style={{ ...field, flex: 1 }}
+        />
+        {(urlChanged || !saved) && (
+          <Button variant="primary" disabled={busy || !url.trim()} onClick={() => void run(api.remote.save({ url }))}>
+            Save
+          </Button>
+        )}
+        <Button variant="secondary" disabled={busy || !saved || urlChanged} onClick={() => void run(api.remote.check(), true)}>
+          Test
+        </Button>
+      </div>
+      {busy && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 8 }}>Working…</div>}
+      {!busy && saved && probed && !error && !urlChanged && (
+        <div style={{ fontSize: 11.5, color: C.textSoft, marginTop: 8 }}>Remote service is ready.</div>
+      )}
       {error && <div style={{ fontSize: 12, color: C.red, marginTop: 8 }}>{error}</div>}
     </Section>
   )
@@ -455,6 +531,8 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
             </Section>
 
             <JevSection settings={settings} onAdoptSettings={onAdoptSettings} />
+
+            <RemoteSection settings={settings} onAdoptSettings={onAdoptSettings} />
           </div>
         ) : (
           <div

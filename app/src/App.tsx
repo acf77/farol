@@ -41,7 +41,7 @@ import {
 import { sessionSeq } from '@shared/session'
 import { owningWorktree, primaryRepoFolderName } from '@shared/worktree'
 import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
-import { parallelAsClashIds, sanitizeAs, topoSort } from '@shared/graph'
+import { parallelAsClashIds, remoteFields, sanitizeAs, topoSort } from '@shared/graph'
 import { clearIndent, emptyTerm, ensureNewline, setIndent, trimTo, write, writeLine } from './ansi'
 import { agentPaneFor, chatOwnerFor, chatTabFor, trimAgentMessages } from './chat-context'
 import { fmtDuration, pipelineActivityText, projectRunChat, upsertMessage } from './pipeline-chat'
@@ -2118,6 +2118,7 @@ export function ProjectWorkspace({
       nodes,
       ...(editor.mandatory === true ? { mandatory: true } : {}),
       ...(editor.autoSelectable === true ? { autoSelectable: true } : {}),
+      ...remoteFields(editor),
       ...(editor.gitHooks?.length ? { gitHooks: editor.gitHooks } : {})
     })
     if (editor.id) {
@@ -2492,6 +2493,7 @@ export function ProjectWorkspace({
               nodes: p.nodes.map((n) => ({ ...n })),
               ...(p.mandatory === true ? { mandatory: true } : {}),
               ...(p.autoSelectable === true ? { autoSelectable: true } : {}),
+              ...remoteFields(p),
               ...(p.gitHooks?.length ? { gitHooks: p.gitHooks } : {})
             })
           }

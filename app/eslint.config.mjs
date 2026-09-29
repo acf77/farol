@@ -4,8 +4,9 @@ import tseslint from 'typescript-eslint'
 export default tseslint.config(
   {
     ignores: [
-      'dist/**',
-      'out/**',
+      '**/dist/**',
+      'service/dist/**',
+      '**/out/**',
       'node_modules/**',
       '**/*.d.ts',
       'scripts/**'

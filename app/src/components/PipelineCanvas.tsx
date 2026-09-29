@@ -24,6 +24,12 @@ const NODE_H = 72
  */
 const PORT_GROW = 1.5
 const PORT_MOTION = 'transform 160ms cubic-bezier(0.22,1,0.36,1)'
+/** Where a pipeline's shell steps run; `local` is stored as no target. */
+const RUN_TARGETS = [
+  { value: 'local', label: 'This machine' },
+  { value: 'remote', label: 'Remote' }
+] as const
+
 const inputStyle: React.CSSProperties = {
   height: 24,
   padding: '0 8px',
@@ -270,6 +276,20 @@ export default function PipelineCanvas({
         >
           Allow Chat to auto-select
         </Checkbox>
+        <SegmentedControl
+          label="Run shell steps on"
+          options={RUN_TARGETS}
+          value={editor.target ?? 'local'}
+          onChange={(v) => updateEditor((current) => v === 'remote' ? { ...current, target: 'remote' } : { ...current, target: undefined, fallbackLocal: undefined })}
+        />
+        {editor.target === 'remote' && (
+          <Checkbox
+            checked={editor.fallbackLocal === true}
+            onChange={(v) => updateEditor((current) => ({ ...current, fallbackLocal: v }))}
+          >
+            Fall back to this machine if remote fails (runs without sandbox isolation)
+          </Checkbox>
+        )}
         <span style={{ width: 1, alignSelf: 'stretch', background: 'rgba(255,255,255,0.08)' }} />
         {GIT_HOOK_EVENTS.map((event) => (
           <Checkbox

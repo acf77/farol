@@ -130,6 +130,22 @@ that tab stops watching without cancelling the run.
   run's output so far as context. If that CLI isn't on PATH the step fails with
   a note saying so.
 
+- **Remote pipelines** — tick *Run shell steps on Vercel Sandbox* in the editor
+  and the shell steps run in a fresh, non-persistent Vercel Sandbox instead of
+  on this machine. The sandbox gets a snapshot of the current checkout:
+  tracked files plus untracked files that Git does not ignore, so uncommitted
+  work is included, while ignored files and secret-looking paths (`.env`, keys)
+  stay behind. Nothing is copied back — a remote run reports results and never
+  changes local files. AI steps still run here, where the agent CLIs are signed
+  in. Runs, cancellation, run tabs, MCP and Chat behave as for local pipelines,
+  and the sandbox is stopped when the run ends, fails, or is cancelled. Add the
+  access token, team id and project id under *Settings → Vercel Sandbox*; the
+  token is encrypted on this machine like the other keys.
+
+- **Run service** — to start the same sandbox runs from a web or mobile app, deploy
+  the standalone service in [`service/`](service/README.md). Clients upload a project
+  snapshot with an API key; it streams output and results over HTTP.
+
 **Settings** (toolbar gear, File menu, or ⌘,) has two tabs. *General* picks the
 agent that new chats start with and that failed steps are handed to. *Models*
 sets each CLI's default `--model` — leave one on *Default* to let that CLI

@@ -14,6 +14,8 @@
     "postinstall": "electron-rebuild -f -w node-pty",
     "test": "vitest run",
     "dist": "electron-vite build && electron-builder --mac dmg zip && node scripts/publish-local.mjs",
+    "dist:alpha": "electron-vite build && electron-builder --mac dmg zip -c.appId=com.farol.app.alpha \"-c.productName=Farol Alpha\" -c.directories.output=dist-alpha \"-c.dmg.title=Farol Alpha ${version}\"",
+    "service:build": "esbuild service/main.ts --bundle --platform=node --target=node22 --format=cjs --outfile=service/dist/farol-service.cjs",
     "install:app": "npm run dist && node scripts/install-app.mjs"
   },
   "build": {
@@ -60,11 +62,14 @@
   "dependencies": {
     "@ai-sdk/gateway": "^4.0.85",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@vercel/sandbox": "^3.5.1",
     "ai": "^7.0.105",
-    "electron-liquid-glass": "^1.1.1",
     "mermaid": "^11.17.2",
     "node-pty": "^1.0.0",
     "zod": "^4.4.3"
+  },
+  "optionalDependencies": {
+    "electron-liquid-glass": "^1.1.1"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.11.1",
@@ -94,6 +99,7 @@
     "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^2.3.0",
+    "esbuild": "^0.21.5",
     "eslint": "^10.9.1",
     "jsdom": "^30.1.1",
     "oxlint-plugin-complexity": "^2.1.8",
