@@ -62,6 +62,7 @@ export default function PipelineCanvas({
   const [cam, setCam] = useState({ x: 48, y: 36, z: 1 })
   const [link, setLink] = useState<{ from: string; x: number; y: number } | null>(null)
   const [hover, setHover] = useState<string | null>(null)
+  const [tab, setTab] = useState<RailTab>('step')
   const wrapRef = useRef<HTMLDivElement>(null)
   const space = useRef(false)
   const pan = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null)
@@ -255,58 +256,12 @@ export default function PipelineCanvas({
           background: C.sidebar
         }}
       >
-        <span style={{ fontSize: 12, fontWeight: 600, color: C.textMuted }}>Pipeline</span>
-        <input
-          className="bf-input"
-          value={editor.name}
-          onChange={(e) => updateEditor((current) => ({ ...current, name: e.target.value }))}
-          placeholder="My Pipeline"
-          spellCheck={false}
-          style={{ ...inputStyle, width: 220, height: 26 }}
-        />
-        <Checkbox
-          checked={editor.mandatory === true}
-          onChange={(v) => updateEditor((current) => ({ ...current, mandatory: v }))}
-        >
-          Mandatory in Chat
-        </Checkbox>
-        <Checkbox
-          checked={editor.autoSelectable === true}
-          onChange={(v) => updateEditor((current) => ({ ...current, autoSelectable: v }))}
-        >
-          Allow Chat to auto-select
-        </Checkbox>
-        <SegmentedControl
-          label="Run shell steps on"
-          options={RUN_TARGETS}
-          value={editor.target ?? 'local'}
-          onChange={(v) => updateEditor((current) => v === 'remote' ? { ...current, target: 'remote' } : { ...current, target: undefined, fallbackLocal: undefined })}
-        />
-        {editor.target === 'remote' && (
-          <Checkbox
-            checked={editor.fallbackLocal === true}
-            onChange={(v) => updateEditor((current) => ({ ...current, fallbackLocal: v }))}
-          >
-            Fall back to this machine if remote fails (runs without sandbox isolation)
-          </Checkbox>
-        )}
-        <span style={{ width: 1, alignSelf: 'stretch', background: 'rgba(255,255,255,0.08)' }} />
-        {GIT_HOOK_EVENTS.map((event) => (
-          <Checkbox
-            key={event}
-            checked={editor.gitHooks?.includes(event) === true}
-            onChange={(v) =>
-              updateEditor((current) => {
-                const rest = (current.gitHooks ?? []).filter((e) => e !== event)
-                const gitHooks = v ? [...rest, event] : rest
-                return gitHooks.length ? { ...current, gitHooks } : { ...current, gitHooks: undefined }
-              })
-            }
-            title="Runs on this event when Farol is open; skipped otherwise, so the repo stays usable without it."
-          >
-            Run on {event}
-          </Checkbox>
-        ))}
+        <span style={{ fontSize: 12, color: C.textMuted }}>Pipelines</span>
+        <span style={{ fontSize: 12, color: C.textMuted }}>›</span>
+        <span style={{ fontSize: 12, fontWeight: 600, minWidth: 0, maxWidth: 260, ...ELLIPSIS }}>
+          {editor.name.trim() || 'Untitled pipeline'}
+        </span>
+        <span style={{ width: 8 }} />
         <button type="button" className="bf-hover-fill" onClick={() => addNode('shell')} style={toolBtn}>
           + Shell
         </button>
@@ -525,6 +480,7 @@ export default function PipelineCanvas({
                   e.stopPropagation()
                   setSel(n.id)
                   setSelEdge(null)
+                  setTab('step')
                 }}
                 onMouseDown={(e) => {
                   if (e.button !== 0 || space.current) return
@@ -647,16 +603,31 @@ export default function PipelineCanvas({
           })}
         </div>
 
-        {selected && (
-          <Inspector
-            node={selected}
-            settings={settings}
-            canDelete={editor.nodes.length > 1}
-            asClash={asClashIds.has(selected.id)}
-            onPatch={(p) => patch(selected.id, p)}
-            onDelete={() => removeNode(selected.id)}
+        <div style={{ flex: 'none', display: 'flex', flexDirection: 'column', width: 280, background: C.sidebar, borderLeft: '1px solid rgba(255,255,255,0.08)' }}>
+          <SegmentedControl
+            label="Editor panel"
+            options={RAIL_TABS}
+            value={tab}
+            onChange={setTab}
+            style={{ margin: '14px 14px 0' }}
           />
-        )}
+          {tab === 'pipeline' ? (
+            <PipelineSettings editor={editor} updateEditor={updateEditor} />
+          ) : selected ? (
+            <Inspector
+              node={selected}
+              settings={settings}
+              canDelete={editor.nodes.length > 1}
+              asClash={asClashIds.has(selected.id)}
+              onPatch={(p) => patch(selected.id, p)}
+              onDelete={() => removeNode(selected.id)}
+            />
+          ) : (
+            <div style={{ padding: '40px 22px', textAlign: 'center', fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>
+              Select a step on the canvas to edit it.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -673,6 +644,122 @@ const toolBtn: React.CSSProperties = {
   cursor: 'pointer'
 }
 
+const RAIL_TABS = [
+  { value: 'step', label: 'STEP' },
+  { value: 'pipeline', label: 'PIPELINE' }
+] as const
+type RailTab = (typeof RAIL_TABS)[number]['value']
+
+const railStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  padding: 14,
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 10
+}
+
+function Toggle({
+  checked,
+  onChange,
+  label,
+  hint,
+  title
+}: {
+  checked: boolean
+  onChange: (v: boolean) => void
+  label: string
+  hint: string
+  title?: string
+}) {
+  return (
+    <Checkbox checked={checked} onChange={onChange} title={title} style={{ alignItems: 'flex-start', padding: '4px 0' }}>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ color: C.text, fontSize: 12 }}>{label}</span>
+        <span style={{ color: C.textMuted, lineHeight: 1.4 }}>{hint}</span>
+      </span>
+    </Checkbox>
+  )
+}
+
+function GroupLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ marginTop: 8, fontSize: 10, fontWeight: 700, letterSpacing: '0.6px', color: C.textMuted }}>
+      {children}
+    </div>
+  )
+}
+
+function PipelineSettings({
+  editor,
+  updateEditor
+}: {
+  editor: EditorState
+  updateEditor: (update: (current: EditorState) => EditorState) => void
+}) {
+  return (
+    <div style={railStyle}>
+      <input
+        className="bf-input"
+        value={editor.name}
+        onChange={(e) => updateEditor((current) => ({ ...current, name: e.target.value }))}
+        placeholder="My Pipeline"
+        aria-label="Pipeline name"
+        spellCheck={false}
+        style={inputStyle}
+      />
+      <GroupLabel>RUNS ON</GroupLabel>
+      <SegmentedControl
+        label="Run shell steps on"
+        options={RUN_TARGETS}
+        value={editor.target ?? 'local'}
+        onChange={(v) =>
+          updateEditor((current) =>
+            v === 'remote' ? { ...current, target: 'remote' } : { ...current, target: undefined, fallbackLocal: undefined }
+          )
+        }
+      />
+      {editor.target === 'remote' && (
+        <Toggle
+          checked={editor.fallbackLocal === true}
+          onChange={(v) => updateEditor((current) => ({ ...current, fallbackLocal: v }))}
+          label="Fall back to this machine"
+          hint="If remote fails, run locally without sandbox isolation."
+        />
+      )}
+      <GroupLabel>GIT HOOKS</GroupLabel>
+      {GIT_HOOK_EVENTS.map((event) => (
+        <Toggle
+          key={event}
+          checked={editor.gitHooks?.includes(event) === true}
+          onChange={(v) =>
+            updateEditor((current) => {
+              const rest = (current.gitHooks ?? []).filter((e) => e !== event)
+              const gitHooks = v ? [...rest, event] : rest
+              return gitHooks.length ? { ...current, gitHooks } : { ...current, gitHooks: undefined }
+            })
+          }
+          label={`Run on ${event}`}
+          hint="Runs when Farol is open; skipped otherwise, so the repo stays usable without it."
+        />
+      ))}
+      <GroupLabel>CHAT</GroupLabel>
+      <Toggle
+        checked={editor.mandatory === true}
+        onChange={(v) => updateEditor((current) => ({ ...current, mandatory: v }))}
+        label="Mandatory in Chat"
+        hint="Chat runs this after every change it makes."
+      />
+      <Toggle
+        checked={editor.autoSelectable === true}
+        onChange={(v) => updateEditor((current) => ({ ...current, autoSelectable: v }))}
+        label="Allow Chat to auto-select"
+        hint="Chat may run this when it judges it relevant."
+      />
+    </div>
+  )
+}
 const TYPE_OPTIONS: { value: StepType; label: string }[] = [
   { value: 'shell', label: 'SHELL' },
   { value: 'ai', label: 'AI' }
@@ -695,20 +782,7 @@ function Inspector({
 }) {
   const ai = node.type === 'ai'
   return (
-    <div
-      style={{
-        flex: 'none',
-        width: 280,
-        borderLeft: '1px solid rgba(255,255,255,0.08)',
-        background: C.sidebar,
-        padding: 14,
-        overflowY: 'auto',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 10
-      }}
-    >
-      <div style={{ fontSize: 12, fontWeight: 600 }}>Step</div>
+    <div style={railStyle}>
       <SegmentedControl
         label="Step type"
         options={TYPE_OPTIONS}

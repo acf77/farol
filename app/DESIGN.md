@@ -302,7 +302,7 @@ A pipeline is authored on a node canvas, not in a list. This is the app's one sp
 - **Nodes:** 8px radius, `1px solid #3E3E3A`, Sidebar Charcoal (`#232322`) for shell steps and `rgba(184, 148, 255,0.12)` for AI steps. Selected takes a Signal Lime border plus a `0 0 0 3px rgba(214, 242, 58,0.18)` ring. A node carries a caption-scale kind label (`SHELL`, `AI · Claude`, suffixed `· GATE`) above its name.
 - **Ports:** 10px circles centred on the top and bottom edges. The outbound port is solid Signal Lime, the inbound is `rgba(214, 242, 58,0.85)`. Ports must grow on node hover; a target this small cannot rely on a tooltip alone.
 - **Wires:** cubic beziers at `rgba(214, 242, 58,0.55)`, 2.5px and full Signal Lime when selected, with a transparent 14px stroke beneath for hit area. A wire in flight is a dashed straight line. Selecting a wire reveals an 18px round remove button at its midpoint.
-- **Inspector:** a 280px right rail on Sidebar Slate holding step type, name, command or prompt, and the Gate toggle. It appears only on selection, which is the canvas's progressive disclosure.
+- **Inspector:** a 280px right rail on Sidebar Slate with a Step / Pipeline tab switch. Step holds step type, name, command or prompt, and the Gate toggle (an empty prompt shows until a node is selected). Pipeline holds name, run target, git hooks, and Chat toggles, keeping the header to breadcrumb, add-step, Cancel and Save.
 - Node shadows (`0 8px 24px rgba(0,0,0,0.35)`) are the documented exception to the Two-Shadow Rule: a node is a thing lifted off the canvas, and the shadow is what sells the plane.
 
 ### Pipeline Chain (Detail)
