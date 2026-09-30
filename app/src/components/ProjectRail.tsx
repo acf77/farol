@@ -23,6 +23,7 @@ import {
   RefreshIcon,
   Spinner
 } from './icons'
+import ActivityDot from './ActivityDot'
 
 const api = window.farol
 
@@ -92,21 +93,7 @@ function PinButton({ pinned, onClick }: { pinned: boolean; onClick: () => void }
 /** Status dot — green pulse while busy, lime until the chat is opened, then off. */
 function ChatActivityDot({ busy, unread }: { busy: boolean; unread: boolean }) {
   const title = busy ? 'Work in progress' : unread ? 'Unread chat updates' : undefined
-  return (
-    <span
-      role={title ? 'img' : undefined}
-      title={title}
-      aria-label={title}
-      style={{
-        width: 7,
-        height: 7,
-        flex: 'none',
-        borderRadius: '50%',
-        background: busy ? C.green : unread ? C.accent : C.fainter,
-        animation: busy ? 'bfpulse 1.1s ease-in-out infinite' : 'none'
-      }}
-    />
-  )
+  return <ActivityDot active={busy} unread={unread} idle title={title} />
 }
 
 function activityTip(display: string, busy: boolean, unread: boolean): string {

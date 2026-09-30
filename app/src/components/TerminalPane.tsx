@@ -4,6 +4,7 @@ import type { Tab } from '../types'
 import { leaves } from '../layout'
 import PaneGrid from './PaneGrid'
 import { SplitDownIcon, SplitRightIcon } from './icons'
+import ActivityDot from './ActivityDot'
 
 interface Props {
   tabs: Tab[]
@@ -23,6 +24,8 @@ interface Props {
   onSplitDown: () => void
   /** Whether the active tab can be split (shell with a focused shell pane). */
   canSplit: boolean
+  /** The selected run or one of its shell panes currently has foreground work. */
+  busy: boolean
 }
 
 interface CtxMenu {
@@ -49,7 +52,8 @@ export default function TerminalPane({
   onResize,
   onSplitRight,
   onSplitDown,
-  canSplit
+  canSplit,
+  busy
 }: Props) {
   const shellCount = tabs.filter((t) => t.kind === 'shell').length
   const [ctx, setCtx] = useState<CtxMenu | null>(null)
@@ -303,6 +307,7 @@ export default function TerminalPane({
         </div>
 
         <span style={{ flex: 1 }} />
+        <ActivityDot active={busy} title="Terminal activity in progress" />
         <span
           title={cwd}
           style={{

@@ -8,6 +8,7 @@ import type {
   Project,
   RunEvent,
   ShellCwd,
+  ShellActivity,
   ShellData,
   ShellExit,
   UpdateStatus
@@ -68,7 +69,8 @@ const api: FarolApi = {
     send: (paneId, data) => ipcRenderer.invoke('shell:send', paneId, data),
     onData: (cb) => on<ShellData>('shell:data', cb),
     onExit: (cb) => on<ShellExit>('shell:exit', cb),
-    onCwd: (cb) => on<ShellCwd>('shell:cwd', cb)
+    onCwd: (cb) => on<ShellCwd>('shell:cwd', cb),
+    onActivity: (cb) => on<ShellActivity>('shell:activity', cb)
   },
   git: {
     info: (projectPath: string) => ipcRenderer.invoke('git:info', projectPath),

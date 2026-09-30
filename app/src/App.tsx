@@ -961,6 +961,7 @@ export function ProjectWorkspace({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [clearChatConfirm, setClearChatConfirm] = useState(false)
   const [chatClearedNotice, setChatClearedNotice] = useState(false)
+  const [activeShells, setActiveShells] = useState<Set<string>>(() => new Set())
 
   const seq = useRef({ shell: 1, pane: 0, split: 0 })
   const pipelinesRef = useRef<Pipeline[]>([])
@@ -1460,6 +1461,15 @@ export function ProjectWorkspace({
   useEffect(() => {
     return api.ui.onSettings(() => setSettingsOpen(true))
   }, [])
+
+  useEffect(() => api.shell.onActivity(({ paneId, active: shellActive }) => {
+    setActiveShells((current) => {
+      const next = new Set(current)
+      if (shellActive) next.add(paneId)
+      else next.delete(paneId)
+      return next
+    })
+  }), [])
 
   useEffect(() => {
     if (!persistEnabled.current || !project) return
@@ -2468,6 +2478,7 @@ export function ProjectWorkspace({
                   onSplitRight={() => splitPane('row')}
                   onSplitDown={() => splitPane('col')}
                   canSplit={!!active && active.kind === 'shell' && active.panes[active.focus]?.kind === 'shell'}
+                  busy={active?.status === 'running' || !!active && Object.keys(active.panes).some((id) => activeShells.has(id))}
                 />
               )
             }}

@@ -10,6 +10,7 @@ import type {
   ProjectWriteOpts,
   RunEvent,
   ShellCwd,
+  ShellActivity,
   ShellData,
   ShellExit,
   WorktreeRequest
@@ -62,7 +63,8 @@ function send(channel: string, payload: unknown): void {
 const shells = new ShellManager(
   (e: ShellData) => send('shell:data', e),
   (e: ShellExit) => send('shell:exit', e),
-  (e: ShellCwd) => send('shell:cwd', e)
+  (e: ShellCwd) => send('shell:cwd', e),
+  (e: ShellActivity) => send('shell:activity', e)
 )
 const runner = new PipelineRunner((e: RunEvent) => {
   send('run:event', e)

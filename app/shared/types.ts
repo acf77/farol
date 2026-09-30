@@ -278,6 +278,12 @@ export interface ShellCwd {
   cwd: string
 }
 
+/** Whether the PTY's foreground process is doing work rather than waiting at the shell prompt. */
+export interface ShellActivity {
+  paneId: string
+  active: boolean
+}
+
 /** Who asked for the run. Agent runs must not re-trigger the failure hand-off. */
 export type RunOrigin = 'app' | 'agent' | 'managed-agent'
 
@@ -534,6 +540,7 @@ export interface FarolApi {
     onData(cb: (e: ShellData) => void): () => void
     onExit(cb: (e: ShellExit) => void): () => void
     onCwd(cb: (e: ShellCwd) => void): () => void
+    onActivity(cb: (e: ShellActivity) => void): () => void
   }
   git: {
     info(projectPath: string): Promise<GitInfo>

@@ -11,6 +11,7 @@ import farolMark from '../assets/farol-mark.png'
 import { ChatBanner } from './chat/cards'
 import { ComposerBox } from './chat/Composer'
 import { Turn } from './chat/Turn'
+import ScrollToLatest from './ScrollToLatest'
 
 interface Props {
   pane: AgentPane | null
@@ -428,54 +429,46 @@ export default function ChatPane({
       {chatClearedNotice && messages.length === 0 && (
         <ChatClearedBanner onDismissChatCleared={onDismissChatCleared} />
       )}
-      <div
-        ref={scrollRef}
-        className="bf-chat-scroll"
-        onScroll={(e) => syncScrollChrome(e.currentTarget)}
-        style={{
-          flex: 1,
-          minHeight: 0,
-          overflow: 'auto',
-          display: 'flex',
-          flexDirection: 'column'
-        }}
-      >
+      <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex' }}>
         <div
+          ref={scrollRef}
+          className="bf-chat-scroll"
+          onScroll={(e) => syncScrollChrome(e.currentTarget)}
           style={{
-            maxWidth: 680,
-            margin: '0 auto',
-            width: '100%',
+            flex: 1,
+            minHeight: 0,
+            overflow: 'auto',
             display: 'flex',
             flexDirection: 'column'
           }}
         >
-          {messages.length === 0 ? (
-            <>
-              <ChatGreeting availableCount={availableCount} mode={mode} />
-              <div style={{ flex: 1, minHeight: 24 }} />
-              {showSuggestions && <SuggestionList onPick={(p) => sendTextRef.current(p)} />}
-            </>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
-              {messages.map((m, i) => (
-                <MessageErrorBoundary key={i}>
-                  <Turn
-                    m={m}
-                    i={i}
-                    messages={messages}
-                    isBusy={isBusy}
-                    provider={provider}
-                    onOpenPipeline={onOpenPipeline}
-                    onNewChat={onNewChat}
-                    onAnswer={onAnswer}
-                    canExecutePlan={!!m.plan?.finished && !m.plan.consumed && !isBusy}
-                    onExecutePlan={onExecutePlan}
-                  />
-                </MessageErrorBoundary>
-              ))}
-            </div>
-          )}
+          <div style={{ maxWidth: 680, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column' }}>
+            {messages.length === 0 ? (
+              <>
+                <ChatGreeting availableCount={availableCount} mode={mode} />
+                <div style={{ flex: 1, minHeight: 24 }} />
+                {showSuggestions && <SuggestionList onPick={(p) => sendTextRef.current(p)} />}
+              </>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
+                {messages.map((m, i) => (
+                  <MessageErrorBoundary key={i}>
+                    <Turn m={m} i={i} messages={messages} isBusy={isBusy} provider={provider}
+                      onOpenPipeline={onOpenPipeline} onNewChat={onNewChat} onAnswer={onAnswer}
+                      canExecutePlan={!!m.plan?.finished && !m.plan.consumed && !isBusy}
+                      onExecutePlan={onExecutePlan} />
+                  </MessageErrorBoundary>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
+        <ScrollToLatest visible={showFade} onClick={() => {
+          const node = scrollRef.current
+          if (!node) return
+          stickRef.current = true
+          node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' })
+        }} />
       </div>
 
       {freshReason && onFreshStart && dismissedFresh !== freshKey && (
