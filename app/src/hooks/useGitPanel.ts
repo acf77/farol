@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { errorMessage } from '@shared/jev'
 import { activeHooks, gitHookFailurePrompt } from '@shared/git-status'
-import type { AiProvider, GitHookRun, GitInfo, MergeStrategy, PrDraft } from '@shared/types'
-import { useGitSync } from './useGitSync'
+import type { AiProvider, GitHookRun, MergeStrategy, PrDraft } from '@shared/types'
+import { useGitSync, type GitSyncOptions } from './useGitSync'
 
 const api = window.farol
 
@@ -29,12 +29,7 @@ export type GitLogEntry = {
   ok: boolean
 }
 
-type UseGitPanelOptions = {
-  /** Fetch status and GitHub info when true (e.g. tab visible and cwd is a repo). */
-  enabled?: boolean
-  open?: boolean
-  /** Called when HEAD changes for this project; the hook also refreshes panel data. */
-  onHeadChange?: (info: GitInfo) => void
+type UseGitPanelOptions = GitSyncOptions & {
   /** Hand a conflict-resolution prompt to Chat. */
   onAskAi?: (prompt: string) => void
 }
