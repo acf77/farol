@@ -689,10 +689,7 @@ export interface FarolApi {
     install(): void
     onStatus(cb: (s: UpdateStatus) => void): () => void
   }
-  /** Native Liquid Glass behind chrome (macOS 26+). */
   ui: {
-    glass(): Promise<boolean>
-    onGlass(cb: (active: boolean) => void): () => void
     onSettings(cb: () => void): () => void
   }
 }

@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Blocks, Check, ChevronDown as LucideChevronDown,
-  ChevronRight as LucideChevronRight, ChevronsUpDown, ChevronUp as LucideChevronUp, Circle, CircleSlash2, Clipboard,
+  ChevronLeft as LucideChevronLeft, ChevronRight as LucideChevronRight, ChevronsUpDown, ChevronUp as LucideChevronUp, Circle, CircleSlash2, Clipboard,
   File, FileCode2, FileText, Folder, FolderPlus, GitBranch, GitFork, Image, ListFilter, LoaderCircle,
   MessageCircleX, PanelBottom, PanelRight, Paperclip, Pencil, Pin, Play, RefreshCw, Search,
   Settings, Square, Trash2
@@ -13,7 +13,7 @@ export {
   ChevronsUpDown,
   ArrowDown as ArrowDownIcon, ArrowLeft as CaretLeft, ArrowRight as CaretRight, Blocks as ToolIcon,
   Check as CheckIcon, LucideChevronDown as ChevronDown, LucideChevronRight as ChevronRight,
-  LucideChevronUp as ChevronUp, Circle as CircleIcon, CircleSlash2 as CancelIcon, Clipboard as CopyIcon,
+  LucideChevronLeft as ChevronLeft, LucideChevronUp as ChevronUp, Circle as CircleIcon, CircleSlash2 as CancelIcon, Clipboard as CopyIcon,
   File as FileIcon, Folder as FolderIcon, FolderPlus as FolderPlusIcon, GitBranch as BranchIcon,
   GitFork as GitIcon, ListFilter as ProjectIcon, MessageCircleX as ClearChatIcon,
   PanelBottom as SplitDownIcon, PanelRight as SplitRightIcon, Paperclip as ClipIcon, Pencil as EditIcon,

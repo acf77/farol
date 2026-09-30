@@ -1,14 +1,12 @@
 import { useState } from 'react'
 import type { AiProvider } from '@shared/types'
-import { AI_LABELS } from '@shared/ai'
+import { aiSelectionLabel } from '@shared/ai'
 import type { AgentMessage } from '../../types'
 import { C, MONO, ELLIPSIS } from '../../theme'
 import { stripControlMarkers } from '../../markdown'
 import { Button } from '../controls'
 import {
-  CircleIcon,
-  ClearChatIcon,
-  CopyIcon,
+  CheckIcon,
   Spinner,
   StatusMark,
   ToolIcon
@@ -30,10 +28,10 @@ function ChatCard({
   return (
     <div
       style={{
-        border: `1px solid ${C.border}`,
-        borderRadius: 12,
+        border: `1px solid ${C.hair}`,
+        borderRadius: 10,
         overflow: 'hidden',
-        background: C.sidebar,
+        background: 'oklch(0.21 0.005 95)',
         ...style
       }}
     >
@@ -44,7 +42,7 @@ function ChatCard({
           gap: compact ? 9 : 8,
           minWidth: 0,
           padding: compact ? '7px 11px' : '11px 14px',
-          borderBottom: children ? `1px solid ${C.border}` : undefined
+          borderBottom: children ? `1px solid ${C.hair}` : undefined
         }}
       >
         <ToolIcon />
@@ -86,7 +84,7 @@ export function ChatBanner({
       style={{
         flex: 'none',
         margin: '12px 34px 0',
-        maxWidth: 680,
+        maxWidth: 700,
         marginLeft: 'auto',
         marginRight: 'auto',
         width: '100%',
@@ -95,9 +93,9 @@ export function ChatBanner({
         alignItems: 'center',
         gap: 10,
         padding: '12px 14px',
-        background: C.sidebar,
-        border: `1px solid ${C.border}`,
-        borderRadius: 12,
+        background: 'oklch(0.21 0.005 95)',
+        border: `1px solid ${C.hair}`,
+        borderRadius: 10,
         ...style
       }}
     >
@@ -113,38 +111,37 @@ export function ChatBanner({
  */
 export function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool']>; tight: boolean }) {
   return (
-    <ChatCard
-      compact
-      style={{ marginTop: tight ? -16 : 0 }}
-      title={tool.name}
-      extra={
-        <>
-          {tool.detail && (
-            <span
-              title={tool.detail}
-              style={{
-                fontFamily: MONO,
-                fontSize: 11,
-                color: C.textMuted,
-                minWidth: 0,
-                ...ELLIPSIS,
-                userSelect: 'text'
-              }}
-            >
-              {tool.detail}
-            </span>
-          )}
-          <span style={{ flex: 1 }} />
-          {tool.state === 'running' ? (
-            <Spinner />
-          ) : tool.state === 'done' ? (
-            <StatusMark done size={18} />
-          ) : (
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.red }}>✗</span>
-          )}
-        </>
-      }
-    />
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 9,
+        padding: '6px 12px',
+        marginTop: tight ? -16 : 0,
+        borderRadius: 8,
+        background: C.rail,
+        border: '1px solid oklch(1 0 0 / 0.05)',
+        minWidth: 0
+      }}
+    >
+      {tool.state === 'running' ? (
+        <Spinner size={10} />
+      ) : (
+        <span
+          aria-hidden
+          style={{ width: 6, height: 6, flex: 'none', borderRadius: '50%', background: tool.state === 'done' ? C.green : C.red }}
+        />
+      )}
+      <span style={{ flex: 'none', fontFamily: MONO, fontSize: 11.5, color: C.textRow }}>{tool.name}</span>
+      {tool.detail && (
+        <span
+          title={tool.detail}
+          style={{ flex: 1, minWidth: 0, fontFamily: MONO, fontSize: 11, color: C.faint, ...ELLIPSIS, userSelect: 'text' }}
+        >
+          {tool.detail}
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -158,117 +155,108 @@ export function PipelineMsgCard({
   onOpenPipeline: (tabId: string) => void
 }) {
   return (
-    <ChatCard
-      title={`pipeline: ${pc.pipelineName}`}
-      extra={
-        <>
-          {pc.status === 'running' ? (
-            <Spinner />
-          ) : pc.status === 'passed' ? (
-            <StatusMark done size={18} />
-          ) : (
-            <span
-              style={{
-                fontSize: 12,
-                fontWeight: 700,
-                color: pc.status === 'failed' ? C.red : C.faint
-              }}
-            >
-              {pc.status === 'failed' ? '✗' : '–'}
-            </span>
-          )}
-          <span style={{ flex: 1 }} />
-          <button
-            type="button"
-            className="bf-focus bf-linkish"
-            onClick={() => onOpenPipeline(pc.tabId)}
-            style={{
-              fontSize: 11,
-              color: C.textMuted,
-              cursor: 'pointer',
-              border: 'none',
-              background: 'transparent',
-              padding: 0,
-              fontFamily: 'inherit'
-            }}
-            title="Jump to this run's terminal tab"
-          >
-            Open in terminal
-          </button>
-        </>
-      }
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 11,
+        padding: '11px 14px',
+        borderRadius: 10,
+        background: 'oklch(0.21 0.005 95)',
+        border: `1px solid ${C.hair}`
+      }}
     >
-      <div
+      <span
+        aria-hidden
         style={{
-          padding: '13px 15px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 6,
-          fontFamily: MONO,
-          fontSize: 12,
-          lineHeight: 1.5,
-          color: C.textMuted,
-          userSelect: 'text'
+          width: 18,
+          height: 18,
+          boxSizing: 'border-box',
+          flex: 'none',
+          borderRadius: '50%',
+          display: 'grid',
+          placeItems: 'center',
+          background: pc.status === 'passed' ? C.accent : 'transparent',
+          border: pc.status === 'passed' || pc.status === 'running' ? 'none' : `1.5px solid ${pc.status === 'failed' ? C.red : C.faint}`
         }}
       >
-        {text}
+        {pc.status === 'running' ? (
+          <Spinner size={18} />
+        ) : pc.status === 'passed' ? (
+          <CheckIcon size={9} color={C.accentInk} strokeWidth={2.4} />
+        ) : null}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 500 }}>{pc.pipelineName}</div>
+        <div style={{ marginTop: 2, fontFamily: MONO, fontSize: 11, lineHeight: 1.5, color: C.faint, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text' }}>
+          {text}
+        </div>
       </div>
-    </ChatCard>
+      <button
+        type="button"
+        className="bf-focus bf-icon-btn"
+        onClick={() => onOpenPipeline(pc.tabId)}
+        title="Jump to this run's terminal tab"
+        style={{ flex: 'none', fontSize: 11.5, color: C.textMuted, padding: '4px 8px', borderRadius: 6, border: 'none', background: 'transparent', fontFamily: 'inherit', cursor: 'pointer' }}
+      >
+        Open in terminal
+      </button>
+    </div>
   )
 }
 
 export function AssistantFooter({
   text,
   provider,
+  model,
   onNewChat
 }: {
   text: string
   provider: AiProvider
+  model?: string
   onNewChat: () => void
 }) {
+  const action: React.CSSProperties = {
+    width: 24,
+    height: 24,
+    display: 'grid',
+    placeItems: 'center',
+    border: 'none',
+    borderRadius: 6,
+    background: 'transparent',
+    color: 'inherit',
+    padding: 0,
+    cursor: 'pointer'
+  }
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.textMuted }}>
-      <CircleIcon />
-      <span style={{ fontSize: 12 }}>{AI_LABELS[provider]}</span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, color: C.faint, fontSize: 11.5 }}>
+      <span>{aiSelectionLabel(provider, model)}</span>
       <span style={{ flex: 1 }} />
-      <div style={{ display: 'flex', gap: 16 }}>
-        <button
-          type="button"
-          className="bf-focus bf-composer-btn"
-          title="Copy"
-          aria-label="Copy message"
-          onClick={() => void navigator.clipboard?.writeText(stripControlMarkers(text))}
-          style={{
-            display: 'grid',
-            placeItems: 'center',
-            border: 'none',
-            background: 'transparent',
-            color: 'inherit',
-            padding: 0,
-            cursor: 'pointer'
-          }}
-        >
-          <CopyIcon />
-        </button>
-        <button
-          type="button"
-          className="bf-focus bf-composer-btn"
-          title="Clear chat and start fresh"
-          aria-label="Clear chat and start fresh"
-          onClick={onNewChat}
-          style={{
-            display: 'grid',
-            placeItems: 'center',
-            border: 'none',
-            background: 'transparent',
-            color: 'inherit',
-            padding: 0,
-            cursor: 'pointer'
-          }}
-        >
-          <ClearChatIcon size={15} />
-        </button>
-      </div>
+      <button
+        type="button"
+        className="bf-focus bf-composer-btn"
+        title="Clear chat"
+        aria-label="Clear chat and start fresh"
+        onClick={onNewChat}
+        style={action}
+      >
+        <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden>
+          <path d="M2 3.5h10M5.5 3.5V2h3v1.5M3.5 3.5l.6 8.5h5.8l.6-8.5" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className="bf-focus bf-composer-btn"
+        title="Copy"
+        aria-label="Copy message"
+        onClick={() => void navigator.clipboard?.writeText(stripControlMarkers(text))}
+        style={action}
+      >
+        <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden>
+          <rect x="4.5" y="4.5" width="8" height="8" rx="1.5" />
+          <path d="M9.5 4.5V3a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 3v5A1.5 1.5 0 0 0 3 9.5h1.5" />
+        </svg>
+      </button>
     </div>
   )
 }

@@ -190,12 +190,12 @@ The status quartet. These are not brand colors and must never be repurposed as d
 ### Neutral
 The seven surface steps, darkest to lightest. Each step is a layer of the instrument, and the ordering is the depth model.
 - **Pane Well** (`#181817`): The recess behind panes in a split, the floor of the app.
-- **Terminal Pitch** (`#181817`): The terminal and run-log content. Deliberately the darkest content surface so the user's own shell colors sit at maximum contrast. Stays fully opaque even under Liquid Glass.
+- **Terminal Pitch** (`#181817`): The terminal and run-log content. Deliberately the darkest content surface so the user's own shell colors sit at maximum contrast.
 - **Empty Field** (`#232322`): The no-project state.
 - **Tab Active** (`#232322`): The selected tab, keyed to read as continuous with the pane below it.
 - **App Ground** (`#181817`): The window's warm near-black base.
 - **Sidebar Slate** (`#232322`): The pipeline sidebar, one step up from ground so it reads as attached chrome.
-- **Chrome Grey** (`#363740`): Native glass rim only. Interior titlebar, tabs, and content share Terminal Pitch so the window reads as one object.
+- **Chrome Grey** (`#363740`): Window rim only. Interior titlebar, tabs, and content share Terminal Pitch so the window reads as one object.
 - **Panel Grey** (`#2D2D2B`): Menus and dialogs. The only surface allowed to float.
 
 Text runs a seven-step ramp on those surfaces: **Text Strong** (`#F0F0EC`) for the one thing that matters most on a screen, **Text Default** (`#F0F0EC`) for ordinary labels, **Text Soft** (`#D8D8D3`) for secondary rows, **Text Muted** (`#A1A19A`) and **Text Dim** (`#A1A19A`) for metadata, **Text Faint** (`#777772`) for inactive glyphs, and **Text Fainter** (`#595956`) for placeholders only. **Neutral Grey** (`#777772`) is the skipped-step marker.
@@ -204,7 +204,7 @@ Text runs a seven-step ramp on those surfaces: **Text Strong** (`#F0F0EC`) for t
 
 **The Signal Rule.** Saturated color is a reading, never a finish. Lime, mint, coral, lavender, and amber appear only where the interface is reporting state or offering the primary action. If a saturated color appears anywhere it is not reporting something, delete it. A typical screen is under 5% saturated pixels.
 
-**The Pitch Floor Rule.** Terminal and run-log surfaces stay at `#181817`, fully opaque, always. When the window is running native Liquid Glass and every other surface goes translucent, content panes do not. Contrast under the user's own shell theme outranks the material effect.
+**The Pitch Floor Rule.** Terminal and run-log surfaces stay at `#181817`, fully opaque, always. Contrast under the user's own shell theme outranks any surface treatment.
 
 **The Status Never Alone Rule.** Green, red, amber, and grey always travel with a glyph or a word. "Passed", "Failed", "Skipped", "Not run on feature/x". A user who cannot distinguish the hues must still read the panel correctly.
 
@@ -249,8 +249,6 @@ Shadows are reserved for the two things that genuinely float above the applicati
 **The Two-Shadow Rule.** The system has two shadows. Menus get Menu Drop, dialogs get Dialog Drop, and everything else gets none. A hover state that reaches for a shadow is a hover state that should have changed its background instead. The one exception is a canvas node (`0 8px 24px rgba(0,0,0,0.35)`), which is genuinely lifted off a world plane rather than layered in the chrome.
 
 **The Ramp-Is-The-Z-Order Rule.** To raise a surface, move it up the neutral ramp; to recess one, move it down. Never simulate depth on an in-flow element with a shadow, an inner glow, or a gradient.
-
-**The Glass Exception.** When native Liquid Glass is active, chrome surfaces become translucent tints of `rgba(28,28,30,0.38–0.42)` and panels `rgba(44,44,46,0.72)`, but the layer ordering is unchanged and content panes stay opaque. Glass is a platform material the window receives, never an effect the interface applies for looks.
 
 ## 5. Components
 
@@ -321,14 +319,14 @@ The read-only counterpart in the sidebar, rendering the graph's resolved order a
 
 ### Do:
 - **Do** build depth by moving surfaces along the neutral ramp (`#181817` → `#2D2D2B`), reinforced with hairline `#3E3E3A` borders.
-- **Do** keep terminal and run-log panes fully opaque at `#181817`, including when Liquid Glass is active.
+- **Do** keep terminal and run-log panes fully opaque at `#181817`.
 - **Do** use `rgba(255,255,255,0.05–0.14)` background washes for every hover state. That wash is the app's hover language.
 - **Do** mark completed work with a Signal Lime circle and Charcoal Ink check; pending work uses the same circle empty, in `#2A2A28`.
 - **Do** pair every status color with a glyph or word: "Passed", "Failed", "Skipped", "Not run on feature/x".
 - **Do** reserve SF Mono for commands, paths, branch names, and run output.
 - **Do** promote with weight (600) and the text color ramp. Display at 22px is reserved for a single empty-view headline.
 - **Do** honor `prefers-reduced-motion` on `bfspin` and `bfpulse`, degrading to a static indicator that still reports the running state.
-- **Do** check dim metadata (`#A1A19A`, `#777772`, `#595956`) for 4.5:1 against its actual surface, including the translucent glass variants where the effective background shifts.
+- **Do** check dim metadata (`#A1A19A`, `#777772`, `#595956`) for 4.5:1 against its actual surface.
 - **Do** show the real result, including git's refusal message or a missing CLI on PATH, in the interface's own type rather than swallowing it.
 
 ### Don't:
@@ -340,6 +338,6 @@ The read-only counterpart in the sidebar, rendering the graph's resolved order a
 - **Don't** use `border-left` or `border-right` above 1px as a colored stripe on a row, step, or panel. Status goes in a glyph, a word, or the text color.
 - **Don't** add a fourth shadow. Menus get `0 12px 32px rgba(0,0,0,0.5)`, dialogs get `0 18px 48px rgba(0,0,0,0.55)`, canvas nodes get `0 8px 24px rgba(0,0,0,0.35)`, everything else gets none.
 - **Don't** reach for a modal. Splits, panes, inline editors, and the sidebar exist precisely so state can be shown in place.
-- **Don't** apply blur or translucency by hand. Glass is a native material the window receives; content panes never take it.
+- **Don't** apply blur or translucency. The window is opaque; content panes never take it.
 - **Don't** restyle the inside of a terminal pane. The user's prompt, theme, and colors pass through untouched.
 - **Don't** show anything green that was not earned on the current branch. Stale results are Stale Amber and labeled with the branch they came from.

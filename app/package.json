@@ -35,8 +35,7 @@
       }
     ],
     "asarUnpack": [
-      "**/node_modules/node-pty/**",
-      "**/node_modules/electron-liquid-glass/**"
+      "**/node_modules/node-pty/**"
     ],
     "npmRebuild": true,
     "mac": {
@@ -68,9 +67,6 @@
     "mermaid": "^11.17.2",
     "node-pty": "^1.0.0",
     "zod": "^4.4.3"
-  },
-  "optionalDependencies": {
-    "electron-liquid-glass": "^1.1.1"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.11.1",

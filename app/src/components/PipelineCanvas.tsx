@@ -235,7 +235,7 @@ export default function PipelineCanvas({
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
-        // Opaque full-page surface — never inherit Liquid Glass / chrome transparency.
+        // Opaque full-page surface.
         background: BG,
         color: C.text,
         fontFamily: UI,
@@ -348,7 +348,7 @@ export default function PipelineCanvas({
             backgroundImage: `radial-gradient(${DOT} 1px, transparent 1px)`,
             backgroundSize: `${22 * cam.z}px ${22 * cam.z}px`,
             backgroundPosition: `${cam.x}px ${cam.y}px`,
-            // Keep the canvas opaque under Liquid Glass so the app behind cannot show through.
+            // Keep the canvas opaque so the app behind cannot show through.
             isolation: 'isolate'
           }}
         >

@@ -2,11 +2,10 @@ import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { shortPath, trimSlashes } from '@shared/project-groups'
 import type { GitInfo, WorktreeRequest } from '@shared/types'
 import { branchNameError, worktreeFolderName } from '@shared/worktree'
-import { C, MONO, glass as G } from '../theme'
+import { C, MONO } from '../theme'
 import { BranchDropdown } from './controls'
 
 interface Props {
-  liquid?: boolean
   git: GitInfo
   /** Absolute project path — used to mark the current project in the list. */
   projectPath: string
@@ -268,7 +267,6 @@ function DialogActions({
 }
 
 export default function NewTabDialog({
-  liquid,
   git,
   projectPath,
   repoName,
@@ -396,7 +394,7 @@ export default function NewTabDialog({
           overflowWrap: 'anywhere',
           padding: 16,
           borderRadius: 8,
-          background: liquid ? G.panel : C.panel,
+          background: C.panel,
           border: '1px solid #3E3E3A',
           boxShadow: '0 18px 48px rgba(0,0,0,0.55)',
           display: 'flex',
