@@ -416,6 +416,10 @@ button:disabled {
   border-color: var(--bf-accent) !important;
 }
 
+.bf-input-ai:focus {
+  border-color: oklch(0.73 0.16 300) !important;
+}
+
 .bf-split-btn:hover {
   background: rgba(255, 255, 255, 0.09) !important;
   color: #fff !important;
