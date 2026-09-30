@@ -35,8 +35,7 @@ import {
   modeDefault,
   modeFallbacks,
   modeSelectionForPane,
-  withAgentModel,
-  withCommitMessageModel
+  withAgentModel
 } from '@shared/settings'
 import { sessionSeq } from '@shared/session'
 import { owningWorktree, primaryRepoFolderName } from '@shared/worktree'
@@ -2573,12 +2572,6 @@ export function ProjectWorkspace({
           remotes={git.remotes ?? []}
           provider={settings.commitMessage.agent}
           model={settings.commitMessage.model}
-          settings={settings}
-          onCommitMessageModelChange={(provider, model) => {
-            const next = withCommitMessageModel(settings, provider, model)
-            setSettings(next)
-            void api.settings.save(next)
-          }}
           {...gitPanel}
           open={gitOpen && visible}
           onClose={() => onGitOpenChange(false)}

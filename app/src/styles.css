@@ -264,6 +264,9 @@ button:disabled {
   width: 100%;
   transition: width var(--bf-hold-ms, 2.5s) linear;
 }
+.bf-hold-btn.is-primary .bf-hold-fill {
+  background: #bdd927;
+}
 .bf-hold-label {
   position: relative;
   display: inline-flex;
@@ -642,4 +645,17 @@ button:disabled {
 .bf-reveal-host:hover .bf-reveal,
 .bf-reveal-host:focus-within .bf-reveal {
   opacity: 1;
+}
+
+/* Source Control: link-style actions, AI draft buttons and file rows. */
+.bf-link-btn:hover:not(:disabled) {
+  color: oklch(0.94 0.006 95) !important;
+  background: transparent !important;
+}
+.bf-ai-btn:hover:not(:disabled) {
+  background: oklch(0.73 0.16 300 / 0.2) !important;
+}
+.bf-file-row:focus-within .bf-file-box {
+  outline: 2px solid var(--bf-accent);
+  outline-offset: 1px;
 }

@@ -12,6 +12,7 @@ import {
   isSecretPath,
   mergePullRequestBlockReason,
   parseAheadBehind,
+  parseNumstat,
   parseGitStatus,
   parseMergeTreeConflictPaths,
   pickPushRemote,
@@ -50,6 +51,15 @@ UU both.txt`)
 
   it('reports clean when porcelain is empty', () => {
     expect(parseGitStatus('').clean).toBe(true)
+  })
+})
+
+describe('parseNumstat', () => {
+  it('reads per-file counts and skips binary files', () => {
+    const counts = parseNumstat('42\t7\tsrc/a.ts\n-\t-\timg.png\n3\t0\tdir/b c.ts\n')
+    expect(counts.get('src/a.ts')).toEqual({ added: 42, removed: 7 })
+    expect(counts.get('dir/b c.ts')).toEqual({ added: 3, removed: 0 })
+    expect(counts.has('img.png')).toBe(false)
   })
 })
 

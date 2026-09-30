@@ -143,6 +143,9 @@ export interface GitStatusFile {
   path: string
   kind: GitFileKind
   staged: boolean
+  /** Lines added / removed against HEAD. Absent for binary or unreadable files. */
+  added?: number
+  removed?: number
 }
 
 export interface GitStatus {

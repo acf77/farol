@@ -379,8 +379,8 @@ function MenuTrigger({
         ...style
       }}
     >
-      <span style={{ ...ELLIPSIS }}>{children}</span>
-      <ChevronDown size={10} color={C.textMuted} />
+      <span style={{ minWidth: 0, ...ELLIPSIS }}>{children}</span>
+      <ChevronDown size={10} color={C.textMuted} style={{ flex: 'none' }} />
     </button>
   )
 }
