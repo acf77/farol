@@ -49,7 +49,7 @@ import { bindLatestRunId, bindRunStart, runOutcomeLabel, syncAgentPipelineRun } 
 import { CHROME_ROW, PANEL_INSET } from './components/side-panel'
 import { leaf, leaves, removeLeaf, setSize, splitLeaf } from './layout'
 import type { PaneNode } from './layout'
-import { C, GRADIENT_BG, UI, glass as G, seg } from './theme'
+import { C, UI, glass as G, seg } from './theme'
 import type {
   AgentMessage,
   AgentPane,
@@ -2342,7 +2342,7 @@ export function ProjectWorkspace({
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
-        background: liquid ? G.appBg : GRADIENT_BG,
+        background: liquid ? G.appBg : C.terminal,
         color: C.text,
         fontFamily: UI,
         fontSize: 13,
@@ -2706,7 +2706,7 @@ export default function App() {
           display: 'flex',
           flexDirection: 'column',
           boxSizing: 'border-box',
-          background: GRADIENT_BG,
+          background: C.terminal,
           color: C.text,
           fontFamily: UI
         }}
@@ -2757,7 +2757,7 @@ export default function App() {
         height: '100vh',
         overflow: 'hidden',
         boxSizing: 'border-box',
-        background: GRADIENT_BG
+        background: C.terminal
       }}
     >
       <ProjectRail

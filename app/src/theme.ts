@@ -1,7 +1,6 @@
 /** Palette sampled from Farol's charcoal desktop references. */
 
 export const C = {
-  chrome: 'oklch(0.31 0.018 285)',
   terminal: 'oklch(0.18 0.004 95)',
   sidebar: 'oklch(0.23 0.005 95)',
   panel: 'oklch(0.28 0.006 95)',
@@ -18,16 +17,13 @@ export const C = {
 
   /** Signal lime: selection, primary action, and keyboard focus. */
   accent: 'oklch(0.91 0.19 115)',
-  accentHover: 'oklch(0.95 0.16 115)',
   accentInk: 'oklch(0.18 0.025 115)',
   green: 'oklch(0.78 0.09 160)',
   red: 'oklch(0.69 0.2 25)',
   /** Lavender identifies agent and model work. */
-  purple: 'oklch(0.73 0.16 300)',
   purpleSoft: 'oklch(0.84 0.1 300)',
   yellow: 'oklch(0.84 0.17 85)',
-  yellowDim: 'oklch(0.48 0.1 85)',
-  grey: 'oklch(0.56 0.006 95)'
+  yellowDim: 'oklch(0.48 0.1 85)'
 } as const
 
 /**
@@ -36,11 +32,7 @@ export const C = {
  */
 export const glass = {
   appBg: 'transparent',
-  chrome: 'rgba(54, 55, 64, 0.58)',
-  sidebar: 'rgba(35, 35, 34, 0.58)',
-  tabActive: 'rgba(255, 255, 255, 0.08)',
-  panel: 'rgba(45, 45, 43, 0.82)',
-  terminal: '#181817'
+  panel: 'rgba(45, 45, 43, 0.82)'
 } as const
 
 /** Colours for Farol's own run-log lines (DESIGN.md § Run Log). */
@@ -58,9 +50,6 @@ export const LINE = {
 } as const
 
 export type LineKind = keyof typeof LINE
-
-/** Flat window ground. Depth comes from surface stacking, not a wash. */
-export const GRADIENT_BG = C.terminal
 
 /**
  * The floating panel every top-level surface sits in — chat, terminal and the

@@ -14,15 +14,6 @@ interface IconProps {
 
 const S = (n: number) => ({ width: n, height: n })
 
-export function TerminalIcon({ size = 13 }: IconProps) {
-  return (
-    <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>
-      <rect x="2" y="3" width="12" height="10" rx="2" />
-      <path d="M4.8 7 6.6 8.6 4.8 10.2M8.4 10.4h2.8" />
-    </svg>
-  )
-}
-
 export function FileIcon({ size = 13 }: IconProps) {
   return (
     <svg {...S(size)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>
