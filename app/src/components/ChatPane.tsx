@@ -207,10 +207,6 @@ function ChatClearedBanner({ onDismissChatCleared }: { onDismissChatCleared?: ()
 }
 
 /**
- * How full the agent's context is. Shown only with a reading from the CLI;
- * amber once it is large enough that answers tend to lose precision.
-
-/**
  * Why a fresh start is suggested — a large reading, or the agent stopped on
  * its context limit — and a key that changes only when the situation does
  * (a new stop, or the next 10% band), so a dismissal holds until then.
@@ -513,5 +509,3 @@ export default function ChatPane({
     </div>
   )
 }
-
-export { ChatModeSwitch } from './chat/Composer'

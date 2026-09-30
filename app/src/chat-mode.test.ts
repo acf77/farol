@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { normalizeMode } from '@shared/ai'
 import { sanitizeSession } from '@shared/session'
 import { modeDefault, sanitizeSettings } from '@shared/settings'
-import { ChatModeSwitch } from './components/ChatPane'
+import { ChatModeSwitch } from './components/chat/Composer'
 import { makeAgentPane, renderChatPane } from './components/chat/test-pane'
 import type { AgentPane } from './types'
 

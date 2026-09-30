@@ -1,154 +1,10 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { errorMessage } from '@shared/jev'
-import { trimSlashes } from '@shared/project-groups'
-import { activeHooks, committableFiles, gitHookFailurePrompt } from '@shared/git-status'
-import type {
-  AiProvider,
-  GitCommit,
-  GitHookInfo,
-  GitHookRun,
-  GitHubInfo,
-  GitInfo,
-  GitStatus,
-  MergeStrategy,
-  PrDraft
-} from '@shared/types'
+import { activeHooks, gitHookFailurePrompt } from '@shared/git-status'
+import type { AiProvider, GitHookRun, GitInfo, MergeStrategy, PrDraft } from '@shared/types'
+import { useGitSync } from './useGitSync'
 
 const api = window.farol
-
-function sameProject(a: string, b: string): boolean {
-  return trimSlashes(a) === trimSlashes(b)
-}
-
-type PollJob = {
-  delay: number
-  read: () => Promise<() => void>
-  fail: (message: string) => void
-  finish?: () => void
-}
-
-/** Repeatedly run a job on a timer, and immediately on window focus / tab visibility. */
-function runPoller(job: PollJob, isCancelled: () => boolean): () => void {
-  const { delay, read, fail, finish } = job
-  let timer: number
-  let busy = false
-  const update = async () => {
-    if (busy || document.hidden) return
-    window.clearTimeout(timer)
-    busy = true
-    try {
-      const apply = await read()
-      if (!isCancelled()) apply()
-    } catch (err) {
-      if (!isCancelled()) fail(errorMessage(err, 'Could not update Git information'))
-    } finally {
-      busy = false
-      if (!isCancelled()) {
-        finish?.()
-        timer = window.setTimeout(() => void update(), delay)
-      }
-    }
-  }
-  const onVisible = () => void update()
-  void update()
-  window.addEventListener('focus', onVisible)
-  document.addEventListener('visibilitychange', onVisible)
-  return () => {
-    window.clearTimeout(timer)
-    window.removeEventListener('focus', onVisible)
-    document.removeEventListener('visibilitychange', onVisible)
-  }
-}
-
-type GitPollingParams = {
-  projectPath: string
-  open?: boolean
-  isCancelled: () => boolean
-  knownFiles: MutableRefObject<Set<string> | null>
-  refreshFailing: MutableRefObject<boolean>
-  setLoading: (loading: boolean) => void
-  setStatus: (status: GitStatus) => void
-  setCommits: (commits: GitCommit[]) => void
-  setSelectedFiles: Dispatch<SetStateAction<string[]>>
-  setRefreshError: (message: string | null) => void
-  setGithub: (github: GitHubInfo | null) => void
-  setHooks: (hooks: GitHookInfo[]) => void
-  appendLog: (action: string, message: string, ok: boolean) => void
-}
-
-/** Poll status/commits, GitHub, and hook info on their own cadences until stopped. */
-function startGitPolling(params: GitPollingParams): () => void {
-  const {
-    projectPath,
-    open,
-    isCancelled,
-    knownFiles,
-    refreshFailing,
-    setLoading,
-    setStatus,
-    setCommits,
-    setSelectedFiles,
-    setRefreshError,
-    setGithub,
-    setHooks,
-    appendLog
-  } = params
-  const jobs: PollJob[] = [
-    {
-      delay: open ? 5000 : 30000,
-      read: async () => {
-        setLoading(true)
-        const [st, recent] = await Promise.all([api.git.status(projectPath), api.git.recentCommits(projectPath)])
-        return () => {
-          const live = committableFiles(st).files
-          const known = knownFiles.current
-          setStatus(st)
-          setCommits(recent)
-          setSelectedFiles((selected) => {
-            const checked = new Set(selected)
-            return known ? live.filter((file) => checked.has(file) || !known.has(file)) : live
-          })
-          knownFiles.current = new Set(live)
-          refreshFailing.current = false
-          setRefreshError(null)
-        }
-      },
-      fail: (message) => {
-        setRefreshError(message)
-        if (!refreshFailing.current) appendLog('Refresh', message, false)
-        refreshFailing.current = true
-      },
-      finish: () => setLoading(false)
-    },
-    {
-      delay: 60000,
-      read: async () => {
-        const gh = await api.git.github(projectPath)
-        return () => setGithub(gh)
-      },
-      fail: (message) => setGithub({ available: false, prs: [], message })
-    },
-    {
-      delay: 60000,
-      read: async () => {
-        const hooks = await api.git.hooks(projectPath)
-        return () => setHooks(hooks)
-      },
-      fail: () => setHooks([])
-    }
-  ]
-  const cleanups = jobs.map((job) => runPoller(job, isCancelled))
-  return () => cleanups.forEach((cleanup) => cleanup())
-}
 
 export type GitAction =
   | 'generate'
@@ -186,27 +42,6 @@ type UseGitPanelOptions = {
 const EMPTY_DRAFT: GitCommitDraft = { message: '', skipped: [] }
 const EMPTY_PR_DRAFT: PrDraft = { title: '', description: '' }
 
-type PanelSetters = {
-  setDraft: Dispatch<SetStateAction<GitCommitDraft>>
-  setPrDraft: Dispatch<SetStateAction<PrDraft>>
-  setSelectedFiles: Dispatch<SetStateAction<string[]>>
-}
-
-function createPanelUpdaters({ setDraft, setPrDraft, setSelectedFiles }: PanelSetters) {
-  return {
-    setDraftMessage: (message: string) => setDraft((current) => ({ ...current, message })),
-    setPrTitle: (title: string) => setPrDraft((current) => ({ ...current, title })),
-    setPrDescription: (description: string) =>
-      setPrDraft((current) => ({ ...current, description })),
-    setFileSelected: (file: string, selected: boolean) =>
-      setSelectedFiles((files) => {
-        if (!selected) return files.filter((path) => path !== file)
-        return files.includes(file) ? files : [...files, file]
-      }),
-    selectAllFiles: (files: string[]) => setSelectedFiles(files)
-  }
-}
-
 type RemoteResult = { ok: boolean; message: string; prompt?: string; hookRun?: GitHookRun }
 
 type RunRemote = (
@@ -216,51 +51,19 @@ type RunRemote = (
   failed: string
 ) => Promise<RemoteResult | undefined>
 
-function createRemoteActions(projectPath: string, runRemote: RunRemote) {
-  return {
-    push: () => runRemote('push', 'Push', () => api.git.push(projectPath), 'Push failed'),
-    pull: () => runRemote('pull', 'Pull', () => api.git.pull(projectPath), 'Pull failed'),
-    createPr: (base?: string, title?: string, body?: string) =>
-      runRemote(
-        'pr',
-        'Create pull request',
-        () => api.git.createPr(projectPath, base, title, body),
-        'Could not create the pull request'
-      ),
-    mergePr: (strategy: MergeStrategy) =>
-      runRemote(
-        'merge',
-        'Merge pull request',
-        () => api.git.mergePr(projectPath, strategy),
-        'Could not merge the pull request'
-      )
-  }
-}
-
 export function useGitPanel(
   projectPath: string,
   ai: () => { agent: AiProvider; model?: string },
   opts?: UseGitPanelOptions
 ) {
-  const [status, setStatus] = useState<GitStatus | null>(null)
-  const [commits, setCommits] = useState<GitCommit[]>([])
-  const [github, setGithub] = useState<GitHubInfo | null>(null)
-  const [hooks, setHooks] = useState<GitHookInfo[] | null>(null)
-  const [loading, setLoading] = useState(false)
   const [gitAction, setGitAction] = useState<GitAction | null>(null)
   const [draft, setDraft] = useState<GitCommitDraft>(EMPTY_DRAFT)
   const [prDraft, setPrDraft] = useState<PrDraft>(EMPTY_PR_DRAFT)
-  const [selectedFiles, setSelectedFiles] = useState<string[]>([])
   const [log, setLog] = useState<GitLogEntry[]>([])
-  const [refreshError, setRefreshError] = useState<string | null>(null)
-  const [refreshVersion, setRefreshVersion] = useState(0)
-  const knownFiles = useRef<Set<string> | null>(null)
-  const refreshFailing = useRef(false)
   const logId = useRef(0)
   // Callers pass `opts` inline; read `onAskAi` through a ref so it never destabilises the actions.
   const onAskAiRef = useRef(opts?.onAskAi)
   onAskAiRef.current = opts?.onAskAi
-  const refresh = useCallback(() => setRefreshVersion((version) => version + 1), [])
   const appendLog = useCallback((action: string, message: string, ok: boolean) => {
     const time = new Date().toLocaleTimeString([], {
       hour: '2-digit',
@@ -274,54 +77,15 @@ export function useGitPanel(
       { id: logId.current, time, action, message, ok }
     ])
   }, [])
+  const sync = useGitSync(projectPath, opts, appendLog)
+  const { hooks, selectedFiles, setSelectedFiles, refresh } = sync
 
   useEffect(() => {
-    setStatus(null)
-    setCommits([])
-    setGithub(null)
-    setHooks(null)
     setDraft(EMPTY_DRAFT)
     setPrDraft(EMPTY_PR_DRAFT)
-    setSelectedFiles([])
     setLog([])
-    setRefreshError(null)
-    knownFiles.current = null
-    refreshFailing.current = false
     logId.current = 0
   }, [projectPath])
-
-  useEffect(() => {
-    if (!opts?.enabled || !projectPath) return
-    let cancelled = false
-    const stop = startGitPolling({
-      projectPath,
-      open: opts.open,
-      isCancelled: () => cancelled,
-      knownFiles,
-      refreshFailing,
-      setLoading,
-      setStatus,
-      setCommits,
-      setSelectedFiles,
-      setRefreshError,
-      setGithub,
-      setHooks,
-      appendLog
-    })
-    return () => {
-      cancelled = true
-      stop()
-      setLoading(false)
-    }
-  }, [appendLog, opts?.enabled, opts?.open, projectPath, refreshVersion])
-
-  useEffect(() => {
-    return api.git.onChanged((changed) => {
-      if (!sameProject(changed.projectPath, projectPath)) return
-      opts?.onHeadChange?.(changed.info)
-      refresh()
-    })
-  }, [opts?.onHeadChange, projectPath, refresh])
 
   const prepareCommit = useCallback(async (provider?: AiProvider, model?: string) => {
     if (gitAction || !selectedFiles.length) return
@@ -404,7 +168,27 @@ export function useGitPanel(
 
   // Stable identities matter: App's git-control effect depends on `pull`, and a fresh
   // function every render re-sets App state, which re-renders this hook — an endless loop.
-  const remotes = useMemo(() => createRemoteActions(projectPath, runRemote), [projectPath, runRemote])
+  const remotes = useMemo(
+    () => ({
+      push: () => runRemote('push', 'Push', () => api.git.push(projectPath), 'Push failed'),
+      pull: () => runRemote('pull', 'Pull', () => api.git.pull(projectPath), 'Pull failed'),
+      createPr: (base?: string, title?: string, body?: string) =>
+        runRemote(
+          'pr',
+          'Create pull request',
+          () => api.git.createPr(projectPath, base, title, body),
+          'Could not create the pull request'
+        ),
+      mergePr: (strategy: MergeStrategy) =>
+        runRemote(
+          'merge',
+          'Merge pull request',
+          () => api.git.mergePr(projectPath, strategy),
+          'Could not merge the pull request'
+        )
+    }),
+    [projectPath, runRemote]
+  )
 
   const preparePr = useCallback(
     async (base: string, provider?: AiProvider, model?: string) => {
@@ -442,21 +226,23 @@ export function useGitPanel(
   }, [projectPath, runRemote])
 
   return {
-    status,
-    commits,
-    github,
-    hooks,
-    loading,
+    ...sync,
     gitAction,
     draft,
     prDraft,
-    selectedFiles,
     log,
-    refreshError,
-    refresh,
     prepareCommit,
     preparePr,
-    ...createPanelUpdaters({ setDraft, setPrDraft, setSelectedFiles }),
+    setDraftMessage: (message: string) => setDraft((current) => ({ ...current, message })),
+    setPrTitle: (title: string) => setPrDraft((current) => ({ ...current, title })),
+    setPrDescription: (description: string) =>
+      setPrDraft((current) => ({ ...current, description })),
+    setFileSelected: (file: string, selected: boolean) =>
+      setSelectedFiles((files) => {
+        if (!selected) return files.filter((path) => path !== file)
+        return files.includes(file) ? files : [...files, file]
+      }),
+    selectAllFiles: setSelectedFiles,
     confirmCommit,
     ...remotes,
     resolveConflicts

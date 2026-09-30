@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { shortPath } from '@shared/project-groups'
+import { shortPath, trimSlashes } from '@shared/project-groups'
 import type { GitInfo, WorktreeRequest } from '@shared/types'
 import { branchNameError, worktreeFolderName } from '@shared/worktree'
 import { C, MONO, glass as G } from '../theme'
@@ -90,8 +90,7 @@ function ExistingWorkspaces({
         >
           <option value="">Select workspace…</option>
           {workspaces.map((w) => {
-            const main =
-              w.path.replace(/[/\\]+$/, '') === projectPath.replace(/[/\\]+$/, '')
+            const main = trimSlashes(w.path) === trimSlashes(projectPath)
             return (
               <option key={w.path} value={w.branch}>
                 {w.branch}
