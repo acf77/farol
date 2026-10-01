@@ -264,6 +264,12 @@ button:disabled {
   width: 100%;
   transition: width var(--bf-hold-ms, 2.5s) linear;
 }
+/* The fill is a progress indicator for how long to hold, so reduced motion keeps it. */
+@media (prefers-reduced-motion: reduce) {
+  .bf-hold-btn.is-holding .bf-hold-fill {
+    transition-duration: var(--bf-hold-ms, 2.5s) !important;
+  }
+}
 .bf-hold-label {
   position: relative;
   display: inline-flex;

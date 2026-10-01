@@ -193,6 +193,7 @@ function HoldButton({
       disabled={disabled || busy}
       title={holding ? 'Keep holding to confirm' : title}
       aria-label={`${label}. Hold until the button fills to confirm`}
+      aria-disabled={disabled || busy}
       className={`bf-hold-btn${holding ? ' is-holding' : ''}`}
       onPointerDown={(event) => {
         if (event.button !== 0) return
@@ -215,6 +216,8 @@ function HoldButton({
       style={{
         flex: 1,
         color: holding ? C.accentInk : undefined,
+        opacity: disabled && !busy ? 0.45 : undefined,
+        cursor: disabled && !busy ? 'not-allowed' : undefined,
         ['--bf-hold-ms' as string]: `${HOLD_MS}ms`,
         ...style
       }}
@@ -551,14 +554,40 @@ function CheckRows({ checks }: { checks: PrCheck[] }) {
   )
 }
 
+/**
+ * Base branches a pull request from `branch` can target, and the one in effect.
+ * The current branch cannot be its own base. Remote-only bases are shown by branch
+ * name: `gh pr create --base` wants `staging`, not `origin/staging`.
+ */
+function resolvePrBase(
+  branch: string,
+  branches: string[],
+  remotes: string[],
+  knownBase: string,
+  userBase: string | null
+): { baseOptions: string[]; base: string } {
+  const baseOptions = [
+    ...new Set([
+      ...(knownBase ? [knownBase] : []),
+      ...branches,
+      ...remotes.map((name) => name.replace(/^[^/]+\//, ''))
+    ])
+  ].filter((name) => name && name !== branch)
+  const preferred = ['staging', 'main', 'master', 'develop']
+    .map((name) => baseOptions.find((option) => option === name || option.endsWith(`/${name}`)))
+    .find(Boolean)
+  // An open pull request's base is fixed; the saved selection only applies without one.
+  const base = knownBase || (userBase && baseOptions.includes(userBase) ? userBase : '') || preferred || ''
+  return { baseOptions, base }
+}
+
 function PullRequestCard({
   branch,
-  branches,
-  remotes,
   status,
   github,
   gitAction,
-  base: userBase,
+  baseOptions,
+  base,
   prDraft,
   provider,
   model,
@@ -575,12 +604,11 @@ function PullRequestCard({
   onMergePr
 }: {
   branch: string
-  branches: string[]
-  remotes: string[]
   status: GitStatus | null
   github: GitHubInfo | null
   gitAction: GitAction | null
-  base: string | null
+  baseOptions: string[]
+  base: string
   prDraft: PrDraft
   provider: AiProvider
   model?: string
@@ -597,18 +625,6 @@ function PullRequestCard({
   onMergePr: (strategy: MergeStrategy) => void
 }) {
   const attached = github?.available ? github.prs[0] : undefined
-  const knownBase = attached?.base ?? status?.baseMerge?.base ?? ''
-  // The current branch cannot be its own pull request base. Remote-only bases
-  // are shown by branch name: `gh pr create --base` wants `staging`, not `origin/staging`.
-  const baseOptions = [
-    ...new Set([
-      ...(knownBase ? [knownBase] : []),
-      ...branches,
-      ...remotes.map((name) => name.replace(/^[^/]+\//, ''))
-    ])
-  ].filter((name) => name && name !== branch)
-  const preferred = baseOptions.find((name) => /(^|\/)(staging|main|master|develop)$/.test(name))
-  const base = (userBase && baseOptions.includes(userBase) ? userBase : '') || knownBase || preferred || ''
   const mergeLoaded = !!status?.conflicts.length || !!github || !!status?.baseMerge
   const mergeItems = mergeLoaded ? conflictStatusItems(status, github) : []
   const working = (status?.conflicts ?? []).map((file) => file.path)
@@ -783,10 +799,12 @@ function PullRequestCard({
             onConfirm={() => onCreatePr(base, prDraft.title, prDraft.description)}
             style={{ width: '100%', height: 38, marginTop: 10, borderRadius: 8 }}
           />
+          {prReason && <div style={{ marginTop: 7, color: C.textMuted, fontSize: 11 }}>{prReason}</div>}
         </>
       )}
 
       {attached && (
+        <>
         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
           <select
             className="bf-input bf-focus"
@@ -826,6 +844,8 @@ function PullRequestCard({
             </Button>
           )}
         </div>
+        {mergeReason && <div style={{ marginTop: 7, color: C.textMuted, fontSize: 11 }}>{mergeReason}</div>}
+        </>
       )}
     </section>
   )
@@ -927,6 +947,7 @@ export default function GitPane({
   createPr,
   mergePr,
   resolveConflicts,
+  setConflictBase,
   open,
   onClose,
   anchorRef
@@ -953,11 +974,27 @@ export default function GitPane({
     return () => anchorRef.current?.focus()
   }, [anchorRef, open])
 
+  const attachedBase = github?.available ? github.prs[0]?.base : undefined
+  const { baseOptions, base } = resolvePrBase(branch, branches, remotes, attachedBase ?? '', prBase)
+
+  // Until the poll reports on the base now in effect, don't show the previous base's result.
+  const baseStatus =
+    status?.baseMerge && status.baseMerge.base !== base ? { ...status, baseMerge: undefined } : status
+
+  // A base picked for one branch should not carry over to another.
+  useEffect(() => {
+    setPrBase(null)
+  }, [branch])
+
+  // The conflict check follows whichever base is in effect.
+  useEffect(() => {
+    setConflictBase(base || undefined)
+  }, [base, setConflictBase])
+
   if (!open) return null
 
   const commitReason = status ? commitBlockReason(status) : 'Reading working changes…'
   const pushReason = status ? pushBlockReason(status) : 'Reading remote status…'
-  const base = prBase ?? github?.prs[0]?.base ?? status?.baseMerge?.base
 
   return createPortal(
     <div
@@ -1022,12 +1059,11 @@ export default function GitPane({
           <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
             <PullRequestCard
               branch={branch}
-              branches={branches}
-              remotes={remotes}
-              status={status}
+              status={baseStatus}
               github={github}
               gitAction={gitAction}
-              base={prBase}
+              baseOptions={baseOptions}
+              base={base}
               prDraft={prDraft}
               provider={prProvider}
               model={prModel}

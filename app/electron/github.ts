@@ -27,6 +27,7 @@ type GhCheckRollup = {
 
 type GhPr = {
   number: number
+  state?: string
   mergeable?: string
   baseRefName?: string
   url?: string
@@ -148,7 +149,7 @@ export async function githubInfo(cwd: string): Promise<GitHubInfo> {
   const view = await execCli(
     'gh',
     cwd,
-    ['pr', 'view', '--json', 'number,mergeable,baseRefName,url,isDraft,statusCheckRollup'],
+    ['pr', 'view', '--json', 'number,state,mergeable,baseRefName,url,isDraft,statusCheckRollup'],
     GH_TIMEOUT
   )
   if (view.code !== 0) {
@@ -160,6 +161,8 @@ export async function githubInfo(cwd: string): Promise<GitHubInfo> {
 
   try {
     const raw = JSON.parse(view.out) as GhPr
+    // `gh pr view` falls back to merged/closed PRs for the branch; only an open one is actionable.
+    if (raw.state && raw.state.toUpperCase() !== 'OPEN') return { available: true, prs: [] }
     const required = await requiredCheckNames(cwd)
     return { available: true, prs: [parsePr(raw, checksFromView(raw, required))] }
   } catch {

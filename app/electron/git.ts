@@ -320,19 +320,20 @@ async function mergeConflictPaths(cwd: string, base: string): Promise<string[]> 
   return parseMergeTreeConflictPaths(tree.out)
 }
 
-/** Whether merging HEAD into `staging` would conflict. Skipped when that ref is missing. */
+/** Whether merging HEAD into `base` would conflict. Skipped when that ref is missing. */
 export async function mergeBaseConflicts(
-  cwd: string
+  cwd: string,
+  base = 'staging'
 ): Promise<{ base: string; conflicts: boolean } | undefined> {
   const head = await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
   const branch = head.out.trim()
-  if (!branch || branch === 'HEAD' || branch === 'staging') return undefined
+  if (!branch || branch === 'HEAD' || branch === base) return undefined
 
-  const from = await resolveBase(cwd, 'staging')
+  const from = await resolveBase(cwd, base)
   if (!from) return undefined
   const tree = await mergeTree(cwd, from.ref)
-  if (tree.code === 0) return { base: 'staging', conflicts: false }
-  if (tree.code === 1) return { base: 'staging', conflicts: true }
+  if (tree.code === 0) return { base, conflicts: false }
+  if (tree.code === 1) return { base, conflicts: true }
   return undefined
 }
 
@@ -393,11 +394,14 @@ export async function mergeForConflicts(
 
 /** Materialize PR/base conflicts and return the prompt to send to Chat. */
 export async function bringPrConflicts(
-  cwd: string
+  cwd: string,
+  selectedBase?: string
 ): Promise<{ ok: boolean; message: string; prompt?: string }> {
-  const [gh, st] = await Promise.all([githubInfo(cwd), status(cwd)])
+  const gh = await githubInfo(cwd)
   const pr = gh.prs[0]
-  const base = conflictMergeBase(st, gh)
+  // An open pull request's base is authoritative over the UI selection, which may be stale.
+  const st = await status(cwd, pr?.base || selectedBase)
+  const base = pr?.base || selectedBase || conflictMergeBase(st, gh)
   if (!st.conflicts.length && !pr?.hasConflicts && !st.baseMerge?.conflicts) {
     return { ok: false, message: 'No pull request conflicts to resolve.' }
   }
@@ -559,11 +563,11 @@ async function hookRunFor(
   return hooks.length ? { hooks: hooks.map((hook) => hook.name), output } : undefined
 }
 
-export async function status(cwd: string): Promise<GitStatus> {
+export async function status(cwd: string, base?: string): Promise<GitStatus> {
   const [porcelain, tracking, baseMerge, remotes, unpublished] = await Promise.all([
     git(cwd, ['status', '--porcelain=v1']),
     git(cwd, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']),
-    mergeBaseConflicts(cwd),
+    mergeBaseConflicts(cwd, base || undefined),
     git(cwd, ['remote']),
     git(cwd, ['rev-list', '--count', 'HEAD', '--not', '--remotes'])
   ])

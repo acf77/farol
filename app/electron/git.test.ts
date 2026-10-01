@@ -444,6 +444,15 @@ describe('mergeBaseConflicts', () => {
     git(cwd, ['add', 'new.txt'])
     git(cwd, ['commit', '-m', 'feat'])
     await expect(mergeBaseConflicts(cwd)).resolves.toEqual({ base: 'staging', conflicts: false })
+    await expect(mergeBaseConflicts(cwd, 'main')).resolves.toEqual({ base: 'main', conflicts: false })
+    await expect(mergeBaseConflicts(cwd, 'feat')).resolves.toBeUndefined()
+  })
+
+  it('checks the selected base instead of staging', async () => {
+    const cwd = conflictRepo()
+    git(cwd, ['branch', 'other', 'HEAD'])
+    await expect(mergeBaseConflicts(cwd, 'other')).resolves.toEqual({ base: 'other', conflicts: false })
+    await expect(status(cwd, 'other')).resolves.toMatchObject({ baseMerge: { base: 'other', conflicts: false } })
   })
 
   it('skips when HEAD is staging', async () => {

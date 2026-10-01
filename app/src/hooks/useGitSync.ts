@@ -53,6 +53,7 @@ function runPoller(job: PollJob, isCancelled: () => boolean): () => void {
 type GitPollingParams = {
   projectPath: string
   open?: boolean
+  base?: string
   isCancelled: () => boolean
   knownFiles: MutableRefObject<Set<string> | null>
   refreshFailing: MutableRefObject<boolean>
@@ -71,6 +72,7 @@ function startGitPolling(params: GitPollingParams): () => void {
   const {
     projectPath,
     open,
+    base,
     isCancelled,
     knownFiles,
     refreshFailing,
@@ -88,7 +90,7 @@ function startGitPolling(params: GitPollingParams): () => void {
       delay: open ? 5000 : 30000,
       read: async () => {
         setLoading(true)
-        const [st, recent] = await Promise.all([api.git.status(projectPath), api.git.recentCommits(projectPath)])
+        const [st, recent] = await Promise.all([api.git.status(projectPath, base), api.git.recentCommits(projectPath)])
         return () => {
           const live = committableFiles(st).files
           const known = knownFiles.current
@@ -132,6 +134,8 @@ function startGitPolling(params: GitPollingParams): () => void {
 }
 
 export type GitSyncOptions = {
+  /** Branch the conflict check compares against; the backend defaults to `staging`. */
+  base?: string
   /** Fetch status and GitHub info when true (e.g. tab visible and cwd is a repo). */
   enabled?: boolean
   open?: boolean
@@ -174,6 +178,7 @@ export function useGitSync(
     const stop = startGitPolling({
       projectPath,
       open: opts.open,
+      base: opts.base,
       isCancelled: () => cancelled,
       knownFiles,
       refreshFailing,
@@ -191,7 +196,7 @@ export function useGitSync(
       stop()
       setLoading(false)
     }
-  }, [appendLog, opts?.enabled, opts?.open, projectPath, refreshVersion])
+  }, [appendLog, opts?.base, opts?.enabled, opts?.open, projectPath, refreshVersion])
 
   useEffect(() => {
     return api.git.onChanged((changed) => {

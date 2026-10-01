@@ -560,7 +560,8 @@ export interface FarolApi {
       reused?: boolean
       message: string
     }>
-    status(projectPath: string): Promise<GitStatus>
+    /** `base` is the branch the conflict check compares against (default `staging`). */
+    status(projectPath: string, base?: string): Promise<GitStatus>
     recentCommits(projectPath: string): Promise<GitCommit[]>
     draftCommit(
       projectPath: string,
@@ -605,7 +606,10 @@ export interface FarolApi {
       projectPath: string,
       strategy: MergeStrategy
     ): Promise<{ ok: boolean; message: string }>
-    bringConflicts(projectPath: string): Promise<{ ok: boolean; message: string; prompt?: string }>
+    bringConflicts(
+      projectPath: string,
+      base?: string
+    ): Promise<{ ok: boolean; message: string; prompt?: string }>
     /** Fires when HEAD changes, including from outside the app. */
     onChanged(cb: (changed: GitChanged) => void): () => void
   }

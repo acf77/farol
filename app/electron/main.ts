@@ -731,7 +731,9 @@ function registerGitIpc(): void {
     }
     return res
   })
-  ipcMain.handle('git:status', (_e, projectPath: string) => gitStatus(projectPath))
+  ipcMain.handle('git:status', (_e, projectPath: string, base?: string) =>
+    gitStatus(projectPath, typeof base === 'string' ? base : undefined)
+  )
   ipcMain.handle('git:recentCommits', (_e, projectPath: string) => recentCommits(projectPath))
   ipcMain.handle(
     'git:draftCommit',
@@ -813,10 +815,10 @@ function registerGitIpc(): void {
     if ('error' in cwd) return { ok: false, message: cwd.error }
     return mergePullRequest(cwd.path, strategy)
   })
-  ipcMain.handle('git:bringConflicts', async (_e, projectPath: string) => {
+  ipcMain.handle('git:bringConflicts', async (_e, projectPath: string, base?: string) => {
     const cwd = await openProjectCwd(projectPath)
     if ('error' in cwd) return { ok: false, message: cwd.error }
-    return bringPrConflicts(cwd.path)
+    return bringPrConflicts(cwd.path, typeof base === 'string' ? base : undefined)
   })
 }
 

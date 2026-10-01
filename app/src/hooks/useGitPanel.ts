@@ -72,12 +72,14 @@ export function useGitPanel(
       { id: logId.current, time, action, message, ok }
     ])
   }, [])
-  const sync = useGitSync(projectPath, opts, appendLog)
+  const [conflictBase, setConflictBase] = useState<string>()
+  const sync = useGitSync(projectPath, { ...opts, base: conflictBase }, appendLog)
   const { hooks, selectedFiles, setSelectedFiles, refresh } = sync
 
   useEffect(() => {
     setDraft(EMPTY_DRAFT)
     setPrDraft(EMPTY_PR_DRAFT)
+    setConflictBase(undefined)
     setLog([])
     logId.current = 0
   }, [projectPath])
@@ -214,11 +216,11 @@ export function useGitPanel(
     const res = await runRemote(
       'conflicts',
       'Check conflicts',
-      () => api.git.bringConflicts(projectPath),
+      () => api.git.bringConflicts(projectPath, conflictBase),
       'Could not bring pull request conflicts into the working tree'
     )
     if (res?.prompt) onAskAiRef.current?.(res.prompt)
-  }, [projectPath, runRemote])
+  }, [conflictBase, projectPath, runRemote])
 
   return {
     ...sync,
@@ -226,6 +228,7 @@ export function useGitPanel(
     draft,
     prDraft,
     log,
+    setConflictBase,
     prepareCommit,
     preparePr,
     setDraftMessage: (message: string) => setDraft((current) => ({ ...current, message })),
