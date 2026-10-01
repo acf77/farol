@@ -4,9 +4,6 @@ import { computeLayout } from '../layout'
 import { SURFACES, type Surface, type WorkspaceLayout } from '../workspace-layout'
 import Dividers from './Dividers'
 
-/** Half the gap between two surfaces; each surface pads by this much and the grid bleeds it back out. */
-const HALF_GAP = 4
-
 /**
  * Lays the chat / code / terminal surfaces out by the workspace split tree.
  * Every surface is a keyed sibling positioned absolutely, so moving a surface
@@ -33,7 +30,7 @@ export default function WorkspaceGrid({
   return (
     <div
       ref={areaRef}
-      style={{ flex: 1, minWidth: 0, position: 'relative', margin: -HALF_GAP }}
+      style={{ flex: 1, minWidth: 0, position: 'relative' }}
     >
       {SURFACES.map((surface) => {
         const rect = panes.find((p) => p.id === surface)
@@ -51,8 +48,10 @@ export default function WorkspaceGrid({
                     width: `${rect.w}%`,
                     height: `${rect.h}%`,
                     boxSizing: 'border-box',
-                    padding: HALF_GAP,
-                    display: 'flex'
+                    display: 'flex',
+                    // Flat panes: a hairline on every edge that touches a neighbour.
+                    borderLeft: rect.x > 0 ? `1px solid ${C.hair}` : 'none',
+                    borderTop: rect.y > 0 ? `1px solid ${C.hair}` : 'none'
                   }
                 : { display: 'none' }
             }
@@ -66,9 +65,8 @@ export default function WorkspaceGrid({
                 minHeight: 0,
                 display: 'flex',
                 flexDirection: 'column',
-                borderRadius: 12,
                 outline: multi && layout.focus === surface ? `1px solid ${C.accent}` : 'none',
-                outlineOffset: 0
+                outlineOffset: -1
               }}
             >
               {surfaces[surface]}

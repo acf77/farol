@@ -2,8 +2,8 @@
 FROM node:24-slim AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
-# --force skips the darwin-only electron-liquid-glass check; optional deps stay so esbuild gets its linux binary.
-RUN npm ci --ignore-scripts --force
+# Optional deps stay so esbuild gets its linux binary.
+RUN npm ci --ignore-scripts
 COPY shared ./shared
 COPY electron ./electron
 COPY service ./service

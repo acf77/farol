@@ -147,8 +147,6 @@ const api: FarolApi = {
     onStatus: (cb) => on<UpdateStatus>('update:status', cb)
   },
   ui: {
-    glass: () => ipcRenderer.invoke('ui:glass'),
-    onGlass: (cb) => on<boolean>('ui:glass', cb),
     onSettings: (cb) => on('ui:settings', () => cb())
   }
 }

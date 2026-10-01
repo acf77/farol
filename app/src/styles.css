@@ -35,12 +35,6 @@ body,
   -webkit-font-smoothing: antialiased;
 }
 
-html.bf-glass,
-html.bf-glass body,
-html.bf-glass #root {
-  background: transparent;
-}
-
 a {
   color: var(--bf-accent-hover);
   text-decoration: none;
@@ -104,18 +98,6 @@ button:disabled {
  * none`. The animations are declared inline on the elements, which is why the
  * selectors match on that declaration and why the overrides are !important.
  */
-/*
- * Reduced transparency. When the user asks for less blur/glass, chrome that
- * rides native Liquid Glass must frost over so controls stay legible.
- */
-@media (prefers-reduced-transparency: reduce) {
-  html.bf-glass,
-  html.bf-glass body,
-  html.bf-glass #root {
-    background: var(--bf-bg) !important;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   /*
    * Safety net first: anything that animates or transitions is reduced to a
@@ -151,11 +133,12 @@ button:disabled {
 }
 
 /*
- * Side panel collapse. Width is animated on the shell; content swaps after the
- * close finishes so the open panel clips away instead of jumping to the rail.
+ * Side panel collapse. Width is animated on the shell with an even ease-in-out
+ * (a strong ease-out covers most of the distance in the first frames and reads
+ * as a jump); the open panel clips away while the content cross-fades.
  */
 .bf-side-panel {
-  transition: width 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: width 320ms cubic-bezier(0.4, 0, 0.2, 1);
   will-change: width;
 }
 
@@ -269,6 +252,9 @@ button:disabled {
   .bf-hold-btn.is-holding .bf-hold-fill {
     transition-duration: var(--bf-hold-ms, 2.5s) !important;
   }
+}
+.bf-hold-btn.is-primary .bf-hold-fill {
+  background: #bdd927;
 }
 .bf-hold-label {
   position: relative;
@@ -473,12 +459,12 @@ button:disabled {
  */
 :root {
   --bf-chat-fade-height: 120px;
-  --bf-chat-fade-color: oklch(0.18 0.004 95);
+  --bf-chat-fade-color: oklch(0.17 0.006 95);
 }
 
 .bf-chat-scroll {
   box-sizing: border-box;
-  padding: 72px 28px 80px;
+  padding: 0;
 }
 
 .bf-chat-scroll > * {
@@ -537,8 +523,8 @@ button:disabled {
   outline: 2px solid var(--bf-accent) !important;
   outline-offset: 1px !important;
   /*
-   * A contrast collar, not elevation: under Liquid Glass the effective
-   * backdrop can be light and Signal Lime alone would sink into it. The
+   * A contrast collar, not elevation: on a light backdrop Signal Lime
+   * alone would sink into it. The
    * outline paints over this, leaving a dark hairline either side of the ring
    * on any surface. No spread reaches layout.
    */
@@ -567,8 +553,7 @@ button:disabled {
   font-size: 12px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: var(--bf-bg);
-  border: 1px solid var(--bf-border);
+  background: oklch(1 0 0 / 0.07);
   color: var(--bf-text);
 }
 
@@ -648,4 +633,35 @@ button:disabled {
 .bf-reveal-host:hover .bf-reveal,
 .bf-reveal-host:focus-within .bf-reveal {
   opacity: 1;
+}
+
+/* Source Control: link-style actions, AI draft buttons and file rows. */
+.bf-link-btn:hover:not(:disabled) {
+  color: oklch(0.94 0.006 95) !important;
+  background: transparent !important;
+}
+.bf-ai-btn:hover:not(:disabled) {
+  background: oklch(0.73 0.16 300 / 0.2) !important;
+}
+.bf-file-row:focus-within .bf-file-box {
+  outline: 2px solid var(--bf-accent);
+  outline-offset: 1px;
+}
+
+/* Projects panel rows: hover tint, per the Pipelines Sidebar design. */
+.bf-proj-row:hover,
+.bf-pipe-row:hover {
+  background: oklch(1 0 0 / 0.04);
+}
+.bf-reveal:focus-visible {
+  opacity: 1;
+}
+
+/* Empty chat: quip and starter pills. */
+.bf-quip:hover {
+  color: oklch(0.8 0.006 95) !important;
+}
+.bf-pill:hover {
+  background: oklch(1 0 0 / 0.05) !important;
+  color: oklch(0.94 0.006 95) !important;
 }

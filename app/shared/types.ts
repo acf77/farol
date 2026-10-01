@@ -143,6 +143,9 @@ export interface GitStatusFile {
   path: string
   kind: GitFileKind
   staged: boolean
+  /** Lines added / removed against HEAD. Absent for binary or unreadable files. */
+  added?: number
+  removed?: number
 }
 
 export interface GitStatus {
@@ -690,10 +693,7 @@ export interface FarolApi {
     install(): void
     onStatus(cb: (s: UpdateStatus) => void): () => void
   }
-  /** Native Liquid Glass behind chrome (macOS 26+). */
   ui: {
-    glass(): Promise<boolean>
-    onGlass(cb: (active: boolean) => void): () => void
     onSettings(cb: () => void): () => void
   }
 }

@@ -17,6 +17,7 @@ export function Turn({
   messages,
   isBusy,
   provider,
+  model,
   onOpenPipeline,
   onNewChat,
   onAnswer,
@@ -28,6 +29,7 @@ export function Turn({
   messages: AgentMessage[]
   isBusy: boolean
   provider: AiProvider
+  model?: string
   onOpenPipeline: (tabId: string) => void
   onNewChat: () => void
   onAnswer: (requestId: string, answers: string[][] | null) => void
@@ -36,15 +38,14 @@ export function Turn({
 }) {
   if (m.role === 'user') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 7 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
         <div
           style={{
-            maxWidth: 430,
-            padding: '11px 15px',
-            background: C.panel,
-            border: `1px solid ${C.border}`,
-            borderRadius: 12,
-            fontSize: 13,
+            maxWidth: 440,
+            padding: '10px 14px',
+            background: 'oklch(0.26 0.005 95)',
+            borderRadius: '14px 14px 4px 14px',
+            fontSize: 13.5,
             lineHeight: 1.5,
             whiteSpace: 'pre-wrap',
             overflowWrap: 'anywhere',
@@ -54,7 +55,7 @@ export function Turn({
           {m.text}
         </div>
         {m.at && (
-          <span style={{ fontSize: 11, color: C.faint }}>{fmtClock(m.at)}</span>
+          <span style={{ fontSize: 11, color: C.fainter }}>{fmtClock(m.at)}</span>
         )}
       </div>
     )
@@ -64,10 +65,12 @@ export function Turn({
   if (m.tool) return <ToolCard tool={m.tool} tight={!!messages[i - 1]?.tool} />
 
   const pc = m.pipeline
-  const showFooter = m.role === 'assistant' && i === messages.length - 1 && !isBusy
+  // The footer closes an answer: the last plain reply, once nothing newer has been said.
+  const plain = (x: AgentMessage): boolean => x.role === 'assistant' && !x.tool && !x.question && !x.pipeline
+  const showFooter = plain(m) && !isBusy && !messages.slice(i + 1).some((x) => x.role === 'user' || plain(x))
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 15, minWidth: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       {pc ? (
         <PipelineMsgCard pc={pc} text={m.text} onOpenPipeline={onOpenPipeline} />
       ) : m.role === 'assistant' ? (
@@ -89,14 +92,14 @@ export function Turn({
       )}
 
       {canExecutePlan && <ExecutePlanButton onExecute={() => onExecutePlan(i)} />}
-      {showFooter && <AssistantFooter text={m.text} provider={provider} onNewChat={onNewChat} />}
+      {showFooter && <AssistantFooter text={m.text} provider={provider} model={model} onNewChat={onNewChat} />}
     </div>
   )
 }
 
 function ExecutePlanButton({ onExecute }: { onExecute: () => void }) {
   return (
-    <Button variant="primary" onClick={onExecute} style={{ alignSelf: 'flex-start' }}>
+    <Button variant="primary" onClick={onExecute} style={{ alignSelf: 'flex-start', marginTop: 12 }}>
       Execute plan
     </Button>
   )

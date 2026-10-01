@@ -16,6 +16,7 @@ import {
   type AiProvider,
   type AppSettings,
   type GitInfo,
+  type GitStatus,
   type Pipeline,
   type PipelineNode,
   type ProviderUsage,
@@ -27,6 +28,7 @@ import {
   type WorktreeRequest
 } from '@shared/types'
 import { AI_LABELS, aiFixPrompt, normalizeMode } from '@shared/ai'
+import { committableChanges } from '@shared/git-status'
 import { trimSlashes } from '@shared/project-groups'
 import { restoredAgentContext } from '@shared/agent-context'
 import { isFinishedPlan, sanitizePlan } from '@shared/questions'
@@ -35,8 +37,7 @@ import {
   modeDefault,
   modeFallbacks,
   modeSelectionForPane,
-  withAgentModel,
-  withCommitMessageModel
+  withAgentModel
 } from '@shared/settings'
 import { sessionSeq } from '@shared/session'
 import { owningWorktree, primaryRepoFolderName } from '@shared/worktree'
@@ -46,10 +47,10 @@ import { clearIndent, emptyTerm, ensureNewline, setIndent, trimTo, write, writeL
 import { agentPaneFor, chatOwnerFor, chatTabFor, trimAgentMessages } from './chat-context'
 import { fmtDuration, pipelineActivityText, projectRunChat, upsertMessage } from './pipeline-chat'
 import { bindLatestRunId, bindRunStart, runOutcomeLabel, syncAgentPipelineRun } from './run-slot'
-import { CHROME_ROW, PANEL_INSET } from './components/side-panel'
+import { CHROME_ROW } from './components/side-panel'
 import { leaf, leaves, removeLeaf, setSize, splitLeaf } from './layout'
 import type { PaneNode } from './layout'
-import { C, UI, glass as G, seg } from './theme'
+import { C, UI, seg } from './theme'
 import type {
   AgentMessage,
   AgentPane,
@@ -133,10 +134,24 @@ const NO_CODE_FILES: string[] = []
 
 type GitControl = {
   dotColor: string
+  /** "3 changes · 16 ahead" — the Source Control row in the Projects panel. */
+  summary: string
   busy: boolean
   pulling: boolean
   pullResult: GitLogEntry | undefined
   pull: ReturnType<typeof useGitPanel>['pull']
+}
+
+/** One-line working-tree summary for the Projects panel. */
+function gitSummary(status: GitStatus | null): string {
+  if (!status) return 'Reading status…'
+  const changes = committableChanges(status).length + status.conflicts.length
+  const parts = [
+    changes ? `${changes} ${changes === 1 ? 'change' : 'changes'}` : 'Clean',
+    ...(status.ahead ? [`${status.ahead} ahead`] : []),
+    ...(status.behind ? [`${status.behind} behind`] : [])
+  ]
+  return parts.join(' · ')
 }
 
 function asText(value: unknown): string {
@@ -904,7 +919,6 @@ interface ProjectWorkspaceProps {
   onGitControlChange: (control: GitControl | null) => void
   onOpenProject: () => void
   onOpenPath: (path: string) => void
-  onCloseProject: () => void
   usage: ProviderUsage[]
   onRefreshUsage: () => void
   /** Tell the project rail when this checkout's agent is working. */
@@ -926,14 +940,11 @@ export function ProjectWorkspace({
   onGitControlChange,
   onOpenProject,
   onOpenPath,
-  onCloseProject,
   usage,
   onRefreshUsage,
   onAgentBusyChange,
   onAgentUnreadChange
 }: ProjectWorkspaceProps) {
-  const [recents, setRecents] = useState<Project[]>([])
-  const [menuOpen, setMenuOpen] = useState(false)
 
   const [git, setGit] = useState<GitInfo>(NO_GIT)
 
@@ -955,7 +966,6 @@ export function ProjectWorkspace({
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
   const [settings, setSettings] = useState<AppSettings>(defaultSettings)
-  const [liquid, setLiquid] = useState(false)
   const [pipesCollapsed, setPipesCollapsed] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -985,6 +995,7 @@ export function ProjectWorkspace({
     }
     onGitControlChange({
       dotColor: gitStatusDotColor(gitPanel.status, gitPanel.github),
+      summary: gitSummary(gitPanel.status),
       busy: gitPanel.gitAction !== null,
       pulling: gitPanel.gitAction === 'pull',
       pullResult: gitPanel.log.filter((entry) => entry.action === 'Pull').at(-1),
@@ -1064,6 +1075,11 @@ export function ProjectWorkspace({
     () => termTabs.find((t) => t.id === activeTab) ?? termTabs[0],
     [termTabs, activeTab]
   )
+  // Any terminal tab with a run in flight or a non-idle shell (a server, an agent session).
+  const terminalBusy = useMemo(
+    () => termTabs.some((t) => t.status === 'running' || Object.keys(t.panes).some((id) => activeShells.has(id))),
+    [termTabs, activeShells]
+  )
   const chatOwner = useMemo(() => chatOwnerFor(termTabs, active?.id ?? activeTab), [termTabs, active, activeTab])
   const chatTab = useMemo(() => chatTabFor(tabs, chatOwner?.id), [tabs, chatOwner])
   const chatPane = useMemo(() => agentPaneFor(chatTab), [chatTab])
@@ -1075,6 +1091,14 @@ export function ProjectWorkspace({
       ),
     [tabs]
   )
+
+  // What the Chat tab should flag: a question waiting on the user outranks work in flight.
+  const chatState = useMemo<'asking' | 'busy' | null>(() => {
+    const asking = tabs.some((tab) =>
+      Object.values(tab.panes).some((pane) => pane.kind === 'agent' && pane.status === 'asking')
+    )
+    return asking ? 'asking' : agentBusy ? 'busy' : null
+  }, [tabs, agentBusy])
 
   const runBranchForBusy = resolveRunBranch(project, active, git)
   const pipelineBusy = useMemo(() => {
@@ -1379,7 +1403,6 @@ export function ProjectWorkspace({
   const loadProject = useCallback(
     async () => {
       persistEnabled.current = false
-      setMenuOpen(false)
       setNewTabOpen(false)
       setEditor(null)
       setRuns({})
@@ -1426,18 +1449,8 @@ export function ProjectWorkspace({
   )
 
   useEffect(() => {
-    void api.ui.glass().then(setLiquid)
-    return api.ui.onGlass(setLiquid)
-  }, [])
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('bf-glass', liquid)
-  }, [liquid])
-
-  useEffect(() => {
     let cancelled = false
     void (async () => {
-      setRecents(await api.project.recents())
       setSettings(await api.settings.load())
       if (cancelled) return
       await loadProject()
@@ -2352,7 +2365,7 @@ export function ProjectWorkspace({
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
-        background: liquid ? G.appBg : C.terminal,
+        background: C.app,
         color: C.text,
         fontFamily: UI,
         fontSize: 13,
@@ -2362,7 +2375,6 @@ export function ProjectWorkspace({
       }}
     >
       <Toolbar
-        liquid={liquid}
         project={project}
         view={workspace.view}
         onView={workspace.show}
@@ -2370,29 +2382,14 @@ export function ProjectWorkspace({
         surfaces={surfaces}
         onSplit={splitSurface}
         onCloseSurface={workspace.close}
-        onNewTerminal={newShellTab}
-        recents={recents}
-        menuOpen={menuOpen}
-        menuDisabled={settingsOpen || editor !== null}
-        onMenuToggle={() => {
-          setMenuOpen((v) => !v)
-          void api.project.recents().then(setRecents)
-        }}
-        onMenuClose={() => setMenuOpen(false)}
-        onOpenProject={onOpenProject}
-        onOpenRecent={onOpenPath}
-        onCloseProject={onCloseProject}
+        terminalBusy={terminalBusy}
+        chatState={chatState}
         updateVersion={updateVersion}
         onInstallUpdate={() => api.update.install()}
-        settings={settings}
-        onSettings={(next) => {
-          setSettings(next)
-          void api.settings.save(next)
-        }}
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 8, padding: PANEL_INSET }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
         <div style={{ flex: 1, minWidth: 0, display: 'flex' }}>
           <WorkspaceGrid
             layout={workspace.layout}
@@ -2487,6 +2484,7 @@ export function ProjectWorkspace({
 
         <Sidebar
           pipelines={pipelines}
+          branch={runBranch}
           runs={branchRuns}
           logs={detailLogs}
           selected={selected}
@@ -2509,6 +2507,7 @@ export function ProjectWorkspace({
             })
           }
           onDelete={deletePipeline}
+          onFix={() => sendToAgent(runBranch, active?.panes[active.focus]?.cwd ?? project.path)}
           onOpenTerminal={openRunLogs}
           collapsed={pipesCollapsed}
           onSetCollapsed={setPipesCollapsed}
@@ -2530,7 +2529,6 @@ export function ProjectWorkspace({
 
       {newTabOpen && (
         <NewTabDialog
-          liquid={liquid}
           git={git}
           projectPath={project.path}
           repoName={worktreeRepoName}
@@ -2573,12 +2571,6 @@ export function ProjectWorkspace({
           remotes={git.remotes ?? []}
           provider={settings.commitMessage.agent}
           model={settings.commitMessage.model}
-          settings={settings}
-          onCommitMessageModelChange={(provider, model) => {
-            const next = withCommitMessageModel(settings, provider, model)
-            setSettings(next)
-            void api.settings.save(next)
-          }}
           {...gitPanel}
           open={gitOpen && visible}
           onClose={() => onGitOpenChange(false)}
@@ -2768,7 +2760,7 @@ export default function App() {
         height: '100vh',
         overflow: 'hidden',
         boxSizing: 'border-box',
-        background: C.terminal
+        background: C.app
       }}
     >
       <ProjectRail
@@ -2786,6 +2778,8 @@ export default function App() {
         showGit={!!gitControl}
         gitOpen={gitOpen}
         gitDotColor={gitControl?.dotColor}
+        gitSummary={gitControl?.summary}
+        onOpenProject={openProject}
         onGitToggle={() => setGitOpen((open) => !open)}
         gitBusy={gitControl?.busy}
         gitPulling={gitControl?.pulling}
@@ -2831,7 +2825,6 @@ export default function App() {
                 onGitControlChange={setGitControl}
                 onOpenProject={openProject}
                 onOpenPath={(path) => void openPath(path)}
-                onCloseProject={() => closeProject(project.path)}
                 usage={usage}
                 onRefreshUsage={refreshUsage}
                 onAgentBusyChange={setAgentBusy}

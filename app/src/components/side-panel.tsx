@@ -1,12 +1,10 @@
 import { useEffect, useState, type CSSProperties, type TransitionEvent } from 'react'
 import { C, UI } from '../theme'
 
-export const SIDE_RAIL_WIDTH = 54
+export const SIDE_RAIL_WIDTH = 44
 export const SIDE_PANEL_WIDTH = 280
 /** Toolbar row. Sidebars start below this, never inside it. */
-export const CHROME_ROW = 52
-/** Gap between chrome and both side panels, and from the window edges. */
-export const PANEL_INSET = 10
+export const CHROME_ROW = 48
 export function RailLabel({
   children,
   color,
@@ -51,23 +49,25 @@ export function useCollapseRail(collapsed: boolean) {
   return { showRail, setShowRail, onWidthTransitionEnd }
 }
 
+/** `edge` is the side that touches the workspace — it carries the hairline. */
 export function sidePanelShellStyle(
   collapsed: boolean,
-  opts?: { animate?: boolean; panelWidth?: number; railWidth?: number }
+  opts?: { animate?: boolean; panelWidth?: number; railWidth?: number; edge?: 'left' | 'right' }
 ): CSSProperties {
   const panelWidth = opts?.panelWidth ?? SIDE_PANEL_WIDTH
   const railWidth = opts?.railWidth ?? SIDE_RAIL_WIDTH
   return {
+    boxSizing: 'border-box',
     width: collapsed ? railWidth : panelWidth,
     flex: 'none',
     minHeight: 0,
     alignSelf: 'stretch',
     display: 'flex',
     flexDirection: 'column',
-    background: C.sidebar,
-    border: '1px solid #3E3E3A',
-    borderRadius: 12,
+    background: C.rail,
+    color: C.text,
     overflow: 'hidden',
+    ...(opts?.edge === 'left' ? { borderLeft: `1px solid ${C.hair}` } : { borderRight: `1px solid ${C.hair}` }),
     fontFamily: UI,
     fontSize: 13,
     WebkitFontSmoothing: 'antialiased',

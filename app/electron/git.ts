@@ -10,6 +10,7 @@ import {
   isSecretPath,
   parseAheadBehind,
   parseGitStatus,
+  parseNumstat,
   parseMergeTreeConflictPaths,
   pickPushRemote,
   pushBlockReason,
@@ -26,6 +27,7 @@ import type {
   GitHubInfo,
   GitInfo,
   GitStatus,
+  GitStatusFile,
   Pipeline
 } from '../shared/types'
 import { githubInfo } from './github'
@@ -563,6 +565,50 @@ async function hookRunFor(
   return hooks.length ? { hooks: hooks.map((hook) => hook.name), output } : undefined
 }
 
+const UNTRACKED_COUNT_LIMIT = 1_000_000
+
+/** Line count of an untracked text file, or undefined for directories, binaries and huge files. */
+async function untrackedLines(file: string): Promise<number | undefined> {
+  try {
+    const stat = await fs.promises.stat(file)
+    if (!stat.isFile() || stat.size > UNTRACKED_COUNT_LIMIT) return undefined
+    const text = await fs.promises.readFile(file)
+    if (text.includes(0)) return undefined
+    if (!text.length) return 0
+    let lines = 0
+    for (const byte of text) if (byte === 10) lines++
+    return text[text.length - 1] === 10 ? lines : lines + 1
+  } catch {
+    return undefined
+  }
+}
+
+/** Attach +/- line counts (against HEAD) to every changed file. */
+async function withLineCounts<T extends Pick<GitStatus, 'staged' | 'unstaged' | 'untracked' | 'conflicts'>>(
+  cwd: string,
+  parsed: T
+): Promise<T> {
+  const diff = await git(cwd, ['diff', 'HEAD', '--numstat', '--no-renames'])
+  const counts = diff.code === 0 ? parseNumstat(diff.out) : new Map()
+  const fill = async (files: GitStatusFile[], untracked: boolean): Promise<GitStatusFile[]> =>
+    Promise.all(
+      files.map(async (file) => {
+        const known = counts.get(file.path)
+        if (known) return { ...file, ...known }
+        if (!untracked) return file
+        const added = await untrackedLines(path.join(cwd, file.path))
+        return added === undefined ? file : { ...file, added, removed: 0 }
+      })
+    )
+  const [staged, unstaged, untracked, conflicts] = await Promise.all([
+    fill(parsed.staged, false),
+    fill(parsed.unstaged, false),
+    fill(parsed.untracked, true),
+    fill(parsed.conflicts, false)
+  ])
+  return { ...parsed, staged, unstaged, untracked, conflicts }
+}
+
 export async function status(cwd: string, base?: string): Promise<GitStatus> {
   const [porcelain, tracking, baseMerge, remotes, unpublished] = await Promise.all([
     git(cwd, ['status', '--porcelain=v1']),
@@ -571,7 +617,7 @@ export async function status(cwd: string, base?: string): Promise<GitStatus> {
     git(cwd, ['remote']),
     git(cwd, ['rev-list', '--count', 'HEAD', '--not', '--remotes'])
   ])
-  const parsed = parseGitStatus(porcelain.out)
+  const parsed = await withLineCounts(cwd, parseGitStatus(porcelain.out))
   const remote = pickPushRemote(remotes.out)
   const upstream = tracking.code === 0
   const { ahead, behind } = upstream

@@ -36,7 +36,6 @@ import { listProjectDir, listProjectFiles, readProjectFile, saveChatAttachment, 
 import { listAgentSkills } from './skills'
 import { openRouterAgent } from './openrouter-agent'
 import { AppUpdater } from './update'
-import { applyGlass, glassAvailable } from './glass'
 import { providerUsage } from './usage'
 import { mergeMcpConfig, MCP_CONFIG_REL_PATHS, type McpServerEntry } from '../shared/mcp-config'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
@@ -53,8 +52,6 @@ import net from 'net'
 import os from 'os'
 
 let win: BrowserWindow | null = null
-/** Renderer chrome goes translucent only when the native glass view is up. */
-let glassActive = false
 
 function send(channel: string, payload: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
@@ -100,8 +97,6 @@ function loadBrandIcon(): Electron.NativeImage | undefined {
 }
 
 function createWindow(): void {
-  const wantGlass = glassAvailable()
-  glassActive = false
   const icon = loadBrandIcon()
 
   win = new BrowserWindow({
@@ -111,9 +106,7 @@ function createWindow(): void {
     minHeight: 520,
     show: false,
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
-    // Liquid Glass needs a transparent window and must not use vibrancy.
-    transparent: wantGlass,
-    backgroundColor: wantGlass ? '#00000000' : '#181817',
+    backgroundColor: '#181817',
     ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -140,7 +133,6 @@ function createWindow(): void {
   })
   win.on('closed', () => {
     win = null
-    glassActive = false
   })
 
   // Keep navigation inside the app; send real http(s) links to the system browser.
@@ -159,14 +151,6 @@ function createWindow(): void {
   win.webContents.on('unresponsive', () => {
     console.error('[farol] renderer unresponsive')
   })
-
-  if (wantGlass) {
-    win.webContents.once('did-finish-load', () => {
-      if (!win || win.isDestroyed()) return
-      glassActive = applyGlass(win)
-      send('ui:glass', glassActive)
-    })
-  }
 
   loadRenderer()
 }
@@ -880,7 +864,6 @@ function registerAppIpc(): void {
   ipcMain.handle('usage:read', () => providerUsage())
   ipcMain.handle('update:check', () => updater.check())
   ipcMain.on('update:install', () => updater.install())
-  ipcMain.handle('ui:glass', () => glassActive)
 }
 
 function registerIpc(): void {
