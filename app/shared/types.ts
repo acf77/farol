@@ -12,6 +12,7 @@ import type {
   ModelChoice,
   OpenRouterSettings,
   SettingsResult,
+  RemoteAccount,
   RemoteConfig,
   RemoteResult,
   RemoteSettings,
@@ -32,6 +33,7 @@ export type {
   OpenRouterSettings,
   ProjectSession,
   SettingsResult,
+  RemoteAccount,
   RemoteConfig,
   RemoteResult,
   RemoteSettings,
@@ -673,6 +675,8 @@ export interface FarolApi {
     signInWait(): Promise<RemoteResult>
     /** Stop waiting for a sign-in started with `signInStart`. */
     signInCancel(): Promise<void>
+    /** Who the stored token belongs to, for the header account menu. */
+    account(): Promise<RemoteAccount>
   }
   /** Jev is internal-only: a key to store and a probe to prove it works. */
   jev: {

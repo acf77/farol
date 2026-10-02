@@ -3,6 +3,7 @@ import type { AppSettings, Project } from '@shared/types'
 import { C, MONO, glass as G } from '../theme'
 import type { View } from '../types'
 import { SURFACES, SURFACE_LABEL, type Surface } from '../workspace-layout'
+import AccountMenu from './AccountMenu'
 import { Checkbox } from './controls'
 import { CHROME_ROW } from './side-panel'
 import { FolderPlusIcon, SettingsIcon } from './icons'
@@ -33,6 +34,8 @@ interface Props {
   onInstallUpdate: () => void
   settings: AppSettings
   onSettings: (next: AppSettings) => void
+  /** Settings a main-process call already saved (signing in or out of the remote service). */
+  onAdoptSettings: (next: AppSettings) => void
   onOpenSettings: () => void
 }
 
@@ -166,6 +169,7 @@ export default function Toolbar({
   onInstallUpdate,
   settings,
   onSettings,
+  onAdoptSettings,
   onOpenSettings
 }: Props) {
   const [splitOpen, setSplitOpen] = useState(false)
@@ -401,7 +405,6 @@ export default function Toolbar({
           <SettingsIcon size={14} />
         </button>
 
-
         <button
           id={TRIGGER_ID}
           type="button"
@@ -424,6 +427,8 @@ export default function Toolbar({
         >
           File
         </button>
+
+        <AccountMenu liquid={liquid} settings={settings} onAdoptSettings={onAdoptSettings} onOpenSettings={onOpenSettings} />
       </div>
 
       {menuOpen && !menuDisabled && (

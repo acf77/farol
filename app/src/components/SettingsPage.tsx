@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { AgentMode, AppSettings, ModelChoice, RemoteResult, SettingsResult } from '@shared/types'
+import type { AgentMode, AppSettings, ModelChoice, SettingsResult } from '@shared/types'
 import {
   AI_LABELS,
   normalizeOpenRouterAgent,
@@ -17,7 +17,7 @@ import {
   withModeChain,
   withOpenRouterAgent
 } from '@shared/settings'
-import { C, MONO, UI } from '../theme'
+import { C, UI } from '../theme'
 import { Button, Checkbox, CliModelDropdown, SegmentedControl } from './controls'
 import { ChevronDown, ChevronUp } from './icons'
 import { CHROME_ROW } from './side-panel'
@@ -187,9 +187,9 @@ function JevSection({
 }
 
 /**
- * Remote pipelines run their shell steps in a sandbox on a Farol service. Signing
- * in with GitHub stores a session token where an API key would go, encrypted on
- * this machine; the URL is a plain setting.
+ * Remote pipelines run their shell steps in a sandbox on a Farol service. The URL
+ * is a plain setting; signing in happens from the header's account menu, which
+ * stores the session where an API key would go, encrypted on this machine.
  */
 function RemoteSection({
   settings,
@@ -204,12 +204,10 @@ function RemoteSection({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [probed, setProbed] = useState(false)
-  const [account, setAccount] = useState<string | null>(null)
-  const [userCode, setUserCode] = useState<string | null>(null)
   const hasKey = !!saved?.hasKey
   const urlChanged = url.trim() !== (saved?.url ?? '')
 
-  const run = (call: Promise<RemoteResult>, probe = false): Promise<boolean> => {
+  const run = (call: Promise<SettingsResult>, probe = false): Promise<boolean> => {
     setBusy(true)
     return call
       .then((result) => {
@@ -217,8 +215,6 @@ function RemoteSection({
         if (result.settings.remote) setUrl(result.settings.remote.url)
         setError(result.error ?? null)
         setProbed(probe && !result.error)
-        if (result.account) setAccount(result.account)
-        if (!result.settings.remote?.hasKey) setAccount(null)
         return !result.error
       })
       .catch((err: unknown) => {
@@ -228,15 +224,6 @@ function RemoteSection({
       .finally(() => setBusy(false))
   }
 
-  const signIn = async (): Promise<void> => {
-    setError(null)
-    const start = await api.remote.signInStart()
-    if ('error' in start) return setError(start.error)
-    setUserCode(start.userCode)
-    await run(api.remote.signInWait())
-    setUserCode(null)
-  }
-
   return (
     <Section
       title="Remote service"
@@ -244,7 +231,7 @@ function RemoteSection({
     >
       <ApiKeyField
         configured={hasKey}
-        placeholder="Or an API key (frl_…)"
+        placeholder="API key for scripts (frl_…) — or sign in from the account menu"
         busy={busy}
         onSave={(key) => run(api.remote.save({ url: url || saved?.url || '', key }))}
         onClear={() => void run(api.remote.clearKey())}
@@ -267,29 +254,7 @@ function RemoteSection({
           Test
         </Button>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-        {userCode ? (
-          <>
-            <span style={{ fontSize: 12, color: C.textSoft, flex: 1 }}>
-              Enter <strong style={{ fontFamily: MONO }}>{userCode}</strong> on the GitHub page that
-              opened.
-            </span>
-            <Button variant="secondary" onClick={() => void api.remote.signInCancel()}>
-              Cancel
-            </Button>
-          </>
-        ) : (
-          <>
-            <span style={{ fontSize: 12, color: C.textSoft, flex: 1 }}>
-              {account ? `Signed in as ${account}` : hasKey ? 'Token stored' : 'Not signed in'}
-            </span>
-            <Button variant="primary" disabled={busy || !saved || urlChanged} onClick={() => void signIn()}>
-              {hasKey ? 'Sign in again' : 'Sign in with GitHub'}
-            </Button>
-          </>
-        )}
-      </div>
-      {busy && !userCode && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 8 }}>Working…</div>}
+      {busy && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 8 }}>Working…</div>}
       {!busy && saved && probed && !error && !urlChanged && (
         <div style={{ fontSize: 11.5, color: C.textSoft, marginTop: 8 }}>Remote service is ready.</div>
       )}

@@ -44,8 +44,8 @@ let usersFile: string
 let approved: boolean
 
 const json = (body: unknown): Response => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } })
-const ghUsers: Record<string, { id: number; login: string }> = {
-  gho_octo: { id: 1, login: 'octo' },
+const ghUsers: Record<string, { id: number; login: string; name?: string; avatar_url?: string }> = {
+  gho_octo: { id: 1, login: 'octo', name: 'Octo Cat', avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4' },
   gho_mallory: { id: 2, login: 'mallory' }
 }
 
@@ -239,7 +239,13 @@ describe('GitHub sign-in', () => {
     expect(done).toMatchObject({ status: 'ok', user: { login: 'octo' } })
     expect(done.token).toMatch(/^fs1\./)
 
-    expect(await (await call('/v1/me', { token: done.token })).json()).toEqual({ id: 'user:1', kind: 'user', name: 'octo' })
+    expect(await (await call('/v1/me', { token: done.token })).json()).toEqual({
+      id: 'user:1',
+      kind: 'user',
+      name: 'octo',
+      displayName: 'Octo Cat',
+      avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4'
+    })
     const run = await startRun([{ id: 'ci', name: 'CI', nodes: [step('a', 'shell', 'x')] }])
     const { runId } = (await run.json()) as { runId: string }
     expect((await call(`/v1/runs/${runId}`, { token: done.token })).status).toBe(404)

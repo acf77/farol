@@ -16,6 +16,9 @@ export interface GitHubAppConfig {
 export interface GitHubUser {
   id: number
   login: string
+  /** Display name, when the user set one. */
+  name?: string
+  avatarUrl?: string
 }
 
 export interface DeviceStart {
@@ -129,9 +132,14 @@ export class GitHub {
   async user(token: string): Promise<GitHubUser> {
     const res = await this.api(token, '/user')
     if (!res.ok) throw new GitHubError(`Reading the GitHub user failed (HTTP ${res.status})`)
-    const body = (await res.json()) as { id?: unknown; login?: unknown }
+    const body = (await res.json()) as { id?: unknown; login?: unknown; name?: unknown; avatar_url?: unknown }
     if (typeof body.id !== 'number' || typeof body.login !== 'string') throw new GitHubError('GitHub returned no user')
-    return { id: body.id, login: body.login }
+    return {
+      id: body.id,
+      login: body.login,
+      ...(typeof body.name === 'string' && body.name ? { name: body.name } : {}),
+      ...(typeof body.avatar_url === 'string' ? { avatarUrl: body.avatar_url } : {})
+    }
   }
 
   /** Whether the token's user is an active member of `org` (needs org members read access). */

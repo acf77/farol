@@ -65,6 +65,23 @@ export interface RemoteResult extends SettingsResult {
   account?: string
 }
 
+/** Who this machine is signed in to the remote service as, for the header account menu. */
+export type RemoteAccount =
+  | { state: 'unconfigured' }
+  | { state: 'signedOut'; serviceUrl: string; message?: string }
+  | {
+      state: 'signedIn'
+      serviceUrl: string
+      /** Signed in with GitHub, or holding an API key. */
+      kind: 'user' | 'key'
+      /** GitHub login, or the API key's name. */
+      login: string
+      displayName?: string
+      /** The GitHub avatar as a `data:` URL; the renderer cannot load remote images. */
+      avatar?: string
+    }
+  | { state: 'error'; serviceUrl: string; message: string }
+
 /** Device-flow sign-in, step 1: show `userCode`; the browser is already open at `verificationUri`. */
 export type RemoteSignInStart = { userCode: string; verificationUri: string } | { error: string }
 

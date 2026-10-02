@@ -17,6 +17,9 @@ export interface Identity {
   githubId?: number
   /** Key name or GitHub login. */
   name: string
+  /** GitHub display name and avatar, for `user` identities. */
+  displayName?: string
+  avatarUrl?: string
 }
 
 /** Who may sign in. Nobody can unless at least one of these is set. */
@@ -67,7 +70,14 @@ export function identify(config: AuthConfig, token: string): Identity | null {
     if (!user || user.disabledAt) return null
     if (user.sessionsValidAfter !== undefined && claims.iat <= user.sessionsValidAfter) return null
     if (!stillAllowed(login.access, user.login)) return null
-    return { id: `user:${user.githubId}`, kind: 'user', name: user.login, githubId: user.githubId }
+    return {
+      id: `user:${user.githubId}`,
+      kind: 'user',
+      name: user.login,
+      githubId: user.githubId,
+      ...(user.name ? { displayName: user.name } : {}),
+      ...(user.avatarUrl ? { avatarUrl: user.avatarUrl } : {})
+    }
   }
   const key = verifyKey(config.keysFile, token)
   return key ? { id: `key:${key.id}`, kind: 'key', name: key.name } : null
@@ -83,7 +93,7 @@ export const loginScope = (login: LoginConfig): string => (login.access.orgs.len
 export async function signIn(
   login: LoginConfig,
   githubToken: string
-): Promise<{ token: string; expiresAt: string; user: { login: string } }> {
+): Promise<{ token: string; expiresAt: string; user: { login: string; name?: string; avatarUrl?: string } }> {
   const user = await login.github.user(githubToken)
   let allowed = listed(login.access, user.login)
   for (const org of login.access.orgs) {
@@ -92,6 +102,7 @@ export async function signIn(
   }
   if (!allowed) throw new AccessDenied(`GitHub user ${user.login} is not allowed on this service`)
   if (findUser(login.usersFile, user.id)?.disabledAt) throw new AccessDenied(`GitHub user ${user.login} is disabled`)
-  recordLogin(login.usersFile, user.id, user.login)
-  return { ...issueSession(login.sessionSecret, user.id), user: { login: user.login } }
+  recordLogin(login.usersFile, user.id, user)
+  const { login: name, name: displayName, avatarUrl } = user
+  return { ...issueSession(login.sessionSecret, user.id), user: { login: name, name: displayName, avatarUrl } }
 }

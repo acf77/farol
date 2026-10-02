@@ -2379,6 +2379,7 @@ export function ProjectWorkspace({
           setSettings(next)
           void api.settings.save(next)
         }}
+        onAdoptSettings={setSettings}
         onOpenSettings={() => setSettingsOpen(true)}
       />
 

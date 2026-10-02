@@ -288,7 +288,8 @@ const signInRoutes: { method: string; path: string; handler: (deps: ServiceDeps,
 ]
 
 function showMe({ res, owner }: Context): void {
-  json(res, 200, { id: owner.id, kind: owner.kind, name: owner.name })
+  const { id, kind, name, displayName, avatarUrl } = owner
+  json(res, 200, { id, kind, name, ...(displayName ? { displayName } : {}), ...(avatarUrl ? { avatarUrl } : {}) })
 }
 
 /** Sign the user out everywhere: every session they hold stops working. */

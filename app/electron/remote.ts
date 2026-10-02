@@ -1,6 +1,6 @@
 import { errorMessage } from '../shared/jev'
 import { shell } from 'electron'
-import type { RemoteResult, RemoteSignInStart, SettingsResult } from '../shared/types'
+import type { RemoteAccount, RemoteResult, RemoteSignInStart, SettingsResult } from '../shared/types'
 import { checkoutSnapshot } from './checkout-snapshot'
 import { snapshotSummary } from '../shared/remote'
 import type { RemoteWorkspace } from './sandbox'
@@ -111,6 +111,61 @@ export async function checkRemote(): Promise<RemoteResult> {
     return { ...(await result()), ...(name ? { account: name } : {}) }
   } catch (err) {
     return result(errorMessage(err))
+  }
+}
+
+const AVATAR_HOST = 'avatars.githubusercontent.com'
+const AVATAR_LIMIT = 512 * 1024
+const avatars = new Map<string, string>()
+
+/** A GitHub avatar as a `data:` URL, or undefined. Only GitHub's avatar host is fetched. */
+async function avatarData(url: string | undefined): Promise<string | undefined> {
+  if (!url) return undefined
+  const cached = avatars.get(url)
+  if (cached) return cached
+  try {
+    const src = new URL(url)
+    if (src.protocol !== 'https:' || src.hostname !== AVATAR_HOST) return undefined
+    src.searchParams.set('s', '64')
+    const res = await fetch(src, { signal: AbortSignal.timeout(10_000) })
+    const type = res.headers.get('content-type') ?? ''
+    if (!res.ok || !/^image\/(png|jpeg|gif|webp)$/.test(type)) return undefined
+    const bytes = Buffer.from(await res.arrayBuffer())
+    if (bytes.length > AVATAR_LIMIT) return undefined
+    const data = `data:${type};base64,${bytes.toString('base64')}`
+    avatars.set(url, data)
+    return data
+  } catch {
+    return undefined
+  }
+}
+
+/** Who the stored token belongs to. A token the service rejects reads as signed out. */
+export async function remoteAccount(): Promise<RemoteAccount> {
+  const { remote } = await loadSettings()
+  if (!remote) return { state: 'unconfigured' }
+  const serviceUrl = remote.url
+  const key = peekSecret('remoteApiKey')
+  if (!key) return { state: 'signedOut', serviceUrl }
+  try {
+    const res = await fetch(new URL('/v1/me', serviceUrl), {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(15_000)
+    })
+    if (res.status === 401) return { state: 'signedOut', serviceUrl, message: 'Your session ended. Sign in again.' }
+    if (!res.ok) return { state: 'error', serviceUrl, message: `The service replied HTTP ${res.status}` }
+    const me = (await res.json()) as { kind?: string; name?: string; displayName?: string; avatarUrl?: string }
+    const avatar = await avatarData(me.avatarUrl)
+    return {
+      state: 'signedIn',
+      serviceUrl,
+      kind: me.kind === 'user' ? 'user' : 'key',
+      login: me.name ?? '',
+      ...(me.displayName ? { displayName: me.displayName } : {}),
+      ...(avatar ? { avatar } : {})
+    }
+  } catch (err) {
+    return { state: 'error', serviceUrl, message: `Cannot reach the service: ${errorMessage(err)}` }
   }
 }
 

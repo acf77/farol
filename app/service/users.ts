@@ -10,6 +10,9 @@ import path from 'path'
 export interface UserRecord {
   githubId: number
   login: string
+  /** GitHub display name and avatar, as of the last sign-in. */
+  name?: string
+  avatarUrl?: string
   createdAt: string
   lastLoginAt: string
   disabledAt?: string
@@ -33,13 +36,18 @@ function writeUsers(file: string, users: UserRecord[]): void {
   fs.renameSync(tmp, file)
 }
 
-/** Record a sign-in: create the user, or refresh their login name and last sign-in time. */
-export function recordLogin(file: string, githubId: number, login: string): UserRecord {
+/** Record a sign-in: create the user, or refresh their profile and last sign-in time. */
+export function recordLogin(
+  file: string,
+  githubId: number,
+  profile: { login: string; name?: string; avatarUrl?: string }
+): UserRecord {
   const users = readUsers(file)
   const now = new Date().toISOString()
+  const { login, name, avatarUrl } = profile
   let user = users.find((u) => u.githubId === githubId)
-  if (user) Object.assign(user, { login, lastLoginAt: now })
-  else users.push((user = { githubId, login, createdAt: now, lastLoginAt: now }))
+  if (user) Object.assign(user, { login, name, avatarUrl, lastLoginAt: now })
+  else users.push((user = { githubId, login, name, avatarUrl, createdAt: now, lastLoginAt: now }))
   writeUsers(file, users)
   return user
 }
