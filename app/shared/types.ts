@@ -17,6 +17,7 @@ import type {
 } from './settings'
 import type { ProviderUsage } from './usage'
 import type { Todo } from './todos'
+import type { CustomPrompt, CustomPromptSet } from './custom-prompts'
 
 export type { AgentQuestion, AgentSkill, ProviderUsage }
 
@@ -660,6 +661,13 @@ export interface FarolApi {
   settings: {
     load(): Promise<AppSettings>
     save(settings: AppSettings): Promise<void>
+  }
+  /** Custom prompts; each mutation hands back the fresh set for `projectPath`. */
+  prompts: {
+    load(projectPath: string | null): Promise<CustomPromptSet>
+    saveGlobal(projectPath: string | null, prompts: CustomPrompt[]): Promise<CustomPromptSet>
+    saveProject(projectPath: string, prompts: CustomPrompt[]): Promise<CustomPromptSet>
+    setProjectActive(projectPath: string, ids: string[]): Promise<CustomPromptSet>
   }
   openrouter: {
     saveKey(key: string): Promise<SettingsResult>

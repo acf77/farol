@@ -119,6 +119,12 @@ const api: FarolApi = {
     load: () => ipcRenderer.invoke('settings:load'),
     save: (settings) => ipcRenderer.invoke('settings:save', settings)
   },
+  prompts: {
+    load: (projectPath) => ipcRenderer.invoke('prompts:load', projectPath),
+    saveGlobal: (projectPath, prompts) => ipcRenderer.invoke('prompts:saveGlobal', projectPath, prompts),
+    saveProject: (projectPath, prompts) => ipcRenderer.invoke('prompts:saveProject', projectPath, prompts),
+    setProjectActive: (projectPath, ids) => ipcRenderer.invoke('prompts:setProjectActive', projectPath, ids)
+  },
   openrouter: {
     saveKey: (key) => ipcRenderer.invoke('openrouter:saveKey', key),
     clearKey: () => ipcRenderer.invoke('openrouter:clearKey'),

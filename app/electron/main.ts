@@ -16,7 +16,7 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus, syncManagedHooks } from './git'
+import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pipelineStoreRootFor, pull as gitPull, push as gitPush, recentCommits, status as gitStatus, syncManagedHooks } from './git'
 import { createPullRequest, mergePullRequest } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, flushWorkspace, PipelineWatcher } from './store'
@@ -44,6 +44,7 @@ import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
 import { appendTail, plainText } from '../shared/terminal'
 import { AgentController } from './agent-controller'
 import { createTodoStore } from './todos'
+import { createCustomPromptStore } from './custom-prompts'
 import { parseTodos } from '../shared/todos'
 import { closedProjects } from '../shared/session'
 import { owningWorktree } from '../shared/worktree'
@@ -71,7 +72,8 @@ const todos = createTodoStore(
   () => app.getPath('userData'),
   (event) => send('todos:changed', event)
 )
-const agents = new AgentController(runner, (event) => send('agent:event', event), undefined, todos)
+const prompts = createCustomPromptStore(() => app.getPath('userData'), pipelineStoreRootFor)
+const agents = new AgentController(runner, (event) => send('agent:event', event), undefined, todos, prompts)
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
 )
@@ -848,9 +850,23 @@ function registerRemoteIpc(): void {
   ipcMain.handle('remote:check', () => checkRemote())
 }
 
+function projectPathOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
 function registerAppIpc(): void {
   ipcMain.handle('settings:load', () => loadSettings())
   ipcMain.handle('settings:save', (_e, settings: AppSettings) => saveSettings(settings))
+  ipcMain.handle('prompts:load', (_e, projectPath: unknown) => prompts.load(projectPathOrNull(projectPath)))
+  ipcMain.handle('prompts:saveGlobal', (_e, projectPath: unknown, value: unknown) =>
+    prompts.saveGlobal(projectPathOrNull(projectPath), value)
+  )
+  ipcMain.handle('prompts:saveProject', (_e, projectPath: unknown, value: unknown) =>
+    prompts.saveProject(projectPathOrNull(projectPath) ?? '', value)
+  )
+  ipcMain.handle('prompts:setProjectActive', (_e, projectPath: unknown, ids: unknown) =>
+    prompts.setProjectActive(projectPathOrNull(projectPath) ?? '', ids)
+  )
   ipcMain.handle('openrouter:saveKey', (_e, key: string) => saveOpenRouterKey(key))
   ipcMain.handle('openrouter:clearKey', () => clearOpenRouter())
   ipcMain.handle('openrouter:refresh', () => refreshOpenRouterCatalog())

@@ -18,7 +18,8 @@ import {
   withOpenRouterAgent
 } from '@shared/settings'
 import { C, UI } from '../theme'
-import { Button, Checkbox, CliModelDropdown, SegmentedControl } from './controls'
+import { Button, Checkbox, CliModelDropdown, SegmentedControl, Switch } from './controls'
+import { CustomPromptsSection } from './CustomPromptsSection'
 import { ChevronDown, ChevronUp } from './icons'
 import { CHROME_ROW } from './side-panel'
 
@@ -28,12 +29,16 @@ interface Props {
   /** Adopt settings the main process already owns — provider keys, catalogs. */
   onAdoptSettings: (next: AppSettings) => void
   onClose: () => void
+  /** The open project, whose `.farol/prompts.json` Custom prompts edits. */
+  projectPath?: string | null
+  projectName?: string
 }
 
-type PageKey = 'general' | 'models' | 'fallbacks' | 'openrouter' | 'jev'
+type PageKey = 'general' | 'prompts' | 'models' | 'fallbacks' | 'openrouter' | 'jev'
 
 const PAGES: readonly { value: PageKey; label: string }[] = [
   { value: 'general', label: 'General' },
+  { value: 'prompts', label: 'Custom prompts' },
   { value: 'models', label: 'Models' },
   { value: 'fallbacks', label: 'Fallbacks' },
   { value: 'openrouter', label: 'OpenRouter' },
@@ -230,41 +235,6 @@ function Field({ label, width = 100, children }: { label: string; width?: number
 
 function Value({ children }: { children: React.ReactNode }) {
   return <span style={{ flex: 1, minWidth: 0, fontFamily: mono, fontSize: 12, color: C.textMuted }}>{children}</span>
-}
-
-function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      className="bf-focus"
-      onClick={() => onChange(!checked)}
-      style={{
-        width: 32,
-        height: 19,
-        padding: 2,
-        border: 'none',
-        borderRadius: 10,
-        flex: 'none',
-        cursor: 'pointer',
-        transition: 'background .15s',
-        background: checked ? C.accent : C.border
-      }}
-    >
-      <div
-        style={{
-          width: 15,
-          height: 15,
-          borderRadius: '50%',
-          background: checked ? C.accentInk : C.textRow,
-          transition: 'transform .15s',
-          transform: `translateX(${checked ? 13 : 0}px)`
-        }}
-      />
-    </button>
-  )
 }
 
 function RefreshButton({ title, disabled, onClick }: { title: string; disabled?: boolean; onClick: () => void }) {
@@ -573,7 +543,14 @@ function ModeChain({
   )
 }
 
-export default function SettingsPage({ settings, onSettings, onAdoptSettings, onClose }: Props) {
+export default function SettingsPage({
+  settings,
+  onSettings,
+  onAdoptSettings,
+  onClose,
+  projectPath,
+  projectName
+}: Props) {
   const api = window.farol
   const or = settings.openrouter
   const configured = !!or?.hasKey
@@ -758,6 +735,8 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
                 <RemoteSection settings={settings} onAdoptSettings={onAdoptSettings} />
               </>
             )}
+
+            {page === 'prompts' && <CustomPromptsSection projectPath={projectPath ?? null} projectName={projectName} />}
 
             {page === 'models' && (
               <>

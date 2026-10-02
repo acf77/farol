@@ -2524,6 +2524,8 @@ export function ProjectWorkspace({
           }}
           onAdoptSettings={setSettings}
           onClose={() => setSettingsOpen(false)}
+          projectPath={project.path}
+          projectName={project.name}
         />
       )}
 
