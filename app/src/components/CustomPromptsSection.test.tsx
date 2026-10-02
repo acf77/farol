@@ -60,9 +60,9 @@ afterEach(() => {
 describe('CustomPromptsSection', () => {
   it('lists global and project prompts with their on state', async () => {
     mount({ global: [prompt('terse', 'Be terse.', true)], project: [prompt('tests', 'Use vitest.')] })
-    const terse = await screen.findByRole('checkbox', { name: /terse/ })
-    expect((terse as HTMLInputElement).checked).toBe(true)
-    expect((screen.getByRole('checkbox', { name: /tests/ }) as HTMLInputElement).checked).toBe(false)
+    const terse = await screen.findByRole('switch', { name: 'terse' })
+    expect(terse.getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('switch', { name: 'tests' }).getAttribute('aria-checked')).toBe('false')
     expect(api.load).toHaveBeenCalledWith('/repo')
   })
 
@@ -78,7 +78,7 @@ describe('CustomPromptsSection', () => {
     expect(api.state.global).toEqual([
       expect.objectContaining({ id: 'new-id', name: 'Terse', body: 'Answer briefly.', active: true })
     ])
-    expect((await screen.findByRole('checkbox', { name: /Terse/ }) as HTMLInputElement).checked).toBe(true)
+    expect((await screen.findByRole('switch', { name: 'Terse' })).getAttribute('aria-checked')).toBe('true')
   })
 
   it('creates a project prompt and switches it on for this machine', async () => {
@@ -90,18 +90,18 @@ describe('CustomPromptsSection', () => {
 
     await waitFor(() => expect(api.setProjectActive).toHaveBeenCalledWith('/repo', ['new-id']))
     expect(api.saveProject).toHaveBeenCalledWith('/repo', [expect.objectContaining({ id: 'new-id' })])
-    expect((await screen.findByRole('checkbox', { name: /Untitled prompt/ }) as HTMLInputElement).checked).toBe(true)
+    expect((await screen.findByRole('switch', { name: 'Untitled prompt' })).getAttribute('aria-checked')).toBe('true')
   })
 
   it('toggles a global prompt by saving the global list', async () => {
     mount({ global: [prompt('terse', 'Be terse.', true)] })
-    fireEvent.click(await screen.findByRole('checkbox', { name: /terse/ }))
+    fireEvent.click(await screen.findByRole('switch', { name: 'terse' }))
     await waitFor(() => expect(api.saveGlobal).toHaveBeenCalledWith('/repo', [expect.objectContaining({ active: false })]))
   })
 
   it('toggles a project prompt through per-machine activation only', async () => {
     mount({ project: [prompt('tests', 'Use vitest.')] })
-    fireEvent.click(await screen.findByRole('checkbox', { name: /tests/ }))
+    fireEvent.click(await screen.findByRole('switch', { name: 'tests' }))
     await waitFor(() => expect(api.setProjectActive).toHaveBeenCalledWith('/repo', ['tests']))
     expect(api.saveProject).not.toHaveBeenCalled()
   })

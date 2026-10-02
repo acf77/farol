@@ -8,7 +8,7 @@ import {
 } from '@shared/custom-prompts'
 import { errorMessage } from '@shared/jev'
 import { C } from '../theme'
-import { Button, Checkbox } from './controls'
+import { Button, Switch } from './controls'
 
 /** Past this, the block is a noticeable cost on every turn. */
 export const ACTIVE_CHARS_WARNING = 4000
@@ -24,13 +24,30 @@ interface Draft {
 }
 
 const field: React.CSSProperties = {
-  padding: '0 8px',
-  borderRadius: 6,
+  padding: '0 10px',
+  borderRadius: 7,
   border: `1px solid ${C.border}`,
   background: C.terminal,
   color: C.text,
   fontSize: 12
 }
+
+const EYEBROW: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: '.06em',
+  textTransform: 'uppercase',
+  color: C.faint
+}
+
+const card: React.CSSProperties = {
+  border: `1px solid ${C.hair}`,
+  borderRadius: 12,
+  background: C.sidebar,
+  minWidth: 0
+}
+
+const ROW: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px' }
 
 function firstLine(body: string): string {
   return body.split('\n', 1)[0]
@@ -51,7 +68,7 @@ function PromptEditor({
 }) {
   return (
     <form
-      style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}
+      style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 16px' }}
       onSubmit={(e) => {
         e.preventDefault()
         onSave()
@@ -64,7 +81,7 @@ function PromptEditor({
         maxLength={MAX_PROMPT_NAME}
         value={draft.name}
         onChange={(e) => onChange({ ...draft, name: e.target.value })}
-        style={{ ...field, height: 28 }}
+        style={{ ...field, height: 30 }}
       />
       <textarea
         className="bf-input bf-focus"
@@ -74,7 +91,7 @@ function PromptEditor({
         rows={6}
         value={draft.body}
         onChange={(e) => onChange({ ...draft, body: e.target.value })}
-        style={{ ...field, padding: 8, resize: 'vertical', lineHeight: 1.45, fontFamily: 'inherit' }}
+        style={{ ...field, padding: 10, resize: 'vertical', lineHeight: 1.45, fontFamily: 'inherit' }}
       />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <Button type="submit" variant="primary" disabled={busy || !draft.body.trim()}>
@@ -108,24 +125,14 @@ function PromptRow({
 }) {
   const [confirming, setConfirming] = useState(false)
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <Checkbox checked={active} onChange={onToggle} title={prompt.body} style={{ fontSize: 12, color: C.textSoft }}>
-          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-            <span>{prompt.name}</span>
-            <span
-              style={{
-                fontSize: 11,
-                color: C.faint,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap'
-              }}
-            >
-              {firstLine(prompt.body)}
-            </span>
-          </span>
-        </Checkbox>
+    <div style={ROW}>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }} title={prompt.body}>
+        <span style={{ fontSize: 13 }}>{prompt.name}</span>
+        <span
+          style={{ fontSize: 12, color: C.faint, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        >
+          {firstLine(prompt.body)}
+        </span>
       </div>
       {confirming ? (
         <>
@@ -146,6 +153,20 @@ function PromptRow({
           </Button>
         </>
       )}
+      <Switch label={prompt.name} checked={active} onChange={(on) => !busy && onToggle(on)} />
+    </div>
+  )
+}
+
+/** Card whose rows are separated by hairlines. */
+function Rows({ children }: { children: React.ReactNode[] }) {
+  return (
+    <div style={card}>
+      {children.map((child, i) => (
+        <div key={i} style={i ? { borderTop: `1px solid ${C.hair}` } : undefined}>
+          {child}
+        </div>
+      ))}
     </div>
   )
 }
@@ -238,62 +259,74 @@ export function CustomPromptsSection({ projectPath, projectName }: { projectPath
 
   const group = (scope: Scope, title: string, list: CustomPrompt[], hint?: string) => {
     const disabled = scope === 'project' && !set.projectRoot
-    const editingHere = draft?.scope === scope
+    const editingNew = draft?.scope === scope && !draft.id
+    const rows: React.ReactNode[] = list.map((prompt) =>
+      draft?.id === prompt.id ? (
+        <PromptEditor
+          key={prompt.id}
+          draft={draft}
+          busy={busy}
+          onChange={setDraft}
+          onSave={() => save(draft)}
+          onCancel={() => setDraft(null)}
+        />
+      ) : (
+        <PromptRow
+          key={prompt.id}
+          prompt={prompt}
+          active={scope === 'global' ? prompt.active : activeIds.has(prompt.id)}
+          busy={busy || !!draft}
+          onToggle={(on) => toggle(scope, prompt, on)}
+          onEdit={() => setDraft({ scope, id: prompt.id, name: prompt.name, body: prompt.body })}
+          onDelete={() => remove(scope, prompt)}
+        />
+      )
+    )
+    if (editingNew) {
+      rows.push(
+        <PromptEditor
+          key="new"
+          draft={draft}
+          busy={busy}
+          onChange={setDraft}
+          onSave={() => save(draft)}
+          onCancel={() => setDraft(null)}
+        />
+      )
+    }
+    if (!rows.length) {
+      rows.push(
+        <div key="empty" style={{ ...ROW, fontSize: 12, color: C.faint }}>
+          {disabled ? 'Open a project to add its prompts.' : 'No prompts yet.'}
+        </div>
+      )
+    }
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: C.textSoft }}>{title}</span>
-          {hint && <span style={{ fontSize: 11, color: C.faint }}>{hint}</span>}
+      <section style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 24 }}>
+          <span style={EYEBROW}>{title}</span>
+          {hint && <span style={{ fontSize: 11, color: C.fainter }}>{hint}</span>}
+          <span style={{ flex: 1 }} />
           <Button
             variant="secondary"
-            style={{ marginLeft: 'auto' }}
             disabled={busy || disabled || !!draft}
             onClick={() => setDraft({ scope, name: '', body: '' })}
           >
             New prompt
           </Button>
         </div>
-        {disabled && <div style={{ fontSize: 12, color: C.textMuted }}>Open a project to add its prompts.</div>}
-        {!disabled && !list.length && !editingHere && (
-          <div style={{ fontSize: 12, color: C.textMuted }}>No prompts yet.</div>
-        )}
-        {list.map((prompt) =>
-          draft?.id === prompt.id ? (
-            <PromptEditor
-              key={prompt.id}
-              draft={draft}
-              busy={busy}
-              onChange={setDraft}
-              onSave={() => save(draft)}
-              onCancel={() => setDraft(null)}
-            />
-          ) : (
-            <PromptRow
-              key={prompt.id}
-              prompt={prompt}
-              active={scope === 'global' ? prompt.active : activeIds.has(prompt.id)}
-              busy={busy || !!draft}
-              onToggle={(on) => toggle(scope, prompt, on)}
-              onEdit={() => setDraft({ scope, id: prompt.id, name: prompt.name, body: prompt.body })}
-              onDelete={() => remove(scope, prompt)}
-            />
-          )
-        )}
-        {editingHere && !draft.id && (
-          <PromptEditor
-            draft={draft}
-            busy={busy}
-            onChange={setDraft}
-            onSave={() => save(draft)}
-            onCancel={() => setDraft(null)}
-          />
-        )}
-      </div>
+        <Rows>{rows}</Rows>
+      </section>
     )
   }
 
+  const over = block.length > ACTIVE_CHARS_WARNING
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <>
+      <div style={{ fontSize: 12, lineHeight: 1.55, color: C.faint, textWrap: 'pretty' }}>
+        Standing instructions added to every chat turn while switched on. Project prompts can be committed; whether
+        they are on is saved only on this machine.
+      </div>
       {group('global', 'Global', set.global, 'Every project')}
       {group(
         'project',
@@ -301,19 +334,14 @@ export function CustomPromptsSection({ projectPath, projectName }: { projectPath
         set.project,
         set.projectRoot ? `${projectName ?? ''} · .farol/prompts.json`.replace(/^ · /, '') : undefined
       )}
-      <div
-        style={{
-          fontSize: 11.5,
-          color: block.length > ACTIVE_CHARS_WARNING ? C.yellow : C.textMuted
-        }}
-      >
+      <div style={{ fontSize: 12, color: over ? C.yellow : C.faint }}>
         {activeCount
           ? `${activeCount} on · ${block.length.toLocaleString()} characters sent with every turn${
-              block.length > ACTIVE_CHARS_WARNING ? ' — consider trimming' : ''
+              over ? ' — consider trimming' : ''
             }`
           : 'None on. Switched-on prompts are sent with every chat turn.'}
       </div>
       {error && <div style={{ fontSize: 12, color: C.red }}>{error}</div>}
-    </div>
+    </>
   )
 }
