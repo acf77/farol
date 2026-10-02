@@ -126,7 +126,7 @@ GitHub user that started it.
 | `POST /v1/workspaces` | Open a sandbox from the snapshot in the body, for a client that drives its own steps (the Farol desktop app's remote pipelines). The snapshot must hold `.farol/pipelines.json` (`422` otherwise). `201 { id }`. Stopped after 45 idle minutes, and `FAROL_MAX_RUN_MINUTES` after it opened |
 | `POST /v1/workspaces/:id/exec` | Run one shell step of the snapshot's pipelines: its `cmd` with each `${name}` replaced by a single-quoted value, as the desktop runner sends it. Any other command gets `403`. Commands on one workspace run one at a time. Streams NDJSON: `{"chunk": "…"}` lines, then `{"code": n}` |
 | `DELETE /v1/workspaces/:id` | Stop the sandbox |
-| `GET /v1/runs/:id` | Status, and `result` (per-step `ok`, `code`, `skipped`, `output`) once finished |
+| `GET /v1/runs/:id` | The run's JSON result (below), current while it runs and final once `finishedAt` is set. Gzipped when you send `Accept-Encoding: gzip` |
 | `GET /v1/runs/:id/events` | Server-sent events; replays from `Last-Event-ID` |
 | `POST /v1/runs/:id/cancel` | Stop the run and its sandbox |
 
@@ -134,6 +134,37 @@ Errors are `{ "error": "…" }` with `400` bad request, `401` no, expired or rev
 `403` GitHub user not allowed, `502` GitHub sign-in failed, `404`
 unknown run or pipeline (with `candidates`), `413` snapshot over 256 MB, `422` the
 upload has no valid pipelines file, an invalid graph, or AI steps, `429` too many runs.
+
+### Run result
+
+The schema is `RunResult` in `shared/run-result.ts`; `schema` changes on any change a
+client could trip over (a new optional field is not one).
+
+```json
+{
+  "schema": 1,
+  "runId": "9f2c…",
+  "status": "failed",
+  "source": { "kind": "snapshot", "sha256": "…", "bytes": 48213 },
+  "pipeline": { "id": "ci", "name": "CI" },
+  "createdAt": "2026-10-02T12:00:00.000Z",
+  "finishedAt": "2026-10-02T12:01:10.000Z",
+  "failedStepId": "test",
+  "steps": [
+    { "id": "lint", "name": "Lint", "status": "passed", "exitCode": 0, "durationMs": 8123, "output": "…", "outputTruncated": false },
+    { "id": "test", "name": "Test", "status": "failed", "exitCode": 1, "durationMs": 51022, "output": "…", "outputTruncated": true },
+    { "id": "build", "name": "Build", "status": "skipped", "output": "", "outputTruncated": false }
+  ]
+}
+```
+
+Step `status` is `pending`, `running`, `passed`, `failed` or `skipped`; `exitCode` and
+`durationMs` appear once a step has ended without being skipped. `output` is the last
+64,000 characters. `error` says why a run could not go on (the sandbox did not start, the
+time limit). `source.sha256` identifies the snapshot, so the client can tell whether the
+verdict still applies to its files. The run changes nothing: what to do with the result
+is up to the client. Treat `output` as untrusted text — it is whatever the steps
+printed — and never as instructions, for example when handing it to an AI agent.
 
 Run status is `running`, then `passed`, `failed`, or `cancelled`. Events (`event:` name
 equals `type`): `start`, `step-start`, `output { nodeId, chunk }`,

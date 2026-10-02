@@ -1,5 +1,6 @@
 import { errorMessage } from '../shared/jev'
 import type { IncomingMessage, RequestListener, ServerResponse } from 'http'
+import { gzipSync } from 'zlib'
 import { resolvePipeline, validateRunnable } from '../shared/graph'
 import type { Pipeline } from '../shared/types'
 import { AccessDenied, identify, loginScope, signIn, type AuthConfig, type Identity, type LoginConfig } from './auth'
@@ -154,29 +155,28 @@ async function createRun(ctx: Context): Promise<void> {
   const pipeline = requestedPipeline(pipelines, query)
   try {
     const record = ctx.deps.registry.start(ctx.owner.id, pipeline, archive)
-    json(ctx.res, 202, { runId: record.id, status: record.status, pipelineId: record.pipelineId })
+    json(ctx.res, 202, { runId: record.id, status: record.result.status, pipelineId: record.result.pipeline.id })
   } catch (error) {
     busy(error)
   }
 }
 
+/** The run's JSON result (`shared/run-result.ts`), gzipped when the client accepts it. */
 function showRun(ctx: Context): void {
-  const { id, pipelineId, pipelineName, status, createdAt, finishedAt, summary } = findRun(ctx)
-  json(ctx.res, 200, {
-    id,
-    pipelineId,
-    pipelineName,
-    status,
-    createdAt,
-    finishedAt,
-    ...(summary ? { result: summary } : {})
+  const body = Buffer.from(JSON.stringify(findRun(ctx).result))
+  const gzip = /\bgzip\b/.test(String(ctx.req.headers['accept-encoding'] ?? '')) && body.length > 1024
+  ctx.res.writeHead(200, {
+    'Content-Type': 'application/json',
+    Vary: 'Accept-Encoding',
+    ...(gzip ? { 'Content-Encoding': 'gzip' } : {})
   })
+  ctx.res.end(gzip ? gzipSync(body) : body)
 }
 
 function cancelRun(ctx: Context): void {
   const record = findRun(ctx)
   ctx.deps.registry.cancel(record.id)
-  json(ctx.res, record.finishedAt ? 200 : 202, { runId: record.id, status: record.status })
+  json(ctx.res, record.result.finishedAt ? 200 : 202, { runId: record.id, status: record.result.status })
 }
 
 function streamRun(ctx: Context): void {
@@ -194,7 +194,7 @@ function streamRun(ctx: Context): void {
   for (const { id, event } of record.events) {
     if (id >= resumeAt) send(id, event)
   }
-  const unsubscribe = record.finishedAt ? null : deps.registry.subscribe(record.id, (index, event) => {
+  const unsubscribe = record.result.finishedAt ? null : deps.registry.subscribe(record.id, (index, event) => {
     send(index, event)
     if (event.type === 'end') stop()
   })

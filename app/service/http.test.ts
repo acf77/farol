@@ -6,6 +6,7 @@ import os from 'os'
 import path from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RemoteWorkspace } from '../electron/sandbox'
+import type { RunResult } from '../shared/run-result'
 import { GitHub } from './github'
 import { createHandler } from './http'
 import { createKey } from './keys'
@@ -126,9 +127,38 @@ describe('run service', () => {
     expect(events).toContain('all good')
     expect(events).toContain('event: end')
 
-    const status = (await (await call(`/v1/runs/${runId}`)).json()) as { status: string; result: { ok: boolean } }
-    expect(status).toMatchObject({ status: 'passed', result: { ok: true } })
+    const result = (await (await call(`/v1/runs/${runId}`)).json()) as RunResult
+    expect(result).toMatchObject({
+      schema: 1,
+      runId,
+      status: 'passed',
+      source: { kind: 'snapshot', bytes: expect.any(Number) },
+      pipeline: { id: 'ci', name: 'CI' },
+      steps: [{ id: 'a', name: 'a', status: 'passed', exitCode: 0, output: 'all good\n', outputTruncated: false }]
+    })
+    expect(result.source.sha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(result.finishedAt).toEqual(expect.any(String))
     expect(workspace.close).toHaveBeenCalled()
+  })
+
+  it('reports the failed step and skips what it gates', async () => {
+    vi.mocked(workspace.exec).mockImplementationOnce(async (_cmd, onChunk) => {
+      onChunk('boom\n')
+      return 2
+    })
+    const nodes = [step('a', 'shell', 'x'), { ...step('b', 'shell', 'y'), after: ['a'] }]
+    const { runId } = (await (await startRun([{ id: 'ci', name: 'CI', nodes }])).json()) as { runId: string }
+    await (await call(`/v1/runs/${runId}/events`)).text()
+    const result = (await (await call(`/v1/runs/${runId}`)).json()) as RunResult
+    expect(result).toMatchObject({
+      status: 'failed',
+      failedStepId: 'a',
+      steps: [
+        { id: 'a', status: 'failed', exitCode: 2, output: 'boom\n' },
+        { id: 'b', status: 'skipped' }
+      ]
+    })
+    expect(result.steps[1].exitCode).toBeUndefined()
   })
 
   it('keeps runs private to the key that started them', async () => {

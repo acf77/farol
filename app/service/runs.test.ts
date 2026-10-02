@@ -31,8 +31,8 @@ describe('run registry limits', () => {
     }
     const registry = new RunRegistry(open, { maxActive: 1, retentionMs: 1000, maxDurationMs: 50 }, () => undefined)
     const record = registry.start('user:1', pipeline, Buffer.alloc(0))
-    await vi.waitFor(() => expect(record.finishedAt).toBeDefined(), { timeout: 2000 })
-    expect(record.status).toBe('failed')
+    await vi.waitFor(() => expect(record.result.finishedAt).toBeDefined(), { timeout: 2000 })
+    expect(record.result).toMatchObject({ status: 'failed', error: 'Run stopped after the 0-minute limit' })
     expect(record.events.map((e) => e.event)).toContainEqual({ type: 'error', message: 'Run stopped after the 0-minute limit' })
     expect(sandbox.close).toHaveBeenCalled()
   })
