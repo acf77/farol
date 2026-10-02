@@ -13,7 +13,9 @@ import type {
   OpenRouterSettings,
   SettingsResult,
   RemoteConfig,
-  RemoteSettings
+  RemoteResult,
+  RemoteSettings,
+  RemoteSignInStart
 } from './settings'
 import type { ProviderUsage } from './usage'
 import type { Todo } from './todos'
@@ -31,7 +33,9 @@ export type {
   ProjectSession,
   SettingsResult,
   RemoteConfig,
+  RemoteResult,
   RemoteSettings,
+  RemoteSignInStart,
   WorktreeRequest
 }
 export { aiFixCommand } from './ai'
@@ -661,8 +665,14 @@ export interface FarolApi {
   remote: {
     save(config: RemoteConfig): Promise<SettingsResult>
     clearKey(): Promise<SettingsResult>
-    /** Ping the service to prove the URL (and key, if any) work. */
-    check(): Promise<SettingsResult>
+    /** Ask the service who the stored token belongs to, proving the URL (and token, if any) work. */
+    check(): Promise<RemoteResult>
+    /** Start signing in with GitHub on the saved service; opens the browser. */
+    signInStart(): Promise<RemoteSignInStart>
+    /** Wait for the browser approval, then store the session like an API key. */
+    signInWait(): Promise<RemoteResult>
+    /** Stop waiting for a sign-in started with `signInStart`. */
+    signInCancel(): Promise<void>
   }
   /** Jev is internal-only: a key to store and a probe to prove it works. */
   jev: {

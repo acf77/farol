@@ -11,7 +11,7 @@ export type RunStatus = 'running' | 'passed' | 'failed' | 'cancelled'
 
 export interface RunRecord {
   id: string
-  keyId: string
+  ownerId: string
   pipelineId: string
   pipelineName: string
   status: RunStatus
@@ -61,11 +61,11 @@ export class RunRegistry {
   ) {}
 
   /** Start a run in the background. Throws BusyError when too many runs are active. */
-  start(keyId: string, pipeline: Pipeline, archive: Buffer): RunRecord {
+  start(ownerId: string, pipeline: Pipeline, archive: Buffer): RunRecord {
     if ((this.limits.inUse?.() ?? this.live.size) >= this.limits.maxActive) throw new BusyError('Too many runs in progress')
     const record: RunRecord = {
       id: randomBytes(8).toString('hex'),
-      keyId,
+      ownerId,
       pipelineId: pipeline.id,
       pipelineName: pipeline.name,
       status: 'running',
@@ -87,9 +87,9 @@ export class RunRegistry {
     return record
   }
 
-  get(id: string, keyId: string): RunRecord | undefined {
+  get(id: string, ownerId: string): RunRecord | undefined {
     const record = this.runs.get(id)
-    return record?.keyId === keyId ? record : undefined
+    return record?.ownerId === ownerId ? record : undefined
   }
 
   cancel(id: string): void {

@@ -59,6 +59,15 @@ export interface SettingsResult {
   error?: string
 }
 
+/** A remote service check or sign-in: also who the service says the stored token belongs to. */
+export interface RemoteResult extends SettingsResult {
+  /** GitHub login or API key name. */
+  account?: string
+}
+
+/** Device-flow sign-in, step 1: show `userCode`; the browser is already open at `verificationUri`. */
+export type RemoteSignInStart = { userCode: string; verificationUri: string } | { error: string }
+
 /** One rung of a mode's fallback chain: a CLI, optionally pinned to a model. */
 export interface ModelChoice {
   agent: AiProvider

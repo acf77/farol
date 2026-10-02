@@ -6,9 +6,11 @@ import os from 'os'
 import path from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RemoteWorkspace } from '../electron/sandbox'
+import { GitHub } from './github'
 import { createHandler } from './http'
 import { createKey } from './keys'
 import { RunRegistry } from './runs'
+import { revokeSessions } from './users'
 import { WorkspaceRegistry } from './workspaces'
 
 const step = (id: string, type: 'shell' | 'ai', cmd: string) => ({ id, name: id, type, cmd, after: [], x: 0, y: 0 })
@@ -36,9 +38,40 @@ let server: Server
 let base: string
 let key: string
 let other: string
+let usersFile: string
+/** Whether the fake GitHub has approved the pending device code yet. */
+let approved: boolean
+
+const json = (body: unknown): Response => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } })
+const ghUsers: Record<string, { id: number; login: string }> = {
+  gho_octo: { id: 1, login: 'octo' },
+  gho_mallory: { id: 2, login: 'mallory' }
+}
+
+/** Just enough of github.com and api.github.com for the sign-in flows. */
+const fakeGitHub: typeof fetch = async (input, init) => {
+  const url = String(input)
+  if (url.endsWith('/login/device/code')) {
+    return json({ device_code: 'dc', user_code: 'ABCD-1234', verification_uri: 'https://github.com/login/device', expires_in: 900, interval: 5 })
+  }
+  if (url.endsWith('/login/oauth/access_token')) {
+    const form = new URLSearchParams(String(init?.body))
+    if (form.get('device_code')) return json(approved ? { access_token: 'gho_octo' } : { error: 'authorization_pending' })
+    const token = { 'octo-code': 'gho_octo', 'mallory-code': 'gho_mallory' }[form.get('code') ?? '']
+    return json(token ? { access_token: token } : { error: 'bad_verification_code' })
+  }
+  if (url.endsWith('/user')) {
+    const user = ghUsers[String((init?.headers as Record<string, string>).Authorization).replace('Bearer ', '')]
+    return user ? json(user) : new Response('', { status: 401 })
+  }
+  return new Response('', { status: 404 })
+}
 
 beforeEach(async () => {
-  const keysFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'farol-http-')), 'keys.json')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'farol-http-'))
+  const keysFile = path.join(dir, 'keys.json')
+  usersFile = path.join(dir, 'users.json')
+  approved = false
   key = createKey(keysFile, 'web').key
   other = createKey(keysFile, 'other').key
   const registry = new RunRegistry(async () => workspace, { maxActive: 1, retentionMs: 60_000 })
@@ -48,7 +81,21 @@ beforeEach(async () => {
     inUse: () => workspaces.active
   })
   server = createServer(
-    createHandler({ keysFile, registry, workspaces, snapshotLimit: 1024 * 1024, allowedOrigins: [] })
+    createHandler({
+      auth: {
+        keysFile,
+        login: {
+          github: new GitHub({ clientId: 'cid', clientSecret: 'secret', redirectUris: ['https://app.example/callback'] }, fakeGitHub),
+          usersFile,
+          sessionSecret: 'x'.repeat(32),
+          access: { users: ['Octo'], orgs: [], anyone: false }
+        }
+      },
+      registry,
+      workspaces,
+      snapshotLimit: 1024 * 1024,
+      allowedOrigins: []
+    })
   )
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
@@ -133,19 +180,52 @@ describe('workspaces', () => {
   })
 })
 
-describe('anonymous mode', () => {
-  it('accepts requests without a key only when enabled', async () => {
-    const keysFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'farol-anon-')), 'keys.json')
-    const registry = new RunRegistry(async () => workspace, { maxActive: 1, retentionMs: 60_000 })
-    const workspaces = new WorkspaceRegistry(async () => workspace, { maxActive: 1, idleMs: 60_000, inUse: () => 0 })
-    const anonymous = createServer(
-      createHandler({ keysFile, registry, workspaces, snapshotLimit: 1024, allowedOrigins: [], anonymous: true })
-    )
-    await new Promise<void>((resolve) => anonymous.listen(0, '127.0.0.1', resolve))
-    const url = `http://127.0.0.1:${(anonymous.address() as AddressInfo).port}/v1/ping`
-    expect((await fetch(url)).status).toBe(200)
-    await new Promise<void>((resolve) => anonymous.close(() => resolve()))
-    expect((await fetch(`${base}/v1/ping`)).status).toBe(401)
+describe('GitHub sign-in', () => {
+  const post = (path: string, body: unknown) =>
+    fetch(base + path, { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } })
+
+  it('signs in with the device flow and the session works like a key', async () => {
+    const started = (await (await post('/v1/auth/device', {})).json()) as { deviceCode: string; userCode: string }
+    expect(started).toMatchObject({ deviceCode: 'dc', userCode: 'ABCD-1234' })
+    expect(await (await post('/v1/auth/device/token', { deviceCode: 'dc' })).json()).toEqual({ status: 'pending' })
+
+    approved = true
+    const done = (await (await post('/v1/auth/device/token', { deviceCode: 'dc' })).json()) as { status: string; token: string }
+    expect(done).toMatchObject({ status: 'ok', user: { login: 'octo' } })
+    expect(done.token).toMatch(/^fs1\./)
+
+    expect(await (await call('/v1/me', { token: done.token })).json()).toEqual({ id: 'user:1', kind: 'user', name: 'octo' })
+    const run = await startRun([{ id: 'ci', name: 'CI', nodes: [step('a', 'shell', 'x')] }])
+    const { runId } = (await run.json()) as { runId: string }
+    expect((await call(`/v1/runs/${runId}`, { token: done.token })).status).toBe(404)
+  })
+
+  it('signs in with a browser code only for allowed redirects and users', async () => {
+    const ok = await post('/v1/auth/code', { code: 'octo-code', redirectUri: 'https://app.example/callback', codeVerifier: 'v' })
+    expect(ok.status).toBe(200)
+    expect((await post('/v1/auth/code', { code: 'octo-code', redirectUri: 'https://evil.example/cb' })).status).toBe(400)
+    expect((await post('/v1/auth/code', { code: 'mallory-code', redirectUri: 'https://app.example/callback' })).status).toBe(403)
+  })
+
+  it('stops accepting sessions after sign-out, revocation, or a forged signature', async () => {
+    const { token } = (await (await post('/v1/auth/code', { code: 'octo-code', redirectUri: 'https://app.example/callback' })).json()) as {
+      token: string
+    }
+    expect((await call('/v1/ping', { token })).status).toBe(200)
+    expect((await call('/v1/ping', { token: token.slice(0, -2) + 'AA' })).status).toBe(401)
+    expect((await call('/v1/auth/logout', { method: 'POST', token })).status).toBe(204)
+    expect((await call('/v1/ping', { token })).status).toBe(401)
+
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    const again = (await (await post('/v1/auth/code', { code: 'octo-code', redirectUri: 'https://app.example/callback' })).json()) as {
+      token: string
+    }
+    expect((await call('/v1/ping', { token: again.token })).status).toBe(200)
+    revokeSessions(usersFile, 'octo')
+    expect((await call('/v1/ping', { token: again.token })).status).toBe(401)
+  })
+
+  it('cannot sign out an API key', async () => {
+    expect((await call('/v1/auth/logout', { method: 'POST' })).status).toBe(400)
   })
 })
-

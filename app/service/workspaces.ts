@@ -9,7 +9,7 @@ import { BusyError } from './runs'
  * workspace is stopped once it has been idle for `idleMs`.
  */
 interface Held {
-  keyId: string
+  ownerId: string
   workspace: RemoteWorkspace
   idle?: NodeJS.Timeout
 }
@@ -24,13 +24,13 @@ export class WorkspaceRegistry {
   ) {}
 
   /** Start a sandbox from the snapshot. Throws BusyError when too many are in use. */
-  async create(keyId: string, archive: Buffer, signal: AbortSignal): Promise<string> {
+  async create(ownerId: string, archive: Buffer, signal: AbortSignal): Promise<string> {
     if (this.limits.inUse() >= this.limits.maxActive) throw new BusyError('Too many workspaces open')
     this.opening++
     try {
       const workspace = await this.open(archive, signal)
       const id = randomBytes(8).toString('hex')
-      this.held.set(id, { keyId, workspace })
+      this.held.set(id, { ownerId, workspace })
       this.touch(id)
       return id
     } finally {
@@ -38,9 +38,9 @@ export class WorkspaceRegistry {
     }
   }
 
-  /** Whether `keyId` owns the workspace. */
-  owns(id: string, keyId: string): boolean {
-    return this.held.get(id)?.keyId === keyId
+  /** Whether `ownerId` owns the workspace. */
+  owns(id: string, ownerId: string): boolean {
+    return this.held.get(id)?.ownerId === ownerId
   }
 
   /** Run `fn` on the workspace; it cannot go idle while `fn` runs, and its idle clock restarts after. */
@@ -54,9 +54,9 @@ export class WorkspaceRegistry {
     }
   }
 
-  async close(id: string, keyId: string): Promise<boolean> {
+  async close(id: string, ownerId: string): Promise<boolean> {
     const held = this.held.get(id)
-    if (held?.keyId !== keyId) return false
+    if (held?.ownerId !== ownerId) return false
     await this.drop(id)
     return true
   }
