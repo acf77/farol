@@ -42,10 +42,14 @@ function fakePrompts(initial: Partial<CustomPromptSet> = {}) {
 
 let api: ReturnType<typeof fakePrompts>
 
-function mount(initial: Partial<CustomPromptSet> = {}, projectPath: string | null = '/repo') {
+function mount(
+  initial: Partial<CustomPromptSet> = {},
+  projectPath: string | null = '/repo',
+  onChange?: (set: CustomPromptSet) => void
+) {
   api = fakePrompts(initial)
   ;(window as unknown as { farol: unknown }).farol = { prompts: api }
-  return render(<CustomPromptsSection projectPath={projectPath} projectName="repo" />)
+  return render(<CustomPromptsSection projectPath={projectPath} projectName="repo" onChange={onChange} />)
 }
 
 beforeEach(() => {
@@ -64,6 +68,18 @@ describe('CustomPromptsSection', () => {
     expect(terse.getAttribute('aria-checked')).toBe('true')
     expect(screen.getByRole('switch', { name: 'tests' }).getAttribute('aria-checked')).toBe('false')
     expect(api.load).toHaveBeenCalledWith('/repo')
+  })
+
+  it('reports loaded and updated prompt sets', async () => {
+    const onChange = vi.fn()
+    mount({ global: [prompt('terse', 'Be terse.', true)] }, '/repo', onChange)
+    fireEvent.click(await screen.findByRole('switch', { name: 'terse' }))
+    await waitFor(() =>
+      expect(onChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({ global: [expect.objectContaining({ active: false })] })
+      )
+    )
+    expect(onChange).toHaveBeenCalledTimes(2)
   })
 
   it('creates a global prompt that starts on', async () => {

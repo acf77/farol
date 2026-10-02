@@ -855,7 +855,7 @@ function projectPathOrNull(value: unknown): string | null {
 }
 
 function registerAppIpc(): void {
-  ipcMain.handle('settings:load', () => loadSettings())
+  ipcMain.handle('settings:load', loadSettings)
   ipcMain.handle('settings:save', (_e, settings: AppSettings) => saveSettings(settings))
   ipcMain.handle('prompts:load', (_e, projectPath: unknown) => prompts.load(projectPathOrNull(projectPath)))
   ipcMain.handle('prompts:saveGlobal', (_e, projectPath: unknown, value: unknown) =>
@@ -868,16 +868,16 @@ function registerAppIpc(): void {
     prompts.setProjectActive(projectPathOrNull(projectPath) ?? '', ids)
   )
   ipcMain.handle('openrouter:saveKey', (_e, key: string) => saveOpenRouterKey(key))
-  ipcMain.handle('openrouter:clearKey', () => clearOpenRouter())
-  ipcMain.handle('openrouter:refresh', () => refreshOpenRouterCatalog())
+  ipcMain.handle('openrouter:clearKey', clearOpenRouter)
+  ipcMain.handle('openrouter:refresh', refreshOpenRouterCatalog)
   ipcMain.handle('openrouter:setPinned', (_e, ids: string[]) => setOpenRouterPinned(ids))
   ipcMain.handle('agentModels:refresh', (_e, force?: boolean) =>
     refreshAgentCatalogs({ forceRefresh: force === true })
   )
   ipcMain.handle('jev:saveKey', (_e, key: string) => saveJevKey(key))
-  ipcMain.handle('jev:clearKey', () => clearJev())
-  ipcMain.handle('jev:check', () => checkJev())
-  ipcMain.handle('usage:read', () => providerUsage())
+  ipcMain.handle('jev:clearKey', clearJev)
+  ipcMain.handle('jev:check', checkJev)
+  ipcMain.handle('usage:read', providerUsage)
   ipcMain.handle('update:check', () => updater.check())
   ipcMain.on('update:install', () => updater.install())
 }

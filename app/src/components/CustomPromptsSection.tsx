@@ -3,6 +3,7 @@ import {
   MAX_PROMPT_BODY,
   MAX_PROMPT_NAME,
   activePromptBlock,
+  activePromptCount,
   type CustomPrompt,
   type CustomPromptSet
 } from '@shared/custom-prompts'
@@ -176,7 +177,15 @@ function Rows({ children }: { children: React.ReactNode[] }) {
  * prompts follow you across projects; project prompts live in the repo's
  * `.farol/prompts.json`, but whether they are on is decided on this machine.
  */
-export function CustomPromptsSection({ projectPath, projectName }: { projectPath: string | null; projectName?: string }) {
+export function CustomPromptsSection({
+  projectPath,
+  projectName,
+  onChange
+}: {
+  projectPath: string | null
+  projectName?: string
+  onChange?: (set: CustomPromptSet) => void
+}) {
   const api = window.farol
   const [set, setSet] = useState<CustomPromptSet | null>(null)
   const [busy, setBusy] = useState(false)
@@ -189,18 +198,23 @@ export function CustomPromptsSection({ projectPath, projectName }: { projectPath
     setDraft(null)
     api.prompts
       .load(projectPath)
-      .then((next) => live && setSet(next))
+      .then((next) => {
+        if (!live) return
+        setSet(next)
+        onChange?.(next)
+      })
       .catch((err: unknown) => live && setError(errorMessage(err)))
     return () => {
       live = false
     }
-  }, [api.prompts, projectPath])
+  }, [api.prompts, onChange, projectPath])
 
   const run = (call: () => Promise<CustomPromptSet>): Promise<boolean> => {
     setBusy(true)
     return call()
       .then((next) => {
         setSet(next)
+        onChange?.(next)
         setError(null)
         return true
       })
@@ -217,7 +231,7 @@ export function CustomPromptsSection({ projectPath, projectName }: { projectPath
 
   const activeIds = new Set(set.activeProjectIds)
   const block = activePromptBlock(set.global, set.project, set.activeProjectIds)
-  const activeCount = set.global.filter((p) => p.active).length + activeIds.size
+  const activeCount = activePromptCount(set)
 
   const saveList = (scope: Scope, list: CustomPrompt[]): Promise<CustomPromptSet> =>
     scope === 'global' ? api.prompts.saveGlobal(projectPath, list) : api.prompts.saveProject(projectPath ?? '', list)
