@@ -7,7 +7,7 @@ import { createHandler } from './http'
 import { createKey, listKeys, revokeKey } from './keys'
 import { openRailwaySandbox } from './railway'
 import { createReceiptHandler } from './receipt'
-import { RunRegistry, type OpenWorkspace } from './runs'
+import { RunRegistry, type OpenWorkspace, type PoolLimits } from './runs'
 import { disableUser, enableUser, listUsers, revokeSessions } from './users'
 import { WorkspaceRegistry } from './workspaces'
 
@@ -126,11 +126,16 @@ function serve(): void {
   }
   const auth: AuthConfig = { keysFile, login: loginConfig() }
   const open = openWorkspace()
-  const maxActive = Number(env.FAROL_MAX_RUNS) || 4
-  // Runs and workspaces draw on one pool of sandboxes.
-  const inUse = (): number => registry.active + workspaces.active
-  const registry = new RunRegistry(open, { maxActive, retentionMs: 60 * 60_000, inUse })
-  const workspaces = new WorkspaceRegistry(open, { maxActive, idleMs: SANDBOX_TIMEOUT_MS, inUse })
+  const maxDurationMs = (Number(env.FAROL_MAX_RUN_MINUTES) || 60) * 60_000
+  // Runs and workspaces draw on one pool of sandboxes, with a share per owner.
+  const pool: PoolLimits = {
+    maxActive: Number(env.FAROL_MAX_RUNS) || 4,
+    maxPerOwner: Number(env.FAROL_MAX_RUNS_PER_OWNER) || 2,
+    inUse: () => registry.active + workspaces.active,
+    ownerInUse: (ownerId) => registry.activeFor(ownerId) + workspaces.activeFor(ownerId)
+  }
+  const registry = new RunRegistry(open, { ...pool, retentionMs: 60 * 60_000, maxDurationMs })
+  const workspaces = new WorkspaceRegistry(open, { ...pool, idleMs: SANDBOX_TIMEOUT_MS, maxLifetimeMs: maxDurationMs })
   const server = createServer(
     createHandler({
       auth,

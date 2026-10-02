@@ -17,14 +17,30 @@ export async function readBody(req: IncomingMessage, limit: number): Promise<Buf
   return Buffer.concat(chunks)
 }
 
+/** Largest `.farol/pipelines.json` read out of an upload; a tiny gzip can expand to far more. */
+const PIPELINES_FILE_LIMIT = 1024 * 1024
+
 /** One member of a gzipped tar, or null when the archive has no such member. */
 function extractMember(archive: Buffer, member: string): Promise<string | null> {
   return new Promise((resolve, reject) => {
     const tar = spawn('tar', ['-xzOf', '-', member], { stdio: ['pipe', 'pipe', 'ignore'] })
     const chunks: Buffer[] = []
-    tar.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
+    let size = 0
+    let tooLarge = false
+    tar.stdout.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > PIPELINES_FILE_LIMIT) {
+        tooLarge = true
+        tar.kill()
+        return
+      }
+      chunks.push(chunk)
+    })
     tar.on('error', reject)
-    tar.on('close', (code) => resolve(code === 0 ? Buffer.concat(chunks).toString('utf8') : null))
+    tar.on('close', (code) => {
+      if (tooLarge) return reject(new Error(`${member} is larger than 1 MB`))
+      resolve(code === 0 ? Buffer.concat(chunks).toString('utf8') : null)
+    })
     tar.stdin.on('error', () => undefined)
     tar.stdin.end(archive)
   })

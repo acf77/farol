@@ -45,6 +45,24 @@ function runReport(record: RunRecord): string {
 
 export class BusyError extends Error {}
 
+/** Runs and workspaces draw on one pool of sandboxes, with a share per owner. */
+export interface PoolLimits {
+  maxActive: number
+  /** Sandboxes in use or starting across the pool. */
+  inUse: () => number
+  /** Most sandboxes one owner may hold at once; unlimited when unset. */
+  maxPerOwner?: number
+  ownerInUse?: (ownerId: string) => number
+}
+
+/** Throw BusyError when the pool, or the owner's share of it, is full. */
+export function checkPool(limits: PoolLimits, ownerId: string): void {
+  if (limits.inUse() >= limits.maxActive) throw new BusyError('Too many sandboxes in use; try again shortly')
+  if (limits.maxPerOwner !== undefined && (limits.ownerInUse?.(ownerId) ?? 0) >= limits.maxPerOwner) {
+    throw new BusyError(`You already have ${limits.maxPerOwner} sandbox${limits.maxPerOwner === 1 ? '' : 'es'} running`)
+  }
+}
+
 interface Live {
   abort: AbortController
   listeners: Set<Listener>
@@ -56,13 +74,25 @@ export class RunRegistry {
 
   constructor(
     private open: OpenWorkspace,
-    private limits: { maxActive: number; retentionMs: number; inUse?: () => number },
+    private limits: Omit<PoolLimits, 'inUse'> & {
+      inUse?: () => number
+      retentionMs: number
+      /** A run still going after this long is stopped and fails. */
+      maxDurationMs?: number
+    },
     private log: (line: string) => void = console.log
   ) {}
 
   /** Start a run in the background. Throws BusyError when too many runs are active. */
   start(ownerId: string, pipeline: Pipeline, archive: Buffer): RunRecord {
-    if ((this.limits.inUse?.() ?? this.live.size) >= this.limits.maxActive) throw new BusyError('Too many runs in progress')
+    checkPool(
+      {
+        ...this.limits,
+        inUse: this.limits.inUse ?? (() => this.live.size),
+        ownerInUse: this.limits.ownerInUse ?? ((owner) => this.activeFor(owner))
+      },
+      ownerId
+    )
     const record: RunRecord = {
       id: randomBytes(8).toString('hex'),
       ownerId,
@@ -100,6 +130,13 @@ export class RunRegistry {
     for (const { abort } of this.live.values()) abort.abort()
   }
 
+  /** Runs the owner has going. */
+  activeFor(ownerId: string): number {
+    let count = 0
+    for (const id of this.live.keys()) if (this.runs.get(id)?.ownerId === ownerId) count++
+    return count
+  }
+
   /** Whether any run is still going, so shutdown can wait for sandboxes to stop. */
   get active(): number {
     return this.live.size
@@ -128,16 +165,27 @@ export class RunRegistry {
     const emit = (event: ServiceEvent): void => this.push(record, event)
     let summary: RunSummary = { ok: false, steps: [] }
     let workspace: RemoteWorkspace | undefined
+    let timedOut = false
+    const limit = this.limits.maxDurationMs
+    const deadline = limit
+      ? setTimeout(() => {
+          timedOut = true
+          emit({ type: 'error', message: `Run stopped after the ${Math.round(limit / 60_000)}-minute limit` })
+          abort.abort()
+        }, limit)
+      : undefined
     try {
       workspace = await this.open(archive, abort.signal)
       summary = await executePipeline(pipeline, workspace, emit, abort.signal)
     } catch (error) {
       if (!abort.signal.aborted) emit({ type: 'error', message: errorMessage(error) })
     } finally {
+      clearTimeout(deadline)
       await workspace?.close()
       this.log(`[run ${record.id}] sandbox stopped`)
     }
-    const cancelled = abort.signal.aborted
+    const cancelled = abort.signal.aborted && !timedOut
+    if (timedOut) summary = { ...summary, ok: false, cancelled: undefined }
     record.summary = summary
     record.status = cancelled ? 'cancelled' : summary.ok ? 'passed' : 'failed'
     record.finishedAt = new Date().toISOString()

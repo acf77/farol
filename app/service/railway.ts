@@ -4,8 +4,12 @@ import { SANDBOX_TIMEOUT_MS } from '../shared/remote'
 import type { RemoteWorkspace } from '../electron/sandbox'
 
 const WORKDIR = '/root/project'
-/** Named checkpoint holding a sandbox disk with installed dependencies, shared by every run. */
-const CHECKPOINT = process.env.RAILWAY_CHECKPOINT || 'farol-deps'
+/**
+ * A checkpoint the operator built from trusted setup (dependencies installed), which every
+ * sandbox boots from. Runs never write one: a checkpoint captured from a user's run would
+ * carry whatever that run left in the profile, PATH or node_modules into everyone's runs.
+ */
+const CHECKPOINT = process.env.RAILWAY_CHECKPOINT
 
 /** Lines the CLI itself prints on stderr, mixed in with the step's own stderr. */
 const CLI_NOISE = /^(Warning: Railway sandboxes|warning: Config as Code|\s+→ Migrate|\s+Existing files keep).*\n?/gm
@@ -47,31 +51,21 @@ async function createSandbox(extra: string[], signal: AbortSignal): Promise<stri
 
 /**
  * Start a Railway sandbox (via the `railway` CLI, authenticated by RAILWAY_API_TOKEN),
- * unpack the gzipped tar `archive` into the work directory, and destroy it on any failure.
- * It boots from the shared checkpoint when one exists; otherwise the first sandbox is
- * captured as that checkpoint when it closes, so later runs start with dependencies installed.
+ * unpack the gzipped tar `archive` into the work directory, and destroy it on close or
+ * any failure. It boots from RAILWAY_CHECKPOINT when that is set and exists.
  */
 export async function openRailwaySandbox(
   archive: Buffer,
   summary: string,
   signal: AbortSignal
 ): Promise<RemoteWorkspace> {
-  const restored = await createSandbox(['--checkpoint', CHECKPOINT], signal)
-  const capture = !restored
+  const restored = CHECKPOINT ? await createSandbox(['--checkpoint', CHECKPOINT], signal) : undefined
   const id = restored ?? (await createSandbox([], signal))
   if (!id) throw new Error('Creating the Railway sandbox failed.')
 
   let closed: Promise<unknown> | undefined
-  let unpacked = false
   const close = async (): Promise<void> => {
-    closed ??= (async () => {
-      if (capture && unpacked) {
-        await railway(['checkpoint', 'create', '--id', id, CHECKPOINT], { signal: AbortSignal.timeout(300_000) }).catch(
-          () => undefined
-        )
-      }
-      await railway(['destroy', id], { signal: AbortSignal.timeout(30_000) }).catch(() => undefined)
-    })()
+    closed ??= railway(['destroy', id], { signal: AbortSignal.timeout(30_000) }).catch(() => undefined)
     await closed
   }
   const exec = (cmd: string, opts: Parameters<typeof railway>[1]) => railway(['exec', '--id', id, '--', cmd], opts)
@@ -84,13 +78,12 @@ export async function openRailwaySandbox(
       ready = await exec('true', { signal })
     }
     if (ready.code !== 0) throw new Error('The Railway sandbox did not become ready.')
-    // A checkpoint keeps last run's sources; drop them but leave node_modules for reuse.
+    // A checkpoint may hold sources from when it was built; drop them but keep node_modules.
     const unpack = await exec(
       `mkdir -p ${WORKDIR} && find ${WORKDIR} -name node_modules -prune -o -type f -exec rm -f {} + && tar -xz -C ${WORKDIR} && find ${WORKDIR} -name '._*' -type f -delete`,
       { input: archive, signal }
     )
-    if (unpack.code !== 0) throw new Error(`Unpacking the checkout failed: ${unpack.stdout.trim()}`)
-    unpacked = true
+    if (unpack.code !== 0) throw new Error('Unpacking the checkout failed.')
   } catch (error) {
     await close()
     throw error

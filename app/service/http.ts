@@ -6,9 +6,10 @@ import { AccessDenied, identify, loginScope, signIn, type AuthConfig, type Ident
 import { GitHubError } from './github'
 import { aiStepNames, type ServiceEvent } from './run'
 import { BusyError, type RunRecord, type RunRegistry } from './runs'
+import { pinnedCommands } from './pinned'
 import { pipelinesFromArchive, readBody, TooLargeError } from './snapshot'
 import { revokeSessions } from './users'
-import type { WorkspaceRegistry } from './workspaces'
+import { CommandRefused, type WorkspaceRegistry } from './workspaces'
 
 export interface ServiceDeps {
   auth: AuthConfig
@@ -101,9 +102,13 @@ const EXEC_COMMAND_LIMIT = 256 * 1024
 
 async function createWorkspace(ctx: Context): Promise<void> {
   const archive = await readArchive(ctx)
+  // Pin the snapshot's own pipelines: the workspace runs their shell steps and nothing else.
+  const pipelines = await pipelinesFromArchive(archive).catch((error: Error) => {
+    throw new HttpError(422, error.message)
+  })
   const abort = new AbortController()
   ctx.req.on('close', () => abort.abort())
-  const id = await ctx.deps.workspaces.create(ctx.owner.id, archive, abort.signal).catch(busy)
+  const id = await ctx.deps.workspaces.create(ctx.owner.id, archive, pinnedCommands(pipelines), abort.signal).catch(busy)
   json(ctx.res, 201, { id })
 }
 
@@ -112,18 +117,22 @@ function requireWorkspace({ deps, owner, params }: Context): string {
   return params[0]
 }
 
-/** Run one command; the reply is NDJSON — `{chunk}` lines, then a single `{code}` line. */
+/** Run one of the workspace's pinned steps; the reply is NDJSON — `{chunk}` lines, then a single `{code}` line. */
 async function execInWorkspace(ctx: Context): Promise<void> {
   const cmd = (await readBody(ctx.req, EXEC_COMMAND_LIMIT).catch((error: unknown) => {
     throw error instanceof TooLargeError ? new HttpError(413, 'Command is too large') : error
   })).toString('utf8')
   if (!cmd.trim()) throw new HttpError(400, 'Send the command as the request body')
   const id = requireWorkspace(ctx)
-  ctx.res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'X-Accel-Buffering': 'no' })
-  const send = (event: { chunk: string } | { code: number }): void => void ctx.res.write(`${JSON.stringify(event)}\n`)
+  // Headers wait for the first line, so a refused command can still answer 403.
+  const send = (event: { chunk: string } | { code: number }): void => {
+    if (!ctx.res.headersSent) ctx.res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'X-Accel-Buffering': 'no' })
+    ctx.res.write(`${JSON.stringify(event)}\n`)
+  }
   try {
-    send({ code: await ctx.deps.workspaces.use(id, (workspace) => workspace.exec(cmd, (chunk) => send({ chunk }))) })
+    send({ code: await ctx.deps.workspaces.exec(id, cmd, (chunk) => send({ chunk })) })
   } catch (error) {
+    if (error instanceof CommandRefused) throw new HttpError(403, error.message)
     send({ chunk: `farol: ${errorMessage(error)}\n` })
     send({ code: 127 })
   }

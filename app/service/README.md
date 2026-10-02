@@ -30,7 +30,10 @@ node service/dist/farol-service.cjs
 | `RAILWAY_API_TOKEN` | one provider required | Create sandboxes on Railway through the `railway` CLI (in the `Dockerfile`; install it yourself when running the bundle directly). Takes precedence over Vercel. Inside a Railway service the project and environment are picked up automatically |
 | `PORT`, `HOST` | `8787`, `0.0.0.0` | Listen address |
 | `FAROL_KEYS_FILE` | `./farol-keys.json` | API key store (mode 0600) |
-| `FAROL_MAX_RUNS` | `4` | Concurrent runs; more get `429` with `Retry-After` |
+| `RAILWAY_CHECKPOINT` | none | A Railway checkpoint you built yourself (see below) that sandboxes boot from. Runs never create or update one |
+| `FAROL_MAX_RUNS` | `4` | Sandboxes in use at once (runs plus workspaces); more get `429` with `Retry-After` |
+| `FAROL_MAX_RUNS_PER_OWNER` | `2` | Sandboxes one user or key may hold at once |
+| `FAROL_MAX_RUN_MINUTES` | `60` | A run, or a workspace, is stopped this long after it starts, busy or not |
 | `FAROL_ALLOWED_ORIGINS` | none | Comma-separated browser origins allowed by CORS |
 | `GITHUB_CLIENT_ID` | none | Turns on GitHub sign-in (GitHub App or OAuth App). Requires `FAROL_SESSION_SECRET` |
 | `GITHUB_CLIENT_SECRET` | none | Needed only for the browser code flow (web and mobile); the device flow works without it |
@@ -46,6 +49,27 @@ and reports what arrived, running nothing.
 
 The `Dockerfile` in `app/` (build context = `app/`) packages the bundle. Put `/data` on a volume so keys
 survive restarts, and terminate TLS in front of the service — API keys are bearer tokens.
+
+## What a sandbox can do
+
+The service runs only what the project's committed pipelines say, in a sandbox that is
+destroyed afterwards. Nothing comes back except output, exit codes and the JSON result:
+no files, no edits, no pushes, and the sandbox holds no credentials to push with. Each
+run gets its own fresh sandbox; nothing a run writes reaches another run.
+
+This does not make an untrusted pipeline safe — `bash -lc` runs whatever the step says,
+so who may sign in (below) is what decides who can run code on your account. Sandboxes
+can reach the network.
+
+On Railway, to boot sandboxes with dependencies already installed, build a checkpoint
+yourself from trusted setup and name it in `RAILWAY_CHECKPOINT`:
+
+```sh
+railway sandbox create --json            # note the id
+railway sandbox exec --id <id> -- 'mkdir -p /root/project && cd /root/project && …install…'
+railway sandbox checkpoint create --id <id> farol-deps
+railway sandbox destroy <id>
+```
 
 ## Signing in with GitHub
 
@@ -99,8 +123,8 @@ GitHub user that started it.
 | `GET /v1/me` | Who the token belongs to: `{ id, kind: "user" \| "key", name }` |
 | `POST /v1/auth/logout` | End every session of the signed-in user |
 | `GET /v1/ping` | Check that the token works |
-| `POST /v1/workspaces` | Open a sandbox from the snapshot in the body, for a client that drives its own steps (the Farol desktop app's remote pipelines). `201 { id }`. Stopped after 45 idle minutes, never while a command is running |
-| `POST /v1/workspaces/:id/exec` | Run the command in the body. Streams NDJSON: `{"chunk": "…"}` lines, then `{"code": n}` |
+| `POST /v1/workspaces` | Open a sandbox from the snapshot in the body, for a client that drives its own steps (the Farol desktop app's remote pipelines). The snapshot must hold `.farol/pipelines.json` (`422` otherwise). `201 { id }`. Stopped after 45 idle minutes, and `FAROL_MAX_RUN_MINUTES` after it opened |
+| `POST /v1/workspaces/:id/exec` | Run one shell step of the snapshot's pipelines: its `cmd` with each `${name}` replaced by a single-quoted value, as the desktop runner sends it. Any other command gets `403`. Commands on one workspace run one at a time. Streams NDJSON: `{"chunk": "…"}` lines, then `{"code": n}` |
 | `DELETE /v1/workspaces/:id` | Stop the sandbox |
 | `GET /v1/runs/:id` | Status, and `result` (per-step `ok`, `code`, `skipped`, `output`) once finished |
 | `GET /v1/runs/:id/events` | Server-sent events; replays from `Last-Event-ID` |
