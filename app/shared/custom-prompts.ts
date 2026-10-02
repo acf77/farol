@@ -18,6 +18,16 @@ export interface CustomPrompt {
   updatedAt: number
 }
 
+/** Everything Settings shows for one project, as the main process sees it. */
+export interface CustomPromptSet {
+  global: CustomPrompt[]
+  project: CustomPrompt[]
+  /** Project prompt ids switched on for this machine. */
+  activeProjectIds: string[]
+  /** Primary checkout the project prompts come from; null with no project. */
+  projectRoot: string | null
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
