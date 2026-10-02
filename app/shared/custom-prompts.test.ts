@@ -108,7 +108,6 @@ describe('activePromptCount', () => {
     ).toBe(2)
   })
 })
-
 describe('escapeCustomInstructions', () => {
   it('leaves other tags alone', () => {
     expect(escapeCustomInstructions('<b>bold</b> <custom>')).toBe('<b>bold</b> <custom>')

@@ -81,7 +81,6 @@ describe('CustomPromptsSection', () => {
     )
     expect(onChange).toHaveBeenCalledTimes(2)
   })
-
   it('creates a global prompt that starts on', async () => {
     mount()
     const [newGlobal] = await screen.findAllByRole('button', { name: 'New prompt' })
