@@ -1,5 +1,6 @@
-import { Children, useEffect, useRef, useState } from 'react'
+import { Children, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { activePromptCount, type CustomPromptSet } from '@shared/custom-prompts'
 import type { AgentMode, AppSettings, ModelChoice, SettingsResult } from '@shared/types'
 import {
   AI_LABELS,
@@ -560,7 +561,13 @@ export default function SettingsPage({
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [listsHint, setListsHint] = useState<string | null>(null)
+  const [promptCount, setPromptCount] = useState(0)
+  const promptRevision = useRef(0)
   const listsRefreshed = useRef(false)
+  const updatePromptCount = useCallback((set: CustomPromptSet) => {
+    promptRevision.current += 1
+    setPromptCount(activePromptCount(set))
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -572,6 +579,21 @@ export default function SettingsPage({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  useEffect(() => {
+    let live = true
+    const revision = ++promptRevision.current
+    setPromptCount(0)
+    void api.prompts
+      .load(projectPath ?? null)
+      .then((set) => {
+        if (live && revision === promptRevision.current) setPromptCount(activePromptCount(set))
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [api.prompts, projectPath])
 
   const retried = useRef(false)
   useEffect(() => {
@@ -614,6 +636,7 @@ export default function SettingsPage({
     ? catalog.filter((m) => `${m.label} ${m.id}`.toLowerCase().includes(q))
     : catalog
   const meta: Partial<Record<PageKey, string>> = {
+    prompts: promptCount ? String(promptCount) : '',
     fallbacks: String(settings.modeDefaults.build.length + settings.modeDefaults.plan.length),
     openrouter: configured ? String(pinned.size) : ''
   }
@@ -736,7 +759,13 @@ export default function SettingsPage({
               </>
             )}
 
-            {page === 'prompts' && <CustomPromptsSection projectPath={projectPath ?? null} projectName={projectName} />}
+            {page === 'prompts' && (
+              <CustomPromptsSection
+                projectPath={projectPath ?? null}
+                projectName={projectName}
+                onChange={updatePromptCount}
+              />
+            )}
 
             {page === 'models' && (
               <>

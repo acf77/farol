@@ -4,6 +4,7 @@ import {
   MAX_PROMPT_BODY,
   MAX_PROMPT_NAME,
   activePromptBlock,
+  activePromptCount,
   escapeCustomInstructions,
   sanitizePrompts,
   type CustomPrompt
@@ -95,6 +96,18 @@ describe('activePromptBlock', () => {
   })
 })
 
+describe('activePromptCount', () => {
+  it('counts active global and selected project prompts', () => {
+    expect(
+      activePromptCount({
+        global: [prompt('on', 'x'), prompt('off', 'x', { active: false })],
+        project: [prompt('selected', 'x'), prompt('not-selected', 'x')],
+        activeProjectIds: ['selected', 'missing'],
+        projectRoot: '/repo'
+      })
+    ).toBe(2)
+  })
+})
 describe('escapeCustomInstructions', () => {
   it('leaves other tags alone', () => {
     expect(escapeCustomInstructions('<b>bold</b> <custom>')).toBe('<b>bold</b> <custom>')

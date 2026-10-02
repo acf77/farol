@@ -86,3 +86,12 @@ export function activePromptBlock(
   )
   return `<${CUSTOM_INSTRUCTIONS_TAG}>\n${sections.join('\n\n')}\n</${CUSTOM_INSTRUCTIONS_TAG}>`
 }
+
+/** Number of prompts that will be included in each chat turn. */
+export function activePromptCount(set: CustomPromptSet): number {
+  const projectActive = new Set(set.activeProjectIds)
+  return (
+    set.global.filter((prompt) => prompt.active).length +
+    set.project.filter((prompt) => projectActive.has(prompt.id)).length
+  )
+}
