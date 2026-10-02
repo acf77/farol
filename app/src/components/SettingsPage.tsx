@@ -19,6 +19,7 @@ import {
 } from '@shared/settings'
 import { C, UI } from '../theme'
 import { Button, Checkbox, CliModelDropdown, SegmentedControl } from './controls'
+import { CustomPromptsSection } from './CustomPromptsSection'
 import { ChevronDown, ChevronUp } from './icons'
 import { CHROME_ROW } from './side-panel'
 
@@ -28,6 +29,9 @@ interface Props {
   /** Adopt settings the main process already owns — provider keys, catalogs. */
   onAdoptSettings: (next: AppSettings) => void
   onClose: () => void
+  /** The open project, whose `.farol/prompts.json` Custom prompts edits. */
+  projectPath?: string | null
+  projectName?: string
 }
 
 type TabKey = 'general' | 'models'
@@ -387,7 +391,14 @@ function ModeChain({
   )
 }
 
-export default function SettingsPage({ settings, onSettings, onAdoptSettings, onClose }: Props) {
+export default function SettingsPage({
+  settings,
+  onSettings,
+  onAdoptSettings,
+  onClose,
+  projectPath,
+  projectName
+}: Props) {
   const api = window.farol
   const or = settings.openrouter
   const configured = !!or?.hasKey
@@ -528,6 +539,13 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
               >
                 Send a failed step&apos;s report straight to Chat
               </Checkbox>
+            </Section>
+
+            <Section
+              title="Custom prompts"
+              hint="Standing instructions added to every chat turn while switched on. Project prompts can be committed; whether they are on is saved only on this machine."
+            >
+              <CustomPromptsSection projectPath={projectPath ?? null} projectName={projectName} />
             </Section>
 
             <JevSection settings={settings} onAdoptSettings={onAdoptSettings} />
