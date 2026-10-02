@@ -28,15 +28,7 @@ import {
 import { refreshAgentCatalogs } from './agent-models'
 import { errorMessage } from '../shared/jev'
 import { checkJev, clearJev, saveJevKey } from './jev'
-import {
-  cancelRemoteSignIn,
-  checkRemote,
-  clearRemoteKey,
-  remoteAccount,
-  saveRemoteConfig,
-  startRemoteSignIn,
-  waitRemoteSignIn
-} from './remote'
+import { cancelRemoteSignIn, remoteAccount, signOutRemote, startRemoteSignIn, waitRemoteSignIn } from './remote'
 import { configureJevLogs } from './jev-log'
 import { configureAgentFailureLogs } from './agent-failure-log'
 import { listProjectDir, listProjectFiles, readProjectFile, saveChatAttachment, writeProjectFile } from './files'
@@ -863,13 +855,11 @@ function registerTaskIpc(): void {
 }
 
 function registerRemoteIpc(): void {
-  ipcMain.handle('remote:save', (_e, config: unknown) => saveRemoteConfig(config))
-  ipcMain.handle('remote:clearKey', () => clearRemoteKey())
-  ipcMain.handle('remote:check', () => checkRemote())
   ipcMain.handle('remote:signInStart', () => startRemoteSignIn())
   ipcMain.handle('remote:signInWait', () => waitRemoteSignIn())
   ipcMain.handle('remote:signInCancel', () => cancelRemoteSignIn())
   ipcMain.handle('remote:account', () => remoteAccount())
+  ipcMain.handle('remote:signOut', () => signOutRemote())
 }
 
 function registerAppIpc(): void {

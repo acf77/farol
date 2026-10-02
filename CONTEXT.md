@@ -147,7 +147,7 @@ _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo 
 ### Remote pipelines
 
 **Remote pipeline**:
-A pipeline whose target is Vercel Sandbox. Its shell steps run in a fresh sandbox holding a **Checkout snapshot**; its AI steps still run on this machine. A run creates one sandbox and stops it when the run ends, fails, or is cancelled.
+A pipeline whose target is Remote. Its shell steps run in a fresh sandbox on the **Run service** holding a **Checkout snapshot**; its AI steps still run on this machine. A run creates one sandbox and stops it when the run ends, fails, or is cancelled.
 _Avoid_: cloud pipeline, remote checkout, persistent sandbox, running a pipeline "on a server"
 
 **Checkout snapshot**:
@@ -155,8 +155,12 @@ The current checkout as uploaded to a sandbox: tracked files plus untracked file
 _Avoid_: commit upload, git clone of the branch, syncing results back
 
 **Run service**:
-The standalone HTTP service in `app/service` that starts **Remote pipeline** runs for web and mobile clients. A client uploads a **Checkout snapshot** and an API key; the pipeline is the one committed in that snapshot. It runs shell steps only, and refuses pipelines with AI steps.
-_Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the service
+The standalone HTTP service in `app/service` that runs **Remote pipeline** steps for the desktop app and starts runs for web and mobile clients. A client signs in and uploads a **Checkout snapshot**; the pipeline is the one committed in that snapshot. It runs shell steps only, and refuses pipelines with AI steps. Its address is built into the desktop app and its sandbox credentials stay on the service, so a user never sees or sets either.
+_Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the service, a service URL or API key setting in the desktop app
+
+**Account menu**:
+The avatar at the top right of the header. Signed in, its popover shows the GitHub user and Sign out; signed out, it offers Sign in with GitHub. It is the only place a user signs in to the **Run service**. A **Remote pipeline** that cannot run because nobody is signed in says only “Sign in to run remote pipelines.”
+_Avoid_: a sign-in form in Settings, showing the service address, retrying a run that needs sign-in
 
 ## Relationships
 

@@ -26,7 +26,7 @@ vi.mock('./session', () => ({
 }))
 vi.mock('./kill', () => ({ killPty: vi.fn(), killPidTree: vi.fn() }))
 vi.mock('./jev', () => ({ verdictFromOutput }))
-vi.mock('./remote', () => ({ openRemote: vi.fn() }))
+vi.mock('./remote', () => ({ openRemote: vi.fn(), SignInRequired: class SignInRequired extends Error {} }))
 vi.mock('fs', () => ({
   default: {
     mkdirSync: vi.fn(),
@@ -36,6 +36,7 @@ vi.mock('fs', () => ({
 }))
 
 import { PipelineRunner } from './runner'
+import { SignInRequired } from './remote'
 
 const pipeline: Pipeline = {
   id: 'review',
@@ -277,6 +278,20 @@ describe('PipelineRunner remote target', () => {
       expect.objectContaining({ kind: 'output', chunk: expect.stringContaining('Remote service is not configured.') })
     )
     expect(events.at(-1)).toMatchObject({ kind: 'end', ok: false })
+  })
+
+  it('asks to sign in, without retrying, when there is no session', async () => {
+    const events: RunEvent[] = []
+    const open = vi.fn().mockRejectedValue(new SignInRequired())
+    const runner = new PipelineRunner((event) => events.push(event), open)
+
+    const result = await runner.run(remotePipeline, '/mock/project', 'main')
+
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(result.ok).toBe(false)
+    const output = events.flatMap((e) => (e.kind === 'output' ? [e.chunk] : [])).join('')
+    expect(output).toContain('Sign in to run remote pipelines.')
+    expect(output).not.toMatch(/https?:|attempt/)
   })
 
   it('retries the sandbox start up to three times, then fails', async () => {

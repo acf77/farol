@@ -34,8 +34,6 @@ interface Props {
   onInstallUpdate: () => void
   settings: AppSettings
   onSettings: (next: AppSettings) => void
-  /** Settings a main-process call already saved (signing in or out of the remote service). */
-  onAdoptSettings: (next: AppSettings) => void
   onOpenSettings: () => void
 }
 
@@ -169,7 +167,6 @@ export default function Toolbar({
   onInstallUpdate,
   settings,
   onSettings,
-  onAdoptSettings,
   onOpenSettings
 }: Props) {
   const [splitOpen, setSplitOpen] = useState(false)
@@ -428,7 +425,7 @@ export default function Toolbar({
           File
         </button>
 
-        <AccountMenu liquid={liquid} settings={settings} onAdoptSettings={onAdoptSettings} onOpenSettings={onOpenSettings} />
+        <AccountMenu liquid={liquid} />
       </div>
 
       {menuOpen && !menuDisabled && (

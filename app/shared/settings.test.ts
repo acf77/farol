@@ -6,8 +6,7 @@ import {
   modeSelectionForPane,
   retainCatalogs,
   sanitizeSettings,
-  withRemoteKeyFlag,
-  withAgentModel,
+    withAgentModel,
   withCommitMessageModel,
   withModeChain,
   withOpenRouterAgent
@@ -264,17 +263,7 @@ describe('mode defaults', () => {
 })
 
 describe('Remote service settings', () => {
-  it('keeps the origin of a valid http(s) url and drops anything else', () => {
-    expect(sanitizeSettings({ remote: { url: ' https://farol.up.railway.app/v1 ', key: 'x' } }).remote).toEqual({
-      url: 'https://farol.up.railway.app'
-    })
-    expect(sanitizeSettings({ remote: { url: 'ftp://farol.dev' } }).remote).toBeUndefined()
-    expect(sanitizeSettings({ remote: { url: 'nope' } }).remote).toBeUndefined()
-  })
-
-  it('flags a stored key only when a url exists', () => {
-    const withUrl = sanitizeSettings({ remote: { url: 'http://localhost:8787' } })
-    expect(withRemoteKeyFlag(withUrl, true).remote?.hasKey).toBe(true)
-    expect(withRemoteKeyFlag(defaultSettings(), true).remote).toBeUndefined()
+  it('drops the service url older builds stored; the app has it built in', () => {
+    expect(sanitizeSettings({ remote: { url: 'https://farol.up.railway.app' } })).not.toHaveProperty('remote')
   })
 })

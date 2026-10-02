@@ -32,7 +32,8 @@ import { killPidTree, killPty } from './kill'
 import { errorMessage } from '../shared/jev'
 import { verdictFromOutput } from './jev'
 import { shellFamily } from './protocol'
-import { openRemote as openRemoteWorkspace, type OpenRemote, type RemoteWorkspace } from './remote'
+import { openRemote as openRemoteWorkspace, SignInRequired, type OpenRemote, type RemoteWorkspace } from './remote'
+import { SIGN_IN_REQUIRED } from '../shared/remote'
 
 /**
  * Runs a pipeline DAG. Ready nodes start together; a gated shell failure
@@ -422,7 +423,10 @@ export class PipelineRunner {
     })
   }
 
-  /** Tries to open the remote sandbox up to REMOTE_START_ATTEMPTS times; returns the last failure message. */
+  /**
+   * Tries to open the remote sandbox up to REMOTE_START_ATTEMPTS times; returns why it failed.
+   * Not being signed in is reported as is and never retried.
+   */
   private async retryOpenRemote(cwd: string, state: Active, graph: RunGraph, first: string): Promise<string> {
     let failure = ''
     for (let attempt = 1; attempt <= REMOTE_START_ATTEMPTS && !state.remote; attempt++) {
@@ -432,6 +436,10 @@ export class PipelineRunner {
         state.remote = await this.openRemote(cwd, state.abort.signal)
       } catch (error) {
         if (state.cancelled) break
+        if (error instanceof SignInRequired) {
+          this.emitOut(state, graph, first, `farol: ${SIGN_IN_REQUIRED}\r\n`)
+          return SIGN_IN_REQUIRED
+        }
         failure = String((error as Error)?.message ?? error)
         this.emitOut(state, graph, first, `farol: remote sandbox failed to start: ${failure}\r\n`)
         if (attempt < REMOTE_START_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, REMOTE_START_BACKOFF_MS * attempt))
@@ -457,7 +465,11 @@ export class PipelineRunner {
         this.emitOut(state, graph, first, 'farol: falling back to this machine\r\n')
         return this.openRunShell(cwd, state, graph)
       }
-      this.failRun(state, graph, `remote run could not start after ${REMOTE_START_ATTEMPTS} attempts: ${failure}`)
+      this.failRun(
+        state,
+        graph,
+        failure === SIGN_IN_REQUIRED ? failure : `remote run could not start after ${REMOTE_START_ATTEMPTS} attempts: ${failure}`
+      )
       return false
     }
     if (state.cancelled) {

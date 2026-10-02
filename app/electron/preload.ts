@@ -126,13 +126,11 @@ const api: FarolApi = {
     refresh: (force) => ipcRenderer.invoke('agentModels:refresh', force === true)
   },
   remote: {
-    save: (config) => ipcRenderer.invoke('remote:save', config),
-    clearKey: () => ipcRenderer.invoke('remote:clearKey'),
-    check: () => ipcRenderer.invoke('remote:check'),
     signInStart: () => ipcRenderer.invoke('remote:signInStart'),
     signInWait: () => ipcRenderer.invoke('remote:signInWait'),
     signInCancel: () => ipcRenderer.invoke('remote:signInCancel'),
-    account: () => ipcRenderer.invoke('remote:account')
+    account: () => ipcRenderer.invoke('remote:account'),
+    signOut: () => ipcRenderer.invoke('remote:signOut')
   },
   jev: {
     saveKey: (key) => ipcRenderer.invoke('jev:saveKey', key),

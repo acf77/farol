@@ -17,7 +17,6 @@ import {
   sanitizeSettings,
   withJevKeyFlag,
   withOpenRouterKeyFlag,
-  withRemoteKeyFlag,
   type AppSettings
 } from '../shared/settings'
 import { normalizeOpenRouterAgent } from '../shared/ai'
@@ -482,13 +481,7 @@ export async function loadSettings(): Promise<AppSettings> {
   await flushWorkspace()
   const stored = sanitizeSettings((await readWorkspace()).settings)
   setOpenRouterAgent(normalizeOpenRouterAgent(stored.openrouter?.agent))
-  return withRemoteKeyFlag(
-    withJevKeyFlag(
-      withOpenRouterKeyFlag(stored, hasSecret('openrouterApiKey')),
-      hasSecret('aiGatewayApiKey')
-    ),
-    hasSecret('remoteApiKey')
-  )
+  return withJevKeyFlag(withOpenRouterKeyFlag(stored, hasSecret('openrouterApiKey')), hasSecret('aiGatewayApiKey'))
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {

@@ -13,9 +13,6 @@ import type {
   OpenRouterSettings,
   SettingsResult,
   RemoteAccount,
-  RemoteConfig,
-  RemoteResult,
-  RemoteSettings,
   RemoteSignInStart
 } from './settings'
 import type { ProviderUsage } from './usage'
@@ -34,9 +31,6 @@ export type {
   ProjectSession,
   SettingsResult,
   RemoteAccount,
-  RemoteConfig,
-  RemoteResult,
-  RemoteSettings,
   RemoteSignInStart,
   WorktreeRequest
 }
@@ -663,20 +657,18 @@ export interface FarolApi {
   agentModels: {
     refresh(force?: boolean): Promise<SettingsResult>
   }
-  /** Machine-local Farol service connection for remote pipelines. */
+  /** Signing in to the built-in remote pipeline service. */
   remote: {
-    save(config: RemoteConfig): Promise<SettingsResult>
-    clearKey(): Promise<SettingsResult>
-    /** Ask the service who the stored token belongs to, proving the URL (and token, if any) work. */
-    check(): Promise<RemoteResult>
-    /** Start signing in with GitHub on the saved service; opens the browser. */
+    /** Who the stored session belongs to. */
+    account(): Promise<RemoteAccount>
+    /** Start signing in with GitHub; opens the browser. */
     signInStart(): Promise<RemoteSignInStart>
-    /** Wait for the browser approval, then store the session like an API key. */
-    signInWait(): Promise<RemoteResult>
+    /** Wait for the browser approval, then keep the session. */
+    signInWait(): Promise<{ error?: string }>
     /** Stop waiting for a sign-in started with `signInStart`. */
     signInCancel(): Promise<void>
-    /** Who the stored token belongs to, for the header account menu. */
-    account(): Promise<RemoteAccount>
+    /** Forget this machine's session. */
+    signOut(): Promise<void>
   }
   /** Jev is internal-only: a key to store and a probe to prove it works. */
   jev: {

@@ -3,7 +3,9 @@ import type { AppSettings, PipelineNode, StepType } from '@shared/types'
 import { GIT_HOOK_EVENTS, aiSelectionLabel, normalizeAi } from '@shared/types'
 import { defaultGate, newPipelineNode, nodeGate, parallelAsClashIds, sanitizeAs, topoSort } from '@shared/graph'
 import { C, MONO, UI, ELLIPSIS } from '../theme'
-import { Checkbox, CliModelDropdown, ConfirmButton, SegmentedControl } from './controls'
+import { SIGN_IN_REQUIRED } from '@shared/remote'
+import { remoteAccount, useRemoteAccount } from '../remote-account'
+import { Button, Checkbox, CliModelDropdown, ConfirmButton, SegmentedControl } from './controls'
 import type { EditorState } from '../types'
 
 interface Props {
@@ -698,6 +700,7 @@ function PipelineSettings({
   editor: EditorState
   updateEditor: (update: (current: EditorState) => EditorState) => void
 }) {
+  const { account } = useRemoteAccount()
   return (
     <div style={railStyle}>
       <input
@@ -720,6 +723,14 @@ function PipelineSettings({
           )
         }
       />
+      {editor.target === 'remote' && account?.state === 'signedOut' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.textSoft }}>
+          <span style={{ flex: 1 }}>{SIGN_IN_REQUIRED}</span>
+          <Button variant="primary" onClick={() => void remoteAccount.signIn()}>
+            Sign in
+          </Button>
+        </div>
+      )}
       {editor.target === 'remote' && (
         <Toggle
           checked={editor.fallbackLocal === true}

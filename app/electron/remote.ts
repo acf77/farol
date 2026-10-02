@@ -1,29 +1,40 @@
 import { errorMessage } from '../shared/jev'
 import { shell } from 'electron'
-import type { RemoteAccount, RemoteResult, RemoteSignInStart, SettingsResult } from '../shared/types'
+import type { RemoteAccount, RemoteSignInStart } from '../shared/types'
 import { checkoutSnapshot } from './checkout-snapshot'
-import { snapshotSummary } from '../shared/remote'
+import { SIGN_IN_REQUIRED, snapshotSummary } from '../shared/remote'
 import type { RemoteWorkspace } from './sandbox'
-import { sanitizeRemote } from '../shared/settings'
 import { clearSecret, peekSecret, setSecret } from './secrets'
-import { loadSettings, saveSettings } from './store'
+import { SERVICE_URL } from './service-url'
 
 export type { RemoteWorkspace }
 
 export type OpenRemote = (cwd: string, signal: AbortSignal) => Promise<RemoteWorkspace>
 
-type Connection = { url: string; key?: string }
-
-async function connection(): Promise<Connection> {
-  const { remote } = await loadSettings()
-  if (!remote) throw new Error('Remote service is not configured. Add its URL in Settings.')
-  return { url: remote.url, key: peekSecret('remoteApiKey') ?? undefined }
+/** The user is not signed in, or the service no longer accepts their session. Not worth retrying. */
+export class SignInRequired extends Error {
+  constructor() {
+    super(SIGN_IN_REQUIRED)
+  }
 }
 
-async function serviceCall({ url, key }: Connection, path: string, init: RequestInit): Promise<Response> {
-  const res = await fetch(new URL(path, url), { ...init, headers: { ...init.headers, ...(key ? { Authorization: `Bearer ${key}` } : {}) } })
+/** The session token for the built-in service; throws SignInRequired when there is none. */
+function session(): string {
+  const token = peekSecret('remoteSession')
+  if (!token) throw new SignInRequired()
+  return token
+}
+
+async function serviceCall(path: string, init: RequestInit & { token?: string }): Promise<Response> {
+  const { token, ...rest } = init
+  const res = await fetch(new URL(path, SERVICE_URL), {
+    ...rest,
+    headers: { ...rest.headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+  })
   if (res.status === 401) {
-    throw new Error(key ? 'The service rejected the stored token. Sign in again.' : 'The service requires sign-in. Sign in with GitHub in Settings.')
+    // The session expired or was revoked: forget it so the account menu offers Sign in.
+    if (token && peekSecret('remoteSession') === token) clearSecret('remoteSession')
+    throw new SignInRequired()
   }
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string }
@@ -55,9 +66,9 @@ async function readExec(res: Response, onChunk: (chunk: string) => void): Promis
 }
 
 export const openRemote: OpenRemote = async (cwd, signal) => {
+  const token = session()
   const { archive, count } = await checkoutSnapshot(cwd)
-  const service = await connection()
-  const created = await serviceCall(service, '/v1/workspaces', { method: 'POST', body: new Uint8Array(archive), signal })
+  const created = await serviceCall('/v1/workspaces', { method: 'POST', body: new Uint8Array(archive), signal, token })
   const { id } = (await created.json()) as { id: string }
   let closed: Promise<unknown> | undefined
   // One command at a time: parallel commands on a single sandbox are unreliable.
@@ -65,14 +76,14 @@ export const openRemote: OpenRemote = async (cwd, signal) => {
   return {
     summary: snapshotSummary(count, archive.length),
     close: async () => {
-      closed ??= serviceCall(service, `/v1/workspaces/${id}`, { method: 'DELETE', signal: AbortSignal.timeout(30_000) }).catch(
+      closed ??= serviceCall(`/v1/workspaces/${id}`, { method: 'DELETE', signal: AbortSignal.timeout(30_000), token }).catch(
         () => undefined
       )
       await closed
     },
     exec(cmd, onChunk) {
       const run = async (): Promise<number> =>
-        readExec(await serviceCall(service, `/v1/workspaces/${id}/exec`, { method: 'POST', body: cmd, signal }), onChunk)
+        readExec(await serviceCall(`/v1/workspaces/${id}/exec`, { method: 'POST', body: cmd, signal, token }), onChunk)
       const result = queue.then(run, run)
       queue = result.catch(() => undefined)
       return result
@@ -80,38 +91,9 @@ export const openRemote: OpenRemote = async (cwd, signal) => {
   }
 }
 
-async function result(error?: string): Promise<SettingsResult> {
-  return { settings: await loadSettings(), ...(error ? { error } : {}) }
-}
-
-export async function saveRemoteConfig(raw: unknown): Promise<SettingsResult> {
-  const { url: rawUrl, key } = (raw ?? {}) as Record<string, unknown>
-  const remote = sanitizeRemote({ url: rawUrl })
-  const secret = typeof key === 'string' ? key.trim() : ''
-  if (!remote) return result('Enter the service URL, starting with http:// or https://.')
-  try {
-    if (secret) setSecret('remoteApiKey', secret)
-  } catch (err) {
-    return result(errorMessage(err))
-  }
-  await saveSettings({ ...(await loadSettings()), remote })
-  return result()
-}
-
-export async function clearRemoteKey(): Promise<SettingsResult> {
-  clearSecret('remoteApiKey')
-  return result()
-}
-
-/** Ask the service who the stored token belongs to; no error means the URL and token work. */
-export async function checkRemote(): Promise<RemoteResult> {
-  try {
-    const res = await serviceCall(await connection(), '/v1/me', { method: 'GET', signal: AbortSignal.timeout(15_000) })
-    const { name } = (await res.json()) as { name?: string }
-    return { ...(await result()), ...(name ? { account: name } : {}) }
-  } catch (err) {
-    return result(errorMessage(err))
-  }
+/** Forget this machine's session. */
+export function signOutRemote(): void {
+  clearSecret('remoteSession')
 }
 
 const AVATAR_HOST = 'avatars.githubusercontent.com'
@@ -140,32 +122,21 @@ async function avatarData(url: string | undefined): Promise<string | undefined> 
   }
 }
 
-/** Who the stored token belongs to. A token the service rejects reads as signed out. */
+/** Who the stored session belongs to. A session the service rejects reads as signed out. */
 export async function remoteAccount(): Promise<RemoteAccount> {
-  const { remote } = await loadSettings()
-  if (!remote) return { state: 'unconfigured' }
-  const serviceUrl = remote.url
-  const key = peekSecret('remoteApiKey')
-  if (!key) return { state: 'signedOut', serviceUrl }
   try {
-    const res = await fetch(new URL('/v1/me', serviceUrl), {
-      headers: { Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(15_000)
-    })
-    if (res.status === 401) return { state: 'signedOut', serviceUrl, message: 'Your session ended. Sign in again.' }
-    if (!res.ok) return { state: 'error', serviceUrl, message: `The service replied HTTP ${res.status}` }
-    const me = (await res.json()) as { kind?: string; name?: string; displayName?: string; avatarUrl?: string }
+    const res = await serviceCall('/v1/me', { signal: AbortSignal.timeout(15_000), token: session() })
+    const me = (await res.json()) as { name?: string; displayName?: string; avatarUrl?: string }
     const avatar = await avatarData(me.avatarUrl)
     return {
       state: 'signedIn',
-      serviceUrl,
-      kind: me.kind === 'user' ? 'user' : 'key',
       login: me.name ?? '',
       ...(me.displayName ? { displayName: me.displayName } : {}),
       ...(avatar ? { avatar } : {})
     }
   } catch (err) {
-    return { state: 'error', serviceUrl, message: `Cannot reach the service: ${errorMessage(err)}` }
+    if (err instanceof SignInRequired) return { state: 'signedOut' }
+    return { state: 'error', message: 'Cannot reach the remote service. Check your connection and try again.' }
   }
 }
 
@@ -176,8 +147,7 @@ let pendingSignIn: { deviceCode: string; interval: number; expiresAt: number; ab
 export async function startRemoteSignIn(): Promise<RemoteSignInStart> {
   cancelRemoteSignIn()
   try {
-    const { url } = await connection()
-    const res = await serviceCall({ url }, '/v1/auth/device', { method: 'POST', signal: AbortSignal.timeout(15_000) })
+    const res = await serviceCall('/v1/auth/device', { method: 'POST', signal: AbortSignal.timeout(15_000) })
     const start = (await res.json()) as { deviceCode: string; userCode: string; verificationUri: string; interval: number; expiresIn: number }
     // Only ever open GitHub, whatever the service sent.
     if (new URL(start.verificationUri).origin !== 'https://github.com') throw new Error('The service sent an unexpected sign-in page.')
@@ -199,37 +169,36 @@ export function cancelRemoteSignIn(): void {
   pendingSignIn = undefined
 }
 
-/** Device flow, step 2: poll until the user approves, then keep the session where the API key goes. */
-export async function waitRemoteSignIn(): Promise<RemoteResult> {
+/** Device flow, step 2: poll until the user approves, then keep the session in the encrypted store. */
+export async function waitRemoteSignIn(): Promise<{ error?: string }> {
   const pending = pendingSignIn
-  if (!pending) return result('Start signing in first.')
+  if (!pending) return { error: 'Start signing in first.' }
   const { signal } = pending.abort
   try {
-    const { url } = await connection()
     let interval = pending.interval
     while (Date.now() < pending.expiresAt) {
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(resolve, interval * 1000)
         signal.addEventListener('abort', () => (clearTimeout(timer), reject(new Error('Sign-in cancelled.'))), { once: true })
       })
-      const res = await serviceCall({ url }, '/v1/auth/device/token', {
+      const res = await serviceCall('/v1/auth/device/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceCode: pending.deviceCode }),
         signal
       })
-      const poll = (await res.json()) as { status: string; interval?: number; token?: string; user?: { login: string } }
+      const poll = (await res.json()) as { status: string; interval?: number; token?: string }
       if (poll.status === 'pending') {
         interval = poll.interval ?? interval
         continue
       }
       if (!poll.token) throw new Error('The service did not return a session.')
-      setSecret('remoteApiKey', poll.token)
-      return { ...(await result()), ...(poll.user ? { account: poll.user.login } : {}) }
+      setSecret('remoteSession', poll.token)
+      return {}
     }
-    return result('The sign-in code expired. Start again.')
+    return { error: 'The sign-in code expired. Start again.' }
   } catch (err) {
-    return result(errorMessage(err))
+    return { error: errorMessage(err) }
   } finally {
     if (pendingSignIn === pending) pendingSignIn = undefined
   }

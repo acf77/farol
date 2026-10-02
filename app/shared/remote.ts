@@ -30,3 +30,6 @@ export function snapshotSummary(files: number, bytes: number): string {
   if (files <= 0) return size
   return `${files} file${files === 1 ? '' : 's'}, ${size}`
 }
+
+/** All a user is told about the remote service when they are not signed in. */
+export const SIGN_IN_REQUIRED = 'Sign in to run remote pipelines.'
