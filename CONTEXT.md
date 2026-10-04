@@ -144,6 +144,12 @@ _Avoid_: Clear as the remedy for a full context, a Farol summarizer call, droppi
 The task list a managed agent maintains with a hidden `FAROL_TODOS:` control line — Farol's stand-in for OpenCode's `todowrite`, because managed Chat runs every CLI with project MCP disabled. One line carries the whole list as JSON; a valid line replaces it and `FAROL_TODOS: []` clears it. It belongs to a checkout, so every chat in that checkout reads and writes the same list.
 _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo tool, partial updates or per-item edits, storing the list in `.farol` or committing it
 
+### Custom prompts
+
+**Custom prompt**:
+A named piece of standing instructions the user writes in Settings. While switched on, it is added to every managed Chat turn inside one `<custom_instructions>` block. A **Global prompt** is saved in application data and applies in every project; a **Project prompt** is saved in the repo's `.farol/prompts.json` and can be committed.
+_Avoid_: system prompt, slash command, snippet, template, inserting the prompt into the user's message
+
 ### Remote pipelines
 
 **Remote pipeline**:
@@ -249,6 +255,15 @@ _Avoid_: a sign-in form in Settings, showing the service address, retrying a run
 - Plan mode diagrams the intended approach; a post-change Build diagram shows what changed and why.
 - Questions-only and status-only replies skip a **Chat diagram**.
 - There is no `FAROL_DIAGRAM` line and no remote image; the source stays in the message so copy still gets the Mermaid text.
+### Custom prompts
+
+- Every switched-on **Custom prompt** goes into one `<custom_instructions>` block, global first, each under `### name`. The block sits right after the task and before Farol's own instructions, so Farol's marker rules come last.
+- The block is re-read at the start of every agent attempt, so switching a prompt on or off applies from the next turn, mid-chat included. It is never stored in the chat history.
+- Whether a **Project prompt** is on is saved per machine, never in `.farol/prompts.json`. A cloned repo's prompts start off.
+- Linked worktrees share the primary checkout's `.farol/prompts.json` and its on/off state, like pipelines.
+- A prompt cannot open or close the block: `custom_instructions` tags in names and bodies are escaped.
+- Both **Plan mode** and **Build mode** receive the block.
+
 ### Todo list
 
 - A **Todo list** belongs to one checkout; every chat in that checkout shares it, and a linked worktree has its own.

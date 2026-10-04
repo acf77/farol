@@ -163,7 +163,7 @@ export function TodoDockView({
   const showList = open || editing !== null
 
   return (
-    <section className="bf-todo-dock" style={{ maxWidth: 680, margin: '0 auto 10px', color: C.textSoft, fontSize: 12 }}>
+    <section className="bf-todo-dock" style={{ width: '100%', color: C.textSoft, fontSize: 12 }}>
       <button
         ref={triggerRef}
         className="bf-focus bf-hover-fill bf-todo-dock-toggle"

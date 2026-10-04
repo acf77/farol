@@ -63,7 +63,7 @@ describe('newPipelineNode', () => {
     const first = newPipelineNode([], 'shell')
     const second = newPipelineNode([first], 'ai')
     expect(first).toMatchObject({ id: 'n1', type: 'shell', gate: true, x: 72, y: 48 })
-    expect(second).toMatchObject({ id: 'n2', type: 'ai', ai: 'claude', gate: false, x: 72, y: 160 })
+    expect(second).toMatchObject({ id: 'n2', type: 'ai', ai: 'claude', gate: false, x: 72, y: 238 })
   })
 })
 

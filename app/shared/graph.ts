@@ -84,7 +84,7 @@ export function nextNodeId(nodes: PipelineNode[]): string {
 export function newNodePos(nodes: PipelineNode[]): { x: number; y: number } {
   if (!nodes.length) return { x: 72, y: 48 }
   const maxY = Math.max(...nodes.map((n) => n.y))
-  return { x: 72, y: maxY + 112 }
+  return { x: 72, y: maxY + 190 }
 }
 
 /** One blank editable node, placed after the existing graph. */

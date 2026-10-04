@@ -10,12 +10,13 @@ import type {
   ProjectWriteOpts,
   RunEvent,
   ShellCwd,
+  ShellActivity,
   ShellData,
   ShellExit,
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pull as gitPull, push as gitPush, recentCommits, status as gitStatus, syncManagedHooks } from './git'
+import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pipelineStoreRootFor, pull as gitPull, push as gitPush, recentCommits, status as gitStatus, syncManagedHooks } from './git'
 import { createPullRequest, mergePullRequest } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, flushWorkspace, PipelineWatcher } from './store'
@@ -35,7 +36,6 @@ import { listProjectDir, listProjectFiles, readProjectFile, saveChatAttachment, 
 import { listAgentSkills } from './skills'
 import { openRouterAgent } from './openrouter-agent'
 import { AppUpdater } from './update'
-import { applyGlass, glassAvailable } from './glass'
 import { providerUsage } from './usage'
 import { mergeMcpConfig, MCP_CONFIG_REL_PATHS, type McpServerEntry } from '../shared/mcp-config'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
@@ -44,6 +44,7 @@ import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
 import { appendTail, plainText } from '../shared/terminal'
 import { AgentController } from './agent-controller'
 import { createTodoStore } from './todos'
+import { createCustomPromptStore } from './custom-prompts'
 import { parseTodos } from '../shared/todos'
 import { closedProjects } from '../shared/session'
 import { owningWorktree } from '../shared/worktree'
@@ -52,8 +53,6 @@ import net from 'net'
 import os from 'os'
 
 let win: BrowserWindow | null = null
-/** Renderer chrome goes translucent only when the native glass view is up. */
-let glassActive = false
 
 function send(channel: string, payload: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
@@ -62,7 +61,8 @@ function send(channel: string, payload: unknown): void {
 const shells = new ShellManager(
   (e: ShellData) => send('shell:data', e),
   (e: ShellExit) => send('shell:exit', e),
-  (e: ShellCwd) => send('shell:cwd', e)
+  (e: ShellCwd) => send('shell:cwd', e),
+  (e: ShellActivity) => send('shell:activity', e)
 )
 const runner = new PipelineRunner((e: RunEvent) => {
   send('run:event', e)
@@ -72,7 +72,8 @@ const todos = createTodoStore(
   () => app.getPath('userData'),
   (event) => send('todos:changed', event)
 )
-const agents = new AgentController(runner, (event) => send('agent:event', event), undefined, todos)
+const prompts = createCustomPromptStore(() => app.getPath('userData'), pipelineStoreRootFor)
+const agents = new AgentController(runner, (event) => send('agent:event', event), undefined, todos, prompts)
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
 )
@@ -98,8 +99,6 @@ function loadBrandIcon(): Electron.NativeImage | undefined {
 }
 
 function createWindow(): void {
-  const wantGlass = glassAvailable()
-  glassActive = false
   const icon = loadBrandIcon()
 
   win = new BrowserWindow({
@@ -109,9 +108,7 @@ function createWindow(): void {
     minHeight: 520,
     show: false,
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
-    // Liquid Glass needs a transparent window and must not use vibrancy.
-    transparent: wantGlass,
-    backgroundColor: wantGlass ? '#00000000' : '#181817',
+    backgroundColor: '#181817',
     ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -138,7 +135,6 @@ function createWindow(): void {
   })
   win.on('closed', () => {
     win = null
-    glassActive = false
   })
 
   // Keep navigation inside the app; send real http(s) links to the system browser.
@@ -157,14 +153,6 @@ function createWindow(): void {
   win.webContents.on('unresponsive', () => {
     console.error('[farol] renderer unresponsive')
   })
-
-  if (wantGlass) {
-    win.webContents.once('did-finish-load', () => {
-      if (!win || win.isDestroyed()) return
-      glassActive = applyGlass(win)
-      send('ui:glass', glassActive)
-    })
-  }
 
   loadRenderer()
 }
@@ -729,7 +717,9 @@ function registerGitIpc(): void {
     }
     return res
   })
-  ipcMain.handle('git:status', (_e, projectPath: string) => gitStatus(projectPath))
+  ipcMain.handle('git:status', (_e, projectPath: string, base?: string) =>
+    gitStatus(projectPath, typeof base === 'string' ? base : undefined)
+  )
   ipcMain.handle('git:recentCommits', (_e, projectPath: string) => recentCommits(projectPath))
   ipcMain.handle(
     'git:draftCommit',
@@ -811,10 +801,10 @@ function registerGitIpc(): void {
     if ('error' in cwd) return { ok: false, message: cwd.error }
     return mergePullRequest(cwd.path, strategy)
   })
-  ipcMain.handle('git:bringConflicts', async (_e, projectPath: string) => {
+  ipcMain.handle('git:bringConflicts', async (_e, projectPath: string, base?: string) => {
     const cwd = await openProjectCwd(projectPath)
     if ('error' in cwd) return { ok: false, message: cwd.error }
-    return bringPrConflicts(cwd.path)
+    return bringPrConflicts(cwd.path, typeof base === 'string' ? base : undefined)
   })
 }
 
@@ -862,23 +852,36 @@ function registerRemoteIpc(): void {
   ipcMain.handle('remote:signOut', () => signOutRemote())
 }
 
+function projectPathOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
 function registerAppIpc(): void {
-  ipcMain.handle('settings:load', () => loadSettings())
+  ipcMain.handle('settings:load', loadSettings)
   ipcMain.handle('settings:save', (_e, settings: AppSettings) => saveSettings(settings))
+  ipcMain.handle('prompts:load', (_e, projectPath: unknown) => prompts.load(projectPathOrNull(projectPath)))
+  ipcMain.handle('prompts:saveGlobal', (_e, projectPath: unknown, value: unknown) =>
+    prompts.saveGlobal(projectPathOrNull(projectPath), value)
+  )
+  ipcMain.handle('prompts:saveProject', (_e, projectPath: unknown, value: unknown) =>
+    prompts.saveProject(projectPathOrNull(projectPath) ?? '', value)
+  )
+  ipcMain.handle('prompts:setProjectActive', (_e, projectPath: unknown, ids: unknown) =>
+    prompts.setProjectActive(projectPathOrNull(projectPath) ?? '', ids)
+  )
   ipcMain.handle('openrouter:saveKey', (_e, key: string) => saveOpenRouterKey(key))
-  ipcMain.handle('openrouter:clearKey', () => clearOpenRouter())
-  ipcMain.handle('openrouter:refresh', () => refreshOpenRouterCatalog())
+  ipcMain.handle('openrouter:clearKey', clearOpenRouter)
+  ipcMain.handle('openrouter:refresh', refreshOpenRouterCatalog)
   ipcMain.handle('openrouter:setPinned', (_e, ids: string[]) => setOpenRouterPinned(ids))
   ipcMain.handle('agentModels:refresh', (_e, force?: boolean) =>
     refreshAgentCatalogs({ forceRefresh: force === true })
   )
   ipcMain.handle('jev:saveKey', (_e, key: string) => saveJevKey(key))
-  ipcMain.handle('jev:clearKey', () => clearJev())
-  ipcMain.handle('jev:check', () => checkJev())
-  ipcMain.handle('usage:read', () => providerUsage())
+  ipcMain.handle('jev:clearKey', clearJev)
+  ipcMain.handle('jev:check', checkJev)
+  ipcMain.handle('usage:read', providerUsage)
   ipcMain.handle('update:check', () => updater.check())
   ipcMain.on('update:install', () => updater.install())
-  ipcMain.handle('ui:glass', () => glassActive)
 }
 
 function registerIpc(): void {

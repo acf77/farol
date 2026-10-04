@@ -6,11 +6,11 @@ import type { AgentMessage, AgentPane } from '../types'
 import { C, PANE } from '../theme'
 import { MessageErrorBoundary } from '../ErrorBoundary'
 import { Button } from './controls'
-import { CheckIcon, SearchIcon, ToolIcon } from './icons'
-import farolMark from '../assets/farol-mark.png'
+import { Spinner } from './icons'
 import { ChatBanner } from './chat/cards'
 import { ComposerBox } from './chat/Composer'
 import { Turn } from './chat/Turn'
+import ScrollToLatest from './ScrollToLatest'
 
 interface Props {
   pane: AgentPane | null
@@ -42,36 +42,47 @@ interface Props {
   onDismissChatCleared?: () => void
   /** Focus hook so ⌘K can put the caret in the composer. */
   composerRef?: React.RefObject<HTMLTextAreaElement>
+  /** Shown in the greeting once the login service supplies it; omitted, the greeting is just the time of day. */
+  userName?: string
 }
 
 const STICK_SLACK = 80
 
-const SUGGESTIONS = [
-  {
-    label: 'Validate',
-    detail: 'Run every validation pipeline',
-    prompt: 'Run every available validation pipeline before I open a PR',
-    Icon: CheckIcon
-  },
-  {
-    label: 'Explain',
-    detail: 'What this pipeline checks',
-    prompt: 'Walk me through what the selected pipeline checks and why',
-    Icon: ToolIcon
-  },
-  {
-    label: 'Investigate',
-    detail: 'Why the last run failed',
-    prompt: 'Investigate why the last run failed and suggest a fix',
-    Icon: SearchIcon
-  }
-] as const
+/** Quips under the greeting; clicking the line shuffles to another. */
+const QUIPS = [
+  "It works on my machine. Let's make it work on yours.",
+  'Zero flaky tests today. Allegedly.',
+  'Ship small, ship often, ship before lunch.',
+  'Your pre-push hook believes in you.',
+  'No yak too hairy.'
+]
 
-function greetingFor(date: Date): string {
+/**
+ * Starter pills under the composer: run what this project actually has. One pill
+ * for the required set, then the pipelines themselves, capped so the row stays a row.
+ */
+function startersFor(pipelines: Pipeline[]): { label: string; prompt: string }[] {
+  const runnable = pipelines.filter((p) => p.nodes.length)
+  const required = runnable.filter((p) => p.mandatory)
+  const all = required.length ? required : runnable
+  const out: { label: string; prompt: string }[] = []
+  if (all.length > 1) {
+    out.push(
+      required.length
+        ? { label: 'Run required', prompt: 'Run every required pipeline and fix what fails' }
+        : { label: 'Run all pipelines', prompt: 'Run every available pipeline and fix what fails' }
+    )
+  }
+  for (const p of [...required, ...runnable.filter((x) => !x.mandatory)].slice(0, 4 - out.length)) {
+    out.push({ label: `Run ${p.name}`, prompt: `Run the "${p.name}" pipeline and fix what fails` })
+  }
+  return out
+}
+
+function greetingFor(date: Date, name?: string): string {
   const h = date.getHours()
-  if (h < 12) return 'Good morning'
-  if (h < 18) return 'Good afternoon'
-  return 'Good evening'
+  const part = h < 5 ? 'Still up' : h < 12 ? 'Morning' : h < 18 ? 'Afternoon' : 'Evening'
+  return name ? `${part}, ${name}` : part
 }
 
 /**
@@ -207,10 +218,6 @@ function ChatClearedBanner({ onDismissChatCleared }: { onDismissChatCleared?: ()
 }
 
 /**
- * How full the agent's context is. Shown only with a reading from the CLI;
- * amber once it is large enough that answers tend to lose precision.
-
-/**
  * Why a fresh start is suggested — a large reading, or the agent stopped on
  * its context limit — and a key that changes only when the situation does
  * (a new stop, or the next 10% band), so a dismissal holds until then.
@@ -274,81 +281,71 @@ function FreshStartBanner({
   )
 }
 
-function ChatGreeting({ availableCount, mode }: { availableCount: number; mode: AgentMode }) {
+/** The agent is between steps: something is happening, even with no tool row to show. */
+function WorkingRow() {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-      <img
-        src={farolMark}
-        alt=""
-        width={36}
-        height={36}
-        draggable={false}
-        style={{ borderRadius: 8, display: 'block' }}
-      />
-      <div
-        style={{
-          fontSize: 22,
-          fontWeight: 600,
-          letterSpacing: '-0.4px',
-          marginTop: 18,
-          color: C.text
-        }}
-      >
-        {greetingFor(new Date())}
-      </div>
-      <div style={{ fontSize: 13, lineHeight: 1.55, color: C.textMuted, marginTop: 8, maxWidth: 420 }}>
-        {availableCount || mode === 'plan'
-          ? 'How can I help you build today?'
-          : 'Create a validation pipeline to start a chat.'}
-      </div>
+    <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 12.5, color: C.textMuted }}>
+      <Spinner size={12} />
+      <span>Working…</span>
     </div>
   )
 }
 
-function SuggestionList({ onPick }: { onPick: (prompt: string) => void }) {
+/** Empty chat: greeting and a quip, bottom-aligned above the composer. */
+function ChatGreeting({ usable, name }: { usable: boolean; name?: string }) {
+  const [quip, setQuip] = useState(0)
   return (
     <div
       style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-        gap: 8,
-        marginTop: 12,
-        paddingBottom: 8
+        minHeight: '100%',
+        boxSizing: 'border-box',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'flex-end',
+        alignItems: 'center',
+        padding: '0 28px 26px',
+        textAlign: 'center'
       }}
     >
-      {SUGGESTIONS.map(({ label, detail, prompt, Icon }) => (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <svg width="26" height="26" viewBox="0 0 16 16" fill={C.accent} style={{ flex: 'none' }} aria-hidden>
+          <path d="M8 1.5c.4 2.9 1.6 4.1 4.5 4.5-2.9.4-4.1 1.6-4.5 4.5-.4-2.9-1.6-4.1-4.5-4.5 2.9-.4 4.1-1.6 4.5-4.5Z" />
+          <path d="M12.5 10c.2 1.3.7 1.8 2 2-1.3.2-1.8.7-2 2-.2-1.3-.7-1.8-2-2 1.3-.2 1.8-.7 2-2Z" />
+        </svg>
+        <span style={{ fontSize: 30, fontWeight: 500, letterSpacing: '-0.6px' }}>{greetingFor(new Date(), name)}</span>
+      </div>
+      {usable ? (
+        <button
+          type="button"
+          className="bf-focus bf-quip"
+          title="Another one"
+          onClick={() => setQuip((i) => i + 1 + Math.floor(Math.random() * 3))}
+          style={{ marginTop: 10, padding: 0, border: 'none', background: 'transparent', font: 'inherit', fontSize: 13.5, color: C.faint, cursor: 'pointer', userSelect: 'none' }}
+        >
+          {QUIPS[quip % QUIPS.length]}
+        </button>
+      ) : (
+        <div style={{ marginTop: 10, fontSize: 13.5, color: C.faint }}>Create a validation pipeline to start a chat.</div>
+      )}
+    </div>
+  )
+}
+
+/** Pills under the composer that send a starter prompt. */
+function StarterPills({ starters, onPick }: { starters: { label: string; prompt: string }[]; onPick: (prompt: string) => void }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 6 }}>
+      {starters.map(({ label, prompt }) => (
         <button
           key={label}
           type="button"
-          className="bf-tile bf-focus"
-          onClick={() => onPick(prompt)}
+          className="bf-focus bf-pill"
           title={prompt}
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-start',
-            gap: 18,
-            minHeight: 92,
-            padding: '14px 14px 12px',
-            margin: 0,
-            background: C.sidebar,
-            border: `1px solid ${C.border}`,
-            borderRadius: 12,
-            cursor: 'pointer',
-            textAlign: 'left',
-            color: C.text,
-            fontFamily: 'inherit'
-          }}
+          onClick={() => onPick(prompt)}
+          style={{ display: 'flex', alignItems: 'center', gap: 7, maxWidth: '100%', padding: '7px 13px', borderRadius: 20, border: '1px solid oklch(1 0 0 / 0.09)', background: 'transparent', font: 'inherit', fontSize: 12.5, color: C.textRow, cursor: 'pointer' }}
         >
-          <span style={{ color: C.textMuted, display: 'grid' }}>
-            <Icon size={16} color={C.textMuted} />
-          </span>
-          <span>
-            <span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>{label}</span>
-            <span style={{ display: 'block', fontSize: 12, lineHeight: 1.4, color: C.textMuted, marginTop: 3 }}>
-              {detail}
-            </span>
-          </span>
+          <span style={{ width: 6, height: 6, flex: 'none', borderRadius: '50%', background: C.accent }} />
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
         </button>
       ))}
     </div>
@@ -378,7 +375,8 @@ export default function ChatPane({
   onCancelClearChat,
   chatClearedNotice,
   onDismissChatCleared,
-  composerRef
+  composerRef,
+  userName
 }: Props) {
   const provider = normalizeAi(pane ? pane.provider : defaultProvider)
   const model = normalizeModel(pane ? pane.model : defaultModel)
@@ -402,7 +400,9 @@ export default function ChatPane({
   const modeLocked = isBusy || status === 'asking'
   const messages = pane?.messages ?? []
   const availableCount = pipelines.filter((p) => p.nodes.length).length
-  const showSuggestions = availableCount > 0 && mode === 'build'
+  const usable = availableCount > 0 || mode === 'plan'
+  const isEmpty = messages.length === 0
+  const starters = mode === 'build' ? startersFor(pipelines) : []
   const freshReason = onFreshStart ? freshStartReason(pane?.usage, messages) : null
   // Dismissed for this reason until the reading changes band or the chat changes.
   const freshKey = `${pane?.taskId ?? ''}:${freshReason?.key ?? ''}`
@@ -432,54 +432,41 @@ export default function ChatPane({
       {chatClearedNotice && messages.length === 0 && (
         <ChatClearedBanner onDismissChatCleared={onDismissChatCleared} />
       )}
-      <div
-        ref={scrollRef}
-        className="bf-chat-scroll"
-        onScroll={(e) => syncScrollChrome(e.currentTarget)}
-        style={{
-          flex: 1,
-          minHeight: 0,
-          overflow: 'auto',
-          display: 'flex',
-          flexDirection: 'column'
-        }}
-      >
+      <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex' }}>
         <div
+          ref={scrollRef}
+          className="bf-chat-scroll"
+          onScroll={(e) => syncScrollChrome(e.currentTarget)}
           style={{
-            maxWidth: 680,
-            margin: '0 auto',
-            width: '100%',
+            flex: 1,
+            minHeight: 0,
+            overflow: 'auto',
             display: 'flex',
             flexDirection: 'column'
           }}
         >
-          {messages.length === 0 ? (
-            <>
-              <ChatGreeting availableCount={availableCount} mode={mode} />
-              <div style={{ flex: 1, minHeight: 24 }} />
-              {showSuggestions && <SuggestionList onPick={(p) => sendTextRef.current(p)} />}
-            </>
+          {isEmpty ? (
+            <ChatGreeting usable={usable} name={userName} />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
+            <div style={{ maxWidth: 700, margin: '0 auto', padding: '32px 28px 24px', display: 'flex', flexDirection: 'column', gap: 22 }}>
               {messages.map((m, i) => (
                 <MessageErrorBoundary key={i}>
-                  <Turn
-                    m={m}
-                    i={i}
-                    messages={messages}
-                    isBusy={isBusy}
-                    provider={provider}
-                    onOpenPipeline={onOpenPipeline}
-                    onNewChat={onNewChat}
-                    onAnswer={onAnswer}
+                  <Turn m={m} i={i} messages={messages} isBusy={isBusy} provider={provider} model={model}
+                    onOpenPipeline={onOpenPipeline} onNewChat={onNewChat} onAnswer={onAnswer}
                     canExecutePlan={!!m.plan?.finished && !m.plan.consumed && !isBusy}
-                    onExecutePlan={onExecutePlan}
-                  />
+                    onExecutePlan={onExecutePlan} />
                 </MessageErrorBoundary>
               ))}
+              {isBusy && status !== 'asking' && !messages[messages.length - 1]?.tool && <WorkingRow />}
             </div>
           )}
         </div>
+        <ScrollToLatest visible={showFade} onClick={() => {
+          const node = scrollRef.current
+          if (!node) return
+          stickRef.current = true
+          node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' })
+        }} />
       </div>
 
       {freshReason && onFreshStart && dismissedFresh !== freshKey && (
@@ -509,9 +496,11 @@ export default function ChatPane({
         onModeChange={onModeChange}
         sendTextRef={sendTextRef}
         showFade={showFade}
+        placeholder={isEmpty ? 'What are we breaking today?' : 'Reply to the agent…'}
+        hasRequired={!isEmpty && pipelines.some((p) => p.mandatory && p.nodes.length > 0)}
+        starters={isEmpty && usable && starters.length ? <StarterPills starters={starters} onPick={(prompt) => sendTextRef.current(prompt)} /> : undefined}
       />
+      {isEmpty && <div style={{ flex: 1, minHeight: 0 }} />}
     </div>
   )
 }
-
-export { ChatModeSwitch } from './chat/Composer'

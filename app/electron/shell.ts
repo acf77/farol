@@ -1,7 +1,8 @@
 import * as pty from 'node-pty'
+import { execFile } from 'node:child_process'
 import { interactiveAiCommand, isAiProvider, type AiProvider } from '../shared/ai'
 import { errorMessage } from '../shared/jev'
-import type { ShellCwd, ShellData, ShellExit } from '../shared/types'
+import type { ShellActivity, ShellCwd, ShellData, ShellExit } from '../shared/types'
 import { aiEnv, resolveBin } from './bin'
 import { openRouterAgent } from './openrouter-agent'
 import { defaultShell, shellEnv } from './session'
@@ -30,6 +31,9 @@ function terminalSize(cols: number, rows: number): { cols: number; rows: number 
 interface Session {
   proc: pty.IPty
   cwd: string
+  active: boolean
+  activityTimer?: NodeJS.Timeout
+  activityChecks: number
 }
 
 export class ShellManager {
@@ -40,8 +44,53 @@ export class ShellManager {
   constructor(
     private onData: (e: ShellData) => void,
     private onExit: (e: ShellExit) => void,
-    private onCwd: (e: ShellCwd) => void
+    private onCwd: (e: ShellCwd) => void,
+    private onActivity: (e: ShellActivity) => void
   ) {}
+
+  private setActive(paneId: string, session: Session, active: boolean): void {
+    if (session.active === active) return
+    session.active = active
+    this.onActivity({ paneId, active })
+  }
+
+  private stopActivityWatch(session: Session): void {
+    if (session.activityTimer) clearInterval(session.activityTimer)
+    session.activityTimer = undefined
+  }
+
+  private updateActivity(paneId: string, session: Session, error: Error | null, stdout: string): void {
+    if (this.sessions.get(paneId) !== session) return
+    if (error) {
+      session.activityChecks--
+      if (session.activityChecks <= 0) this.stopActivityWatch(session)
+      return
+    }
+
+    const [pgid, foreground] = stdout.trim().split(/\s+/).map(Number)
+    if (!Number.isFinite(pgid) || !Number.isFinite(foreground)) return
+    const active = foreground > 0 && foreground !== pgid
+    const finished = session.active && !active
+    this.setActive(paneId, session, active)
+    session.activityChecks = active ? 5 : session.activityChecks - 1
+    if (finished || session.activityChecks <= 0) this.stopActivityWatch(session)
+  }
+
+  private watchActivity(paneId: string, session: Session): void {
+    if (process.platform === 'win32' || session.activityTimer) return
+    let checking = false
+    const check = (): void => {
+      if (checking || this.sessions.get(paneId) !== session) return
+      checking = true
+      execFile('ps', ['-o', 'pgid=,tpgid=', '-p', String(session.proc.pid)], (error, stdout) => {
+        checking = false
+        this.updateActivity(paneId, session, error, stdout)
+      })
+    }
+    session.activityChecks = 5
+    check()
+    session.activityTimer = setInterval(check, 400)
+  }
 
   open(paneId: string, cwd: string, cols = 100, rows = 30, provider?: AiProvider): void {
     const existing = this.sessions.get(paneId)
@@ -65,7 +114,7 @@ export class ShellManager {
       return
     }
 
-    const session: Session = { proc, cwd }
+    const session: Session = { proc, cwd, active: false, activityChecks: 0 }
     this.sessions.set(paneId, session)
 
     // A login shell prints its prompt asynchronously; typing into it before
@@ -76,6 +125,7 @@ export class ShellManager {
       setTimeout(() => {
         if (this.sessions.get(paneId) !== session) return
         for (const data of queued) session.proc.write(data)
+        this.watchActivity(paneId, session)
       }, 400)
     }
 
@@ -102,13 +152,17 @@ export class ShellManager {
 
     proc.onExit(({ exitCode }) => {
       this.sessions.delete(paneId)
+      this.stopActivityWatch(session)
+      this.setActive(paneId, session, false)
       this.onExit({ tabId: paneId, code: exitCode, cwd: session.cwd, durationMs: 0, sessionEnded: true })
     })
   }
 
   /** Keystrokes and pasted text, straight to the PTY. */
   write(paneId: string, data: string): void {
-    this.sessions.get(paneId)?.proc.write(data)
+    const session = this.sessions.get(paneId)
+    session?.proc.write(data)
+    if (session && /[\r\n]/.test(data)) this.watchActivity(paneId, session)
   }
 
   /**
@@ -120,6 +174,7 @@ export class ShellManager {
     const session = this.sessions.get(paneId)
     if (session) {
       session.proc.write(data)
+      if (/[\r\n]/.test(data)) this.watchActivity(paneId, session)
       return
     }
     const queue = this.pending.get(paneId) ?? []
@@ -144,6 +199,8 @@ export class ShellManager {
     const session = this.sessions.get(paneId)
     if (!session) return
     this.sessions.delete(paneId)
+    this.stopActivityWatch(session)
+    this.setActive(paneId, session, false)
     try {
       session.proc.kill()
     } catch {

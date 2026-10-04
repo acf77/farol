@@ -379,8 +379,8 @@ function MenuTrigger({
         ...style
       }}
     >
-      <span style={{ ...ELLIPSIS }}>{children}</span>
-      <ChevronDown size={10} color={C.textMuted} />
+      <span style={{ minWidth: 0, ...ELLIPSIS }}>{children}</span>
+      <ChevronDown size={10} color={C.textMuted} style={{ flex: 'none' }} />
     </button>
   )
 }
@@ -798,5 +798,41 @@ export function BranchDropdown({
         />
       )}
     </>
+  )
+}
+
+/** On/off toggle; `label` is its accessible name. */
+export function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      className="bf-focus"
+      onClick={() => onChange(!checked)}
+      style={{
+        width: 32,
+        height: 19,
+        padding: 2,
+        border: 'none',
+        borderRadius: 10,
+        flex: 'none',
+        cursor: 'pointer',
+        transition: 'background .15s',
+        background: checked ? C.accent : C.border
+      }}
+    >
+      <div
+        style={{
+          width: 15,
+          height: 15,
+          borderRadius: '50%',
+          background: checked ? C.accentInk : C.textRow,
+          transition: 'transform .15s',
+          transform: `translateX(${checked ? 13 : 0}px)`
+        }}
+      />
+    </button>
   )
 }

@@ -8,6 +8,7 @@ import type {
   Project,
   RunEvent,
   ShellCwd,
+  ShellActivity,
   ShellData,
   ShellExit,
   UpdateStatus
@@ -68,14 +69,15 @@ const api: FarolApi = {
     send: (paneId, data) => ipcRenderer.invoke('shell:send', paneId, data),
     onData: (cb) => on<ShellData>('shell:data', cb),
     onExit: (cb) => on<ShellExit>('shell:exit', cb),
-    onCwd: (cb) => on<ShellCwd>('shell:cwd', cb)
+    onCwd: (cb) => on<ShellCwd>('shell:cwd', cb),
+    onActivity: (cb) => on<ShellActivity>('shell:activity', cb)
   },
   git: {
     info: (projectPath: string) => ipcRenderer.invoke('git:info', projectPath),
     checkout: (projectPath: string, branch: string) =>
       ipcRenderer.invoke('git:checkout', projectPath, branch),
     worktree: (projectPath, req) => ipcRenderer.invoke('git:worktree', projectPath, req),
-    status: (projectPath: string) => ipcRenderer.invoke('git:status', projectPath),
+    status: (projectPath: string, base?: string) => ipcRenderer.invoke('git:status', projectPath, base),
     recentCommits: (projectPath: string) => ipcRenderer.invoke('git:recentCommits', projectPath),
     draftCommit: (projectPath: string, provider, model, files) =>
       ipcRenderer.invoke('git:draftCommit', projectPath, provider, model, files),
@@ -91,7 +93,8 @@ const api: FarolApi = {
       ipcRenderer.invoke('git:draftPr', projectPath, provider, model, base),
     mergePr: (projectPath: string, strategy) =>
       ipcRenderer.invoke('git:mergePr', projectPath, strategy),
-    bringConflicts: (projectPath: string) => ipcRenderer.invoke('git:bringConflicts', projectPath),
+    bringConflicts: (projectPath: string, base?: string) =>
+      ipcRenderer.invoke('git:bringConflicts', projectPath, base),
     onChanged: (cb) => on<GitChanged>('git:changed', cb)
   },
   run: {
@@ -115,6 +118,12 @@ const api: FarolApi = {
   settings: {
     load: () => ipcRenderer.invoke('settings:load'),
     save: (settings) => ipcRenderer.invoke('settings:save', settings)
+  },
+  prompts: {
+    load: (projectPath) => ipcRenderer.invoke('prompts:load', projectPath),
+    saveGlobal: (projectPath, prompts) => ipcRenderer.invoke('prompts:saveGlobal', projectPath, prompts),
+    saveProject: (projectPath, prompts) => ipcRenderer.invoke('prompts:saveProject', projectPath, prompts),
+    setProjectActive: (projectPath, ids) => ipcRenderer.invoke('prompts:setProjectActive', projectPath, ids)
   },
   openrouter: {
     saveKey: (key) => ipcRenderer.invoke('openrouter:saveKey', key),
@@ -146,8 +155,6 @@ const api: FarolApi = {
     onStatus: (cb) => on<UpdateStatus>('update:status', cb)
   },
   ui: {
-    glass: () => ipcRenderer.invoke('ui:glass'),
-    onGlass: (cb) => on<boolean>('ui:glass', cb),
     onSettings: (cb) => on('ui:settings', () => cb())
   }
 }

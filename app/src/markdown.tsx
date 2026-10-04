@@ -455,13 +455,13 @@ export function MarkdownBody({ text }: { text: string }) {
     <div
       className="bf-md"
       style={{
-        fontSize: 13,
-        lineHeight: 1.6,
-        color: C.text,
+        fontSize: 13.5,
+        lineHeight: 1.65,
+        color: 'oklch(0.9 0.006 95)',
         textWrap: 'pretty',
         display: 'flex',
         flexDirection: 'column',
-        gap: 8,
+        gap: 10,
         userSelect: 'text'
       }}
     >

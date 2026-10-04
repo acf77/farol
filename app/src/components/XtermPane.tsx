@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import type { AiProvider } from '@shared/ai'
 import { MONO } from '../theme'
+import ScrollToLatest from './ScrollToLatest'
 
 /**
  * A shell pane: a real terminal emulator wired straight to a PTY. xterm.js
@@ -62,6 +63,7 @@ export default function XtermPane({ paneId, cwd, agent, visible, focused, onFocu
   const sizeRef = useRef({ cols: 0, rows: 0 })
   // The pane's directory at mount time; later `cd`s belong to the shell.
   const cwdRef = useRef(cwd)
+  const [canJump, setCanJump] = useState(false)
   visibleRef.current = visible
 
   useEffect(() => {
@@ -83,6 +85,7 @@ export default function XtermPane({ paneId, cwd, agent, visible, focused, onFocu
     term.open(host)
     termRef.current = term
     fitRef.current = fit
+    const scroll = term.onScroll(() => setCanJump(term.buffer.active.viewportY < term.buffer.active.baseY))
 
     const sync = (): void => {
       // Fitting while hidden or zero-sized collapses the PTY and reprints
@@ -133,6 +136,7 @@ export default function XtermPane({ paneId, cwd, agent, visible, focused, onFocu
       offData()
       offExit()
       keys.dispose()
+      scroll.dispose()
       term.dispose()
       termRef.current = null
       fitRef.current = null
@@ -186,12 +190,17 @@ export default function XtermPane({ paneId, cwd, agent, visible, focused, onFocu
       style={{
         flex: 1,
         minHeight: 0,
+        position: 'relative',
         overflow: 'hidden',
         padding: '10px 12px 12px 14px',
         background: '#181817'
       }}
     >
       <div ref={hostRef} style={{ width: '100%', height: '100%' }} />
+      <ScrollToLatest visible={canJump} onClick={() => {
+        termRef.current?.scrollToBottom()
+        setCanJump(false)
+      }} />
     </div>
   )
 }

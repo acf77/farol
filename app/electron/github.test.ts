@@ -81,6 +81,14 @@ describe('parseStatusCheckRollup', () => {
   })
 })
 
+describe('githubInfo for a finished PR', () => {
+  it.each(['MERGED', 'CLOSED'])('treats a %s pull request as no pull request', async (state) => {
+    authOk().mockResolvedValueOnce(ok(JSON.stringify({ number: 3, state, baseRefName: 'main' })))
+    await expect(githubInfo('/repo')).resolves.toEqual({ available: true, prs: [] })
+    expect(execCli).toHaveBeenCalledTimes(3)
+  })
+})
+
 describe('githubInfo', () => {
   it('returns the current branch PR with checks and draft state', async () => {
     authOk()

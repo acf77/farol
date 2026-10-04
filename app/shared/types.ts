@@ -17,6 +17,7 @@ import type {
 } from './settings'
 import type { ProviderUsage } from './usage'
 import type { Todo } from './todos'
+import type { CustomPrompt, CustomPromptSet } from './custom-prompts'
 
 export type { AgentQuestion, AgentSkill, ProviderUsage }
 
@@ -143,6 +144,9 @@ export interface GitStatusFile {
   path: string
   kind: GitFileKind
   staged: boolean
+  /** Lines added / removed against HEAD. Absent for binary or unreadable files. */
+  added?: number
+  removed?: number
 }
 
 export interface GitStatus {
@@ -276,6 +280,12 @@ export interface ShellData {
 export interface ShellCwd {
   paneId: string
   cwd: string
+}
+
+/** Whether the PTY's foreground process is doing work rather than waiting at the shell prompt. */
+export interface ShellActivity {
+  paneId: string
+  active: boolean
 }
 
 /** Who asked for the run. Agent runs must not re-trigger the failure hand-off. */
@@ -534,6 +544,7 @@ export interface FarolApi {
     onData(cb: (e: ShellData) => void): () => void
     onExit(cb: (e: ShellExit) => void): () => void
     onCwd(cb: (e: ShellCwd) => void): () => void
+    onActivity(cb: (e: ShellActivity) => void): () => void
   }
   git: {
     info(projectPath: string): Promise<GitInfo>
@@ -553,7 +564,8 @@ export interface FarolApi {
       reused?: boolean
       message: string
     }>
-    status(projectPath: string): Promise<GitStatus>
+    /** `base` is the branch the conflict check compares against (default `staging`). */
+    status(projectPath: string, base?: string): Promise<GitStatus>
     recentCommits(projectPath: string): Promise<GitCommit[]>
     draftCommit(
       projectPath: string,
@@ -598,7 +610,10 @@ export interface FarolApi {
       projectPath: string,
       strategy: MergeStrategy
     ): Promise<{ ok: boolean; message: string }>
-    bringConflicts(projectPath: string): Promise<{ ok: boolean; message: string; prompt?: string }>
+    bringConflicts(
+      projectPath: string,
+      base?: string
+    ): Promise<{ ok: boolean; message: string; prompt?: string }>
     /** Fires when HEAD changes, including from outside the app. */
     onChanged(cb: (changed: GitChanged) => void): () => void
   }
@@ -647,6 +662,13 @@ export interface FarolApi {
     load(): Promise<AppSettings>
     save(settings: AppSettings): Promise<void>
   }
+  /** Custom prompts; each mutation hands back the fresh set for `projectPath`. */
+  prompts: {
+    load(projectPath: string | null): Promise<CustomPromptSet>
+    saveGlobal(projectPath: string | null, prompts: CustomPrompt[]): Promise<CustomPromptSet>
+    saveProject(projectPath: string, prompts: CustomPrompt[]): Promise<CustomPromptSet>
+    setProjectActive(projectPath: string, ids: string[]): Promise<CustomPromptSet>
+  }
   openrouter: {
     saveKey(key: string): Promise<SettingsResult>
     clearKey(): Promise<SettingsResult>
@@ -685,10 +707,7 @@ export interface FarolApi {
     install(): void
     onStatus(cb: (s: UpdateStatus) => void): () => void
   }
-  /** Native Liquid Glass behind chrome (macOS 26+). */
   ui: {
-    glass(): Promise<boolean>
-    onGlass(cb: (active: boolean) => void): () => void
     onSettings(cb: () => void): () => void
   }
 }

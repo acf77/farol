@@ -138,6 +138,76 @@ describe('AgentController', () => {
     expect(execute.mock.calls[0][1]).toContain('- [pending] (low) Existing')
   })
 
+  it('adds the active custom instructions after the task and before Farol\'s instructions', async () => {
+    const block = '<custom_instructions>\n### Terse\nAnswer briefly.\n</custom_instructions>'
+    const prompts = { activeBlock: vi.fn().mockResolvedValue(block) }
+    const execute = selecting()
+    const controller = new AgentController({ run: vi.fn() }, () => {}, execute, undefined, prompts)
+
+    controller.start({ ...request, cwd: '/tmp/project/sub' })
+    await vi.waitFor(() => expect(execute).toHaveBeenCalled())
+
+    expect(prompts.activeBlock).toHaveBeenCalledWith(request.checkout)
+    const prompt: string = execute.mock.calls[0][1]
+    expect(prompt.startsWith(`${request.prompt}\n\n${block}\nWork only in`)).toBe(true)
+  })
+
+  it('leaves the prompt unchanged when no custom prompt is active', async () => {
+    const execute = selecting()
+    const controller = new AgentController(
+      { run: vi.fn() },
+      () => {},
+      execute,
+      undefined,
+      { activeBlock: vi.fn().mockResolvedValue('') }
+    )
+
+    controller.start(request)
+    await vi.waitFor(() => expect(execute).toHaveBeenCalled())
+
+    const prompt: string = execute.mock.calls[0][1]
+    expect(prompt).not.toContain('custom_instructions')
+    expect(prompt.startsWith(`${request.prompt}\nWork only in`)).toBe(true)
+  })
+
+  it('re-reads custom instructions every turn and never carries them into the chat', async () => {
+    const events: AgentTaskEvent[] = []
+    const first = '<custom_instructions>\n### A\nFirst rule.\n</custom_instructions>'
+    const second = '<custom_instructions>\n### B\nSecond rule.\n</custom_instructions>'
+    const prompts = {
+      activeBlock: vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second).mockResolvedValue('')
+    }
+    const execute = selecting()
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute, undefined, prompts)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+    expect(controller.message(request.id, 'now tidy up')).toEqual({ ok: true })
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2))
+
+    const followUp: string = execute.mock.calls[1][1]
+    expect(followUp).toContain(second)
+    expect(followUp).not.toContain('First rule.')
+    expect(followUp.match(/<custom_instructions>/g)).toHaveLength(1)
+  })
+
+  it('still runs the turn when custom prompts cannot be read', async () => {
+    const execute = selecting()
+    const controller = new AgentController(
+      { run: vi.fn() },
+      () => {},
+      execute,
+      undefined,
+      { activeBlock: vi.fn().mockRejectedValue(new Error('disk gone')) }
+    )
+
+    controller.start(request)
+    await vi.waitFor(() => expect(execute).toHaveBeenCalled())
+    expect(execute.mock.calls[0][1]).not.toContain('custom_instructions')
+  })
+
   it('injects the checkout list into Plan mode and reloads it on follow-up', async () => {
     const events: AgentTaskEvent[] = []
     const store: TodoStore = {

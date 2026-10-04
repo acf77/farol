@@ -1,10 +1,9 @@
 import { useEffect } from 'react'
 import type { RemoteAccount } from '@shared/types'
-import { C, MONO, glass as G } from '../theme'
+import { C, MONO } from '../theme'
 import { remoteAccount, useRemoteAccount } from '../remote-account'
 import { Button } from './controls'
 import { UserIcon } from './icons'
-import { CHROME_ROW } from './side-panel'
 
 /**
  * The header's account avatar. Its popover shows who this machine is signed in
@@ -41,7 +40,7 @@ function Avatar({ account, size }: { account: RemoteAccount | null; size: number
   return <UserIcon size={Math.round(size * 0.6)} />
 }
 
-export default function AccountMenu({ liquid }: { liquid?: boolean }) {
+export default function AccountMenu() {
   const { account, userCode, busy, error, menuOpen: open } = useRemoteAccount()
 
   useEffect(() => remoteAccount.refresh(), [])
@@ -59,7 +58,7 @@ export default function AccountMenu({ liquid }: { liquid?: boolean }) {
   const label = signedIn ? `Account: ${signedIn.login}` : 'Account: not signed in'
 
   return (
-    <>
+    <div style={{ position: 'relative' }}>
       <button
         type="button"
         className="bf-focus bf-icon-btn"
@@ -110,14 +109,14 @@ export default function AccountMenu({ liquid }: { liquid?: boolean }) {
             style={{
               ...noDrag,
               position: 'absolute',
-              top: CHROME_ROW,
-              right: 16,
+              top: 34,
+              right: 0,
               zIndex: 50,
               width: 268,
-              background: liquid ? G.panel : C.sidebar,
+              background: 'oklch(0.26 0.006 95)',
               border: `1px solid ${C.border}`,
-              borderRadius: 12,
-              boxShadow: '0 18px 44px rgba(0,0,0,0.55)',
+              borderRadius: 10,
+              boxShadow: '0 12px 32px rgba(0,0,0,.45)',
               padding: 12,
               fontSize: 12,
               color: C.text
@@ -192,6 +191,6 @@ export default function AccountMenu({ liquid }: { liquid?: boolean }) {
           </div>
         </>
       )}
-    </>
+    </div>
   )
 }

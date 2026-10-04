@@ -60,6 +60,7 @@ import {
   type Todo,
   type TodoStore
 } from '../shared/todos'
+import type { CustomPromptStore } from './custom-prompts'
 import {
   isWriteToolName,
   mandatoryOptOutError,
@@ -144,6 +145,8 @@ interface Task {
   guidance: string[]
   pipelineRuns: PipelineActivity[]
   todos: Todo[]
+  /** The `<custom_instructions>` block, re-read every attempt; never stored in the chat. */
+  customInstructions: string
   /** The chat so far, and the CLI session that already holds it. */
   context: AgentContext
   /** A failed resume already fell back to a new session this cycle. */
@@ -407,7 +410,8 @@ export class AgentController {
     private runner: ValidationRunner,
     private emit: (event: AgentTaskEvent) => void,
     private executor?: AgentExecutor,
-    private todoStore?: TodoStore
+    private todoStore?: TodoStore,
+    private promptStore?: Pick<CustomPromptStore, 'activeBlock'>
   ) {}
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
@@ -447,6 +451,7 @@ export class AgentController {
       guidance: [],
       pipelineRuns: [],
       todos: [],
+      customInstructions: '',
       context: newAgentContext(clean),
       resumeAbandoned: false,
       abort: new AbortController(),
@@ -867,6 +872,11 @@ export class AgentController {
   private async loadTodos(task: Task): Promise<void> {
     if (!this.todoStore) return
     task.todos = await this.todoStore.load(task.request.checkout).catch(() => task.todos)
+  }
+
+  private async loadCustomInstructions(task: Task): Promise<void> {
+    if (!this.promptStore) return
+    task.customInstructions = await this.promptStore.activeBlock(task.request.checkout).catch(() => '')
   }
 
   private async applyTodos(task: Task, assistant: string): Promise<void> {
@@ -1438,6 +1448,7 @@ export class AgentController {
     try {
       for (attempt = 1; attempt <= maxAttempts && !task.cancelled; attempt++) {
         await this.loadTodos(task)
+        await this.loadCustomInstructions(task)
         const result = await this.runCycleAttempt(task, opening, attempt)
         if (result.kind === 'done') return
         opening = result.opening
@@ -1480,6 +1491,7 @@ export class AgentController {
       : ''
     return [
       this.lead(task, opening, resuming),
+      task.customInstructions ? `\n${task.customInstructions}` : '',
       '',
       `Work only in ${task.request.cwd}.`,
       this.pipelineHistory(task),

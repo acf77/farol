@@ -393,8 +393,6 @@ async function result(error?: string): Promise<SettingsResult> {
   return { settings: await loadSettings(), ...(error ? { error } : {}) }
 }
 
-const message = errorMessage
-
 /** Run the known-answer probe. No error means the key works and Jev agreed. */
 export async function checkJev(): Promise<SettingsResult> {
   try {
@@ -403,7 +401,7 @@ export async function checkJev(): Promise<SettingsResult> {
       answers.failed === true ? undefined : 'Jev answered the check question wrong. Try again.'
     )
   } catch (err) {
-    return result(message(err))
+    return result(errorMessage(err))
   }
 }
 
@@ -412,7 +410,7 @@ export async function saveJevKey(raw: unknown): Promise<SettingsResult> {
   try {
     setSecret('aiGatewayApiKey', raw)
   } catch (err) {
-    return result(message(err))
+    return result(errorMessage(err))
   }
   return checkJev()
 }
