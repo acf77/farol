@@ -35,6 +35,5 @@ export function managedCatalogPipelineId(runtimeId: string): string | undefined 
   const m = RUNTIME_PIPELINE_SLOT.exec(runtimeId)
   if (!m) return undefined
   const [, repoPrefix = '', , bare] = m
-  if (!bare) return undefined
   return `${repoPrefix}managed-pipeline:${bare}`
 }

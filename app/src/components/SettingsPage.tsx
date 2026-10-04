@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { Children, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { activePromptCount, type CustomPromptSet } from '@shared/custom-prompts'
 import type { AgentMode, AppSettings, ModelChoice, SettingsResult } from '@shared/types'
 import {
   AI_LABELS,
@@ -18,7 +19,8 @@ import {
   withOpenRouterAgent
 } from '@shared/settings'
 import { C, UI } from '../theme'
-import { Button, Checkbox, CliModelDropdown, SegmentedControl } from './controls'
+import { Button, Checkbox, CliModelDropdown, SegmentedControl, Switch } from './controls'
+import { CustomPromptsSection } from './CustomPromptsSection'
 import { ChevronDown, ChevronUp } from './icons'
 import { CHROME_ROW } from './side-panel'
 
@@ -28,13 +30,20 @@ interface Props {
   /** Adopt settings the main process already owns — provider keys, catalogs. */
   onAdoptSettings: (next: AppSettings) => void
   onClose: () => void
+  /** The open project, whose `.farol/prompts.json` Custom prompts edits. */
+  projectPath?: string | null
+  projectName?: string
 }
 
-type TabKey = 'general' | 'models'
+type PageKey = 'general' | 'prompts' | 'models' | 'fallbacks' | 'openrouter' | 'jev'
 
-const TABS: readonly { value: TabKey; label: string }[] = [
+const PAGES: readonly { value: PageKey; label: string }[] = [
   { value: 'general', label: 'General' },
-  { value: 'models', label: 'Models' }
+  { value: 'prompts', label: 'Custom prompts' },
+  { value: 'models', label: 'Models' },
+  { value: 'fallbacks', label: 'Fallbacks' },
+  { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'jev', label: 'Jev' }
 ]
 
 const OPENROUTER_AGENT_OPTIONS = OPENROUTER_AGENTS.map((value) => ({
@@ -43,17 +52,18 @@ const OPENROUTER_AGENT_OPTIONS = OPENROUTER_AGENTS.map((value) => ({
 }))
 
 const card: React.CSSProperties = {
-  border: `1px solid ${C.border}`,
+  border: `1px solid ${C.hair}`,
   borderRadius: 12,
   background: C.sidebar,
-  padding: 16,
   minWidth: 0
 }
 
+const mono = "ui-monospace, 'SF Mono', Menlo, monospace"
+
 const field: React.CSSProperties = {
-  height: 28,
-  padding: '0 8px',
-  borderRadius: 6,
+  height: 30,
+  padding: '0 10px',
+  borderRadius: 7,
   border: `1px solid ${C.border}`,
   background: C.terminal,
   color: C.text,
@@ -80,8 +90,8 @@ function ApiKeyField({
 
   if (configured && !replace) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 12, color: C.textSoft }}>API key saved</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 1, minWidth: 0 }}>
+        <span style={{ flex: 1, fontFamily: mono, fontSize: 12, color: C.textMuted }}>••••••••</span>
         <Button variant="ghost" onClick={() => setReplace(true)}>
           Replace
         </Button>
@@ -94,7 +104,7 @@ function ApiKeyField({
 
   return (
     <form
-      style={{ display: 'flex', gap: 8, marginBottom: 10 }}
+      style={{ display: 'flex', gap: 8, flex: 1, minWidth: 0 }}
       onSubmit={(e) => {
         e.preventDefault()
         void onSave(draft).then((saved) => {
@@ -112,7 +122,7 @@ function ApiKeyField({
         placeholder={placeholder}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        style={{ ...field, flex: 1 }}
+        style={{ ...field, flex: 1, minWidth: 0, fontFamily: mono }}
       />
       <Button type="submit" variant="primary" disabled={busy || !draft.trim()}>
         Save
@@ -125,6 +135,132 @@ function ApiKeyField({
     </form>
   )
 }
+
+
+const EYEBROW: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: '.06em',
+  textTransform: 'uppercase',
+  color: C.faint
+}
+
+/** Uppercase eyebrow over one card; `aside` sits on the right of the eyebrow. */
+function Group({
+  title,
+  count,
+  aside,
+  foot,
+  children
+}: {
+  title: string
+  count?: string
+  aside?: React.ReactNode
+  foot?: string
+  children: React.ReactNode
+}) {
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 24 }}>
+        <span style={EYEBROW}>{title}</span>
+        {count && <span style={{ fontSize: 11, color: C.fainter }}>{count}</span>}
+        <span style={{ flex: 1 }} />
+        {aside}
+      </div>
+      {children}
+      {foot && <span style={{ fontSize: 12, color: C.faint, textWrap: 'pretty' }}>{foot}</span>}
+    </section>
+  )
+}
+
+/** Rounded card whose children are separated by hairlines. */
+function Card({ children, clip }: { children: React.ReactNode; clip?: boolean }) {
+  return (
+    <div style={{ ...card, overflow: clip ? 'hidden' : undefined }}>
+      {Children.toArray(children).map((child, i) => (
+        <div key={i} style={i ? { borderTop: `1px solid ${C.hair}` } : undefined}>
+          {child}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const ROW: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 16, padding: '12px 16px' }
+
+function Blurb({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ padding: '14px 16px 4px', fontSize: 12, lineHeight: 1.55, color: C.faint, textWrap: 'pretty' }}>
+      {children}
+    </div>
+  )
+}
+
+/** Title and description on the left, the control on the right. */
+function Setting({
+  title,
+  hint,
+  icon,
+  width,
+  children
+}: {
+  title: string
+  hint?: string
+  icon?: React.ReactNode
+  width?: number
+  children: React.ReactNode
+}) {
+  return (
+    <div style={ROW}>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+          {icon}
+          {title}
+        </span>
+        {hint && <span style={{ fontSize: 12, color: C.faint, textWrap: 'pretty' }}>{hint}</span>}
+      </div>
+      <div style={{ width, flex: width ? 'none' : undefined, minWidth: 0 }}>{children}</div>
+    </div>
+  )
+}
+
+/** Fixed-width label with its control or value beside it. */
+function Field({ label, width = 100, children }: { label: string; width?: number; children: React.ReactNode }) {
+  return (
+    <div style={ROW}>
+      <span style={{ width, flex: 'none', fontSize: 13 }}>{label}</span>
+      {children}
+    </div>
+  )
+}
+
+function Value({ children }: { children: React.ReactNode }) {
+  return <span style={{ flex: 1, minWidth: 0, fontFamily: mono, fontSize: 12, color: C.textMuted }}>{children}</span>
+}
+
+function RefreshButton({ title, disabled, onClick }: { title: string; disabled?: boolean; onClick: () => void }) {
+  return (
+    <Button variant="ghost" aria-label={title} title={title} disabled={disabled} onClick={onClick}>
+      <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4">
+        <path d="M12 7a5 5 0 1 1-1.5-3.6" />
+        <path d="M11 1.5v2.5H8.5" />
+      </svg>
+    </Button>
+  )
+}
+
+function StatusText({ busy, ok, error }: { busy: boolean; ok?: string | null; error?: string | null }) {
+  if (busy) return <span style={{ fontSize: 11.5, color: C.faint }}>Working…</span>
+  if (error) return <span style={{ fontSize: 11.5, color: C.red }}>{error}</span>
+  if (ok) return <span style={{ fontSize: 11.5, color: C.green }}>{ok}</span>
+  return null
+}
+
+const ActionRow = ({ children }: { children: React.ReactNode }) => (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, padding: '8px 10px' }}>
+    {children}
+  </div>
+)
 
 /**
  * Jev never reaches a model picker — Farol calls it for its own decisions — so
@@ -155,81 +291,53 @@ function JevSection({
   }
 
   return (
-    <Section
+    <Group
       title="Jev"
-      hint={`${JEV_MODEL_ID} via ${AI_GATEWAY_API_URL} — Farol's internal decisions only. Jev writes no text, so it is not offered to Chat or to pipeline steps.`}
-    >
-      <ApiKeyField
-        configured={configured}
-        placeholder="vck_…"
-        busy={busy}
-        onSave={(key) => run(api.jev.saveKey(key))}
-        onClear={() => void run(api.jev.clearKey())}
-      />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Button
-          variant="secondary"
-          disabled={busy || !configured}
-          onClick={() => void run(api.jev.check())}
+      aside={
+        <span
+          style={{
+            fontSize: 11,
+            padding: '1px 6px',
+            borderRadius: 4,
+            background: 'oklch(0.73 0.16 300 / 0.12)',
+            color: C.purpleSoft
+          }}
         >
-          Test
-        </Button>
-        {busy && <span style={{ fontSize: 11, color: C.textMuted }}>Working…</span>}
-        {!busy && configured && probed && !error && (
-          <span style={{ fontSize: 11, color: C.textSoft }}>
-            Jev answered the check question.
-          </span>
-        )}
-      </div>
-      {error && <div style={{ fontSize: 12, color: C.red, marginTop: 8 }}>{error}</div>}
-    </Section>
-  )
-}
-
-function Section({
-  title,
-  hint,
-  children
-}: {
-  title: string
-  hint?: string
-  children: React.ReactNode
-}) {
-  return (
-    <section style={card}>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: hint ? 4 : 10 }}>{title}</div>
-      {hint && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.45, marginBottom: 14 }}>{hint}</div>}
-      {children}
-    </section>
-  )
-}
-
-/** One `<agent> → default model` row. An empty value leaves it to the CLI. */
-function ModelRow({
-  provider,
-  settings,
-  onChange
-}: {
-  provider: AiProvider
-  settings: AppSettings
-  onChange: (model?: string) => void
-}) {
-  return (
-    <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <span style={{ width: 96, flex: 'none', fontSize: 12, color: C.textSoft }}>
-        {AI_LABELS[provider]}
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <CliModelDropdown
-          label={`${AI_LABELS[provider]} default model`}
-          provider={provider}
-          model={settings.models[provider]}
-          settings={settings}
-          locked
-          onChange={(_agent, model) => onChange(model)}
-        />
-      </div>
-    </label>
+          Internal
+        </span>
+      }
+    >
+      <Card>
+        <Blurb>
+          Farol&apos;s internal decisions only. Jev writes no text, so it is not offered to Chat or to pipeline steps.
+        </Blurb>
+        <Field label="Model">
+          <Value>{JEV_MODEL_ID}</Value>
+        </Field>
+        <Field label="Gateway">
+          <Value>{AI_GATEWAY_API_URL}</Value>
+        </Field>
+        <Field label="API key">
+          <ApiKeyField
+            configured={configured}
+            placeholder="vck_…"
+            busy={busy}
+            onSave={(key) => run(api.jev.saveKey(key))}
+            onClear={() => void run(api.jev.clearKey())}
+          />
+        </Field>
+        <ActionRow>
+          <StatusText
+            busy={busy}
+            error={error}
+            ok={configured && probed ? 'Jev answered the check question.' : null}
+          />
+          <Button variant="secondary" disabled={busy || !configured} onClick={() => void run(api.jev.check())}>
+            Test connection
+          </Button>
+        </ActionRow>
+      </Card>
+    </Group>
   )
 }
 
@@ -256,72 +364,118 @@ function ModeChain({
     save(next)
   }
   const fallback = pickerProviders(settings.openrouter)[0]
+  const title = mode === 'plan' ? 'Plan mode' : 'Build mode'
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {chain.map((rung, i) => (
-        <div key={`${rung.agent}:${rung.model ?? ''}`} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ width: 18, flex: 'none', fontSize: 11, color: C.faint }}>{i + 1}.</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <CliModelDropdown
-              label={`${mode === 'plan' ? 'Plan' : 'Build'} model ${i + 1}`}
-              provider={rung.agent}
-              model={rung.model}
-              settings={settings}
-              onChange={(agent, model) =>
-                save(chain.map((r, at) => (at === i ? { agent, ...(model ? { model } : {}) } : r)))
-              }
-            />
-          </div>
-          <Button
-            variant="ghost"
-            aria-label={`Move model ${i + 1} up`}
-            disabled={i === 0}
-            onClick={() => move(i, i - 1)}
-          >
-            <ChevronUp size={11} color="currentColor" />
-          </Button>
-          <Button
-            variant="ghost"
-            aria-label={`Move model ${i + 1} down`}
-            disabled={i === chain.length - 1}
-            onClick={() => move(i, i + 1)}
-          >
-            <ChevronDown size={11} color="currentColor" />
-          </Button>
-          <Button
-            variant="danger"
-            aria-label={`Remove model ${i + 1}`}
-            onClick={() => save(chain.filter((_, at) => at !== i))}
-          >
-            Remove
-          </Button>
-        </div>
-      ))}
-      <div>
-        <Button
-          variant="secondary"
-          disabled={!fallback}
-          onClick={() => fallback && save([...chain, { agent: fallback }])}
-        >
-          {chain.length ? 'Add fallback' : 'Add model'}
+    <Group
+      title={title}
+      count={String(chain.length)}
+      aside={
+        <Button variant="ghost" disabled={!fallback} onClick={() => fallback && save([...chain, { agent: fallback }])}>
+          + Add fallback
         </Button>
-      </div>
-    </div>
+      }
+      foot={mode === 'plan' ? 'Leave empty to keep whichever model the chat is already on.' : undefined}
+    >
+      <Card>
+        {chain.length === 0 ? (
+          <div style={{ padding: '14px 16px', fontSize: 12.5, color: C.faint }}>
+            {mode === 'plan'
+              ? 'Empty — plan mode keeps whichever model the chat is already on.'
+              : 'Empty — build mode uses the default model only.'}
+          </div>
+        ) : (
+          chain.map((rung, i) => (
+            <div
+              key={`${rung.agent}:${rung.model ?? ''}`}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px 8px 16px' }}
+            >
+              <span style={{ width: 18, flex: 'none', fontFamily: mono, fontSize: 11.5, color: C.fainter }}>
+                {i + 1}.
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <CliModelDropdown
+                  label={`${title} model ${i + 1}`}
+                  provider={rung.agent}
+                  model={rung.model}
+                  settings={settings}
+                  onChange={(agent, model) =>
+                    save(chain.map((r, at) => (at === i ? { agent, ...(model ? { model } : {}) } : r)))
+                  }
+                />
+              </div>
+              {i === 0 && (
+                <span
+                  style={{
+                    flex: 'none',
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    padding: '1px 6px',
+                    borderRadius: 4,
+                    background: 'oklch(0.91 0.19 115 / 0.14)',
+                    color: C.accent
+                  }}
+                >
+                  FIRST
+                </span>
+              )}
+              <div style={{ display: 'flex', gap: 2, flex: 'none' }}>
+                <Button
+                  variant="ghost"
+                  aria-label={`Move model ${i + 1} up`}
+                  disabled={i === 0}
+                  onClick={() => move(i, i - 1)}
+                >
+                  <ChevronUp size={11} color="currentColor" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  aria-label={`Move model ${i + 1} down`}
+                  disabled={i === chain.length - 1}
+                  onClick={() => move(i, i + 1)}
+                >
+                  <ChevronDown size={11} color="currentColor" />
+                </Button>
+                <Button
+                  variant="danger"
+                  aria-label={`Remove model ${i + 1}`}
+                  onClick={() => save(chain.filter((_, at) => at !== i))}
+                >
+                  Remove
+                </Button>
+              </div>
+            </div>
+          ))
+        )}
+      </Card>
+    </Group>
   )
 }
 
-export default function SettingsPage({ settings, onSettings, onAdoptSettings, onClose }: Props) {
+export default function SettingsPage({
+  settings,
+  onSettings,
+  onAdoptSettings,
+  onClose,
+  projectPath,
+  projectName
+}: Props) {
   const api = window.farol
   const or = settings.openrouter
   const configured = !!or?.hasKey
   const orAgent = normalizeOpenRouterAgent(or?.agent)
-  const [tab, setTab] = useState<TabKey>('general')
+  const [page, setPage] = useState<PageKey>('general')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [listsHint, setListsHint] = useState<string | null>(null)
+  const [promptCount, setPromptCount] = useState(0)
+  const promptRevision = useRef(0)
   const listsRefreshed = useRef(false)
+  const updatePromptCount = useCallback((set: CustomPromptSet) => {
+    promptRevision.current += 1
+    setPromptCount(activePromptCount(set))
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -333,6 +487,21 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  useEffect(() => {
+    let live = true
+    const revision = ++promptRevision.current
+    setPromptCount(0)
+    void api.prompts
+      .load(projectPath ?? null)
+      .then((set) => {
+        if (live && revision === promptRevision.current) setPromptCount(activePromptCount(set))
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [api.prompts, projectPath])
 
   const retried = useRef(false)
   useEffect(() => {
@@ -362,10 +531,10 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
   }
 
   useEffect(() => {
-    if (tab !== 'models' || listsRefreshed.current) return
+    if (page !== 'models' || listsRefreshed.current) return
     listsRefreshed.current = true
     refreshLists()
-  }, [tab])
+  }, [page])
 
   const providers = pickerProviders(or)
   const catalog = or?.catalog ?? []
@@ -374,6 +543,11 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
   const visible = q
     ? catalog.filter((m) => `${m.label} ${m.id}`.toLowerCase().includes(q))
     : catalog
+  const meta: Partial<Record<PageKey, string>> = {
+    prompts: promptCount ? String(promptCount) : '',
+    fallbacks: String(settings.modeDefaults.build.length + settings.modeDefaults.plan.length),
+    openrouter: configured ? String(pinned.size) : ''
+  }
 
   return createPortal(
     <div
@@ -386,7 +560,7 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
         zIndex: 90,
         display: 'flex',
         flexDirection: 'column',
-        background: C.terminal,
+        background: C.app,
         color: C.text,
         fontFamily: UI
       }}
@@ -395,230 +569,305 @@ export default function SettingsPage({ settings, onSettings, onAdoptSettings, on
         style={{
           height: 52,
           flex: 'none',
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+          display: 'flex',
           alignItems: 'center',
-          padding: '0 16px',
-          borderBottom: `1px solid ${C.border}`
+          padding: '0 16px 0 18px',
+          borderBottom: `1px solid ${C.hair}`
         }}
       >
-        <span style={{ fontSize: 13, fontWeight: 600 }}>Settings</span>
-        <SegmentedControl
-          label="Settings section"
-          options={TABS}
-          value={tab}
-          onChange={setTab}
-          style={{ width: 180 }}
-        />
-        <div style={{ justifySelf: 'end' }}>
-          <Button variant="ghost" onClick={onClose}>
-            Done
-          </Button>
-        </div>
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>Settings</span>
+        <Button variant="secondary" onClick={onClose}>
+          Done
+        </Button>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '24px 16px' }}>
-        {tab === 'general' ? (
+      <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+        <nav
+          aria-label="Settings section"
+          style={{
+            width: 196,
+            flex: 'none',
+            padding: '18px 10px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            borderRight: `1px solid ${C.hair}`
+          }}
+        >
+          {PAGES.map(({ value, label }) => {
+            const on = page === value
+            return (
+              <button
+                key={value}
+                type="button"
+                className="bf-focus"
+                aria-current={on ? 'page' : undefined}
+                onClick={() => setPage(value)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '7px 10px',
+                  border: 'none',
+                  borderRadius: 7,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  fontSize: 13,
+                  textAlign: 'left',
+                  background: on ? 'oklch(1 0 0 / 0.07)' : 'transparent',
+                  color: on ? C.text : C.textMuted
+                }}
+              >
+                <span style={{ flex: 1 }}>{label}</span>
+                <span style={{ fontSize: 11, color: C.faint }}>{meta[value]}</span>
+              </button>
+            )
+          })}
+        </nav>
+
+        <div style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
           <div
             style={{
-              maxWidth: 620,
+              maxWidth: 680,
               margin: '0 auto',
+              padding: '36px 32px 80px',
               display: 'flex',
               flexDirection: 'column',
-              gap: 14
+              gap: 32
             }}
           >
-            <Section title="Agent" hint="Starts new chats and picks up failures sent from a run.">
-              <select
-                className="bf-input bf-focus"
-                aria-label="Default agent"
-                value={settings.agent}
-                onChange={(e) => onSettings({ ...settings, agent: e.target.value as AiProvider })}
-                style={{ ...field, width: '100%' }}
-              >
-                {providers.map((p) => (
-                  <option key={p} value={p}>
-                    {AI_LABELS[p]}
-                  </option>
-                ))}
-              </select>
-            </Section>
-
-            <Section title="Failures">
-              <Checkbox
-                checked={settings.autoFix}
-                onChange={(autoFix) => onSettings({ ...settings, autoFix })}
-                style={{ fontSize: 12, color: C.textSoft }}
-              >
-                Send a failed step&apos;s report straight to Chat
-              </Checkbox>
-            </Section>
-
-            <JevSection settings={settings} onAdoptSettings={onAdoptSettings} />
-          </div>
-        ) : (
-          <div
-            style={{
-              maxWidth: 900,
-              margin: '0 auto',
-              display: 'grid',
-              gridTemplateColumns: configured ? 'minmax(0, 1fr) minmax(0, 1fr)' : 'minmax(0, 1fr)',
-              gap: 14,
-              alignItems: 'start'
-            }}
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
-              <Section
-                title="Default model"
-                hint="Each agent starts new chats with the model picked here. Pipeline steps keep their own. Lists refresh from the installed CLIs."
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {providers.map((p) => (
-                    <ModelRow
-                      key={p}
-                      provider={p}
-                      settings={settings}
-                      onChange={(model) => onSettings(withAgentModel(settings, p, model))}
-                    />
-                  ))}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-                  <Button variant="secondary" disabled={busy} onClick={refreshLists}>
-                    Refresh model lists
-                  </Button>
-                  {busy && <span style={{ fontSize: 11, color: C.textMuted }}>Working…</span>}
-                  {!busy && listsHint && (
-                    <span style={{ fontSize: 11, color: listsHint === 'Updated' ? C.textSoft : C.red }}>
-                      {listsHint}
-                    </span>
-                  )}
-                </div>
-              </Section>
-
-              <Section
-                title="Build mode"
-                hint="New chats start on the first model. If it fails — CLI missing, non-zero exit, usage or quota limit — Farol retries the same turn on the next one down."
-              >
-                <ModeChain mode="build" settings={settings} onSettings={onSettings} />
-              </Section>
-
-              <Section
-                title="Plan mode"
-                hint="Leave empty to keep whichever model the chat is already on."
-              >
-                <ModeChain mode="plan" settings={settings} onSettings={onSettings} />
-              </Section>
-
-              <Section
-                title="Commit message generator"
-                hint="Used only when Git drafts a commit message. It does not follow the chat default."
-              >
-                <CliModelDropdown
-                  label="Commit message provider and model"
-                  provider={settings.commitMessage.agent}
-                  model={settings.commitMessage.model}
-                  settings={settings}
-                  onChange={(agent, model) => onSettings(withCommitMessageModel(settings, agent, model))}
-                />
-              </Section>
-
-              <Section
-                title="OpenRouter"
-                hint={`Endpoint ${OPENROUTER_API_URL} · runs through ${OPENROUTER_AGENT_LABELS[orAgent]}`}
-              >
-                <ApiKeyField
-                  configured={configured}
-                  placeholder="sk-or-…"
-                  busy={busy}
-                  onSave={(key) => {
-                    setBusy(true)
-                    return api.openrouter.saveKey(key).then(apply)
-                  }}
-                  onClear={() => {
-                    setBusy(true)
-                    void api.openrouter.clearKey().then(apply)
-                  }}
-                />
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <span style={{ fontSize: 12, color: C.textSoft }}>Runs through</span>
-                  <SegmentedControl
-                    label="OpenRouter agent"
-                    options={OPENROUTER_AGENT_OPTIONS}
-                    value={orAgent}
-                    onChange={(next) => onSettings(withOpenRouterAgent(settings, next))}
-                    style={{ width: 180 }}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <Button
-                    variant="secondary"
-                    disabled={busy || !configured}
-                    onClick={() => {
-                      setBusy(true)
-                      void api.openrouter.refresh().then(apply)
-                    }}
-                  >
-                    Refresh catalog
-                  </Button>
-                  {busy && <span style={{ fontSize: 11, color: C.textMuted }}>Working…</span>}
-                </div>
-                {error && <div style={{ fontSize: 12, color: C.red, marginBottom: 8 }}>{error}</div>}
-              </Section>
-            </div>
-
-            {configured && (
-              <Section title="Pinned models" hint="Chat and pipelines list these under OpenRouter.">
-                <input
-                  className="bf-input bf-focus"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Filter catalog…"
-                  spellCheck={false}
-                  style={{ ...field, width: '100%', marginBottom: 10 }}
-                />
-                {!catalog.length && (
-                  <div style={{ fontSize: 12, color: C.textMuted }}>
-                    {error
-                      ? 'Catalog unavailable.'
-                      : 'No tool-capable models yet. Refresh after saving a key.'}
-                  </div>
-                )}
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 4,
-                    maxHeight: 360,
-                    overflow: 'auto'
-                  }}
-                >
-                  {visible.map((m) => (
-                    <Checkbox
-                      key={m.id}
-                      checked={pinned.has(m.id)}
-                      onChange={(on) => {
-                        const current = or?.pinned ?? []
-                        const next = on
-                          ? [...current, m.id]
-                          : current.filter((id) => id !== m.id)
-                        void api.openrouter.setPinned(next).then(apply)
-                      }}
-                      title={m.id}
-                      style={{ fontSize: 12, color: C.textSoft }}
-                    >
-                      <span>
-                        {m.label}
-                        <span style={{ color: C.faint, marginLeft: 6 }}>{m.id}</span>
-                      </span>
-                    </Checkbox>
-                  ))}
-                </div>
-              </Section>
+            {page === 'general' && (
+              <>
+                <Group title="Agent">
+                  <Card>
+                    <Setting title="Default agent" hint="Starts new chats and picks up failures sent from a run." width={220}>
+                      <select
+                        className="bf-input bf-focus"
+                        aria-label="Default agent"
+                        value={settings.agent}
+                        onChange={(e) => onSettings({ ...settings, agent: e.target.value as AiProvider })}
+                        style={{ ...field, width: '100%' }}
+                      >
+                        {providers.map((p) => (
+                          <option key={p} value={p}>
+                            {AI_LABELS[p]}
+                          </option>
+                        ))}
+                      </select>
+                    </Setting>
+                    <Setting title="Send failures to Chat" hint="Send a failed step's report straight to Chat.">
+                      <Switch
+                        label="Send failures to Chat"
+                        checked={settings.autoFix}
+                        onChange={(autoFix) => onSettings({ ...settings, autoFix })}
+                      />
+                    </Setting>
+                  </Card>
+                </Group>
+              </>
             )}
+
+            {page === 'prompts' && (
+              <CustomPromptsSection
+                projectPath={projectPath ?? null}
+                projectName={projectName}
+                onChange={updatePromptCount}
+              />
+            )}
+
+            {page === 'models' && (
+              <>
+                <Group
+                  title="Default model"
+                  foot="Each agent starts new chats with the model picked here. Pipeline steps keep their own. Lists refresh from the installed CLIs."
+                  aside={
+                    <>
+                      <StatusText busy={busy} error={listsHint === 'Updated' ? null : listsHint} ok={listsHint === 'Updated' ? 'Updated' : null} />
+                      <RefreshButton title="Refresh model lists" disabled={busy} onClick={refreshLists} />
+                    </>
+                  }
+                >
+                  <Card>
+                    {providers.map((p) => (
+                      <div key={p} style={{ ...ROW, padding: '9px 16px' }}>
+                        <span style={{ width: 110, flex: 'none', fontSize: 13 }}>{AI_LABELS[p]}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <CliModelDropdown
+                            label={`${AI_LABELS[p]} default model`}
+                            provider={p}
+                            model={settings.models[p]}
+                            settings={settings}
+                            locked
+                            onChange={(_agent, model) => onSettings(withAgentModel(settings, p, model))}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </Card>
+                </Group>
+                <Group title="Commit messages">
+                  <Card>
+                    <Setting
+                      title="Generator"
+                      icon={<span style={{ color: C.purpleSoft, fontSize: 12 }}>✦</span>}
+                      hint="Used only when Git drafts a commit message. It does not follow the chat default."
+                      width={260}
+                    >
+                      <CliModelDropdown
+                        label="Commit message provider and model"
+                        provider={settings.commitMessage.agent}
+                        model={settings.commitMessage.model}
+                        settings={settings}
+                        onChange={(agent, model) => onSettings(withCommitMessageModel(settings, agent, model))}
+                      />
+                    </Setting>
+                  </Card>
+                </Group>
+              </>
+            )}
+
+            {page === 'fallbacks' && (
+              <>
+                <span style={{ fontSize: 12.5, lineHeight: 1.55, color: C.textMuted, textWrap: 'pretty' }}>
+                  New chats start on the first model. If it fails — CLI missing, non-zero exit, usage or quota limit —
+                  Farol retries the same turn on the next one down.
+                </span>
+                <ModeChain mode="build" settings={settings} onSettings={onSettings} />
+                <ModeChain mode="plan" settings={settings} onSettings={onSettings} />
+              </>
+            )}
+
+            {page === 'openrouter' && (
+              <>
+                <Group title="Connection">
+                  <Card>
+                    <Field label="Endpoint">
+                      <Value>{OPENROUTER_API_URL}</Value>
+                    </Field>
+                    <Field label="API key">
+                      <ApiKeyField
+                        configured={configured}
+                        placeholder="sk-or-…"
+                        busy={busy}
+                        onSave={(key) => {
+                          setBusy(true)
+                          return api.openrouter.saveKey(key).then(apply)
+                        }}
+                        onClear={() => {
+                          setBusy(true)
+                          void api.openrouter.clearKey().then(apply)
+                        }}
+                      />
+                    </Field>
+                    <Setting title="Runs through" hint="The CLI that executes OpenRouter models.">
+                      <SegmentedControl
+                        label="OpenRouter agent"
+                        options={OPENROUTER_AGENT_OPTIONS}
+                        value={orAgent}
+                        onChange={(next) => onSettings(withOpenRouterAgent(settings, next))}
+                        style={{ width: 180 }}
+                      />
+                    </Setting>
+                  </Card>
+                </Group>
+
+                {configured && (
+                  <Group
+                    title="Pinned models"
+                    count={`${pinned.size} pinned`}
+                    foot="Chat and pipelines list these under OpenRouter."
+                    aside={
+                      <>
+                        <StatusText busy={busy} error={error} />
+                        <RefreshButton
+                          title="Refresh catalog"
+                          disabled={busy}
+                          onClick={() => {
+                            setBusy(true)
+                            void api.openrouter.refresh().then(apply)
+                          }}
+                        />
+                      </>
+                    }
+                  >
+                    <Card clip>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px' }}>
+                        <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke={C.faint} strokeWidth="1.4">
+                          <circle cx="6" cy="6" r="4.2" />
+                          <path d="m9.2 9.2 3 3" />
+                        </svg>
+                        <input
+                          className="bf-focus"
+                          aria-label="Filter catalog"
+                          value={query}
+                          onChange={(e) => setQuery(e.target.value)}
+                          placeholder="Filter catalog…"
+                          spellCheck={false}
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            padding: '4px 0',
+                            border: 'none',
+                            background: 'transparent',
+                            color: C.text,
+                            fontSize: 12.5,
+                            outline: 'none'
+                          }}
+                        />
+                      </div>
+                      <div style={{ maxHeight: 380, overflow: 'auto' }}>
+                        {!catalog.length && (
+                          <div style={{ padding: 14, fontSize: 12.5, color: C.faint }}>
+                            {error ? 'Catalog unavailable.' : 'No tool-capable models yet. Refresh after saving a key.'}
+                          </div>
+                        )}
+                        {!!catalog.length && !visible.length && (
+                          <div style={{ padding: 14, fontSize: 12.5, color: C.faint }}>No models match “{query}”.</div>
+                        )}
+                        {visible.map((m, i) => (
+                          <Checkbox
+                            key={m.id}
+                            checked={pinned.has(m.id)}
+                            onChange={(on) => {
+                              const current = or?.pinned ?? []
+                              const next = on ? [...current, m.id] : current.filter((id) => id !== m.id)
+                              void api.openrouter.setPinned(next).then(apply)
+                            }}
+                            title={m.id}
+                            style={{
+                              gap: 10,
+                              padding: '7px 14px',
+                              fontSize: 12.5,
+                              color: C.text,
+                              borderTop: i ? `1px solid ${C.hair}` : undefined
+                            }}
+                          >
+                            <span style={{ flex: 'none' }}>{m.label}</span>
+                            <span
+                              style={{
+                                flex: 1,
+                                minWidth: 0,
+                                fontFamily: mono,
+                                fontSize: 11.5,
+                                color: C.faint,
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis'
+                              }}
+                            >
+                              {m.id}
+                            </span>
+                          </Checkbox>
+                        ))}
+                      </div>
+                    </Card>
+                  </Group>
+                )}
+              </>
+            )}
+
+            {page === 'jev' && <JevSection settings={settings} onAdoptSettings={onAdoptSettings} />}
           </div>
-        )}
+        </div>
       </div>
     </div>,
     document.body

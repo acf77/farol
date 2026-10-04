@@ -21,7 +21,7 @@ import UsageBar from '../UsageBar'
 import TodoList from '../TodoList'
 import {
   AttachmentIcon,
-  ChevronDown,
+  ChevronsUpDown,
   ClipIcon,
   SendIcon
 } from '../icons'
@@ -270,19 +270,6 @@ function applyMentionInsert(
   return { text: `${before}@${file} ${after}`, caret: before.length + file.length + 2 }
 }
 
-function applyMentionOpen(
-  text: string,
-  caret: number
-): { text: string; mention: { query: string; start: number }; caret: number | null } {
-  const active = mentionFromCaret(text, caret)
-  if (active) return { text, mention: active, caret: null }
-  return {
-    text: `${text.slice(0, caret)}@${text.slice(caret)}`,
-    mention: { query: '', start: caret },
-    caret: caret + 1
-  }
-}
-
 function focusCaret(node: HTMLTextAreaElement | null, caret: number): void {
   window.setTimeout(() => {
     node?.focus()
@@ -352,14 +339,11 @@ async function saveAttachments(
 
 function composerSurfaceStyle(dragOver: boolean): React.CSSProperties {
   return {
-    maxWidth: 680,
-    margin: '0 auto',
-    background: dragOver ? C.panel : C.sidebar,
-    border: dragOver ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
-    borderRadius: 12,
-    padding: '14px 16px 11px',
+    background: dragOver ? C.panel : 'oklch(0.21 0.005 95)',
+    border: dragOver ? `1px solid ${C.accent}` : '1px solid oklch(1 0 0 / 0.08)',
+    borderRadius: 14,
     position: 'relative',
-    boxShadow: dragOver ? '0 0 0 1px rgba(214, 242, 58,.2)' : 'none'
+    boxShadow: dragOver ? '0 0 0 1px rgba(214, 242, 58,.2)' : '0 8px 24px rgba(0,0,0,.25)'
   }
 }
 
@@ -426,12 +410,14 @@ const COMPOSER_TEXTAREA_STYLE: React.CSSProperties = {
   background: 'transparent',
   color: C.text,
   fontFamily: 'inherit',
-  fontSize: 13,
+  fontSize: 13.5,
   lineHeight: 1.5,
-  minHeight: 40,
+  minHeight: 54,
   maxHeight: 200,
   overflowY: 'auto',
-  padding: 0,
+  padding: '14px 16px 6px',
+  display: 'block',
+  boxSizing: 'border-box',
   userSelect: 'text',
   WebkitUserSelect: 'text',
   caretColor: C.text
@@ -446,51 +432,33 @@ export function ChatModeSwitch({
   locked: boolean
   onChange: (mode: AgentMode) => void
 }) {
-  return (
-    <div
-      role="group"
-      aria-label="Chat mode"
+  const option = (value: AgentMode, label: string, title: string) => (
+    <button
+      type="button"
+      className="bf-focus"
+      disabled={locked}
+      onClick={() => onChange(value)}
+      title={title}
+      aria-pressed={mode === value}
       style={{
-        display: 'flex',
-        alignItems: 'center',
-        padding: 2,
-        gap: 2,
-        borderRadius: 8,
-        background: C.panel,
-        border: `1px solid ${C.border}`
+        border: 'none',
+        borderRadius: 5,
+        padding: '4px 10px',
+        background: mode === value ? 'oklch(0.31 0.006 95)' : 'transparent',
+        color: mode === value ? C.text : C.faint,
+        fontFamily: 'inherit',
+        fontSize: 12,
+        fontWeight: 500,
+        cursor: locked ? 'default' : 'pointer'
       }}
     >
-      <button
-        type="button"
-        className="bf-focus"
-        disabled={locked}
-        onClick={() => onChange('plan')}
-        title="Plan without making changes"
-        aria-pressed={mode === 'plan'}
-        style={{
-          border: 'none', borderRadius: 6, padding: '3px 7px',
-          background: mode === 'plan' ? C.sidebar : 'transparent',
-          color: mode === 'plan' ? C.text : C.textMuted,
-          fontSize: 11, fontWeight: 600, cursor: locked ? 'default' : 'pointer'
-        }}
-      >
-        Plan
-      </button>
-      <button
-        type="button"
-        className="bf-focus"
-        disabled={locked}
-        onClick={() => onChange('build')}
-        title="Build with file changes"
-        aria-pressed={mode === 'build'}
-        style={{
-          border: 'none', borderRadius: 6, padding: '3px 7px',
-          background: mode === 'build' ? C.sidebar : 'transparent', color: mode === 'build' ? C.text : C.textMuted,
-          fontSize: 11, fontWeight: 600, cursor: locked ? 'default' : 'pointer'
-        }}
-      >
-        Build
-      </button>
+      {label}
+    </button>
+  )
+  return (
+    <div role="group" aria-label="Chat mode" style={{ display: 'flex', padding: 2, borderRadius: 7, background: C.app }}>
+      {option('plan', 'Plan', 'Plan without making changes')}
+      {option('build', 'Build', 'Build with file changes')}
     </div>
   )
 }
@@ -508,7 +476,6 @@ function ComposerToolbar({
   canSend,
   onOpenAgentMenu,
   onModeChange,
-  onOpenMention,
   onAttach,
   onCancel,
   onSend
@@ -525,83 +492,62 @@ function ComposerToolbar({
   canSend: boolean
   onOpenAgentMenu: () => void
   onModeChange: (mode: AgentMode) => void
-  onOpenMention: () => void
   onAttach: () => void
   onCancel: () => void
   onSend: () => void
 }) {
+  const quiet: React.CSSProperties = {
+    display: 'grid',
+    placeItems: 'center',
+    width: 28,
+    height: 28,
+    border: 'none',
+    borderRadius: 7,
+    background: 'transparent',
+    color: C.faint,
+    cursor: 'pointer',
+    padding: 0
+  }
   return (
-    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 14, rowGap: 8 }}>
+    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '8px 10px 10px 12px' }}>
       <ChatModeSwitch mode={mode} locked={modeLocked} onChange={onModeChange} />
-      <span style={{ flex: 1 }} />
-      <button
-        ref={agentBtnRef}
-        type="button"
-        className="bf-focus"
-        onClick={onOpenAgentMenu}
-        title={`Agent: ${aiSelectionLabel(provider, model)}`}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 5,
-          border: 'none',
-          background: 'transparent',
-          color: C.textMuted,
-          fontSize: 12,
-          cursor: 'pointer',
-          padding: '2px 4px'
-        }}
-      >
-        <span
-          style={{
-            maxWidth: 168,
-            ...ELLIPSIS
-          }}
-        >
-          {aiSelectionLabel(provider, model)}
-        </span>
-        <ChevronDown size={11} />
-      </button>
-      <UsageBar usage={usage} provider={provider} onRefresh={onRefreshUsage} />
-      <ContextMeter usage={contextUsage} />
-      <button
-        type="button"
-        className="bf-focus"
-        onClick={onOpenMention}
-        title="Reference a file (@)"
-        aria-label="Reference a file"
-        style={{
-          display: 'grid',
-          placeItems: 'center',
-          border: 'none',
-          background: 'transparent',
-          color: C.textMuted,
-          cursor: 'pointer',
-          padding: 2
-        }}
-      >
-        @
-      </button>
       <button
         type="button"
         className="bf-focus bf-composer-btn"
         onClick={onAttach}
         title="Attach files"
         aria-label="Attach files"
+        style={quiet}
+      >
+        <ClipIcon size={13} />
+      </button>
+      <span style={{ flex: '1 1 0', minWidth: 0 }} />
+      <UsageBar usage={usage} provider={provider} onRefresh={onRefreshUsage} />
+      <ContextMeter usage={contextUsage} />
+      <button
+        ref={agentBtnRef}
+        type="button"
+        className="bf-focus bf-composer-btn"
+        onClick={onOpenAgentMenu}
+        title={`Agent: ${aiSelectionLabel(provider, model)}`}
         style={{
-          display: 'grid',
-          placeItems: 'center',
-          width: 26,
-          height: 26,
+          flex: '0 1 auto',
+          minWidth: 0,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
           border: 'none',
-          borderRadius: 6,
+          borderRadius: 7,
           background: 'transparent',
-          color: C.textMuted,
+          color: C.textRow,
+          fontFamily: 'inherit',
+          fontSize: 12,
           cursor: 'pointer',
-          padding: 2
+          padding: '5px 9px'
         }}
       >
-        <ClipIcon />
+        <span style={{ minWidth: 0, ...ELLIPSIS }}>{aiSelectionLabel(provider, model)}</span>
+        <ChevronsUpDown size={9} color={C.faint} style={{ flex: 'none' }} />
       </button>
       <SendButton isBusy={isBusy} canSend={canSend} onCancel={onCancel} onSend={onSend} />
     </div>
@@ -630,19 +576,21 @@ function SendButton({
       style={{
         width: 30,
         height: 30,
+        flex: 'none',
+        marginLeft: 2,
         borderRadius: '50%',
         border: 'none',
-        background: isBusy ? C.red : canSend ? C.accent : C.panel,
-        color: !isBusy && canSend ? C.accentInk : C.text,
+        background: isBusy ? 'oklch(0.31 0.006 95)' : canSend ? C.accent : C.panel,
+        color: !isBusy && canSend ? C.accentInk : C.textMuted,
         display: 'grid',
         placeItems: 'center',
         cursor: isBusy || canSend ? 'pointer' : 'default'
       }}
     >
       {isBusy ? (
-        <span style={{ width: 10, height: 10, borderRadius: 4, background: '#fff' }} />
+        <span style={{ width: 9, height: 9, borderRadius: 2, background: C.text }} />
       ) : (
-        <SendIcon />
+        <SendIcon size={13} />
       )}
     </button>
   )
@@ -666,7 +614,10 @@ export function ComposerBox({
   onProviderChange,
   onModeChange,
   sendTextRef,
-  showFade
+  showFade,
+  hasRequired,
+  placeholder,
+  starters
 }: {
   projectPath: string
   availableCount: number
@@ -687,6 +638,12 @@ export function ComposerBox({
   /** Lets the parent fire the same send path suggestions used before (incl. history). */
   sendTextRef: React.MutableRefObject<(clean: string) => void>
   showFade: boolean
+  /** At least one required pipeline exists, so the footer hint is true. */
+  hasRequired?: boolean
+  /** Overrides the textarea placeholder (empty chat vs. reply). */
+  placeholder?: string
+  /** Starter pills shown under the box in place of the footer hint. */
+  starters?: React.ReactNode
 }) {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
@@ -825,15 +782,6 @@ export function ComposerBox({
     if (next.caret !== null) focusCaret(node, next.caret)
   }
 
-  const openMentionPicker = (): void => {
-    const node = textareaRef.current
-    const next = applyMentionOpen(text, node?.selectionStart ?? text.length)
-    if (next.text !== text) setText(next.text)
-    setMention(next.mention)
-    if (next.caret === null) node?.focus()
-    else focusCaret(node, next.caret)
-  }
-
   const syncComposerPickers = (value: string, caret: number): void => {
     const next = composerPickerState(value, caret)
     setSkillQuery(next.skillQuery)
@@ -888,13 +836,17 @@ export function ComposerBox({
         : null
 
   return (
+    <div style={{ flex: 'none', position: 'relative', zIndex: 2, background: C.app }}>
     <div
       style={{
-        flex: 'none',
-        position: 'relative',
-        zIndex: 2,
-        padding: '28px clamp(16px, 4vw, 34px) 20px',
-        background: C.terminal
+        maxWidth: 700,
+        width: '100%',
+        margin: '0 auto',
+        boxSizing: 'border-box',
+        padding: '0 28px 18px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8
       }}
     >
       <div className={showFade ? 'bf-chat-fade is-on' : 'bf-chat-fade'} aria-hidden="true" />
@@ -933,6 +885,7 @@ export function ComposerBox({
             e.currentTarget.value = ''
           }}
         />
+        <div style={{ padding: attachments.length || attachmentError || skillWarnText || savingAttachments > 0 ? '12px 16px 0' : 0 }}>
         {attachments.length > 0 && (
           <AttachmentStrip attachments={attachments} onRemove={removeAttachment} />
         )}
@@ -949,6 +902,7 @@ export function ComposerBox({
             Saving attachment…
           </div>
         )}
+        </div>
         <textarea
           ref={textareaRef}
           value={text}
@@ -981,9 +935,9 @@ export function ComposerBox({
                 )
             })
           }
-          placeholder={composerPlaceholder(availableCount, attachments.length > 0, mode)}
+          placeholder={placeholder ?? composerPlaceholder(availableCount, attachments.length > 0, mode)}
           disabled={!availableCount && mode === 'build'}
-          rows={1}
+          rows={2}
           style={COMPOSER_TEXTAREA_STYLE}
         />
         <ComposerToolbar
@@ -999,12 +953,18 @@ export function ComposerBox({
           canSend={canSend}
           onModeChange={onModeChange}
           onOpenAgentMenu={openAgentMenu}
-          onOpenMention={openMentionPicker}
           onAttach={() => fileInputRef.current?.click()}
           onCancel={onCancel}
           onSend={send}
         />
       </div>
+
+      {hasRequired && !starters && (
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 14, fontSize: 11, color: C.fainter }}>
+          <span>Required pipelines run after every change</span>
+        </div>
+      )}
+      {starters}
 
       {skillQuery !== null && menuPos && (
         <ComposerPickerMenu
@@ -1048,6 +1008,7 @@ export function ComposerBox({
           onClose={() => setModelOpen(false)}
         />
       )}
+    </div>
     </div>
   )
 }

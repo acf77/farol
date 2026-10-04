@@ -93,6 +93,18 @@ export function parseGitStatus(porcelain: string): Omit<GitStatus, 'ahead' | 'be
   return { clean: dirty === 0, staged, unstaged, untracked, conflicts }
 }
 
+/** Parse `git diff --numstat --no-renames` into per-path line counts; binary files are skipped. */
+export function parseNumstat(raw: string): Map<string, { added: number; removed: number }> {
+  const counts = new Map<string, { added: number; removed: number }>()
+  for (const line of raw.split('\n')) {
+    const [added, removed, ...rest] = line.split('\t')
+    const file = rest.join('\t')
+    if (!file || !/^\d+$/.test(added ?? '') || !/^\d+$/.test(removed ?? '')) continue
+    counts.set(file, { added: Number(added), removed: Number(removed) })
+  }
+  return counts
+}
+
 /** Parse `git rev-list --left-right --count @{u}...HEAD` output. */
 export function parseAheadBehind(raw: string): { ahead: number; behind: number } {
   const parts = raw.trim().split(/\s+/)

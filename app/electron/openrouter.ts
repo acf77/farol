@@ -60,10 +60,6 @@ async function applyCatalog(catalog: AiModel[]): Promise<AppSettings> {
   })
 }
 
-export async function openRouterStatus(): Promise<SettingsResult> {
-  return { settings: await currentSettings() }
-}
-
 export async function saveOpenRouterKey(raw: unknown): Promise<SettingsResult> {
   if (typeof raw !== 'string' || !raw.trim()) {
     return { settings: await currentSettings(), error: 'Paste an OpenRouter API key.' }
