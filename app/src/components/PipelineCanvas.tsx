@@ -3,7 +3,9 @@ import type { AppSettings, PipelineNode, StepType } from '@shared/types'
 import { GIT_HOOK_EVENTS, aiSelectionLabel, normalizeAi } from '@shared/types'
 import { defaultGate, newPipelineNode, nodeGate, parallelAsClashIds, sanitizeAs, topoSort } from '@shared/graph'
 import { C, MONO, UI, ELLIPSIS } from '../theme'
-import { CliModelDropdown } from './controls'
+import { SIGN_IN_REQUIRED } from '@shared/remote'
+import { remoteAccount, useRemoteAccount } from '../remote-account'
+import { Button, CliModelDropdown } from './controls'
 import { Field, HAIR, Seg, SettingsGroup, SparkIcon, fieldBox } from './editor-ui'
 import type { EditorState } from '../types'
 
@@ -817,6 +819,7 @@ function PipelineSettings({
   editor: EditorState
   updateEditor: (update: (current: EditorState) => EditorState) => void
 }) {
+  const { account } = useRemoteAccount()
   const rowPad = '12px 13px'
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -843,6 +846,14 @@ function PipelineSettings({
             )
           }
         />
+        {editor.target === 'remote' && account?.state === 'signedOut' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.textSoft }}>
+            <span style={{ flex: 1 }}>{SIGN_IN_REQUIRED}</span>
+            <Button variant="primary" onClick={() => void remoteAccount.signIn()}>
+              Sign in
+            </Button>
+          </div>
+        )}
         {editor.target === 'remote' && (
           <SettingsGroup title="">
             <SwitchRow

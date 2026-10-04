@@ -130,21 +130,24 @@ that tab stops watching without cancelling the run.
   run's output so far as context. If that CLI isn't on PATH the step fails with
   a note saying so.
 
-- **Remote pipelines** — tick *Run shell steps on Vercel Sandbox* in the editor
-  and the shell steps run in a fresh, non-persistent Vercel Sandbox instead of
-  on this machine. The sandbox gets a snapshot of the current checkout:
+- **Remote pipelines** — set *Runs on* to *Remote* in the pipeline editor and the
+  shell steps run in a fresh, non-persistent sandbox on the Farol service instead
+  of on this machine. The sandbox gets a snapshot of the current checkout:
   tracked files plus untracked files that Git does not ignore, so uncommitted
   work is included, while ignored files and secret-looking paths (`.env`, keys)
   stay behind. Nothing is copied back — a remote run reports results and never
   changes local files. AI steps still run here, where the agent CLIs are signed
   in. Runs, cancellation, run tabs, MCP and Chat behave as for local pipelines,
-  and the sandbox is stopped when the run ends, fails, or is cancelled. Add the
-  access token, team id and project id under *Settings → Vercel Sandbox*; the
-  token is encrypted on this machine like the other keys.
+  and the sandbox is stopped when the run ends, fails, or is cancelled. Sign in
+  with GitHub from the account avatar at the top right; that is the only setup.
+  The service address is built into the app (`electron/service-url.ts`; override
+  it at build time with `MAIN_VITE_FAROL_SERVICE_URL`), and sandbox credentials
+  live on the service.
 
 - **Run service** — to start the same sandbox runs from a web or mobile app, deploy
   the standalone service in [`service/`](service/README.md). Clients upload a project
-  snapshot with an API key; it streams output and results over HTTP.
+  snapshot with a GitHub session or an API key; it streams output and returns a
+  JSON result.
 
 **Settings** (toolbar gear, File menu, or ⌘,) has two tabs. *General* picks the
 agent that new chats start with and that failed steps are handed to. *Models*

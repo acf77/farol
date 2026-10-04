@@ -6,7 +6,7 @@ set -euo pipefail
 pipeline="${1:?usage: farol-run.sh <pipeline id or name> [dir]}"
 dir="${2:-.}"
 url="${FAROL_URL:-http://localhost:8787}"
-: "${FAROL_KEY:?set FAROL_KEY to an API key from 'farol-service keys create'}"
+: "${FAROL_KEY:?set FAROL_KEY to an API key (farol-service keys create) or a session token}"
 
 app_root="$(cd "$(dirname "$0")/.." && pwd)"
 abs_dir="$(cd "$dir" && pwd)"
@@ -25,5 +25,5 @@ echo "run $run_id" >&2
 trap 'curl -fsS -X POST "$url/v1/runs/$run_id/cancel" -H "Authorization: Bearer $FAROL_KEY" >/dev/null || true' INT
 curl -fsSN "$url/v1/runs/$run_id/events" -H "Authorization: Bearer $FAROL_KEY"
 echo
-curl -fsS "$url/v1/runs/$run_id" -H "Authorization: Bearer $FAROL_KEY"
+curl -fsS --compressed "$url/v1/runs/$run_id" -H "Authorization: Bearer $FAROL_KEY"
 echo

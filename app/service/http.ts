@@ -1,26 +1,26 @@
 import { errorMessage } from '../shared/jev'
 import type { IncomingMessage, RequestListener, ServerResponse } from 'http'
+import { gzipSync } from 'zlib'
 import { resolvePipeline, validateRunnable } from '../shared/graph'
 import type { Pipeline } from '../shared/types'
-import { verifyKey, type ApiKeyRecord } from './keys'
+import { AccessDenied, identify, loginScope, signIn, type AuthConfig, type Identity, type LoginConfig } from './auth'
+import { GitHubError } from './github'
 import { aiStepNames, type ServiceEvent } from './run'
 import { BusyError, type RunRecord, type RunRegistry } from './runs'
+import { pinnedCommands } from './pinned'
 import { pipelinesFromArchive, readBody, TooLargeError } from './snapshot'
-import type { WorkspaceRegistry } from './workspaces'
+import { revokeSessions } from './users'
+import { CommandRefused, type WorkspaceRegistry } from './workspaces'
 
 export interface ServiceDeps {
-  keysFile: string
+  auth: AuthConfig
   registry: RunRegistry
   workspaces: WorkspaceRegistry
   /** Largest accepted snapshot upload, in bytes. */
   snapshotLimit: number
   /** Browser origins allowed to call the API. */
   allowedOrigins: string[]
-  /** Accept requests without an API key; every caller then shares one identity. */
-  anonymous?: boolean
 }
-
-const ANONYMOUS: ApiKeyRecord = { id: 'anonymous', name: 'anonymous', hash: '', createdAt: '' }
 
 class HttpError extends Error {
   constructor(
@@ -37,7 +37,8 @@ interface Context {
   deps: ServiceDeps
   req: IncomingMessage
   res: ServerResponse
-  key: ApiKeyRecord
+  /** The authenticated caller; it owns the runs and workspaces it starts. */
+  owner: Identity
   /** Capture groups from the route pattern. */
   params: string[]
 }
@@ -63,8 +64,8 @@ function corsHeaders(deps: ServiceDeps, req: IncomingMessage): Record<string, st
   }
 }
 
-function findRun({ deps, key, params }: Context): RunRecord {
-  const record = deps.registry.get(params[0], key.id)
+function findRun({ deps, owner, params }: Context): RunRecord {
+  const record = deps.registry.get(params[0], owner.id)
   if (!record) throw new HttpError(404, 'Run not found')
   return record
 }
@@ -102,29 +103,37 @@ const EXEC_COMMAND_LIMIT = 256 * 1024
 
 async function createWorkspace(ctx: Context): Promise<void> {
   const archive = await readArchive(ctx)
+  // Pin the snapshot's own pipelines: the workspace runs their shell steps and nothing else.
+  const pipelines = await pipelinesFromArchive(archive).catch((error: Error) => {
+    throw new HttpError(422, error.message)
+  })
   const abort = new AbortController()
   ctx.req.on('close', () => abort.abort())
-  const id = await ctx.deps.workspaces.create(ctx.key.id, archive, abort.signal).catch(busy)
+  const id = await ctx.deps.workspaces.create(ctx.owner.id, archive, pinnedCommands(pipelines), abort.signal).catch(busy)
   json(ctx.res, 201, { id })
 }
 
-function requireWorkspace({ deps, key, params }: Context): string {
-  if (!deps.workspaces.owns(params[0], key.id)) throw new HttpError(404, 'Workspace not found')
+function requireWorkspace({ deps, owner, params }: Context): string {
+  if (!deps.workspaces.owns(params[0], owner.id)) throw new HttpError(404, 'Workspace not found')
   return params[0]
 }
 
-/** Run one command; the reply is NDJSON — `{chunk}` lines, then a single `{code}` line. */
+/** Run one of the workspace's pinned steps; the reply is NDJSON — `{chunk}` lines, then a single `{code}` line. */
 async function execInWorkspace(ctx: Context): Promise<void> {
   const cmd = (await readBody(ctx.req, EXEC_COMMAND_LIMIT).catch((error: unknown) => {
     throw error instanceof TooLargeError ? new HttpError(413, 'Command is too large') : error
   })).toString('utf8')
   if (!cmd.trim()) throw new HttpError(400, 'Send the command as the request body')
   const id = requireWorkspace(ctx)
-  ctx.res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'X-Accel-Buffering': 'no' })
-  const send = (event: { chunk: string } | { code: number }): void => void ctx.res.write(`${JSON.stringify(event)}\n`)
+  // Headers wait for the first line, so a refused command can still answer 403.
+  const send = (event: { chunk: string } | { code: number }): void => {
+    if (!ctx.res.headersSent) ctx.res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'X-Accel-Buffering': 'no' })
+    ctx.res.write(`${JSON.stringify(event)}\n`)
+  }
   try {
-    send({ code: await ctx.deps.workspaces.use(id, (workspace) => workspace.exec(cmd, (chunk) => send({ chunk }))) })
+    send({ code: await ctx.deps.workspaces.exec(id, cmd, (chunk) => send({ chunk })) })
   } catch (error) {
+    if (error instanceof CommandRefused) throw new HttpError(403, error.message)
     send({ chunk: `farol: ${errorMessage(error)}\n` })
     send({ code: 127 })
   }
@@ -132,7 +141,7 @@ async function execInWorkspace(ctx: Context): Promise<void> {
 }
 
 async function closeWorkspace(ctx: Context): Promise<void> {
-  if (!(await ctx.deps.workspaces.close(ctx.params[0], ctx.key.id))) throw new HttpError(404, 'Workspace not found')
+  if (!(await ctx.deps.workspaces.close(ctx.params[0], ctx.owner.id))) throw new HttpError(404, 'Workspace not found')
   ctx.res.writeHead(204).end()
 }
 
@@ -145,30 +154,29 @@ async function createRun(ctx: Context): Promise<void> {
   })
   const pipeline = requestedPipeline(pipelines, query)
   try {
-    const record = ctx.deps.registry.start(ctx.key.id, pipeline, archive)
-    json(ctx.res, 202, { runId: record.id, status: record.status, pipelineId: record.pipelineId })
+    const record = ctx.deps.registry.start(ctx.owner.id, pipeline, archive)
+    json(ctx.res, 202, { runId: record.id, status: record.result.status, pipelineId: record.result.pipeline.id })
   } catch (error) {
     busy(error)
   }
 }
 
+/** The run's JSON result (`shared/run-result.ts`), gzipped when the client accepts it. */
 function showRun(ctx: Context): void {
-  const { id, pipelineId, pipelineName, status, createdAt, finishedAt, summary } = findRun(ctx)
-  json(ctx.res, 200, {
-    id,
-    pipelineId,
-    pipelineName,
-    status,
-    createdAt,
-    finishedAt,
-    ...(summary ? { result: summary } : {})
+  const body = Buffer.from(JSON.stringify(findRun(ctx).result))
+  const gzip = /\bgzip\b/.test(String(ctx.req.headers['accept-encoding'] ?? '')) && body.length > 1024
+  ctx.res.writeHead(200, {
+    'Content-Type': 'application/json',
+    Vary: 'Accept-Encoding',
+    ...(gzip ? { 'Content-Encoding': 'gzip' } : {})
   })
+  ctx.res.end(gzip ? gzipSync(body) : body)
 }
 
 function cancelRun(ctx: Context): void {
   const record = findRun(ctx)
   ctx.deps.registry.cancel(record.id)
-  json(ctx.res, record.finishedAt ? 200 : 202, { runId: record.id, status: record.status })
+  json(ctx.res, record.result.finishedAt ? 200 : 202, { runId: record.id, status: record.result.status })
 }
 
 function streamRun(ctx: Context): void {
@@ -186,7 +194,7 @@ function streamRun(ctx: Context): void {
   for (const { id, event } of record.events) {
     if (id >= resumeAt) send(id, event)
   }
-  const unsubscribe = record.finishedAt ? null : deps.registry.subscribe(record.id, (index, event) => {
+  const unsubscribe = record.result.finishedAt ? null : deps.registry.subscribe(record.id, (index, event) => {
     send(index, event)
     if (event.type === 'end') stop()
   })
@@ -200,8 +208,101 @@ function streamRun(ctx: Context): void {
   if (!unsubscribe) stop()
 }
 
+const AUTH_BODY_LIMIT = 16 * 1024
+
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const text = (await readBody(req, AUTH_BODY_LIMIT).catch(() => {
+    throw new HttpError(413, 'Request body is too large')
+  })).toString('utf8')
+  try {
+    const parsed: unknown = JSON.parse(text || '{}')
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+  } catch {
+    // fall through
+  }
+  throw new HttpError(400, 'Send a JSON object')
+}
+
+function requireLogin(deps: ServiceDeps): LoginConfig {
+  if (!deps.auth.login) throw new HttpError(404, 'GitHub sign-in is not configured on this service')
+  return deps.auth.login
+}
+
+function stringField(body: Record<string, unknown>, name: string, required = true): string | undefined {
+  const value = body[name]
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (required) throw new HttpError(400, `Missing ${name}`)
+  return undefined
+}
+
+/** Map sign-in failures to responses: refused users get 403, GitHub trouble 502. */
+async function signInWith(login: LoginConfig, githubToken: Promise<string>): ReturnType<typeof signIn> {
+  try {
+    return await signIn(login, await githubToken)
+  } catch (error) {
+    if (error instanceof AccessDenied) throw new HttpError(403, error.message)
+    if (error instanceof GitHubError) throw new HttpError(502, error.message)
+    throw error
+  }
+}
+
+/** Device flow, step 1: the client shows `userCode` and opens `verificationUri`. */
+async function startDeviceLogin(deps: ServiceDeps, _req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const login = requireLogin(deps)
+  try {
+    json(res, 200, await login.github.startDevice(loginScope(login)))
+  } catch (error) {
+    if (error instanceof GitHubError) throw new HttpError(502, error.message)
+    throw error
+  }
+}
+
+/** Device flow, step 2: poll every `interval` seconds until the user approves. */
+async function pollDeviceLogin(deps: ServiceDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const login = requireLogin(deps)
+  const deviceCode = stringField(await readJson(req), 'deviceCode') as string
+  const poll = await login.github.pollDevice(deviceCode).catch((error: unknown) => {
+    throw error instanceof GitHubError ? new HttpError(502, error.message) : error
+  })
+  if (poll.status === 'pending') return json(res, 200, { status: 'pending', ...(poll.interval ? { interval: poll.interval } : {}) })
+  if (poll.status !== 'ok') throw new HttpError(400, poll.status === 'denied' ? 'Sign-in was denied' : 'The device code expired; start again')
+  json(res, 200, { status: 'ok', ...(await signInWith(login, Promise.resolve(poll.token))) })
+}
+
+/** Browser flow (web and mobile): exchange the code GitHub redirected back with. */
+async function codeLogin(deps: ServiceDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const login = requireLogin(deps)
+  const body = await readJson(req)
+  const code = stringField(body, 'code') as string
+  const redirectUri = stringField(body, 'redirectUri') as string
+  const codeVerifier = stringField(body, 'codeVerifier', false)
+  const refusal = login.github.codeFlowRefusal(redirectUri)
+  if (refusal) throw new HttpError(400, refusal)
+  json(res, 200, await signInWith(login, login.github.exchangeCode(code, redirectUri, codeVerifier)))
+}
+
+const signInRoutes: { method: string; path: string; handler: (deps: ServiceDeps, req: IncomingMessage, res: ServerResponse) => Promise<void> }[] = [
+  { method: 'POST', path: '/v1/auth/device', handler: startDeviceLogin },
+  { method: 'POST', path: '/v1/auth/device/token', handler: pollDeviceLogin },
+  { method: 'POST', path: '/v1/auth/code', handler: codeLogin }
+]
+
+function showMe({ res, owner }: Context): void {
+  const { id, kind, name, displayName, avatarUrl } = owner
+  json(res, 200, { id, kind, name, ...(displayName ? { displayName } : {}), ...(avatarUrl ? { avatarUrl } : {}) })
+}
+
+/** Sign the user out everywhere: every session they hold stops working. */
+function logout({ deps, res, owner }: Context): void {
+  if (owner.githubId === undefined) throw new HttpError(400, 'API keys are revoked with `keys revoke`, not signed out')
+  revokeSessions(requireLogin(deps).usersFile, owner.githubId)
+  res.writeHead(204).end()
+}
+
 const routes: { method: string; pattern: RegExp; handler: (ctx: Context) => Promise<void> | void }[] = [
   { method: 'GET', pattern: /^\/v1\/ping$/, handler: (ctx) => json(ctx.res, 200, { ok: true }) },
+  { method: 'GET', pattern: /^\/v1\/me$/, handler: showMe },
+  { method: 'POST', pattern: /^\/v1\/auth\/logout$/, handler: logout },
   { method: 'POST', pattern: /^\/v1\/workspaces$/, handler: createWorkspace },
   { method: 'POST', pattern: /^\/v1\/workspaces\/([0-9a-f]+)\/exec$/, handler: execInWorkspace },
   { method: 'DELETE', pattern: /^\/v1\/workspaces\/([0-9a-f]+)$/, handler: closeWorkspace },
@@ -214,11 +315,13 @@ const routes: { method: string; pattern: RegExp; handler: (ctx: Context) => Prom
 async function dispatch(deps: ServiceDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const { pathname } = new URL(req.url ?? '/', 'http://localhost')
   if (req.method === 'GET' && pathname === '/healthz') return json(res, 200, { ok: true })
-  const key = deps.anonymous ? ANONYMOUS : verifyKey(deps.keysFile, bearer(req))
-  if (!key) throw new HttpError(401, 'Missing or invalid API key', {}, { 'WWW-Authenticate': 'Bearer' })
+  const signInRoute = signInRoutes.find((r) => r.method === req.method && r.path === pathname)
+  if (signInRoute) return signInRoute.handler(deps, req, res)
+  const owner = identify(deps.auth, bearer(req))
+  if (!owner) throw new HttpError(401, 'Missing, invalid or expired token', {}, { 'WWW-Authenticate': 'Bearer' })
   for (const { method, pattern, handler } of routes) {
     const match = pattern.exec(pathname)
-    if (match && req.method === method) return handler({ deps, req, res, key, params: match.slice(1) })
+    if (match && req.method === method) return handler({ deps, req, res, owner, params: match.slice(1) })
   }
   throw new HttpError(404, 'Not found')
 }

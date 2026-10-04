@@ -1,27 +1,41 @@
 import { errorMessage } from '../shared/jev'
-import type { SettingsResult } from '../shared/types'
+import { shell } from 'electron'
+import type { RemoteAccount, RemoteSignInStart } from '../shared/types'
 import { checkoutSnapshot } from './checkout-snapshot'
-import { snapshotSummary } from '../shared/remote'
+import { SIGN_IN_REQUIRED, snapshotSummary } from '../shared/remote'
 import type { RemoteWorkspace } from './sandbox'
-import { sanitizeRemote } from '../shared/settings'
 import { clearSecret, peekSecret, setSecret } from './secrets'
-import { loadSettings, saveSettings } from './store'
+import { SERVICE_URL } from './service-url'
 
 export type { RemoteWorkspace }
 
 export type OpenRemote = (cwd: string, signal: AbortSignal) => Promise<RemoteWorkspace>
 
-type Connection = { url: string; key?: string }
-
-async function connection(): Promise<Connection> {
-  const { remote } = await loadSettings()
-  if (!remote) throw new Error('Remote service is not configured. Add its URL in Settings.')
-  return { url: remote.url, key: peekSecret('remoteApiKey') ?? undefined }
+/** The user is not signed in, or the service no longer accepts their session. Not worth retrying. */
+export class SignInRequired extends Error {
+  constructor() {
+    super(SIGN_IN_REQUIRED)
+  }
 }
 
-async function serviceCall({ url, key }: Connection, path: string, init: RequestInit): Promise<Response> {
-  const res = await fetch(new URL(path, url), { ...init, headers: { ...init.headers, ...(key ? { Authorization: `Bearer ${key}` } : {}) } })
-  if (res.status === 401 && !key) throw new Error('The service requires an API key. Add one in Settings.')
+/** The session token for the built-in service; throws SignInRequired when there is none. */
+function session(): string {
+  const token = peekSecret('remoteSession')
+  if (!token) throw new SignInRequired()
+  return token
+}
+
+async function serviceCall(path: string, init: RequestInit & { token?: string }): Promise<Response> {
+  const { token, ...rest } = init
+  const res = await fetch(new URL(path, SERVICE_URL), {
+    ...rest,
+    headers: { ...rest.headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+  })
+  if (res.status === 401) {
+    // The session expired or was revoked: forget it so the account menu offers Sign in.
+    if (token && peekSecret('remoteSession') === token) clearSecret('remoteSession')
+    throw new SignInRequired()
+  }
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string }
     throw new Error(body.error ?? `Remote service replied HTTP ${res.status}`)
@@ -52,9 +66,9 @@ async function readExec(res: Response, onChunk: (chunk: string) => void): Promis
 }
 
 export const openRemote: OpenRemote = async (cwd, signal) => {
+  const token = session()
   const { archive, count } = await checkoutSnapshot(cwd)
-  const service = await connection()
-  const created = await serviceCall(service, '/v1/workspaces', { method: 'POST', body: new Uint8Array(archive), signal })
+  const created = await serviceCall('/v1/workspaces', { method: 'POST', body: new Uint8Array(archive), signal, token })
   const { id } = (await created.json()) as { id: string }
   let closed: Promise<unknown> | undefined
   // One command at a time: parallel commands on a single sandbox are unreliable.
@@ -62,14 +76,14 @@ export const openRemote: OpenRemote = async (cwd, signal) => {
   return {
     summary: snapshotSummary(count, archive.length),
     close: async () => {
-      closed ??= serviceCall(service, `/v1/workspaces/${id}`, { method: 'DELETE', signal: AbortSignal.timeout(30_000) }).catch(
+      closed ??= serviceCall(`/v1/workspaces/${id}`, { method: 'DELETE', signal: AbortSignal.timeout(30_000), token }).catch(
         () => undefined
       )
       await closed
     },
     exec(cmd, onChunk) {
       const run = async (): Promise<number> =>
-        readExec(await serviceCall(service, `/v1/workspaces/${id}/exec`, { method: 'POST', body: cmd, signal }), onChunk)
+        readExec(await serviceCall(`/v1/workspaces/${id}/exec`, { method: 'POST', body: cmd, signal, token }), onChunk)
       const result = queue.then(run, run)
       queue = result.catch(() => undefined)
       return result
@@ -77,35 +91,115 @@ export const openRemote: OpenRemote = async (cwd, signal) => {
   }
 }
 
-async function result(error?: string): Promise<SettingsResult> {
-  return { settings: await loadSettings(), ...(error ? { error } : {}) }
+/** Forget this machine's session. */
+export function signOutRemote(): void {
+  clearSecret('remoteSession')
 }
 
-export async function saveRemoteConfig(raw: unknown): Promise<SettingsResult> {
-  const { url: rawUrl, key } = (raw ?? {}) as Record<string, unknown>
-  const remote = sanitizeRemote({ url: rawUrl })
-  const secret = typeof key === 'string' ? key.trim() : ''
-  if (!remote) return result('Enter the service URL, starting with http:// or https://.')
+const AVATAR_HOST = 'avatars.githubusercontent.com'
+const AVATAR_LIMIT = 512 * 1024
+const avatars = new Map<string, string>()
+
+/** A GitHub avatar as a `data:` URL, or undefined. Only GitHub's avatar host is fetched. */
+async function avatarData(url: string | undefined): Promise<string | undefined> {
+  if (!url) return undefined
+  const cached = avatars.get(url)
+  if (cached) return cached
   try {
-    if (secret) setSecret('remoteApiKey', secret)
-  } catch (err) {
-    return result(errorMessage(err))
+    const src = new URL(url)
+    if (src.protocol !== 'https:' || src.hostname !== AVATAR_HOST) return undefined
+    src.searchParams.set('s', '64')
+    const res = await fetch(src, { signal: AbortSignal.timeout(10_000) })
+    const type = res.headers.get('content-type') ?? ''
+    if (!res.ok || !/^image\/(png|jpeg|gif|webp)$/.test(type)) return undefined
+    const bytes = Buffer.from(await res.arrayBuffer())
+    if (bytes.length > AVATAR_LIMIT) return undefined
+    const data = `data:${type};base64,${bytes.toString('base64')}`
+    avatars.set(url, data)
+    return data
+  } catch {
+    return undefined
   }
-  await saveSettings({ ...(await loadSettings()), remote })
-  return result()
 }
 
-export async function clearRemoteKey(): Promise<SettingsResult> {
-  clearSecret('remoteApiKey')
-  return result()
-}
-
-/** Call the service's ping endpoint; no error means the URL (and key, if any) work. */
-export async function checkRemote(): Promise<SettingsResult> {
+/** Who the stored session belongs to. A session the service rejects reads as signed out. */
+export async function remoteAccount(): Promise<RemoteAccount> {
   try {
-    await serviceCall(await connection(), '/v1/ping', { method: 'GET', signal: AbortSignal.timeout(15_000) })
-    return result()
+    const res = await serviceCall('/v1/me', { signal: AbortSignal.timeout(15_000), token: session() })
+    const me = (await res.json()) as { name?: string; displayName?: string; avatarUrl?: string }
+    const avatar = await avatarData(me.avatarUrl)
+    return {
+      state: 'signedIn',
+      login: me.name ?? '',
+      ...(me.displayName ? { displayName: me.displayName } : {}),
+      ...(avatar ? { avatar } : {})
+    }
   } catch (err) {
-    return result(errorMessage(err))
+    if (err instanceof SignInRequired) return { state: 'signedOut' }
+    return { state: 'error', message: 'Cannot reach the remote service. Check your connection and try again.' }
+  }
+}
+
+/** The device-flow sign-in in progress; a new start or a cancel aborts it. */
+let pendingSignIn: { deviceCode: string; interval: number; expiresAt: number; abort: AbortController } | undefined
+
+/** Device flow, step 1: get a code from the service and open GitHub's approval page in the browser. */
+export async function startRemoteSignIn(): Promise<RemoteSignInStart> {
+  cancelRemoteSignIn()
+  try {
+    const res = await serviceCall('/v1/auth/device', { method: 'POST', signal: AbortSignal.timeout(15_000) })
+    const start = (await res.json()) as { deviceCode: string; userCode: string; verificationUri: string; interval: number; expiresIn: number }
+    // Only ever open GitHub, whatever the service sent.
+    if (new URL(start.verificationUri).origin !== 'https://github.com') throw new Error('The service sent an unexpected sign-in page.')
+    pendingSignIn = {
+      deviceCode: start.deviceCode,
+      interval: start.interval,
+      expiresAt: Date.now() + start.expiresIn * 1000,
+      abort: new AbortController()
+    }
+    await shell.openExternal(start.verificationUri)
+    return { userCode: start.userCode, verificationUri: start.verificationUri }
+  } catch (err) {
+    return { error: errorMessage(err) }
+  }
+}
+
+export function cancelRemoteSignIn(): void {
+  pendingSignIn?.abort.abort()
+  pendingSignIn = undefined
+}
+
+/** Device flow, step 2: poll until the user approves, then keep the session in the encrypted store. */
+export async function waitRemoteSignIn(): Promise<{ error?: string }> {
+  const pending = pendingSignIn
+  if (!pending) return { error: 'Start signing in first.' }
+  const { signal } = pending.abort
+  try {
+    let interval = pending.interval
+    while (Date.now() < pending.expiresAt) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, interval * 1000)
+        signal.addEventListener('abort', () => (clearTimeout(timer), reject(new Error('Sign-in cancelled.'))), { once: true })
+      })
+      const res = await serviceCall('/v1/auth/device/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceCode: pending.deviceCode }),
+        signal
+      })
+      const poll = (await res.json()) as { status: string; interval?: number; token?: string }
+      if (poll.status === 'pending') {
+        interval = poll.interval ?? interval
+        continue
+      }
+      if (!poll.token) throw new Error('The service did not return a session.')
+      setSecret('remoteSession', poll.token)
+      return {}
+    }
+    return { error: 'The sign-in code expired. Start again.' }
+  } catch (err) {
+    return { error: errorMessage(err) }
+  } finally {
+    if (pendingSignIn === pending) pendingSignIn = undefined
   }
 }

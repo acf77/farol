@@ -15,6 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends tar ca-certific
   && npm install -g @railway/cli && npm cache clean --force
 WORKDIR /srv
 COPY --from=build /out/farol-service.cjs ./
-ENV FAROL_KEYS_FILE=/data/farol-keys.json
+ENV FAROL_KEYS_FILE=/data/farol-keys.json FAROL_USERS_FILE=/data/farol-users.json
 EXPOSE 8787
 CMD ["node", "farol-service.cjs"]

@@ -37,27 +37,29 @@ export interface JevSettings {
   hasKey: boolean
 }
 
-/**
- * The Farol service that runs remote pipelines. The URL lives in the workspace
- * file; the optional API key stays in the encrypted store, and `hasKey` is a runtime
- * flag that is never persisted.
- */
-export interface RemoteSettings {
-  url: string
-  hasKey?: boolean
-}
-
-/** What the Settings form submits. An empty key keeps the stored one. */
-export interface RemoteConfig {
-  url: string
-  key?: string
-}
-
 /** What a key mutation hands back: the settings to adopt, plus why it failed. */
 export interface SettingsResult {
   settings: AppSettings
   error?: string
 }
+
+/**
+ * Who this machine is signed in to the remote pipeline service as. The service's
+ * address is built into the app; the session token stays in the main process.
+ */
+export type RemoteAccount =
+  | { state: 'signedOut'; message?: string }
+  | {
+      state: 'signedIn'
+      login: string
+      displayName?: string
+      /** The GitHub avatar as a `data:` URL; the renderer cannot load remote images. */
+      avatar?: string
+    }
+  | { state: 'error'; message: string }
+
+/** Device-flow sign-in, step 1: show `userCode`; the browser is already open at `verificationUri`. */
+export type RemoteSignInStart = { userCode: string; verificationUri: string } | { error: string }
 
 /** One rung of a mode's fallback chain: a CLI, optionally pinned to a model. */
 export interface ModelChoice {
@@ -87,8 +89,6 @@ export interface AppSettings {
   catalogs?: AgentCatalogs
   /** Absent until an AI Gateway key is stored. */
   jev?: JevSettings
-  /** Absent until a Farol service URL is stored. */
-  remote?: RemoteSettings
 }
 
 export function defaultSettings(): AppSettings {
@@ -237,21 +237,6 @@ export function withJevKeyFlag(settings: AppSettings, hasKey: boolean): AppSetti
   return next
 }
 
-export function sanitizeRemote(raw: unknown): RemoteSettings | undefined {
-  const url = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).url : undefined
-  if (typeof url !== 'string') return undefined
-  try {
-    const { protocol, origin } = new URL(url.trim())
-    return protocol === 'http:' || protocol === 'https:' ? { url: origin } : undefined
-  } catch {
-    return undefined
-  }
-}
-
-export function withRemoteKeyFlag(settings: AppSettings, hasKey: boolean): AppSettings {
-  return settings.remote ? { ...settings, remote: { ...settings.remote, hasKey } } : settings
-}
-
 /** Pick the CLI OpenRouter runs through; OpenCode is stored as absence. */
 export function withOpenRouterAgent(settings: AppSettings, agent: OpenRouterAgent): AppSettings {
   const next: OpenRouterSettings = { ...defaultOpenRouter(), ...settings.openrouter }
@@ -317,7 +302,6 @@ export function sanitizeSettings(raw: unknown): AppSettings {
   const commitModel = normalizeModel(commit.model) ?? (hasCommitMessage ? undefined : models[commitAgent])
   const openrouter = sanitizeOpenRouter(s.openrouter)
   const catalogs = sanitizeCatalogs(s.catalogs)
-  const remote = sanitizeRemote(s.remote)
   return {
     agent,
     models,
@@ -328,8 +312,7 @@ export function sanitizeSettings(raw: unknown): AppSettings {
     autoFix: typeof s.autoFix === 'boolean' ? s.autoFix : d.autoFix,
     modeDefaults: sanitizeModeDefaults(s.modeDefaults),
     ...(openrouter ? { openrouter } : {}),
-    ...(catalogs ? { catalogs } : {}),
-    ...(remote ? { remote } : {})
+    ...(catalogs ? { catalogs } : {})
   }
 }
 

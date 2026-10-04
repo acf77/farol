@@ -4,7 +4,7 @@ import {
   ChevronLeft as LucideChevronLeft, ChevronRight as LucideChevronRight, ChevronsUpDown, ChevronUp as LucideChevronUp, Circle, CircleSlash2, Clipboard,
   File, FileCode2, FileText, Folder, FolderPlus, GitBranch, GitFork, Image, ListFilter, LoaderCircle,
   MessageCircleX, PanelBottom, PanelRight, Paperclip, Pencil, Pin, Play, RefreshCw, Search,
-  Settings, Square, Trash2
+  Settings, Square, Trash2, User
 } from 'lucide-react'
 
 interface IconProps { size?: number; color?: string; style?: CSSProperties }
@@ -18,7 +18,7 @@ export {
   GitFork as GitIcon, ListFilter as ProjectIcon, MessageCircleX as ClearChatIcon,
   PanelBottom as SplitDownIcon, PanelRight as SplitRightIcon, Paperclip as ClipIcon, Pencil as EditIcon,
   Pin as PinIcon, Play as PlayIcon, RefreshCw as RefreshIcon, Search as SearchIcon,
-  Settings as SettingsIcon, Square as StopIcon, Trash2 as DeleteIcon
+  Settings as SettingsIcon, Square as StopIcon, Trash2 as DeleteIcon, User as UserIcon
 }
 
 export function Spinner({ size = 13, color = '#E3F86C', style }: IconProps) {
@@ -42,3 +42,4 @@ export function AttachmentIcon({ kind, size = 24 }: IconProps & { kind: string }
   const Attachment = kind === 'Image' ? Image : kind === 'HTML' ? FileCode2 : FileText
   return <Attachment aria-hidden="true" size={size} style={{ flexShrink: 0 }} />
 }
+
