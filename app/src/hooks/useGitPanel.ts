@@ -81,7 +81,7 @@ export function useGitPanel(
   }, [])
   const [conflictBase, setConflictBase] = useState<string>()
   const sync = useGitSync(projectPath, { ...opts, base: conflictBase }, appendLog)
-  const { hooks, selectedFiles, setSelectedFiles, refresh, setGithub, burstGithubPoll, githubBranchRef, githubGenRef } =
+  const { hooks, selectedFiles, setSelectedFiles, refresh, applyGithubPollResult, burstGithubPoll, githubBranchRef, githubGenRef, githubPollGenRef } =
     sync
   const projectRef = useRef(projectPath)
   projectRef.current = projectPath
@@ -188,15 +188,17 @@ export function useGitPanel(
             const ctx = {
               project: cwd,
               branch: githubBranchRef.current,
-              gen: githubGenRef.current
+              gen: githubGenRef.current,
+              poll: githubPollGenRef.current
             }
             const res = await api.git.createPr(cwd, base, title, body)
             const live =
               trimSlashes(projectRef.current) === trimSlashes(ctx.project) &&
               githubBranchRef.current === ctx.branch &&
-              githubGenRef.current === ctx.gen
+              githubGenRef.current === ctx.gen &&
+              githubPollGenRef.current === ctx.poll
             if (res.ok && live) {
-              if (res.github) setGithub(res.github)
+              if (res.github) applyGithubPollResult(res.github)
               burstGithubPoll()
             }
             return res
@@ -211,7 +213,7 @@ export function useGitPanel(
           'Could not merge the pull request'
         )
     }),
-    [burstGithubPoll, githubBranchRef, githubGenRef, projectPath, runRemote, setGithub]
+    [applyGithubPollResult, burstGithubPoll, githubBranchRef, githubGenRef, githubPollGenRef, projectPath, runRemote]
   )
 
   const preparePr = useCallback(

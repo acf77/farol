@@ -234,6 +234,7 @@ export function useGitSync(
   const githubBranch = useRef<string | undefined>(undefined)
   const burstGen = useRef(0)
   const burstTimer = useRef<number | undefined>(undefined)
+  const gitSyncActive = useRef(false)
   const refresh = useCallback(() => setRefreshVersion((version) => version + 1), [])
 
   const stopBurstPoll = useCallback(() => {
@@ -245,20 +246,20 @@ export function useGitSync(
   }, [])
 
   const burstGithubPoll = useCallback(() => {
-    if (!projectPath) return
+    if (!projectPath || !gitSyncActive.current) return
     stopBurstPoll()
     const path = projectPath
     const gen = burstGen.current
     let count = 0
     const tick = async (): Promise<void> => {
-      if (gen !== burstGen.current || projectRef.current !== path) {
+      if (!gitSyncActive.current || gen !== burstGen.current || projectRef.current !== path) {
         return
       }
       count += 1
       try {
         const ctx = beginGithubFetch(githubSeq, pollGen, githubBranch)
         const gh = await api.git.github(path)
-        if (gen !== burstGen.current || projectRef.current !== path) return
+        if (!gitSyncActive.current || gen !== burstGen.current || projectRef.current !== path) return
         applyGithubFetch(ctx, githubApplied, pollGen, githubBranch, () => {
           const clearPrevious = githubBranch.current !== undefined
           setGithub((prev) => mergeGithubPoll(prev, gh, clearPrevious))
@@ -266,7 +267,12 @@ export function useGitSync(
       } catch {
         /* regular poll will surface errors */
       }
-      if (gen !== burstGen.current || count >= GITHUB_BURST_COUNT || projectRef.current !== path) {
+      if (
+        !gitSyncActive.current ||
+        gen !== burstGen.current ||
+        count >= GITHUB_BURST_COUNT ||
+        projectRef.current !== path
+      ) {
         return
       }
       burstTimer.current = window.setTimeout(() => void tick(), GITHUB_BURST_MS)
@@ -274,10 +280,20 @@ export function useGitSync(
     void tick()
   }, [projectPath, stopBurstPoll])
 
+  const applyGithubPollResult = useCallback((gh: GitHubInfo) => {
+    if (!gitSyncActive.current) return
+    pollGen.current += 1
+    const ctx = beginGithubFetch(githubSeq, pollGen, githubBranch)
+    applyGithubFetch(ctx, githubApplied, pollGen, githubBranch, () => {
+      setGithub(gh)
+    })
+  }, [])
+
   useEffect(() => {
     githubGen.current += 1
     pollGen.current += 1
     githubBranch.current = undefined
+    gitSyncActive.current = false
     stopBurstPoll()
     setStatus(null)
     setCommits([])
@@ -291,9 +307,11 @@ export function useGitSync(
 
   useEffect(() => {
     if (!opts?.enabled || !projectPath) {
+      gitSyncActive.current = false
       stopBurstPoll()
       return
     }
+    gitSyncActive.current = true
     const path = projectPath
     const initPoll = pollGen.current
     let cancelled = false
@@ -331,6 +349,7 @@ export function useGitSync(
       })
     })()
     return () => {
+      gitSyncActive.current = false
       cancelled = true
       pollGen.current += 1
       stopPolling?.()
@@ -364,8 +383,10 @@ export function useGitSync(
     github,
     setGithub,
     burstGithubPoll,
+    applyGithubPollResult,
     githubBranchRef: githubBranch,
     githubGenRef: githubGen,
+    githubPollGenRef: pollGen,
     hooks,
     loading,
     selectedFiles,
