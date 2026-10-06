@@ -611,7 +611,7 @@ async function withLineCounts<T extends Pick<GitStatus, 'staged' | 'unstaged' | 
 
 export async function status(cwd: string, base?: string): Promise<GitStatus> {
   const [porcelain, tracking, baseMerge, remotes, unpublished] = await Promise.all([
-    git(cwd, ['status', '--porcelain=v1']),
+    git(cwd, ['status', '--porcelain=v1', '-z']),
     git(cwd, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']),
     mergeBaseConflicts(cwd, base || undefined),
     git(cwd, ['remote']),
@@ -981,9 +981,15 @@ export async function commitAll(
     return failedCommit(cwd, added, removed, unstaged.message, 'Could not update staged files')
   }
 
-  const staged = await stageFiles(cwd, selected)
-  if (!staged.ok) {
-    return failedCommit(cwd, added, removed, staged.message, 'Could not stage changes')
+  // A deletion already in the index has nothing left for `git add` to match.
+  const needsAdd = new Set([...st.unstaged, ...st.untracked].map((file) => file.path))
+  const indexed = new Set(st.staged.filter((file) => file.kind === 'deleted').map((file) => file.path))
+  const toStage = selected.filter((file) => needsAdd.has(file) || !indexed.has(file))
+  if (toStage.length) {
+    const staged = await stageFiles(cwd, toStage)
+    if (!staged.ok) {
+      return failedCommit(cwd, added, removed, staged.message, 'Could not stage changes')
+    }
   }
   const done = await commit(cwd, text)
   if (!done.ok) {

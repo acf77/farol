@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import type { RemoteAccount } from '@shared/types'
-import { C, MONO, glass as G } from '../theme'
+import { C, MONO } from '../theme'
 import { remoteAccount, useRemoteAccount } from '../remote-account'
 import { Button } from './controls'
 import { UserIcon } from './icons'
@@ -114,7 +114,7 @@ export default function AccountMenu({ liquid }: { liquid?: boolean }) {
               right: 16,
               zIndex: 50,
               width: 268,
-              background: liquid ? G.panel : C.sidebar,
+              background: liquid ? C.panel : C.sidebar,
               border: `1px solid ${C.border}`,
               borderRadius: 12,
               boxShadow: '0 18px 44px rgba(0,0,0,0.55)',

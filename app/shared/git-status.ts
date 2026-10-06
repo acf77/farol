@@ -19,20 +19,24 @@ function kindFrom(code: string): GitFileKind {
   if (CONFLICT.has(code)) return 'conflict'
   const c = code.replace(/\s/g, '')
   if (c.includes('?')) return 'untracked'
-  if (c.includes('A')) return 'added'
   if (c.includes('D')) return 'deleted'
+  if (c.includes('A')) return 'added'
   if (c.includes('R')) return 'renamed'
   return 'modified'
 }
 
-function parsePath(line: string): { index: string; worktree: string; path: string } | null {
+function parsePath(
+  line: string,
+  splitRenameArrow: boolean
+): { index: string; worktree: string; path: string } | null {
   if (line.length < 4) return null
   const index = line[0] ?? ' '
   const worktree = line[1] ?? ' '
   let path = line.slice(3)
-  // Renames: "R  old -> new" — keep the destination.
-  const arrow = path.indexOf(' -> ')
-  if (arrow >= 0) path = path.slice(arrow + 4)
+  if (splitRenameArrow) {
+    const arrow = path.indexOf(' -> ')
+    if (arrow >= 0) path = path.slice(arrow + 4)
+  }
   return { index, worktree, path }
 }
 
@@ -44,6 +48,24 @@ function pushOnce<T>(seen: Set<string>, key: string, list: T[], item: T): void {
   if (seen.has(key)) return
   seen.add(key)
   list.push(item)
+}
+
+function isRenameStatus(code: string): boolean {
+  return code.includes('R') || code.includes('C')
+}
+
+/** In `-z` mode the next field is always the rename/copy source path. */
+function skipZRenameSource(records: string[], index: number, code: string): number {
+  if (!isRenameStatus(code) || records[index + 1] === undefined) return index
+  return index + 1
+}
+
+/** Split porcelain text into status records without changing path bytes. */
+function splitPorcelainRecords(porcelain: string): string[] {
+  if (!porcelain.includes('\0')) {
+    return porcelain.split('\n').map((line) => line.trimEnd()).filter(Boolean)
+  }
+  return porcelain.split('\0').filter((part) => part.length > 0)
 }
 
 function bucketLine(
@@ -83,9 +105,19 @@ export function parseGitStatus(porcelain: string): Omit<GitStatus, 'ahead' | 'be
   const conflicts: GitStatusFile[] = []
   const seen = new Set<string>()
 
-  for (const raw of porcelain.split('\n')) {
-    const parsed = parsePath(raw.trimEnd())
-    if (!parsed) continue
+  const records = splitPorcelainRecords(porcelain)
+  const nulDelimited = porcelain.includes('\0')
+  let i = 0
+  while (i < records.length) {
+    const raw = records[i]!
+    const parsed = parsePath(raw, !nulDelimited)
+    if (!parsed) {
+      i += 1
+      continue
+    }
+    const code = `${parsed.index}${parsed.worktree}`
+    if (nulDelimited) i = skipZRenameSource(records, i, code)
+    i += 1
     bucketLine(parsed, staged, unstaged, untracked, conflicts, seen)
   }
 

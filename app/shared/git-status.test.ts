@@ -52,6 +52,45 @@ UU both.txt`)
   it('reports clean when porcelain is empty', () => {
     expect(parseGitStatus('').clean).toBe(true)
   })
+
+  it('classifies added-then-deleted as deleted in the index', () => {
+    const out = parseGitStatus('AD staged-delete.txt')
+    expect(out.staged).toEqual([{ path: 'staged-delete.txt', kind: 'deleted', staged: true }])
+  })
+
+  it('reads NUL-delimited porcelain', () => {
+    const out = parseGitStatus('M  a.txt\0?? b.txt\0')
+    expect(out.staged.map((f) => f.path)).toEqual(['a.txt'])
+    expect(out.untracked.map((f) => f.path)).toEqual(['b.txt'])
+  })
+
+  it('keeps unstaged paths when -z records are not trimmed', () => {
+    const out = parseGitStatus(' M file.txt\0')
+    expect(out.unstaged).toEqual([{ path: 'file.txt', kind: 'modified', staged: false }])
+    expect(out.staged).toEqual([])
+  })
+
+  it('pairs rename destination in -z mode', () => {
+    const out = parseGitStatus('R  new.txt\0old.txt\0')
+    expect(out.staged).toEqual([{ path: 'new.txt', kind: 'renamed', staged: true }])
+    expect(out.unstaged).toEqual([])
+  })
+
+  it('skips rename source without phantom paths for RM', () => {
+    const out = parseGitStatus('RM new.txt\0old.txt\0')
+    expect(out.staged.map((f) => f.path)).toEqual(['new.txt'])
+    expect(out.unstaged.map((f) => f.path)).toEqual(['new.txt'])
+  })
+
+  it('does not split arrow in untracked -z paths', () => {
+    const out = parseGitStatus('?? a -> b.txt\0')
+    expect(out.untracked).toEqual([{ path: 'a -> b.txt', kind: 'untracked', staged: false }])
+  })
+
+  it('always consumes rename source even when it looks like status', () => {
+    expect(parseGitStatus('R  new.txt\0?? old.txt\0').untracked).toEqual([])
+    expect(parseGitStatus('R  new.txt\0M  old.txt\0').staged.map((f) => f.path)).toEqual(['new.txt'])
+  })
 })
 
 describe('parseNumstat', () => {

@@ -594,7 +594,7 @@ export interface FarolApi {
       base?: string,
       title?: string,
       body?: string
-    ): Promise<{ ok: boolean; message: string }>
+    ): Promise<{ ok: boolean; message: string; github?: GitHubInfo }>
     draftPr(
       projectPath: string,
       provider: AiProvider,

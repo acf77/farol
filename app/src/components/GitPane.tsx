@@ -125,9 +125,11 @@ function HoldButton({
     setHolding(false)
   }, [])
 
+  const prevDisabled = useRef(disabled)
   useEffect(() => {
-    if (disabled || busy) cancel()
-  }, [busy, cancel, disabled])
+    if (disabled && !prevDisabled.current) cancel()
+    prevDisabled.current = disabled
+  }, [cancel, disabled])
 
   useEffect(() => () => cancel(), [cancel])
 
