@@ -1731,12 +1731,13 @@ describe('AgentController chat context', () => {
   type Call = { request: AgentTaskRequest; prompt: string; resume?: string }
 
   /** Each run reports `session` (if any), then says `reply` and selects no pipelines. */
-  function recording(turns: { session?: string; reply?: string; code?: number }[]) {
+  function recording(turns: { session?: string; reply?: string; code?: number; diagnostic?: string }[]) {
     const calls: Call[] = []
     const execute: AgentExecutor = async (req, prompt, output, _tool, session) => {
       const turn = turns[calls.length] ?? {}
       calls.push({ request: { ...req }, prompt, resume: session?.resume })
       if (turn.session) session?.onSession(turn.session)
+      if (turn.diagnostic) output(turn.diagnostic)
       if (turn.code) return turn.code
       output(`${turn.reply ?? 'Done'}\nFAROL_PIPELINES: []\n`)
       return 0
@@ -1811,6 +1812,25 @@ describe('AgentController chat context', () => {
       taskId: request.id,
       context: { session: { cli: 'claude', id: 's2', cwd: request.cwd } }
     })
+  })
+
+  it('starts a new session when the CLI prints Session not found', async () => {
+    const events: AgentTaskEvent[] = []
+    const { calls, execute } = recording([
+      { session: 's1' },
+      { code: 1, diagnostic: 'Error: Session not found\n' },
+      { session: 's2' }
+    ])
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, provider: 'openrouter' })
+    await vi.waitFor(() => expect(completions(events)).toBe(1))
+    controller.message(request.id, 'again')
+    await vi.waitFor(() => expect(completions(events)).toBe(2))
+
+    expect(calls.map((call) => call.resume)).toEqual([undefined, 's1', undefined])
+    expect(calls[2].prompt).toContain('Continue the original task: Fix the widget')
+    expect(events.some((event) => event.kind === 'status' && event.message.includes('retrying'))).toBe(false)
   })
 
   it('gives up on resuming after one fresh try and uses the normal retry path', async () => {

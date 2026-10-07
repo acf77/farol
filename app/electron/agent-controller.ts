@@ -919,7 +919,8 @@ export class AgentController {
   private abandonResume(task: Task, scan: CycleScan, code: number): boolean {
     if (!scan.resumed || task.resumeAbandoned) return false
     const contextFull = scan.blockedByProvider && /context length/i.test(scan.blocked ?? '')
-    const refused = code !== 0 && !scan.blocked && !scan.assistant.trim()
+    const missing = code !== 0 && /session not found/i.test(scan.output)
+    const refused = code !== 0 && !scan.blocked && (missing || !scan.assistant.trim())
     if (!contextFull && !refused) return false
     task.resumeAbandoned = true
     this.forgetSession(task)
