@@ -64,3 +64,8 @@ jobs:
         run: npm run release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Drop the tag if the build failed, so re-running the workflow retries this version.
+      - name: Remove tag after failed release
+        if: failure() && steps.version.outputs.release == 'true'
+        run: git push origin --delete "${{ steps.version.outputs.tag }}" || true
