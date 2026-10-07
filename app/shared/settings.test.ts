@@ -4,12 +4,14 @@ import {
   modeDefault,
   modeFallbacks,
   modeSelectionForPane,
+  pipelineModelFallbacks,
   retainCatalogs,
   sanitizeSettings,
     withAgentModel,
   withCommitMessageModel,
   withModeChain,
-  withOpenRouterAgent
+  withOpenRouterAgent,
+  withPipelineChain
 } from './settings'
 
 describe('sanitizeSettings', () => {
@@ -24,7 +26,8 @@ describe('sanitizeSettings', () => {
       models: { claude: 'opus', cursor: 'grok-4.6' },
       commitMessage: { agent: 'cursor', model: 'grok-4.6' },
       autoFix: false,
-      modeDefaults: { plan: [], build: [] }
+      modeDefaults: { plan: [], build: [] },
+      pipelineFallbacks: []
     })
   })
 
@@ -45,7 +48,8 @@ describe('sanitizeSettings', () => {
       models: {},
       commitMessage: { agent: 'cursor' },
       autoFix: true,
-      modeDefaults: { plan: [], build: [] }
+      modeDefaults: { plan: [], build: [] },
+      pipelineFallbacks: []
     })
   })
 
@@ -74,6 +78,7 @@ describe('sanitizeSettings', () => {
       commitMessage: { agent: 'openrouter' },
       autoFix: true,
       modeDefaults: { plan: [], build: [] },
+      pipelineFallbacks: [],
       openrouter: {
         autoPinned: true,
         pinned: ['openai/gpt-4o'],
@@ -243,6 +248,23 @@ describe('mode defaults', () => {
     expect(modeFallbacks(s, 'build', 'cursor', 'composer-2.5')).toHaveLength(3)
     // No chain configured means no fallback at all.
     expect(modeFallbacks(base, 'build', 'claude', 'opus')).toEqual([])
+  })
+
+  it('walks the pipeline chain on its own, apart from the Build chain', () => {
+    const built = withModeChain(base, 'build', [{ agent: 'omp' }, { agent: 'codex' }])
+    // No pipeline chain means no fallback, even when Build has one.
+    expect(pipelineModelFallbacks(built, 'omp')).toEqual([])
+    const s = withPipelineChain(built, [
+      { agent: 'claude', model: 'opus' },
+      { agent: 'cursor' },
+      { agent: 'cursor' }
+    ])
+    expect(s.pipelineFallbacks).toEqual([{ agent: 'claude', model: 'opus' }, { agent: 'cursor' }])
+    expect(pipelineModelFallbacks(s, 'claude', 'opus')).toEqual([{ agent: 'cursor' }])
+    // A step on the last rung still gets the earlier ones.
+    expect(pipelineModelFallbacks(s, 'cursor')).toEqual([{ agent: 'claude', model: 'opus' }])
+    expect(pipelineModelFallbacks(s, 'codex')).toHaveLength(2)
+    expect(sanitizeSettings(s).pipelineFallbacks).toEqual(s.pipelineFallbacks)
   })
 
   it('switches a live pane onto the mode chain head, else keeps its selection', () => {

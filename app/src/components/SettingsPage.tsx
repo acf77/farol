@@ -16,6 +16,7 @@ import {
   withAgentModel,
   withCommitMessageModel,
   withModeChain,
+  withPipelineChain,
   withOpenRouterAgent
 } from '@shared/settings'
 import { C, UI } from '../theme'
@@ -351,12 +352,15 @@ function ModeChain({
   settings,
   onSettings
 }: {
-  mode: AgentMode
+  mode: AgentMode | 'pipelines'
   settings: AppSettings
   onSettings: (next: AppSettings) => void
 }) {
-  const chain = settings.modeDefaults[mode]
-  const save = (next: ModelChoice[]): void => onSettings(withModeChain(settings, mode, next))
+  const chain = mode === 'pipelines' ? settings.pipelineFallbacks : settings.modeDefaults[mode]
+  const save = (next: ModelChoice[]): void =>
+    onSettings(
+      mode === 'pipelines' ? withPipelineChain(settings, next) : withModeChain(settings, mode, next)
+    )
   const move = (from: number, to: number): void => {
     const next = [...chain]
     const [rung] = next.splice(from, 1)
@@ -364,7 +368,18 @@ function ModeChain({
     save(next)
   }
   const fallback = pickerProviders(settings.openrouter)[0]
-  const title = mode === 'plan' ? 'Plan mode' : 'Build mode'
+  const title = { plan: 'Plan mode', build: 'Build mode', pipelines: 'Pipelines' }[mode]
+  const foot = {
+    plan: 'Leave empty to keep whichever model the chat is already on.',
+    build: undefined,
+    pipelines:
+      'Tried when an AI pipeline step cannot run on its own model — CLI missing, usage or quota limit. Leave empty for no fallback.'
+  }[mode]
+  const empty = {
+    plan: 'Empty — plan mode keeps whichever model the chat is already on.',
+    build: 'Empty — build mode uses the default model only.',
+    pipelines: 'Empty — AI pipeline steps do not fall back.'
+  }[mode]
 
   return (
     <Group
@@ -375,14 +390,12 @@ function ModeChain({
           + Add fallback
         </Button>
       }
-      foot={mode === 'plan' ? 'Leave empty to keep whichever model the chat is already on.' : undefined}
+      foot={foot}
     >
       <Card>
         {chain.length === 0 ? (
           <div style={{ padding: '14px 16px', fontSize: 12.5, color: C.faint }}>
-            {mode === 'plan'
-              ? 'Empty — plan mode keeps whichever model the chat is already on.'
-              : 'Empty — build mode uses the default model only.'}
+            {empty}
           </div>
         ) : (
           chain.map((rung, i) => (
@@ -545,7 +558,11 @@ export default function SettingsPage({
     : catalog
   const meta: Partial<Record<PageKey, string>> = {
     prompts: promptCount ? String(promptCount) : '',
-    fallbacks: String(settings.modeDefaults.build.length + settings.modeDefaults.plan.length),
+    fallbacks: String(
+      settings.modeDefaults.build.length +
+        settings.modeDefaults.plan.length +
+        settings.pipelineFallbacks.length
+    ),
     openrouter: configured ? String(pinned.size) : ''
   }
 
@@ -733,6 +750,7 @@ export default function SettingsPage({
                 </span>
                 <ModeChain mode="build" settings={settings} onSettings={onSettings} />
                 <ModeChain mode="plan" settings={settings} onSettings={onSettings} />
+                <ModeChain mode="pipelines" settings={settings} onSettings={onSettings} />
               </>
             )}
 

@@ -36,7 +36,7 @@ import { openRemote as openRemoteWorkspace, SignInRequired, type OpenRemote, typ
 import { SIGN_IN_REQUIRED } from '../shared/remote'
 import { providerFailure } from '../shared/provider-failure'
 import { loadSettings } from './store'
-import { modeFallbacks, type ModelChoice } from '../shared/settings'
+import { pipelineModelFallbacks, type ModelChoice } from '../shared/settings'
 import { backoffDelayMs } from './backoff'
 
 /**
@@ -791,7 +791,7 @@ export class PipelineRunner {
     const primary = normalizeAi(node.ai)
     const chain: ModelChoice[] = [
       { agent: primary, ...(node.model ? { model: node.model } : {}) },
-      ...modeFallbacks(settings, 'build', primary, node.model)
+      ...pipelineModelFallbacks(settings, primary, node.model)
     ]
     const prompt = [cmd, verdictPromptSuffix()].join('\n')
     const via = openRouterAgent()

@@ -84,6 +84,8 @@ export interface AppSettings {
    * An empty chain means the mode just uses `agent` / `models[agent]`.
    */
   modeDefaults: ModeDefaults
+  /** Models tried, in order, when an AI pipeline step's own model is missing or hits a provider limit. Empty means no fallback. */
+  pipelineFallbacks: ModelChoice[]
   openrouter?: OpenRouterSettings
   /** Live `--model` catalogs discovered from each local CLI. */
   catalogs?: AgentCatalogs
@@ -97,7 +99,8 @@ export function defaultSettings(): AppSettings {
     models: {},
     commitMessage: { agent: 'claude' },
     autoFix: true,
-    modeDefaults: { plan: [], build: [] }
+    modeDefaults: { plan: [], build: [] },
+    pipelineFallbacks: []
   }
 }
 
@@ -169,6 +172,25 @@ export function modeFallbacks(
   const id = normalizeModel(model)
   const at = chain.findIndex((rung) => rung.agent === agent && normalizeModel(rung.model) === id)
   return chain.slice(at + 1)
+}
+
+/**
+ * Every pipeline fallback except the step's own model, in chain order. A step
+ * pins its own model, so its position in the chain says nothing about what to try.
+ */
+export function pipelineModelFallbacks(
+  settings: AppSettings,
+  agent: AiProvider,
+  model?: string
+): ModelChoice[] {
+  const id = normalizeModel(model)
+  return settings.pipelineFallbacks.filter(
+    (rung) => !(rung.agent === agent && normalizeModel(rung.model) === id)
+  )
+}
+
+export function withPipelineChain(settings: AppSettings, chain: readonly ModelChoice[]): AppSettings {
+  return { ...settings, pipelineFallbacks: sanitizeModeChain(chain) }
 }
 
 /** Set or clear one CLI's default model; an empty id falls back to the CLI's own. */
@@ -311,6 +333,7 @@ export function sanitizeSettings(raw: unknown): AppSettings {
     },
     autoFix: typeof s.autoFix === 'boolean' ? s.autoFix : d.autoFix,
     modeDefaults: sanitizeModeDefaults(s.modeDefaults),
+    pipelineFallbacks: sanitizeModeChain(s.pipelineFallbacks),
     ...(openrouter ? { openrouter } : {}),
     ...(catalogs ? { catalogs } : {})
   }
