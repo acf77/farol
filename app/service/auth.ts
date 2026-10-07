@@ -58,27 +58,29 @@ const listed = (access: AccessPolicy, login: string): boolean =>
  */
 const stillAllowed = (access: AccessPolicy, login: string): boolean => listed(access, login) || access.orgs.length > 0
 
+function identityFromSession(config: AuthConfig, token: string): Identity | null {
+  const { login } = config
+  if (!login) return null
+  const claims = readSession(login.sessionSecret, token)
+  if (!claims) return null
+  const user = findUser(login.usersFile, claims.sub)
+  if (!user || user.disabledAt) return null
+  if (user.sessionsValidAfter !== undefined && claims.iat <= user.sessionsValidAfter) return null
+  if (!stillAllowed(login.access, user.login)) return null
+  return {
+    id: `user:${user.githubId}`,
+    kind: 'user',
+    name: user.login,
+    githubId: user.githubId,
+    ...(user.name ? { displayName: user.name } : {}),
+    ...(user.avatarUrl ? { avatarUrl: user.avatarUrl } : {})
+  }
+}
+
 /** The caller a bearer token identifies, or null when it is missing, malformed, expired, or revoked. */
 export function identify(config: AuthConfig, token: string): Identity | null {
   if (!token) return null
-  if (isSessionToken(token)) {
-    const { login } = config
-    if (!login) return null
-    const claims = readSession(login.sessionSecret, token)
-    if (!claims) return null
-    const user = findUser(login.usersFile, claims.sub)
-    if (!user || user.disabledAt) return null
-    if (user.sessionsValidAfter !== undefined && claims.iat <= user.sessionsValidAfter) return null
-    if (!stillAllowed(login.access, user.login)) return null
-    return {
-      id: `user:${user.githubId}`,
-      kind: 'user',
-      name: user.login,
-      githubId: user.githubId,
-      ...(user.name ? { displayName: user.name } : {}),
-      ...(user.avatarUrl ? { avatarUrl: user.avatarUrl } : {})
-    }
-  }
+  if (isSessionToken(token)) return identityFromSession(config, token)
   const key = verifyKey(config.keysFile, token)
   return key ? { id: `key:${key.id}`, kind: 'key', name: key.name } : null
 }

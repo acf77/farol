@@ -10,7 +10,7 @@ import type {
   RunEvent,
   RunOrigin
 } from '../shared/types'
-import { aiCommand, normalizeAi } from '../shared/ai'
+import { aiCommand, aiSelectionLabel, normalizeAi, type AiProvider, type OpenRouterAgent } from '../shared/ai'
 import { FAILURE_REPORT_REL, failureReport, gitignoreWithEntry, REPORT_OUTPUT_LIMIT } from '../shared/failure'
 import { appendTail, plainText } from '../shared/terminal'
 import { exitCodeFromSignal } from '../shared/exit-code'
@@ -34,6 +34,10 @@ import { verdictFromOutput } from './jev'
 import { shellFamily } from './protocol'
 import { openRemote as openRemoteWorkspace, SignInRequired, type OpenRemote, type RemoteWorkspace } from './remote'
 import { SIGN_IN_REQUIRED } from '../shared/remote'
+import { providerFailure } from '../shared/provider-failure'
+import { loadSettings } from './store'
+import { modeFallbacks, type ModelChoice } from '../shared/settings'
+import { backoffDelayMs } from './backoff'
 
 /**
  * Runs a pipeline DAG. Ready nodes start together; a gated shell failure
@@ -51,6 +55,37 @@ const STEP_RESULT_LIMIT = 4000
 /** Tries to start a remote sandbox before the run fails (or falls back to this machine). */
 const REMOTE_START_ATTEMPTS = 3
 const REMOTE_START_BACKOFF_MS = 500
+
+async function pauseUnlessCancelled(state: { cancelled: boolean }, ms: number): Promise<void> {
+  if (state.cancelled || ms <= 0) return
+  const end = Date.now() + ms
+  while (Date.now() < end) {
+    if (state.cancelled) return
+    await new Promise((resolve) => setTimeout(resolve, Math.min(200, end - Date.now())))
+  }
+}
+
+export type AiAttemptResult = { exit: number; verdict: StepVerdict | null; output: string }
+
+/** Keep in sync with ../shared/ai-step-attempt.ts (Full Check slices this file). */
+export function resolveAiStepAttempt(
+  result: AiAttemptResult,
+  rungIndex: number,
+  chainLength: number
+): number | null {
+  if (result.verdict === 'pass') return 0
+  if (result.verdict === 'fail') return 1
+  const providerReason = providerFailure(result.output)
+  if (result.exit === 127 || providerReason) {
+    if (rungIndex >= chainLength - 1) return result.exit === 127 ? 127 : 1
+    return null
+  }
+  return result.exit
+}
+
+function remoteStartErrorMessage(error: unknown): string {
+  return String((error as Error)?.message ?? error)
+}
 
 /**
  * Leave a failed step somewhere an agent can read it. The file lives in the
@@ -435,17 +470,31 @@ export class PipelineRunner {
       try {
         state.remote = await this.openRemote(cwd, state.abort.signal)
       } catch (error) {
-        if (state.cancelled) break
-        if (error instanceof SignInRequired) {
-          this.emitOut(state, graph, first, `farol: ${SIGN_IN_REQUIRED}\r\n`)
-          return SIGN_IN_REQUIRED
-        }
-        failure = String((error as Error)?.message ?? error)
+        const stop = this.remoteStartStop(error, state, graph, first)
+        if (stop !== undefined) return stop
+        failure = remoteStartErrorMessage(error)
         this.emitOut(state, graph, first, `farol: remote sandbox failed to start: ${failure}\r\n`)
-        if (attempt < REMOTE_START_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, REMOTE_START_BACKOFF_MS * attempt))
+        if (attempt < REMOTE_START_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, REMOTE_START_BACKOFF_MS * attempt))
+        }
       }
     }
     return failure
+  }
+
+  /** Sign-in required, or undefined to keep retrying. */
+  private remoteStartStop(
+    error: unknown,
+    state: Active,
+    graph: RunGraph,
+    first: string
+  ): string | undefined {
+    if (state.cancelled) return ''
+    if (error instanceof SignInRequired) {
+      this.emitOut(state, graph, first, `farol: ${SIGN_IN_REQUIRED}\r\n`)
+      return SIGN_IN_REQUIRED
+    }
+    return undefined
   }
 
   private async openRemoteWorkspace(
@@ -730,37 +779,95 @@ export class PipelineRunner {
     }
   }
 
-  private runAiStep(
+  private async runAiStep(
     node: PipelineNode,
     cmd: string,
     cwd: string,
     state: Active,
     onChunk: (chunk: string) => void
   ): Promise<number> {
+    if (state.cancelled) return 130
+    const settings = await loadSettings()
+    const primary = normalizeAi(node.ai)
+    const chain: ModelChoice[] = [
+      { agent: primary, ...(node.model ? { model: node.model } : {}) },
+      ...modeFallbacks(settings, 'build', primary, node.model)
+    ]
     const prompt = [cmd, verdictPromptSuffix()].join('\n')
     const via = openRouterAgent()
-    const spec = aiCommand(normalizeAi(node.ai), prompt, node.model, via)
+    let fallbackWait = 0
+
+    for (let i = 0; i < chain.length; i++) {
+      const code = await this.runAiFallbackRung(
+        chain,
+        i,
+        node,
+        prompt,
+        via,
+        cwd,
+        state,
+        onChunk,
+        () => backoffDelayMs(++fallbackWait)
+      )
+      if (code !== null) return code
+    }
+    return 127
+  }
+
+  private async runAiFallbackRung(
+    chain: ModelChoice[],
+    index: number,
+    node: PipelineNode,
+    prompt: string,
+    via: OpenRouterAgent,
+    cwd: string,
+    state: Active,
+    onChunk: (chunk: string) => void,
+    backoffMs: () => number
+  ): Promise<number | null> {
+    if (state.cancelled) return 130
+    const rung = chain[index]!
+    if (index > 0) {
+      onChunk(`farol: Retrying with ${aiSelectionLabel(rung.agent, rung.model)}.\r\n`)
+      await pauseUnlessCancelled(state, backoffMs())
+      if (state.cancelled) return 130
+    }
+    const result = await this.runOneAiAttempt(node, prompt, rung.agent, rung.model, via, cwd, state, onChunk)
+    if (state.cancelled || result.exit === 130) return 130
+    return resolveAiStepAttempt(result, index, chain.length)
+  }
+
+  private runOneAiAttempt(
+    node: PipelineNode,
+    prompt: string,
+    agent: AiProvider,
+    model: string | undefined,
+    via: OpenRouterAgent,
+    cwd: string,
+    state: Active,
+    onChunk: (chunk: string) => void
+  ): Promise<{ exit: number; verdict: StepVerdict | null; output: string }> {
+    const spec = aiCommand(normalizeAi(agent), prompt, model, via)
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       const listed = spec.bins.map((b) => `'${b}'`).join(' or ')
       onChunk(`farol: ${listed} is not on PATH. ${spec.hint}\r\n`)
-      return Promise.resolve(127)
+      return Promise.resolve({ exit: 127, verdict: null, output: '' })
     }
 
-    return new Promise<number>((resolve) => {
+    return new Promise((resolve) => {
       let collected = ''
-      const done = (code: number): void => {
+      const finish = (exit: number, verdict: StepVerdict | null): void => {
         if (state.finishers.get(node.id) !== done) return
         state.finishers.delete(node.id)
         const proc = state.aiProcs.get(node.id)
-        if (proc) {
-          state.aiProcs.delete(node.id)
-        }
-        resolve(code)
+        if (proc) state.aiProcs.delete(node.id)
+        resolve({ exit, verdict, output: collected })
       }
+      const done = (code: number): void => finish(code, null)
       state.finishers.set(node.id, done)
       if (state.cancelled) {
-        done(130)
+        finish(130, null)
         return
       }
 
@@ -771,11 +878,11 @@ export class PipelineRunner {
           cols: 110,
           rows: 40,
           cwd,
-          env: aiEnv(normalizeAi(node.ai), via)
+          env: aiEnv(normalizeAi(agent), via)
         })
       } catch (err) {
         onChunk(`farol: ${errorMessage(err)}\r\n`)
-        done(127)
+        finish(127, null)
         return
       }
       state.aiProcs.set(node.id, proc)
@@ -788,17 +895,16 @@ export class PipelineRunner {
         const exitFromVerdict = (verdict: StepVerdict | null): number =>
           verdict === 'pass' ? 0 : verdict === 'fail' ? 1 : exit
         const verdict = parseVerdict(collected)
-        if (verdict) done(exitFromVerdict(verdict))
+        if (verdict) finish(exitFromVerdict(verdict), verdict)
         else {
-          // No FAROL_VERDICT line — ask Jev to read the transcript before
-          // falling back to the CLI's own exit code, which is often 0 even
-          // when the review it printed found a failure.
-          void verdictFromOutput(collected).then((jevVerdict) => done(exitFromVerdict(jevVerdict)))
+          void verdictFromOutput(collected).then((jevVerdict) =>
+            finish(exitFromVerdict(jevVerdict), jevVerdict)
+          )
         }
       })
       if (state.cancelled) {
         killPty(proc)
-        done(130)
+        finish(130, null)
       }
     })
   }

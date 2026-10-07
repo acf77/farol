@@ -4,6 +4,7 @@ import { C, MONO } from '../theme'
 import { remoteAccount, useRemoteAccount } from '../remote-account'
 import { Button } from './controls'
 import { UserIcon } from './icons'
+import { CHROME_ROW } from './side-panel'
 
 /**
  * The header's account avatar. Its popover shows who this machine is signed in
@@ -40,7 +41,7 @@ function Avatar({ account, size }: { account: RemoteAccount | null; size: number
   return <UserIcon size={Math.round(size * 0.6)} />
 }
 
-export default function AccountMenu() {
+export default function AccountMenu({ liquid }: { liquid?: boolean }) {
   const { account, userCode, busy, error, menuOpen: open } = useRemoteAccount()
 
   useEffect(() => remoteAccount.refresh(), [])
@@ -58,7 +59,7 @@ export default function AccountMenu() {
   const label = signedIn ? `Account: ${signedIn.login}` : 'Account: not signed in'
 
   return (
-    <div style={{ position: 'relative' }}>
+    <>
       <button
         type="button"
         className="bf-focus bf-icon-btn"
@@ -109,14 +110,14 @@ export default function AccountMenu() {
             style={{
               ...noDrag,
               position: 'absolute',
-              top: 34,
-              right: 0,
+              top: CHROME_ROW,
+              right: 16,
               zIndex: 50,
               width: 268,
-              background: 'oklch(0.26 0.006 95)',
+              background: liquid ? C.panel : C.sidebar,
               border: `1px solid ${C.border}`,
-              borderRadius: 10,
-              boxShadow: '0 12px 32px rgba(0,0,0,.45)',
+              borderRadius: 12,
+              boxShadow: '0 18px 44px rgba(0,0,0,0.55)',
               padding: 12,
               fontSize: 12,
               color: C.text
@@ -191,6 +192,6 @@ export default function AccountMenu() {
           </div>
         </>
       )}
-    </div>
+    </>
   )
 }

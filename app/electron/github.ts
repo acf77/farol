@@ -113,12 +113,20 @@ function parsePr(raw: GhPr, checks?: PrCheckSummary): PullRequest {
 
 /** Why gh cannot be used for `purpose`, or null when it is installed and logged in. */
 async function ghBlockReason(cwd: string, purpose: string): Promise<string | null> {
-  const version = await execCli('gh', cwd, ['--version'], GH_TIMEOUT)
+  // A healthy install and login is remembered, so each poll skips two process spawns.
+  if (Date.now() < ghReadyUntil) return null
+  const [version, auth] = await Promise.all([
+    execCli('gh', cwd, ['--version'], GH_TIMEOUT),
+    execCli('gh', cwd, ['auth', 'status'], GH_TIMEOUT)
+  ])
   if (version.code !== 0) return `Install the GitHub CLI (gh) to ${purpose}.`
-  const auth = await execCli('gh', cwd, ['auth', 'status'], GH_TIMEOUT)
   if (auth.code !== 0) return `Run \`gh auth login\` to ${purpose}.`
+  ghReadyUntil = Date.now() + GH_READY_TTL_MS
   return null
 }
+
+const GH_READY_TTL_MS = 5 * 60_000
+let ghReadyUntil = 0
 
 /** Names of checks that branch protection requires for this PR, when gh can list them. */
 async function requiredCheckNames(cwd: string): Promise<Set<string> | undefined> {
@@ -139,6 +147,25 @@ function checksFromView(raw: GhPr, required?: Set<string>): PrCheckSummary {
   return summarizePrChecks(parseStatusCheckRollup(raw.statusCheckRollup, required), {
     requireAllWhenUnmarked: required === undefined
   })
+}
+
+/** Load one open PR by URL right after create — skips a full branch scan. */
+async function githubFromCreatedUrl(cwd: string, url: string): Promise<GitHubInfo | undefined> {
+  const view = await execCli(
+    'gh',
+    cwd,
+    ['pr', 'view', url, '--json', 'number,state,mergeable,baseRefName,url,isDraft,statusCheckRollup'],
+    GH_TIMEOUT
+  )
+  if (view.code !== 0) return undefined
+  try {
+    const raw = JSON.parse(view.out) as GhPr
+    if (raw.state && raw.state.toUpperCase() !== 'OPEN') return { available: true, prs: [] }
+    const required = await requiredCheckNames(cwd)
+    return { available: true, prs: [parsePr(raw, checksFromView(raw, required))] }
+  } catch {
+    return undefined
+  }
 }
 
 /** Open PR for the current branch, if any — including draft state and Actions checks. */
@@ -180,7 +207,7 @@ export async function createPullRequest(
   base?: string,
   title?: string,
   body?: string
-): Promise<{ ok: boolean; message: string }> {
+): Promise<{ ok: boolean; message: string; github?: GitHubInfo }> {
   const blocked = await ghBlockReason(cwd, 'open pull requests')
   if (blocked) return { ok: false, message: blocked }
 
@@ -199,7 +226,11 @@ export async function createPullRequest(
     return { ok: false, message: lines[0] ?? 'Could not create the pull request' }
   }
   const url = lines.find((l) => /^https?:\/\//.test(l))
-  return { ok: true, message: url ? `Pull request created: ${url}` : 'Pull request created' }
+  const message = url ? `Pull request created: ${url}` : 'Pull request created'
+  const github = url
+    ? await githubFromCreatedUrl(cwd, url).catch(() => undefined)
+    : await githubInfo(cwd).catch(() => undefined)
+  return { ok: true, message, ...(github?.prs.length ? { github } : {}) }
 }
 
 const STRATEGY_FLAG: Record<MergeStrategy, string> = {

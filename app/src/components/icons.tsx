@@ -42,4 +42,3 @@ export function AttachmentIcon({ kind, size = 24 }: IconProps & { kind: string }
   const Attachment = kind === 'Image' ? Image : kind === 'HTML' ? FileCode2 : FileText
   return <Attachment aria-hidden="true" size={size} style={{ flexShrink: 0 }} />
 }
-

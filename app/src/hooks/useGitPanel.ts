@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { errorMessage } from '@shared/jev'
+import { trimSlashes } from '@shared/project-groups'
 import { activeHooks, gitHookFailurePrompt } from '@shared/git-status'
-import type { AiProvider, GitHookRun, MergeStrategy, PrDraft } from '@shared/types'
+import type { AiProvider, GitHookRun, GitHubInfo, MergeStrategy, PrDraft } from '@shared/types'
 import { useGitSync, type GitSyncOptions } from './useGitSync'
 
 const api = window.farol
@@ -37,7 +38,13 @@ type UseGitPanelOptions = GitSyncOptions & {
 const EMPTY_DRAFT: GitCommitDraft = { message: '', skipped: [] }
 const EMPTY_PR_DRAFT: PrDraft = { title: '', description: '' }
 
-type RemoteResult = { ok: boolean; message: string; prompt?: string; hookRun?: GitHookRun }
+type RemoteResult = {
+  ok: boolean
+  message: string
+  prompt?: string
+  hookRun?: GitHookRun
+  github?: GitHubInfo
+}
 
 type RunRemote = (
   kind: GitAction,
@@ -74,7 +81,10 @@ export function useGitPanel(
   }, [])
   const [conflictBase, setConflictBase] = useState<string>()
   const sync = useGitSync(projectPath, { ...opts, base: conflictBase }, appendLog)
-  const { hooks, selectedFiles, setSelectedFiles, refresh } = sync
+  const { hooks, selectedFiles, setSelectedFiles, refresh, applyGithubPollResult, burstGithubPoll, githubBranchRef, githubGenRef, githubPollGenRef } =
+    sync
+  const projectRef = useRef(projectPath)
+  projectRef.current = projectPath
 
   useEffect(() => {
     setDraft(EMPTY_DRAFT)
@@ -173,7 +183,26 @@ export function useGitPanel(
         runRemote(
           'pr',
           'Create pull request',
-          () => api.git.createPr(projectPath, base, title, body),
+          async () => {
+            const cwd = projectPath
+            const ctx = {
+              project: cwd,
+              branch: githubBranchRef.current,
+              gen: githubGenRef.current,
+              poll: githubPollGenRef.current
+            }
+            const res = await api.git.createPr(cwd, base, title, body)
+            const live =
+              trimSlashes(projectRef.current) === trimSlashes(ctx.project) &&
+              githubBranchRef.current === ctx.branch &&
+              githubGenRef.current === ctx.gen &&
+              githubPollGenRef.current === ctx.poll
+            if (res.ok && live) {
+              if (res.github) applyGithubPollResult(res.github)
+              burstGithubPoll()
+            }
+            return res
+          },
           'Could not create the pull request'
         ),
       mergePr: (strategy: MergeStrategy) =>
@@ -184,7 +213,7 @@ export function useGitPanel(
           'Could not merge the pull request'
         )
     }),
-    [projectPath, runRemote]
+    [applyGithubPollResult, burstGithubPoll, githubBranchRef, githubGenRef, githubPollGenRef, projectPath, runRemote]
   )
 
   const preparePr = useCallback(
