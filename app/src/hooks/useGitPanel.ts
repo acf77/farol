@@ -244,7 +244,7 @@ export function useGitPanel(
   const resolveConflicts = useCallback(async () => {
     const res = await runRemote(
       'conflicts',
-      'Check conflicts',
+      'Fix conflicts with AI',
       () => api.git.bringConflicts(projectPath, conflictBase),
       'Could not bring pull request conflicts into the working tree'
     )

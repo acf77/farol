@@ -196,59 +196,6 @@ function HoldButton({
   )
 }
 
-/** A remote action that asks for a second click before it runs. */
-function ConfirmButton({
-  label,
-  confirmLabel,
-  busyLabel,
-  busy,
-  disabled,
-  title,
-  onConfirm
-}: {
-  label: string
-  confirmLabel: string
-  busyLabel: string
-  busy: boolean
-  disabled: boolean
-  title: string
-  onConfirm: () => void
-}) {
-  const [armed, setArmed] = useState(false)
-
-  useEffect(() => {
-    if (disabled) {
-      setArmed(false)
-      return
-    }
-    if (!armed) return
-    const timer = window.setTimeout(() => setArmed(false), 6000)
-    return () => window.clearTimeout(timer)
-  }, [armed, disabled])
-
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="bf-link-btn"
-      style={{ height: 'auto', padding: 0, flex: 'none', color: armed ? C.accent : C.textRow }}
-      disabled={disabled || busy}
-      onBlur={() => setArmed(false)}
-      title={armed ? 'Click again to confirm' : title}
-      onClick={() => {
-        if (!armed) {
-          setArmed(true)
-          return
-        }
-        setArmed(false)
-        onConfirm()
-      }}
-    >
-      {busy ? <><Spinner /> {busyLabel}</> : armed ? confirmLabel : label}
-    </Button>
-  )
-}
-
 const BG = 'oklch(0.17 0.006 95)'
 const CARD_BORDER = 'oklch(1 0 0 / 0.08)'
 const SOFT_BORDER = 'oklch(1 0 0 / 0.06)'
@@ -324,7 +271,7 @@ function LinkButton({ children, disabled, onClick }: { children: ReactNode; disa
   )
 }
 
-function AiButton({ busy, disabled, title, onClick, style }: { busy: boolean; disabled: boolean; title?: string; onClick: () => void; style?: CSSProperties }) {
+function AiButton({ busy, disabled, title, onClick, style, label = 'Draft with AI', busyLabel = 'Drafting…' }: { busy: boolean; disabled: boolean; title?: string; onClick: () => void; style?: CSSProperties; label?: string; busyLabel?: string }) {
   return (
     <button
       type="button"
@@ -335,7 +282,7 @@ function AiButton({ busy, disabled, title, onClick, style }: { busy: boolean; di
       style={{ flex: 'none', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '5px 10px', border: 'none', borderRadius: 7, background: AI_FILL, color: C.purpleSoft, font: 'inherit', fontSize: 12, fontWeight: 500, cursor: disabled ? 'default' : 'pointer', opacity: disabled && !busy ? 0.5 : 1, ...style }}
     >
       {busy ? <Spinner size={12} color={C.purpleSoft} /> : <SparkIcon />}
-      <span>{busy ? 'Drafting…' : 'Draft with AI'}</span>
+      <span>{busy ? busyLabel : label}</span>
     </button>
   )
 }
@@ -706,7 +653,7 @@ function PullRequestTab({
   onPrDescription,
   onPreparePr,
   onMergeStrategy,
-  onCheckConflicts,
+  onFixConflicts,
   onCreatePr,
   onMergePr
 }: {
@@ -725,7 +672,7 @@ function PullRequestTab({
   onPrDescription: (description: string) => void
   onPreparePr: (base: string) => void
   onMergeStrategy: (strategy: MergeStrategy | '') => void
-  onCheckConflicts: () => void
+  onFixConflicts: () => void
   onCreatePr: (base: string, title: string, body: string) => void
   onMergePr: (strategy: MergeStrategy) => void
 }) {
@@ -740,12 +687,12 @@ function PullRequestTab({
     !!status &&
     (status.clean || status.conflicts.length > 0) &&
     (working.length > 0 || !!conflictMergeBase(status, github))
-  const checkTitle = !status
+  const fixTitle = !status
     ? 'Reading working changes…'
     : gitAction
       ? 'Wait for the current Git action to finish'
       : canCheck
-        ? 'Merge the pull request base if needed, then send conflicted files to Chat'
+        ? 'Merge the base into your working tree if needed, then send the conflicts to Chat to fix'
         : !working.length && !conflictMergeBase(status, github)
           ? 'No pull request or base branch to check.'
           : 'Commit or stash local changes before merging the pull request base'
@@ -797,15 +744,16 @@ function PullRequestTab({
           <span style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: 1.4, color: C.textRow }}>
             {mergeItems[0]?.text ?? 'Merge status unknown'}
           </span>
-          <ConfirmButton
-            label="Check conflicts"
-            confirmLabel="Confirm check"
-            busyLabel="Checking…"
-            busy={gitAction === 'conflicts'}
-            disabled={!canCheck}
-            title={checkTitle}
-            onConfirm={onCheckConflicts}
-          />
+          {hasConflict && (
+            <AiButton
+              label="Fix with AI"
+              busyLabel="Fixing…"
+              busy={gitAction === 'conflicts'}
+              disabled={!canCheck}
+              title={fixTitle}
+              onClick={onFixConflicts}
+            />
+          )}
         </div>
         {mergeItems.slice(1).map((item) => (
           <div key={item.text} style={{ padding: '0 12px 10px 29px', color: item.tone === 'conflict' ? C.red : C.textMuted, fontSize: 11.5 }}>
@@ -1172,7 +1120,7 @@ export default function GitPane({
                 onPrDescription={setPrDescription}
                 onPreparePr={(nextBase) => void preparePr(nextBase, provider, aiModel)}
                 onMergeStrategy={setMergeStrategy}
-                onCheckConflicts={resolveConflicts}
+                onFixConflicts={resolveConflicts}
                 onCreatePr={createPr}
                 onMergePr={(strategy) => {
                   void mergePr(strategy)
