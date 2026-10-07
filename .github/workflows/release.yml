@@ -1,0 +1,43 @@
+name: Release
+
+# Push a tag matching app/package.json's version (e.g. `npm version patch` in app/,
+# then `git push --follow-tags`) to build the macOS app and publish a GitHub Release.
+# The landing page links to the fixed-name asset of the latest release:
+#   https://github.com/acf77/farol/releases/latest/download/Farol-mac-arm64.dmg
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Check tag matches package.json version
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - name: Build and publish release
+        run: npm run release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
