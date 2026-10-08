@@ -151,7 +151,11 @@ const api: FarolApi = {
     check: () => ipcRenderer.invoke('jev:check')
   },
   usage: {
-    read: () => ipcRenderer.invoke('usage:read')
+    read: () => ipcRenderer.invoke('usage:read'),
+    spend: (force) => ipcRenderer.invoke('spend:read', force),
+    spendKeys: () => ipcRenderer.invoke('spend:keys'),
+    saveSpendKey: (name, key) => ipcRenderer.invoke('spend:saveKey', name, key),
+    clearSpendKey: (name) => ipcRenderer.invoke('spend:clearKey', name)
   },
   update: {
     check: () => ipcRenderer.invoke('update:check'),

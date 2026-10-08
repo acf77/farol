@@ -20,6 +20,23 @@ import {
   withPipelineChain,
   withOpenRouterAgent
 } from '@shared/settings'
+import {
+  SPEND_DAYS,
+  SPEND_KEY_HINTS,
+  SPEND_LABELS,
+  SPEND_PROVIDERS,
+  dailyCost,
+  daysAgo,
+  formatUsd,
+  heatCuts,
+  heatLevel,
+  totalsSince,
+  type ProviderSpend,
+  type SpendKeyStatus,
+  type SpendProvider,
+  type SpendReport
+} from '@shared/spend'
+import { formatTokens } from '@shared/usage'
 import { C, UI } from '../theme'
 import { Button, Checkbox, CliModelDropdown, SegmentedControl, Switch } from './controls'
 import { CustomPromptsSection } from './CustomPromptsSection'
@@ -37,7 +54,7 @@ interface Props {
   projectName?: string
 }
 
-type PageKey = 'general' | 'prompts' | 'models' | 'fallbacks' | 'openrouter' | 'keys' | 'jev'
+type PageKey = 'general' | 'prompts' | 'models' | 'fallbacks' | 'openrouter' | 'keys' | 'jev' | 'usage'
 
 const PAGES: readonly { value: PageKey; label: string }[] = [
   { value: 'general', label: 'General' },
@@ -46,7 +63,8 @@ const PAGES: readonly { value: PageKey; label: string }[] = [
   { value: 'fallbacks', label: 'Fallbacks' },
   { value: 'openrouter', label: 'OpenRouter' },
   { value: 'keys', label: 'API keys' },
-  { value: 'jev', label: 'Jev' }
+  { value: 'jev', label: 'Jev' },
+  { value: 'usage', label: 'Usage' }
 ]
 
 const OPENROUTER_AGENT_OPTIONS = OPENROUTER_AGENTS.map((value) => ({
@@ -537,6 +555,370 @@ function ModeChain({
   )
 }
 
+const SPEND_COLORS: Record<SpendProvider, string> = {
+  anthropic: 'oklch(0.76 0.12 55)',
+  openai: 'oklch(0.78 0.09 200)',
+  openrouter: 'oklch(0.91 0.19 115)'
+}
+const SPEND_RANGES = [
+  { value: 7, label: '7 days' },
+  { value: 30, label: '30 days' },
+  { value: 90, label: '90 days' }
+] as const
+const HEAT_WEEKS = 14
+const HEAT_CELL = 13
+const DAY_MS = 86_400_000
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function utcDate(date: string): Date {
+  return new Date(`${date}T00:00:00Z`)
+}
+
+function dayLabel(date: string): string {
+  const d = utcDate(date)
+  return `${WEEKDAYS[d.getUTCDay()]}, ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`
+}
+
+/** API spend from the providers' admin endpoints: a daily heatmap and per-model tables. */
+function UsageSection() {
+  const api = window.farol
+  const [report, setReport] = useState<SpendReport | null>(null)
+  const [keys, setKeys] = useState<SpendKeyStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [keyBusy, setKeyBusy] = useState(false)
+  const [keyError, setKeyError] = useState<string | null>(null)
+  const [range, setRange] = useState<number>(30)
+  const [filter, setFilter] = useState<SpendProvider | 'all'>('all')
+  const [hover, setHover] = useState<string | null>(null)
+
+  const load = useCallback(
+    (force?: boolean): void => {
+      setLoading(true)
+      void Promise.all([api.usage.spendKeys(), api.usage.spend(force)])
+        .then(([status, next]) => {
+          setKeys(status)
+          setReport(next)
+        })
+        .catch(() => undefined)
+        .finally(() => setLoading(false))
+    },
+    [api.usage]
+  )
+
+  useEffect(() => load(), [load])
+
+  const saveKey = (name: SpendProvider, key: string): Promise<boolean> => {
+    setKeyBusy(true)
+    setKeyError(null)
+    return api.usage
+      .saveSpendKey(name, key)
+      .then((result) => {
+        setKeys(result.status)
+        setKeyError(result.error ?? null)
+        if (!result.error) load(true)
+        return !result.error
+      })
+      .catch(() => false)
+      .finally(() => setKeyBusy(false))
+  }
+  const clearKey = (name: SpendProvider): void => {
+    void api.usage.clearSpendKey(name).then((result) => {
+      setKeys(result.status)
+      load(true)
+    })
+  }
+
+  const providers = report?.providers ?? []
+  const live = providers.filter((p) => p.state === 'ok')
+  const today = new Date()
+  const from = daysAgo(today, range - 1)
+  const totals = live.map((p) => totalsSince(p, from))
+  const total = totals.reduce((t, p) => t + p.cost, 0)
+  const tokens = totals.reduce((t, p) => t + p.tokens, 0)
+
+  const shown: ProviderSpend[] = filter === 'all' ? live : live.filter((p) => p.provider === filter)
+  const perDay = new Map<string, number>()
+  const perDayBy = new Map<string, Partial<Record<SpendProvider, number>>>()
+  for (const p of shown) {
+    for (const [date, cost] of dailyCost(p)) {
+      perDay.set(date, (perDay.get(date) ?? 0) + cost)
+      perDayBy.set(date, { ...perDayBy.get(date), [p.provider]: cost })
+    }
+  }
+  const cuts = heatCuts([...perDay.values()])
+  const heatBase = filter === 'all' ? C.accent : SPEND_COLORS[filter]
+  const heat = [
+    'oklch(1 0 0 / 0.05)',
+    ...[0.22, 0.42, 0.68].map((a) => heatBase.replace(')', ` / ${a})`)),
+    heatBase
+  ]
+  const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())
+  const gridStart = todayUtc - today.getUTCDay() * DAY_MS - (HEAT_WEEKS - 1) * 7 * DAY_MS
+  const dateAt = (index: number): string => new Date(gridStart + index * DAY_MS).toISOString().slice(0, 10)
+  const todayStr = dateAt(Math.round((todayUtc - gridStart) / DAY_MS))
+  const weeks = Array.from({ length: HEAT_WEEKS }, (_, w) => {
+    const first = utcDate(dateAt(w * 7))
+    const prev = utcDate(dateAt(w * 7 - 7))
+    return {
+      month: w === 0 || first.getUTCMonth() !== prev.getUTCMonth() ? MONTHS[first.getUTCMonth()] : '',
+      days: Array.from({ length: 7 }, (_, k) => dateAt(w * 7 + k))
+    }
+  })
+
+  const hoverText = (() => {
+    if (!hover) return `Daily spend${filter === 'all' ? '' : ` · ${SPEND_LABELS[filter]}`} · hover a day`
+    const value = perDay.get(hover) ?? 0
+    const by = perDayBy.get(hover) ?? {}
+    const split =
+      filter === 'all' && value > 0
+        ? ' · ' +
+          SPEND_PROVIDERS.filter((p) => by[p]).map((p) => `${SPEND_LABELS[p]} ${formatUsd(by[p] ?? 0)}`).join(', ')
+        : ''
+    return `${dayLabel(hover)} · ${value > 0 ? formatUsd(value) : 'No usage'}${split}`
+  })()
+
+  const chip = (value: SpendProvider | 'all', name: string, color: string, cost: number) => {
+    const on = filter === value
+    return (
+      <button
+        key={value}
+        type="button"
+        className="bf-focus"
+        aria-pressed={on}
+        onClick={() => setFilter(value)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 7,
+          padding: '4px 10px',
+          border: 'none',
+          borderRadius: 7,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          fontSize: 12,
+          background: on ? 'oklch(1 0 0 / 0.07)' : 'transparent',
+          boxShadow: on ? 'inset 0 0 0 1px oklch(1 0 0 / 0.1)' : undefined,
+          color: on ? C.text : C.textMuted
+        }}
+      >
+        <span style={{ width: 8, height: 8, borderRadius: 2, flex: 'none', background: color }} />
+        <span>{name}</span>
+        <span style={{ color: C.faint, fontVariantNumeric: 'tabular-nums' }}>{formatUsd(cost)}</span>
+      </button>
+    )
+  }
+
+  const anyKey = !!keys && SPEND_PROVIDERS.some((p) => keys[p])
+
+  return (
+    <>
+      {anyKey && (
+        <Group
+          title="API usage"
+          aside={
+            <>
+              {loading && <StatusText busy ok={null} error={null} />}
+              <RefreshButton title="Refresh usage" disabled={loading} onClick={() => load(true)} />
+              <SegmentedControl
+                label="Usage range"
+                options={SPEND_RANGES.map((r) => ({ value: String(r.value), label: r.label }))}
+                value={String(range)}
+                onChange={(next) => setRange(Number(next))}
+                style={{ width: 210 }}
+              />
+            </>
+          }
+          foot="Counts calls made with your API keys. Subscription logins in the Claude and Codex CLIs are not included. Providers report a day only after it ends (UTC), so today's usage appears tomorrow."
+        >
+          <div style={{ ...card, padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+              <span style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-.01em', fontVariantNumeric: 'tabular-nums' }}>
+                {formatUsd(total)}
+              </span>
+              <span style={{ fontSize: 12, color: C.textMuted }}>
+                {formatTokens(tokens)} tokens · last {range} days
+              </span>
+            </div>
+            <div
+              role="img"
+              aria-label="Daily API spend"
+              onMouseLeave={() => setHover(null)}
+              style={{ display: 'flex', flexDirection: 'column', gap: 4, overflowX: 'auto' }}
+            >
+              <div style={{ display: 'flex', gap: 3, paddingLeft: 30, height: 14 }}>
+                {weeks.map((w, i) => (
+                  <span key={i} style={{ width: HEAT_CELL, flex: 'none', fontSize: 10.5, color: C.faint, whiteSpace: 'nowrap', overflow: 'visible' }}>
+                    {w.month}
+                  </span>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 3 }}>
+                <div
+                  style={{
+                    width: 27,
+                    flex: 'none',
+                    display: 'grid',
+                    gridTemplateRows: `repeat(7, ${HEAT_CELL}px)`,
+                    gap: 3,
+                    fontSize: 10,
+                    color: C.faint
+                  }}
+                >
+                  {WEEKDAYS.map((d, i) => (
+                    <span key={d} style={{ lineHeight: `${HEAT_CELL}px` }}>
+                      {i % 2 === 1 ? d : ''}
+                    </span>
+                  ))}
+                </div>
+                {weeks.map((w, i) => (
+                  <div key={i} style={{ display: 'grid', gridTemplateRows: `repeat(7, ${HEAT_CELL}px)`, gap: 3, flex: 'none' }}>
+                    {w.days.map((date) => {
+                      const future = date > todayStr
+                      return (
+                        <div
+                          key={date}
+                          onMouseEnter={future ? undefined : () => setHover(date)}
+                          style={{
+                            width: HEAT_CELL,
+                            height: HEAT_CELL,
+                            borderRadius: 3,
+                            visibility: future ? 'hidden' : undefined,
+                            background: heat[heatLevel(perDay.get(date) ?? 0, cuts)],
+                            opacity: date >= from ? 1 : 0.35,
+                            outline: hover === date ? `1px solid ${C.text}` : undefined,
+                            outlineOffset: 1
+                          }}
+                        />
+                      )
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px 14px', flexWrap: 'wrap', fontSize: 12 }}>
+              <span style={{ color: C.textMuted, fontVariantNumeric: 'tabular-nums', minWidth: 0 }}>{hoverText}</span>
+              <span style={{ flex: 1 }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 3, color: C.faint, fontSize: 11 }}>
+                <span style={{ marginRight: 4 }}>Less</span>
+                {heat.map((c, i) => (
+                  <span key={i} style={{ width: 11, height: 11, borderRadius: 3, background: c }} />
+                ))}
+                <span style={{ marginLeft: 4 }}>More</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingTop: 12, borderTop: `1px solid ${C.hair}` }}>
+              {chip('all', 'All', C.text, total)}
+              {live.map((p, i) => chip(p.provider, SPEND_LABELS[p.provider], SPEND_COLORS[p.provider], totals[i].cost))}
+            </div>
+          </div>
+        </Group>
+      )}
+
+      {providers
+        .filter((p) => p.state === 'error')
+        .map((p) => (
+          <div key={p.provider} style={{ fontSize: 12, color: C.red }}>
+            {SPEND_LABELS[p.provider]}: {p.message}
+          </div>
+        ))}
+
+      {totals.map((t) => {
+        const peak = Math.max(...t.models.map((m) => m.cost), 0.0001)
+        const grid = 'minmax(0,1fr) 64px 64px 76px'
+        return (
+          <Group
+            key={t.provider}
+            title={SPEND_LABELS[t.provider]}
+            count={`${t.models.length} ${t.models.length === 1 ? 'model' : 'models'}`}
+            aside={<span style={{ fontSize: 12, color: C.textRow, fontVariantNumeric: 'tabular-nums' }}>{formatUsd(t.cost)}</span>}
+          >
+            <div style={card}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: grid,
+                  gap: 12,
+                  padding: '8px 16px',
+                  fontSize: 11,
+                  color: C.faint,
+                  borderBottom: `1px solid ${C.hair}`
+                }}
+              >
+                <span>Model</span>
+                <span style={{ textAlign: 'right' }}>Input</span>
+                <span style={{ textAlign: 'right' }}>Output</span>
+                <span style={{ textAlign: 'right' }}>Cost</span>
+              </div>
+              {t.models.length === 0 && (
+                <div style={{ padding: '14px 16px', fontSize: 12.5, color: C.faint }}>No usage in this range.</div>
+              )}
+              {t.models.map((m, i) => (
+                <div
+                  key={m.id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: grid,
+                    gap: 12,
+                    alignItems: 'center',
+                    padding: '10px 16px',
+                    borderTop: i ? `1px solid ${C.hair}` : undefined
+                  }}
+                >
+                  <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.id}>
+                      {m.name}
+                    </span>
+                    <div style={{ height: 3, borderRadius: 2, background: 'oklch(1 0 0 / 0.05)' }}>
+                      <div
+                        style={{
+                          height: 3,
+                          borderRadius: 2,
+                          width: `${Math.max(2, (m.cost / peak) * 100)}%`,
+                          background: SPEND_COLORS[t.provider]
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <span style={{ textAlign: 'right', fontFamily: mono, fontSize: 11.5, color: C.textMuted }}>
+                    {formatTokens(m.input)}
+                  </span>
+                  <span style={{ textAlign: 'right', fontFamily: mono, fontSize: 11.5, color: C.textMuted }}>
+                    {formatTokens(m.output)}
+                  </span>
+                  <span style={{ textAlign: 'right', fontFamily: mono, fontSize: 12 }}>{formatUsd(m.cost)}</span>
+                </div>
+              ))}
+            </div>
+          </Group>
+        )
+      })}
+
+      <Group title="Admin keys" foot={`Read-only reports for the last ${SPEND_DAYS} days. These are separate from the keys your runs use.`}>
+        <Card>
+          <Blurb>
+            Usage comes from each provider&apos;s organization reports, so it needs an admin key rather than a regular API key.
+          </Blurb>
+          {SPEND_PROVIDERS.map((name) => (
+            <Field key={name} label={SPEND_KEY_HINTS[name].label} width={170}>
+              <ApiKeyField
+                configured={!!keys?.[name]}
+                placeholder={SPEND_KEY_HINTS[name].placeholder}
+                busy={keyBusy}
+                onSave={(key) => saveKey(name, key)}
+                onClear={() => clearKey(name)}
+              />
+            </Field>
+          ))}
+          <ActionRow>
+            <StatusText busy={keyBusy} error={keyError} ok={null} />
+          </ActionRow>
+        </Card>
+      </Group>
+    </>
+  )
+}
+
 export default function SettingsPage({
   settings,
   onSettings,
@@ -957,6 +1339,7 @@ export default function SettingsPage({
 
             {page === 'keys' && <ProviderKeysSection settings={settings} onSettings={onSettings} onAdoptSettings={onAdoptSettings} />}
             {page === 'jev' && <JevSection settings={settings} onAdoptSettings={onAdoptSettings} />}
+            {page === 'usage' && <UsageSection />}
           </div>
         </div>
       </div>

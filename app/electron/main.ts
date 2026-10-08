@@ -38,6 +38,7 @@ import { listAgentSkills } from './skills'
 import { openRouterAgent } from './openrouter-agent'
 import { AppUpdater } from './update'
 import { providerUsage } from './usage'
+import { clearSpendKey, readSpend, saveSpendKey, spendKeyStatus } from './spend'
 import { mergeMcpConfig, MCP_CONFIG_REL_PATHS, type McpServerEntry } from '../shared/mcp-config'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
 import { isAiProvider } from '../shared/ai'
@@ -883,6 +884,10 @@ function registerAppIpc(): void {
   ipcMain.handle('jev:clearKey', clearJev)
   ipcMain.handle('jev:check', checkJev)
   ipcMain.handle('usage:read', providerUsage)
+  ipcMain.handle('spend:read', (_e, force: unknown) => readSpend(force))
+  ipcMain.handle('spend:keys', spendKeyStatus)
+  ipcMain.handle('spend:saveKey', (_e, name: unknown, key: unknown) => saveSpendKey(name, key))
+  ipcMain.handle('spend:clearKey', (_e, name: unknown) => clearSpendKey(name))
   ipcMain.handle('update:check', () => updater.check())
   ipcMain.on('update:install', () => updater.install())
 }

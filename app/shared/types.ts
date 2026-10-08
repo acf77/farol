@@ -16,6 +16,7 @@ import type {
   RemoteSignInStart
 } from './settings'
 import type { ProviderUsage } from './usage'
+import type { SpendKeyStatus, SpendProvider, SpendReport } from './spend'
 import type { Todo } from './todos'
 import type { CustomPrompt, CustomPromptSet } from './custom-prompts'
 
@@ -706,6 +707,12 @@ export interface FarolApi {
   usage: {
     /** Plan limits and balance for every provider, cached in the main process. */
     read(): Promise<ProviderUsage[]>
+    /** API spend by day and model from the providers' admin endpoints. */
+    spend(force?: boolean): Promise<SpendReport>
+    /** Which admin keys are stored. */
+    spendKeys(): Promise<SpendKeyStatus>
+    saveSpendKey(name: SpendProvider, key: string): Promise<{ status: SpendKeyStatus; error?: string }>
+    clearSpendKey(name: SpendProvider): Promise<{ status: SpendKeyStatus }>
   }
   update: {
     check(): Promise<UpdateStatus>

@@ -4,7 +4,14 @@ import path from 'path'
 import type { ProviderKey } from '../shared/ai'
 
 /** One entry per provider Farol holds a key for, each encrypted at rest. */
-export type SecretName = 'openrouterApiKey' | 'aiGatewayApiKey' | 'remoteSession' | `${ProviderKey}ApiKey`
+export type SecretName =
+  | 'openrouterApiKey'
+  | 'aiGatewayApiKey'
+  | 'remoteSession'
+  | 'anthropicAdminKey'
+  | 'openaiAdminKey'
+  | 'openrouterManagementKey'
+  | `${ProviderKey}ApiKey`
 
 type SecretsFile = Partial<Record<SecretName, string>>
 
