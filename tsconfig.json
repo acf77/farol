@@ -4,5 +4,5 @@
     "typeRoots": ["./app/node_modules/@types", "./app/node_modules"],
     "types": ["vite/client", "node", "electron-vite/node"]
   },
-  "include": ["app/src", "app/shared", "app/electron", "app/service", "app/electron.vite.config.ts"]
+  "include": ["app/src", "app/shared", "app/electron", "app/electron.vite.config.ts", "service/src"]
 }

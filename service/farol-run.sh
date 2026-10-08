@@ -8,12 +8,12 @@ dir="${2:-.}"
 url="${FAROL_URL:-http://localhost:8787}"
 : "${FAROL_KEY:?set FAROL_KEY to an API key (farol-service keys create) or a session token}"
 
-app_root="$(cd "$(dirname "$0")/.." && pwd)"
+repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 abs_dir="$(cd "$dir" && pwd)"
 archive="$(mktemp -t farol-snapshot.XXXXXX)"
 trap 'rm -f "$archive"' EXIT
 
-node --experimental-strip-types "$app_root/scripts/checkout-snapshot.ts" "$abs_dir" >"$archive"
+node --experimental-strip-types "$repo_root/app/scripts/checkout-snapshot.ts" "$abs_dir" >"$archive"
 
 echo "snapshot: $(du -h "$archive" | cut -f1)" >&2
 run_id="$(curl -fsS -X POST "$url/v1/runs" \

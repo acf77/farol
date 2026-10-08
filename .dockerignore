@@ -1,0 +1,9 @@
+# The Docker build context is the repository root; keep the desktop app's heavy folders out of it.
+**/node_modules
+.git
+app/out
+app/dist
+app/dist-alpha
+service/dist
+service/shared
+service/electron

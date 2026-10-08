@@ -15,7 +15,6 @@
     "test": "vitest run",
     "dist": "electron-vite build && electron-builder --mac dmg zip && node scripts/publish-local.mjs",
     "dist:alpha": "electron-vite build && electron-builder --mac dmg zip -c.appId=com.farol.app.alpha \"-c.productName=Farol Alpha\" -c.directories.output=dist-alpha \"-c.dmg.title=Farol Alpha ${version}\"",
-    "service:build": "esbuild service/main.ts --bundle --platform=node --target=node22 --format=cjs --outfile=service/dist/farol-service.cjs",
     "install:app": "npm run dist && node scripts/install-app.mjs",
     "release": "electron-vite build && electron-builder --mac dmg zip --publish always '-c.mac.artifactName=Farol-mac-${arch}.${ext}'"
   },

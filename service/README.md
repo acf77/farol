@@ -18,10 +18,11 @@ streams their output, and stops the sandbox when the run ends, fails, or is canc
 ## Run it
 
 ```sh
-cd app
-npm run service:build          # -> service/dist/farol-service.cjs
+cd service
+npm install                      # once
+npm run build                  # -> dist/farol-service.cjs
 export VERCEL_TOKEN=… VERCEL_TEAM_ID=team_… VERCEL_PROJECT_ID=prj_…
-node service/dist/farol-service.cjs
+node dist/farol-service.cjs
 ```
 
 | Variable | Default | Meaning |
@@ -47,7 +48,7 @@ node service/dist/farol-service.cjs
 With neither provider configured the service starts in receipt mode: it accepts `POST /v1/receipts`
 and reports what arrived, running nothing.
 
-The `Dockerfile` in `app/` (build context = `app/`) packages the bundle. Put `/data` on a volume so keys
+The `Dockerfile` in `service/` packages the bundle. Build from the repository root (`docker build -f service/Dockerfile .`): it copies `app/shared` and `app/electron/sandbox.ts` in, and nothing else from the desktop app. Put `/data` on a volume so keys
 survive restarts, and terminate TLS in front of the service — API keys are bearer tokens.
 
 ## What a sandbox can do
@@ -175,15 +176,15 @@ not kept for replay.
 ## Try it with the example project
 
 `example/` is a tiny project with a shell-only pipeline (`Hello Sandbox`) and an
-uncommitted `hello.txt`, to prove the whole path works. From `app/`:
+uncommitted `hello.txt`, to prove the whole path works. From `service/`:
 
 ```sh
-npm run service:build
+npm run build
 export VERCEL_TOKEN=… VERCEL_TEAM_ID=team_… VERCEL_PROJECT_ID=prj_…
-node service/dist/farol-service.cjs keys create "me"   # copy the frl_… key
-node service/dist/farol-service.cjs &
+node dist/farol-service.cjs keys create "me"   # copy the frl_… key
+node dist/farol-service.cjs &
 
-cd service/example && git init -q 2>/dev/null   # the script snapshots a Git checkout
+cd example && git init -q 2>/dev/null   # the script snapshots a Git checkout
 FAROL_KEY=frl_… ../farol-run.sh "Hello Sandbox"
 FAROL_KEY=frl_… ../farol-run.sh Lint     # runs lint.sh in the sandbox
 ```

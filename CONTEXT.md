@@ -161,7 +161,7 @@ The current checkout as uploaded to a sandbox: tracked files plus untracked file
 _Avoid_: commit upload, git clone of the branch, syncing results back
 
 **Run service**:
-The standalone HTTP service in `app/service` that runs **Remote pipeline** steps for the desktop app and starts runs for web and mobile clients. A client signs in and uploads a **Checkout snapshot**; the pipeline is the one committed in that snapshot. It runs shell steps only, and refuses pipelines with AI steps. Its address is built into the desktop app and its sandbox credentials stay on the service, so a user never sees or sets either.
+The standalone HTTP service in `service/` that runs **Remote pipeline** steps for the desktop app and starts runs for web and mobile clients. A client signs in and uploads a **Checkout snapshot**; the pipeline is the one committed in that snapshot. It runs shell steps only, and refuses pipelines with AI steps. Its address is built into the desktop app and its sandbox credentials stay on the service, so a user never sees or sets either.
 _Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the service, a service URL or API key setting in the desktop app
 
 **Account menu**:
