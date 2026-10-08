@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('./secrets', () => ({ peekSecret: () => 'sk-or-test' }))
 vi.mock('./session', () => ({ shellEnv: () => ({ PATH: '/usr/bin' }) }))
 
-import { aiEnv, extraBinDirs, resolveBin } from './bin'
+import { aiEnv, extraBinDirs, interactiveAiEnv, resolveBin } from './bin'
 import { setProviderKeysOff } from './provider-keys-off'
 
 const dirs: string[] = []
@@ -65,10 +65,10 @@ describe('aiEnv vendor keys', () => {
     expect(aiEnv('codex').CODEX_API_KEY).toBe('sk-or-test')
   })
 
-  it('gives interactive Codex no key', () => {
-    expect(aiEnv('codex', undefined, true).OPENAI_API_KEY).toBeUndefined()
-    expect(aiEnv('codex', undefined, true).CODEX_API_KEY).toBeUndefined()
-    expect(aiEnv('claude', undefined, true).ANTHROPIC_API_KEY).toBe('sk-or-test')
+  it('gives the interactive Codex terminal no key but keeps Claude\'s', () => {
+    expect(interactiveAiEnv('codex').OPENAI_API_KEY).toBeUndefined()
+    expect(interactiveAiEnv('codex').CODEX_API_KEY).toBeUndefined()
+    expect(interactiveAiEnv('claude').ANTHROPIC_API_KEY).toBe('sk-or-test')
   })
 
   it('omits the key when switched off', () => {

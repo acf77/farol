@@ -105,12 +105,7 @@ function isolatedOpencodeDataHome(): string {
   return root
 }
 
-/** `interactive` terminals run plain `codex`, which ignores API-key env vars, so it keeps none. */
-export function aiEnv(
-  provider?: AiProvider,
-  via?: OpenRouterAgent,
-  interactive = false
-): Record<string, string> {
+export function aiEnv(provider?: AiProvider, via?: OpenRouterAgent): Record<string, string> {
   const env = shellEnv()
   env.PATH = pathDirs(env.PATH).join(path.delimiter)
   if (provider && usesOpenRouterEnv(provider)) {
@@ -118,12 +113,19 @@ export function aiEnv(
     if (key) env[OPENROUTER_API_KEY_ENV] = key
   }
   const direct = provider && PROVIDER_KEY_ENV[provider]
-  if (direct && (providerKeyOff(direct.key) || (interactive && provider === 'codex'))) {
+  if (direct && providerKeyOff(direct.key)) {
     for (const name of direct.env) delete env[name]
   } else if (direct) {
     const key = peekSecret(`${direct.key}ApiKey`)
     if (key) for (const name of direct.env) env[name] = key
   }
   if (provider && cliFor(provider, via) === 'opencode') env.XDG_DATA_HOME = isolatedOpencodeDataHome()
+  return env
+}
+
+/** Plain `codex` ignores API-key env vars, so the interactive terminal keeps none: its login decides billing. */
+export function interactiveAiEnv(provider: AiProvider, via?: OpenRouterAgent): Record<string, string> {
+  const env = aiEnv(provider, via)
+  if (provider === 'codex') for (const name of PROVIDER_KEY_ENV.codex?.env ?? []) delete env[name]
   return env
 }

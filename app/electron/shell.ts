@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { interactiveAiCommand, isAiProvider, type AiProvider } from '../shared/ai'
 import { errorMessage } from '../shared/jev'
 import type { ShellActivity, ShellCwd, ShellData, ShellExit } from '../shared/types'
-import { aiEnv, resolveBin } from './bin'
+import { interactiveAiEnv, resolveBin } from './bin'
 import { openRouterAgent } from './openrouter-agent'
 import { defaultShell, shellEnv } from './session'
 
@@ -106,7 +106,7 @@ export class ShellManager {
         name: 'xterm-256color',
         ...terminalSize(cols, rows),
         cwd,
-        env: agent ? aiEnv(agent, via, true) : shellEnv()
+        env: agent ? interactiveAiEnv(agent, via) : shellEnv()
       })
     } catch (err) {
       const message = errorMessage(err)
