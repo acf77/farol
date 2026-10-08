@@ -5,10 +5,12 @@ import {
   normalizeMode,
   normalizeModel,
   normalizeOpenRouterAgent,
+  PROVIDER_KEYS,
   type AgentMode,
   type AiModel,
   type AiProvider,
-  type OpenRouterAgent
+  type OpenRouterAgent,
+  type ProviderKey
 } from './ai'
 import {
   DISCOVERABLE_PROVIDERS,
@@ -91,6 +93,10 @@ export interface AppSettings {
   catalogs?: AgentCatalogs
   /** Absent until an AI Gateway key is stored. */
   jev?: JevSettings
+  /** Which vendor API keys Farol holds. Read from the encrypted store, never persisted. */
+  providerKeys?: Partial<Record<ProviderKey, true>>
+  /** Keys kept stored but switched off, so that CLI runs on its own login. */
+  providerKeysOff?: ProviderKey[]
 }
 
 export function defaultSettings(): AppSettings {
@@ -259,6 +265,17 @@ export function withJevKeyFlag(settings: AppSettings, hasKey: boolean): AppSetti
   return next
 }
 
+export function withProviderKeyFlags(
+  settings: AppSettings,
+  held: Partial<Record<ProviderKey, boolean>>
+): AppSettings {
+  const keys = Object.fromEntries(PROVIDER_KEYS.filter((k) => held[k]).map((k) => [k, true]))
+  const next = { ...settings }
+  if (Object.keys(keys).length) next.providerKeys = keys
+  else delete next.providerKeys
+  return next
+}
+
 /** Pick the CLI OpenRouter runs through; OpenCode is stored as absence. */
 export function withOpenRouterAgent(settings: AppSettings, agent: OpenRouterAgent): AppSettings {
   const next: OpenRouterSettings = { ...defaultOpenRouter(), ...settings.openrouter }
@@ -305,6 +322,11 @@ function sanitizeCatalogs(raw: unknown): AgentCatalogs | undefined {
   return Object.keys(out).length ? out : undefined
 }
 
+function sanitizeKeysOff(raw: unknown): ProviderKey[] {
+  const list = Array.isArray(raw) ? raw : []
+  return PROVIDER_KEYS.filter((k) => list.includes(k))
+}
+
 export function sanitizeSettings(raw: unknown): AppSettings {
   const d = defaultSettings()
   if (!raw || typeof raw !== 'object') return d
@@ -324,6 +346,7 @@ export function sanitizeSettings(raw: unknown): AppSettings {
   const commitModel = normalizeModel(commit.model) ?? (hasCommitMessage ? undefined : models[commitAgent])
   const openrouter = sanitizeOpenRouter(s.openrouter)
   const catalogs = sanitizeCatalogs(s.catalogs)
+  const keysOff = sanitizeKeysOff(s.providerKeysOff)
   return {
     agent,
     models,
@@ -335,7 +358,8 @@ export function sanitizeSettings(raw: unknown): AppSettings {
     modeDefaults: sanitizeModeDefaults(s.modeDefaults),
     pipelineFallbacks: sanitizeModeChain(s.pipelineFallbacks),
     ...(openrouter ? { openrouter } : {}),
-    ...(catalogs ? { catalogs } : {})
+    ...(catalogs ? { catalogs } : {}),
+    ...(keysOff.length ? { providerKeysOff: keysOff } : {})
   }
 }
 

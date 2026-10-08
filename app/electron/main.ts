@@ -29,6 +29,7 @@ import {
 import { refreshAgentCatalogs } from './agent-models'
 import { errorMessage } from '../shared/jev'
 import { checkJev, clearJev, saveJevKey } from './jev'
+import { clearProviderKey, saveProviderKey } from './provider-keys'
 import { cancelRemoteSignIn, remoteAccount, signOutRemote, startRemoteSignIn, waitRemoteSignIn } from './remote'
 import { configureJevLogs } from './jev-log'
 import { configureAgentFailureLogs } from './agent-failure-log'
@@ -876,6 +877,8 @@ function registerAppIpc(): void {
   ipcMain.handle('agentModels:refresh', (_e, force?: boolean) =>
     refreshAgentCatalogs({ forceRefresh: force === true })
   )
+  ipcMain.handle('providerKey:save', (_e, name: unknown, key: unknown) => saveProviderKey(name, key))
+  ipcMain.handle('providerKey:clear', (_e, name: unknown) => clearProviderKey(name))
   ipcMain.handle('jev:saveKey', (_e, key: string) => saveJevKey(key))
   ipcMain.handle('jev:clearKey', clearJev)
   ipcMain.handle('jev:check', checkJev)

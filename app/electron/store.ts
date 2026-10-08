@@ -17,11 +17,13 @@ import {
   sanitizeSettings,
   withJevKeyFlag,
   withOpenRouterKeyFlag,
+  withProviderKeyFlags,
   type AppSettings
 } from '../shared/settings'
 import { normalizeOpenRouterAgent } from '../shared/ai'
 import { hasSecret } from './secrets'
 import { setOpenRouterAgent } from './openrouter-agent'
+import { setProviderKeysOff } from './provider-keys-off'
 import { pipelineStoreRootFor } from './git'
 import { migrateUserDataFiles } from './user-data-migrate'
 
@@ -481,11 +483,17 @@ export async function loadSettings(): Promise<AppSettings> {
   await flushWorkspace()
   const stored = sanitizeSettings((await readWorkspace()).settings)
   setOpenRouterAgent(normalizeOpenRouterAgent(stored.openrouter?.agent))
-  return withJevKeyFlag(withOpenRouterKeyFlag(stored, hasSecret('openrouterApiKey')), hasSecret('aiGatewayApiKey'))
+  setProviderKeysOff(stored.providerKeysOff)
+  const withKeys = withProviderKeyFlags(stored, {
+    anthropic: hasSecret('anthropicApiKey'),
+    openai: hasSecret('openaiApiKey')
+  })
+  return withJevKeyFlag(withOpenRouterKeyFlag(withKeys, hasSecret('openrouterApiKey')), hasSecret('aiGatewayApiKey'))
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
   setOpenRouterAgent(normalizeOpenRouterAgent(settings.openrouter?.agent))
+  setProviderKeysOff(sanitizeSettings(settings).providerKeysOff)
   await updateWorkspace((ws) => {
     ws.settings = retainCatalogs(sanitizeSettings(settings), sanitizeSettings(ws.settings))
   })

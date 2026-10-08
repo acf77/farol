@@ -141,6 +141,10 @@ const api: FarolApi = {
     account: () => ipcRenderer.invoke('remote:account'),
     signOut: () => ipcRenderer.invoke('remote:signOut')
   },
+  providerKey: {
+    save: (name, key) => ipcRenderer.invoke('providerKey:save', name, key),
+    clear: (name) => ipcRenderer.invoke('providerKey:clear', name)
+  },
   jev: {
     saveKey: (key) => ipcRenderer.invoke('jev:saveKey', key),
     clearKey: () => ipcRenderer.invoke('jev:clearKey'),

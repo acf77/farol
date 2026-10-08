@@ -7,6 +7,7 @@ vi.mock('./secrets', () => ({ peekSecret: () => 'sk-or-test' }))
 vi.mock('./session', () => ({ shellEnv: () => ({ PATH: '/usr/bin' }) }))
 
 import { aiEnv, extraBinDirs, resolveBin } from './bin'
+import { setProviderKeysOff } from './provider-keys-off'
 
 const dirs: string[] = []
 
@@ -52,5 +53,27 @@ describe('aiEnv', () => {
 
     expect(aiEnv('opencode', 'pi').XDG_DATA_HOME).toContain('farol-opencode')
     expect(aiEnv('omp').OPENROUTER_API_KEY).toBeUndefined()
+  })
+})
+
+describe('aiEnv vendor keys', () => {
+  afterEach(() => setProviderKeysOff([]))
+
+  it('passes the stored key to Claude and both Codex variables', () => {
+    expect(aiEnv('claude').ANTHROPIC_API_KEY).toBe('sk-or-test')
+    expect(aiEnv('codex').OPENAI_API_KEY).toBe('sk-or-test')
+    expect(aiEnv('codex').CODEX_API_KEY).toBe('sk-or-test')
+  })
+
+  it('gives interactive Codex no key', () => {
+    expect(aiEnv('codex', undefined, true).OPENAI_API_KEY).toBeUndefined()
+    expect(aiEnv('codex', undefined, true).CODEX_API_KEY).toBeUndefined()
+    expect(aiEnv('claude', undefined, true).ANTHROPIC_API_KEY).toBe('sk-or-test')
+  })
+
+  it('omits the key when switched off', () => {
+    setProviderKeysOff(['anthropic'])
+    expect(aiEnv('claude').ANTHROPIC_API_KEY).toBeUndefined()
+    expect(aiEnv('codex').OPENAI_API_KEY).toBe('sk-or-test')
   })
 })

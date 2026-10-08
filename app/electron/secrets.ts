@@ -1,9 +1,10 @@
 import { app, safeStorage } from 'electron'
 import fs from 'fs'
 import path from 'path'
+import type { ProviderKey } from '../shared/ai'
 
 /** One entry per provider Farol holds a key for, each encrypted at rest. */
-export type SecretName = 'openrouterApiKey' | 'aiGatewayApiKey' | 'remoteSession'
+export type SecretName = 'openrouterApiKey' | 'aiGatewayApiKey' | 'remoteSession' | `${ProviderKey}ApiKey`
 
 type SecretsFile = Partial<Record<SecretName, string>>
 

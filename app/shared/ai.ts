@@ -103,6 +103,19 @@ export function cliFor(provider: AiProvider, via: OpenRouterAgent = 'opencode'):
   return provider === 'openrouter' ? via : provider
 }
 
+/** Direct vendor keys Farol can hold; each feeds the env var its CLI reads. */
+export const PROVIDER_KEYS = ['anthropic', 'openai'] as const
+export type ProviderKey = (typeof PROVIDER_KEYS)[number]
+
+export function isProviderKey(value: unknown): value is ProviderKey {
+  return (PROVIDER_KEYS as readonly unknown[]).includes(value)
+}
+
+export const PROVIDER_KEY_ENV: Partial<Record<AiProvider, { key: ProviderKey; env: string[] }>> = {
+  claude: { key: 'anthropic', env: ['ANTHROPIC_API_KEY'] },
+  codex: { key: 'openai', env: ['OPENAI_API_KEY', 'CODEX_API_KEY'] }
+}
+
 export function usesOpenRouterEnv(provider: AiProvider): boolean {
   return provider === 'openrouter' || provider === 'opencode'
 }

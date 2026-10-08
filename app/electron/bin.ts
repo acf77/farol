@@ -2,7 +2,8 @@ import { randomUUID } from 'crypto'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { cliFor, usesOpenRouterEnv, type AiProvider, type OpenRouterAgent } from '../shared/ai'
+import { cliFor, PROVIDER_KEY_ENV, usesOpenRouterEnv, type AiProvider, type OpenRouterAgent } from '../shared/ai'
+import { providerKeyOff } from './provider-keys-off'
 import { OPENROUTER_API_KEY_ENV } from '../shared/openrouter'
 import { peekSecret } from './secrets'
 import { shellEnv } from './session'
@@ -104,12 +105,24 @@ function isolatedOpencodeDataHome(): string {
   return root
 }
 
-export function aiEnv(provider?: AiProvider, via?: OpenRouterAgent): Record<string, string> {
+/** `interactive` terminals run plain `codex`, which ignores API-key env vars, so it keeps none. */
+export function aiEnv(
+  provider?: AiProvider,
+  via?: OpenRouterAgent,
+  interactive = false
+): Record<string, string> {
   const env = shellEnv()
   env.PATH = pathDirs(env.PATH).join(path.delimiter)
   if (provider && usesOpenRouterEnv(provider)) {
     const key = peekSecret('openrouterApiKey')
     if (key) env[OPENROUTER_API_KEY_ENV] = key
+  }
+  const direct = provider && PROVIDER_KEY_ENV[provider]
+  if (direct && (providerKeyOff(direct.key) || (interactive && provider === 'codex'))) {
+    for (const name of direct.env) delete env[name]
+  } else if (direct) {
+    const key = peekSecret(`${direct.key}ApiKey`)
+    if (key) for (const name of direct.env) env[name] = key
   }
   if (provider && cliFor(provider, via) === 'opencode') env.XDG_DATA_HOME = isolatedOpencodeDataHome()
   return env

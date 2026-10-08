@@ -1,6 +1,7 @@
 import { Children, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { activePromptCount, type CustomPromptSet } from '@shared/custom-prompts'
+import type { ProviderKey } from '@shared/ai'
 import type { AgentMode, AppSettings, ModelChoice, SettingsResult } from '@shared/types'
 import {
   AI_LABELS,
@@ -36,7 +37,7 @@ interface Props {
   projectName?: string
 }
 
-type PageKey = 'general' | 'prompts' | 'models' | 'fallbacks' | 'openrouter' | 'jev'
+type PageKey = 'general' | 'prompts' | 'models' | 'fallbacks' | 'openrouter' | 'keys' | 'jev'
 
 const PAGES: readonly { value: PageKey; label: string }[] = [
   { value: 'general', label: 'General' },
@@ -44,6 +45,7 @@ const PAGES: readonly { value: PageKey; label: string }[] = [
   { value: 'models', label: 'Models' },
   { value: 'fallbacks', label: 'Fallbacks' },
   { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'keys', label: 'API keys' },
   { value: 'jev', label: 'Jev' }
 ]
 
@@ -262,6 +264,76 @@ const ActionRow = ({ children }: { children: React.ReactNode }) => (
     {children}
   </div>
 )
+
+const PROVIDER_KEY_FIELDS: readonly { name: ProviderKey; label: string; placeholder: string }[] = [
+  { name: 'anthropic', label: 'Anthropic (Claude)', placeholder: 'sk-ant-…' },
+  { name: 'openai', label: 'OpenAI (Codex)', placeholder: 'sk-…' }
+]
+
+/** Direct vendor keys bill API credits instead of the CLI's own login. */
+function ProviderKeysSection({
+  settings,
+  onSettings,
+  onAdoptSettings
+}: {
+  settings: AppSettings
+  onSettings: (next: AppSettings) => void
+  onAdoptSettings: (next: AppSettings) => void
+}) {
+  const api = window.farol
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = (call: Promise<SettingsResult>): Promise<boolean> => {
+    setBusy(true)
+    return call
+      .then((result) => {
+        onAdoptSettings(result.settings)
+        setError(result.error ?? null)
+        return !result.error
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : String(err))
+        return false
+      })
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <Group title="API keys">
+      <Card>
+        <Blurb>
+          With a key on, API credits pay for that provider's runs. Switch it off to use the CLI login again. The interactive Codex terminal always uses the Codex login.
+        </Blurb>
+        {PROVIDER_KEY_FIELDS.map(({ name, label, placeholder }) => (
+          <Field key={name} label={label}>
+            {settings.providerKeys?.[name] && (
+              <Switch
+                label={`Use ${label} key`}
+                checked={!settings.providerKeysOff?.includes(name)}
+                onChange={(on) => {
+                  if (busy) return
+                  const rest = (settings.providerKeysOff ?? []).filter((k) => k !== name)
+                  onSettings({ ...settings, providerKeysOff: on ? rest : [...rest, name] })
+                }}
+              />
+            )}
+            <ApiKeyField
+              configured={!!settings.providerKeys?.[name]}
+              placeholder={placeholder}
+              busy={busy}
+              onSave={(key) => run(api.providerKey.save(name, key))}
+              onClear={() => void run(api.providerKey.clear(name))}
+            />
+          </Field>
+        ))}
+        <ActionRow>
+          <StatusText busy={busy} error={error} ok={null} />
+        </ActionRow>
+      </Card>
+    </Group>
+  )
+}
 
 /**
  * Jev never reaches a model picker — Farol calls it for its own decisions — so
@@ -883,6 +955,7 @@ export default function SettingsPage({
               </>
             )}
 
+            {page === 'keys' && <ProviderKeysSection settings={settings} onSettings={onSettings} onAdoptSettings={onAdoptSettings} />}
             {page === 'jev' && <JevSection settings={settings} onAdoptSettings={onAdoptSettings} />}
           </div>
         </div>

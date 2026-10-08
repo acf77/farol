@@ -11,7 +11,8 @@ import {
   withCommitMessageModel,
   withModeChain,
   withOpenRouterAgent,
-  withPipelineChain
+  withPipelineChain,
+  withProviderKeyFlags
 } from './settings'
 
 describe('sanitizeSettings', () => {
@@ -287,5 +288,19 @@ describe('mode defaults', () => {
 describe('Remote service settings', () => {
   it('drops the service url older builds stored; the app has it built in', () => {
     expect(sanitizeSettings({ remote: { url: 'https://farol.up.railway.app' } })).not.toHaveProperty('remote')
+  })
+})
+
+describe('withProviderKeyFlags', () => {
+  it('flags held keys only and is never persisted', () => {
+    const flagged = withProviderKeyFlags(defaultSettings(), { anthropic: true, openai: false })
+    expect(flagged.providerKeys).toEqual({ anthropic: true })
+    expect(sanitizeSettings(flagged)).not.toHaveProperty('providerKeys')
+    expect(withProviderKeyFlags(flagged, {})).not.toHaveProperty('providerKeys')
+  })
+
+  it('persists switched-off keys and drops unknown names', () => {
+    expect(sanitizeSettings({ providerKeysOff: ['openai', 'nope'] }).providerKeysOff).toEqual(['openai'])
+    expect(sanitizeSettings({ providerKeysOff: [] })).not.toHaveProperty('providerKeysOff')
   })
 })

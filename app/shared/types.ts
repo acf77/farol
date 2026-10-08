@@ -1,6 +1,6 @@
 /** Types shared between the main process, the preload bridge, and the renderer. */
 
-import type { AgentMode, AiProvider } from './ai'
+import type { AgentMode, AiProvider, ProviderKey } from './ai'
 import type { AgentContext, ContextUsage, SavedAgentContext } from './agent-context'
 import type { AgentQuestion } from './questions'
 import type { ProjectSession } from './session'
@@ -691,6 +691,11 @@ export interface FarolApi {
     signInCancel(): Promise<void>
     /** Forget this machine's session. */
     signOut(): Promise<void>
+  }
+  /** Direct Anthropic and OpenAI API keys, passed to the Claude and Codex CLIs. */
+  providerKey: {
+    save(name: ProviderKey, key: string): Promise<SettingsResult>
+    clear(name: ProviderKey): Promise<SettingsResult>
   }
   /** Jev is internal-only: a key to store and a probe to prove it works. */
   jev: {

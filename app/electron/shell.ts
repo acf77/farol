@@ -106,7 +106,7 @@ export class ShellManager {
         name: 'xterm-256color',
         ...terminalSize(cols, rows),
         cwd,
-        env: agent ? aiEnv(agent, via) : shellEnv()
+        env: agent ? aiEnv(agent, via, true) : shellEnv()
       })
     } catch (err) {
       const message = errorMessage(err)
