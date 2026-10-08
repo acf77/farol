@@ -1,0 +1,71 @@
+name: Release
+
+# Bump the version in app/package.json and push to main: this workflow tags the
+# commit as v<version>, builds the macOS app and publishes a GitHub Release.
+# Pushes that don't change the version are skipped (the tag already exists).
+# The landing page links to the fixed-name asset of the latest release:
+#   https://github.com/acf77/farol/releases/latest/download/Farol-mac-arm64.dmg
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - app/package.json
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check whether this version is already released
+        id: version
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists — nothing to release"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.version.outputs.release == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - if: steps.version.outputs.release == 'true'
+        run: npm ci
+
+      - name: Tag the release commit
+        if: steps.version.outputs.release == 'true'
+        run: |
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Build and publish release
+        if: steps.version.outputs.release == 'true'
+        run: npm run release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Drop the tag if the build failed, so re-running the workflow retries this version.
+      - name: Remove tag after failed release
+        if: failure() && steps.version.outputs.release == 'true'
+        run: git push origin --delete "${{ steps.version.outputs.tag }}" || true
