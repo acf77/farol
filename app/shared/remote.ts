@@ -2,8 +2,15 @@
 
 import { isSecretPath } from './git-status'
 
-/** Where the checkout snapshot is unpacked inside the sandbox. */
-export const REMOTE_WORKDIR = '/vercel/sandbox/project'
+/** A started remote workspace: a sandbox that holds an uploaded checkout and runs its shell steps. */
+export interface RemoteWorkspace {
+  /** What was uploaded, e.g. `12 files, 0.4 MB`. */
+  summary: string
+  /** Run a shell step; resolves with its exit code. Output arrives with `\n` line ends. */
+  exec(cmd: string, onChunk: (chunk: string) => void): Promise<number>
+  /** Stop the sandbox. Safe to call more than once. */
+  close(): Promise<void>
+}
 
 /** A checkout larger than this is more likely a mistake than something to upload per run. */
 export const SNAPSHOT_LIMIT_BYTES = 256 * 1024 * 1024

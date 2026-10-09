@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto'
-import type { RemoteWorkspace } from '../electron/sandbox'
+import type { RemoteWorkspace } from '../shared/remote'
 import type { OpenWorkspace, PoolLimits } from './runs'
 import { checkPool } from './runs'
 

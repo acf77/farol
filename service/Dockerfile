@@ -1,5 +1,5 @@
 # Build from the repository root: `docker build -f service/Dockerfile .`
-# The service needs only its own folder plus two files from app/ (shared code and the sandbox module).
+# The service needs only its own folder plus the shared code from app/.
 FROM node:24-slim AS build
 WORKDIR /src/service
 COPY service/package.json service/package-lock.json ./
@@ -7,7 +7,6 @@ COPY service/package.json service/package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY service/src ./src
 COPY app/shared ./shared
-COPY app/electron/sandbox.ts ./electron/sandbox.ts
 RUN npx esbuild src/main.ts --bundle --platform=node --target=node22 --format=cjs --outfile=/out/farol-service.cjs
 
 FROM node:24-slim

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Pipeline, PipelineNode } from '../shared/types'
-import type { RemoteWorkspace } from '../electron/sandbox'
+import type { RemoteWorkspace } from '../shared/remote'
 import { aiStepNames, executePipeline, type ServiceEvent } from './run'
 
 function node(id: string, cmd: string, after: string[] = [], extra: Partial<PipelineNode> = {}): PipelineNode {

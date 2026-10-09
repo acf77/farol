@@ -2,7 +2,7 @@ import { errorMessage } from '../shared/jev'
 import type { Pipeline, PipelineNode, PipelineStepResult } from '../shared/types'
 import { ancestorVars, descendants, expandVars, nodeGate, quoteShellArg, readyIds, topoSort } from '../shared/graph'
 import { appendTail } from '../shared/terminal'
-import type { RemoteWorkspace } from '../electron/sandbox'
+import type { RemoteWorkspace } from '../shared/remote'
 
 /**
  * Runs a pipeline's shell steps in a sandbox: ready nodes start together, a

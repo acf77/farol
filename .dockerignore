@@ -6,4 +6,3 @@ app/dist
 app/dist-alpha
 service/dist
 service/shared
-service/electron

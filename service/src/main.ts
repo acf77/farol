@@ -1,6 +1,5 @@
 import { createServer } from 'http'
 import { SANDBOX_TIMEOUT_MS, SNAPSHOT_LIMIT_BYTES, snapshotSummary } from '../shared/remote'
-import { openSandbox, type SandboxCredentials } from '../electron/sandbox'
 import type { AuthConfig, LoginConfig } from './auth'
 import { GitHub } from './github'
 import { createHandler } from './http'
@@ -12,7 +11,7 @@ import { disableUser, enableUser, listUsers, revokeSessions } from './users'
 import { WorkspaceRegistry } from './workspaces'
 
 /**
- * Farol run service: starts pipeline runs in Vercel or Railway Sandboxes for web and
+ * Farol run service: starts pipeline runs in Railway Sandboxes for web and
  * mobile clients. `farol-service` serves; `farol-service keys create|list|revoke` manages
  * API keys and `farol-service users list|disable|enable|signout` manages GitHub users.
  */
@@ -96,21 +95,9 @@ function loginConfig(): LoginConfig | undefined {
   return { github, usersFile, sessionSecret, access }
 }
 
-function vercelCredentials(): SandboxCredentials {
-  const { VERCEL_TOKEN: token, VERCEL_TEAM_ID: teamId, VERCEL_PROJECT_ID: projectId } = env
-  if (!token || !teamId || !projectId) {
-    throw new Error('Set VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID.')
-  }
-  return { token, teamId, projectId }
-}
-
-/** Railway is preferred when its token is set; the CLI reads RAILWAY_API_TOKEN itself. */
+/** The `railway` CLI reads RAILWAY_API_TOKEN itself. */
 function openWorkspace(): OpenWorkspace {
-  if (env.RAILWAY_API_TOKEN) {
-    return (archive, signal) => openRailwaySandbox(archive, snapshotSummary(0, archive.length), signal)
-  }
-  const creds = vercelCredentials()
-  return (archive, signal) => openSandbox(creds, archive, snapshotSummary(0, archive.length), signal)
+  return (archive, signal) => openRailwaySandbox(archive, snapshotSummary(0, archive.length), signal)
 }
 
 function serveReceipts(): void {
@@ -167,5 +154,5 @@ function serve(): void {
 const [command, ...rest] = process.argv.slice(2)
 if (command === 'keys') process.exit(keysCommand(rest))
 else if (command === 'users') process.exit(usersCommand(rest))
-else if (env.RAILWAY_API_TOKEN || env.VERCEL_TOKEN) serve()
+else if (env.RAILWAY_API_TOKEN) serve()
 else serveReceipts()

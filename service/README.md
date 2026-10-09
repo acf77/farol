@@ -1,6 +1,6 @@
 # Farol run service
 
-A standalone HTTP service that runs a project's pipelines in Vercel or Railway Sandboxes, so a
+A standalone HTTP service that runs a project's pipelines in Railway Sandboxes, so a
 web or mobile app can start a run and watch it without the Farol desktop app. The
 client uploads a snapshot of the project (a `.tar.gz`); the service starts one
 throwaway sandbox for the run, unpacks the snapshot, runs the pipeline's shell steps,
@@ -21,14 +21,13 @@ streams their output, and stops the sandbox when the run ends, fails, or is canc
 cd service
 npm install                      # once
 npm run build                  # -> dist/farol-service.cjs
-export VERCEL_TOKEN=… VERCEL_TEAM_ID=team_… VERCEL_PROJECT_ID=prj_…
+export RAILWAY_API_TOKEN=…
 node dist/farol-service.cjs
 ```
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | one provider required | Create sandboxes on Vercel |
-| `RAILWAY_API_TOKEN` | one provider required | Create sandboxes on Railway through the `railway` CLI (in the `Dockerfile`; install it yourself when running the bundle directly). Takes precedence over Vercel. Inside a Railway service the project and environment are picked up automatically |
+| `RAILWAY_API_TOKEN` | required | Create sandboxes on Railway through the `railway` CLI (in the `Dockerfile`; install it yourself when running the bundle directly). Inside a Railway service the project and environment are picked up automatically |
 | `PORT`, `HOST` | `8787`, `0.0.0.0` | Listen address |
 | `FAROL_KEYS_FILE` | `./farol-keys.json` | API key store (mode 0600) |
 | `RAILWAY_CHECKPOINT` | none | A Railway checkpoint you built yourself (see below) that sandboxes boot from. Runs never create or update one |
@@ -48,7 +47,7 @@ node dist/farol-service.cjs
 With neither provider configured the service starts in receipt mode: it accepts `POST /v1/receipts`
 and reports what arrived, running nothing.
 
-The `Dockerfile` in `service/` packages the bundle. Build from the repository root (`docker build -f service/Dockerfile .`): it copies `app/shared` and `app/electron/sandbox.ts` in, and nothing else from the desktop app. Put `/data` on a volume so keys
+The `Dockerfile` in `service/` packages the bundle. Build from the repository root (`docker build -f service/Dockerfile .`): it copies `app/shared` in, and nothing else from the desktop app. Put `/data` on a volume so keys
 survive restarts, and terminate TLS in front of the service — API keys are bearer tokens.
 
 ## What a sandbox can do
@@ -180,7 +179,7 @@ uncommitted `hello.txt`, to prove the whole path works. From `service/`:
 
 ```sh
 npm run build
-export VERCEL_TOKEN=… VERCEL_TEAM_ID=team_… VERCEL_PROJECT_ID=prj_…
+export RAILWAY_API_TOKEN=…
 node dist/farol-service.cjs keys create "me"   # copy the frl_… key
 node dist/farol-service.cjs &
 

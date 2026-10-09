@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { RemoteWorkspace } from '../electron/sandbox'
+import type { RemoteWorkspace } from '../shared/remote'
 import { BusyError, RunRegistry } from './runs'
 
 const pipeline = { id: 'ci', name: 'CI', nodes: [{ id: 'a', name: 'a', type: 'shell', cmd: 'sleep', after: [], x: 0, y: 0 }] } as never

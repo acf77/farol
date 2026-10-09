@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'crypto'
 import { RUN_RESULT_SCHEMA, RUN_STEP_OUTPUT_LIMIT, type RunResult } from '../shared/run-result'
 import { appendTail } from '../shared/terminal'
 import type { Pipeline } from '../shared/types'
-import type { RemoteWorkspace } from '../electron/sandbox'
+import type { RemoteWorkspace } from '../shared/remote'
 import { executePipeline, type RunSummary, type ServiceEvent } from './run'
 
 /** Opens the sandbox for one run from the uploaded snapshot. */

@@ -1,7 +1,6 @@
 import { spawn } from 'child_process'
 import { quoteShellArg } from '../shared/graph'
-import { SANDBOX_TIMEOUT_MS } from '../shared/remote'
-import type { RemoteWorkspace } from '../electron/sandbox'
+import { SANDBOX_TIMEOUT_MS, type RemoteWorkspace } from '../shared/remote'
 
 const WORKDIR = '/root/project'
 /**
