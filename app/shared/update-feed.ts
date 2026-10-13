@@ -3,13 +3,21 @@
 export interface UpdateFeed {
   version: string
   file: string
+  /** Base64 SHA-512 of the zip; electron-builder writes it, `publish-local.mjs` does not. */
+  sha512?: string
+}
+
+/** A top-level `key: value`; indented `files:` entries do not match. */
+function field(yml: string, key: string): string | undefined {
+  return new RegExp(`^${key}:\\s*['"]?(.+?)['"]?\\s*$`, 'm').exec(yml)?.[1]?.trim()
 }
 
 export function parseUpdateFeed(yml: string): UpdateFeed | null {
-  const version = /^version:\s*['"]?(.+?)['"]?\s*$/m.exec(yml)?.[1]?.trim()
-  const file = /^path:\s*['"]?(.+?)['"]?\s*$/m.exec(yml)?.[1]?.trim()
+  const version = field(yml, 'version')
+  const file = field(yml, 'path')
   if (!version || !file) return null
-  return { version, file }
+  const sha512 = field(yml, 'sha512')
+  return { version, file, ...(sha512 ? { sha512 } : {}) }
 }
 
 function parts(v: string): number[] {

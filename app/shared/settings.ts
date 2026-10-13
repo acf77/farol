@@ -352,6 +352,21 @@ function sanitizeKeysOff(raw: unknown): ProviderKey[] {
   return PROVIDER_KEYS.filter((k) => list.includes(k))
 }
 
+function sanitizeCommitMessage(
+  raw: unknown,
+  agent: AiProvider,
+  models: AppSettings['models']
+): AppSettings['commitMessage'] {
+  const hasCommitMessage = !!raw && typeof raw === 'object'
+  const commit = hasCommitMessage ? (raw as Record<string, unknown>) : {}
+  const commitAgent = isAiProvider(commit.agent) ? commit.agent : agent
+  // Installs that predate the dedicated commit-message field inherit the chat
+  // model once; after that, an absent model means "use the CLI's own default"
+  // (same convention as `models`), even if the user cleared it deliberately.
+  const commitModel = normalizeModel(commit.model) ?? (hasCommitMessage ? undefined : models[commitAgent])
+  return { agent: commitAgent, ...(commitModel ? { model: commitModel } : {}) }
+}
+
 export function sanitizeSettings(raw: unknown): AppSettings {
   const d = defaultSettings()
   if (!raw || typeof raw !== 'object') return d
@@ -361,14 +376,6 @@ export function sanitizeSettings(raw: unknown): AppSettings {
   // Settings written before per-agent models held one `model`, for `agent`.
   const legacy = normalizeModel(s.model)
   if (legacy && !models[agent]) models[agent] = legacy
-  const commitRaw = s.commitMessage
-  const hasCommitMessage = !!commitRaw && typeof commitRaw === 'object'
-  const commit = hasCommitMessage ? (commitRaw as Record<string, unknown>) : {}
-  const commitAgent = isAiProvider(commit.agent) ? commit.agent : agent
-  // Installs that predate the dedicated commit-message field inherit the chat
-  // model once; after that, an absent model means "use the CLI's own default"
-  // (same convention as `models`), even if the user cleared it deliberately.
-  const commitModel = normalizeModel(commit.model) ?? (hasCommitMessage ? undefined : models[commitAgent])
   const openrouter = sanitizeOpenRouter(s.openrouter)
   const catalogs = sanitizeCatalogs(s.catalogs)
   const keysOff = sanitizeKeysOff(s.providerKeysOff)
@@ -378,10 +385,7 @@ export function sanitizeSettings(raw: unknown): AppSettings {
   return {
     agent,
     models,
-    commitMessage: {
-      agent: commitAgent,
-      ...(commitModel ? { model: commitModel } : {})
-    },
+    commitMessage: sanitizeCommitMessage(s.commitMessage, agent, models),
     autoFix: typeof s.autoFix === 'boolean' ? s.autoFix : d.autoFix,
     modeDefaults: sanitizeModeDefaults(s.modeDefaults),
     pipelineFallbacks: sanitizeModeChain(s.pipelineFallbacks),

@@ -8,6 +8,19 @@ describe('parseUpdateFeed', () => {
     ).toEqual({ version: '0.2.0', file: 'Farol-0.2.0-arm64-mac.zip' })
   })
 
+  it('reads the top-level checksum of an electron-builder feed', () => {
+    const yml = [
+      'version: 0.2.0',
+      'files:',
+      '  - url: Farol-mac-arm64.zip',
+      '    sha512: inner==',
+      'path: Farol-mac-arm64.zip',
+      'sha512: top==',
+      "releaseDate: '2026-10-13T12:00:00.000Z'"
+    ].join('\n')
+    expect(parseUpdateFeed(yml)).toEqual({ version: '0.2.0', file: 'Farol-mac-arm64.zip', sha512: 'top==' })
+  })
+
   it('rejects an empty file', () => {
     expect(parseUpdateFeed('')).toBeNull()
   })

@@ -877,14 +877,20 @@ function registerAppIpc(): void {
   ipcMain.handle('prompts:setProjectActive', (_e, projectPath: unknown, ids: unknown) =>
     prompts.setProjectActive(projectPathOrNull(projectPath) ?? '', ids)
   )
-  ipcMain.handle('openrouter:saveKey', (_e, key: string) => saveOpenRouterKey(key))
-  ipcMain.handle('openrouter:clearKey', clearOpenRouter)
-  ipcMain.handle('openrouter:refresh', refreshOpenRouterCatalog)
-  ipcMain.handle('openrouter:setPinned', (_e, ids: string[]) => setOpenRouterPinned(ids))
   ipcMain.handle('agents:scan', scanAgents)
   ipcMain.handle('agentModels:refresh', (_e, force?: boolean) =>
     refreshAgentCatalogs({ forceRefresh: force === true })
   )
+  ipcMain.handle('update:check', () => updater.check())
+  ipcMain.on('update:install', () => updater.install())
+}
+
+/** Provider keys, their catalogs, and the usage and spend they unlock. */
+function registerKeyIpc(): void {
+  ipcMain.handle('openrouter:saveKey', (_e, key: string) => saveOpenRouterKey(key))
+  ipcMain.handle('openrouter:clearKey', clearOpenRouter)
+  ipcMain.handle('openrouter:refresh', refreshOpenRouterCatalog)
+  ipcMain.handle('openrouter:setPinned', (_e, ids: string[]) => setOpenRouterPinned(ids))
   ipcMain.handle('providerKey:save', (_e, name: unknown, key: unknown) => saveProviderKey(name, key))
   ipcMain.handle('providerKey:clear', (_e, name: unknown) => clearProviderKey(name))
   ipcMain.handle('jev:saveKey', (_e, key: string) => saveJevKey(key))
@@ -895,8 +901,6 @@ function registerAppIpc(): void {
   ipcMain.handle('spend:keys', spendKeyStatus)
   ipcMain.handle('spend:saveKey', (_e, name: unknown, key: unknown) => saveSpendKey(name, key))
   ipcMain.handle('spend:clearKey', (_e, name: unknown) => clearSpendKey(name))
-  ipcMain.handle('update:check', () => updater.check())
-  ipcMain.on('update:install', () => updater.install())
 }
 
 function registerIpc(): void {
@@ -907,6 +911,7 @@ function registerIpc(): void {
   registerTaskIpc()
   registerRemoteIpc()
   registerAppIpc()
+  registerKeyIpc()
 }
 
 function applyBrandIcon(): void {
@@ -939,7 +944,10 @@ app.whenReady().then(() => {
   void loadSettings()
   buildMenu()
   createWindow()
-  if (app.isPackaged) setTimeout(() => void updater.check(), 2500)
+  if (app.isPackaged) {
+    setTimeout(() => void updater.check(), 2500)
+    setInterval(() => void updater.check(), 6 * 60 * 60 * 1000)
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
