@@ -5,6 +5,8 @@ import { defaultGate, newPipelineNode, nodeGate, parallelAsClashIds, sanitizeAs,
 import { C, MONO, UI, ELLIPSIS } from '../theme'
 import { SIGN_IN_REQUIRED } from '@shared/remote'
 import { remoteAccount, useRemoteAccount } from '../remote-account'
+import { useRemoteBilling } from '../remote-billing'
+import { BillingButton } from './BillingButton'
 import { Button, CliModelDropdown } from './controls'
 import { Field, HAIR, Seg, SettingsGroup, SparkIcon, fieldBox } from './editor-ui'
 import type { EditorState } from '../types'
@@ -820,6 +822,7 @@ function PipelineSettings({
   updateEditor: (update: (current: EditorState) => EditorState) => void
 }) {
   const { account } = useRemoteAccount()
+  const { paymentRequired } = useRemoteBilling()
   const rowPad = '12px 13px'
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -852,6 +855,12 @@ function PipelineSettings({
             <Button variant="primary" onClick={() => void remoteAccount.signIn()}>
               Sign in
             </Button>
+          </div>
+        )}
+        {editor.target === 'remote' && paymentRequired && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.textSoft }}>
+            <span style={{ flex: 1 }}>Your free remote runs are used up. Upgrade to keep running.</span>
+            <BillingButton />
           </div>
         )}
         {editor.target === 'remote' && (

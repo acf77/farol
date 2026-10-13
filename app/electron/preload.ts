@@ -131,6 +131,9 @@ const api: FarolApi = {
     refresh: () => ipcRenderer.invoke('openrouter:refresh'),
     setPinned: (ids) => ipcRenderer.invoke('openrouter:setPinned', ids)
   },
+  agents: {
+    scan: () => ipcRenderer.invoke('agents:scan')
+  },
   agentModels: {
     refresh: (force) => ipcRenderer.invoke('agentModels:refresh', force === true)
   },
@@ -139,7 +142,10 @@ const api: FarolApi = {
     signInWait: () => ipcRenderer.invoke('remote:signInWait'),
     signInCancel: () => ipcRenderer.invoke('remote:signInCancel'),
     account: () => ipcRenderer.invoke('remote:account'),
-    signOut: () => ipcRenderer.invoke('remote:signOut')
+    signOut: () => ipcRenderer.invoke('remote:signOut'),
+    billing: () => ipcRenderer.invoke('remote:billing'),
+    openBilling: (kind) => ipcRenderer.invoke('remote:openBilling', kind),
+    onPaymentRequired: (cb) => on<{ canUpgrade: boolean }>('remote:paymentRequired', cb)
   },
   providerKey: {
     save: (name, key) => ipcRenderer.invoke('providerKey:save', name, key),

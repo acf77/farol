@@ -1,6 +1,7 @@
 /** Machine-scoped preferences — which agent to hand work to, and when. */
 
 import {
+  AI_PROVIDERS,
   isAiProvider,
   normalizeMode,
   normalizeModel,
@@ -60,6 +61,26 @@ export type RemoteAccount =
     }
   | { state: 'error'; message: string }
 
+export type RemotePlan = 'free' | 'trial' | 'paid' | 'key'
+
+/**
+ * What `GET /v1/billing` says about the signed-in user. The Stripe links never leave
+ * the main process: the renderer only learns whether each one exists, and asks the
+ * main process to open it.
+ */
+export type RemoteBilling =
+  | { state: 'off' | 'signedOut' | 'error' }
+  | {
+      state: 'ok'
+      plan: RemotePlan
+      freeSandboxesUsed: number
+      freeSandboxesLimit: number
+      canUpgrade: boolean
+      canManage: boolean
+      /** RFC 3339. */
+      trialEndsAt?: string
+    }
+
 /** Device-flow sign-in, step 1: show `userCode`; the browser is already open at `verificationUri`. */
 export type RemoteSignInStart = { userCode: string; verificationUri: string } | { error: string }
 
@@ -97,6 +118,10 @@ export interface AppSettings {
   providerKeys?: Partial<Record<ProviderKey, true>>
   /** Keys kept stored but switched off, so that CLI runs on its own login. */
   providerKeysOff?: ProviderKey[]
+  /** Set once first-run onboarding has been finished or skipped. */
+  onboarded?: true
+  /** CLIs switched on during onboarding. Absent means no choice was made. */
+  enabledAgents?: AiProvider[]
 }
 
 export function defaultSettings(): AppSettings {
@@ -347,6 +372,9 @@ export function sanitizeSettings(raw: unknown): AppSettings {
   const openrouter = sanitizeOpenRouter(s.openrouter)
   const catalogs = sanitizeCatalogs(s.catalogs)
   const keysOff = sanitizeKeysOff(s.providerKeysOff)
+  const enabled = Array.isArray(s.enabledAgents)
+    ? AI_PROVIDERS.filter((p) => (s.enabledAgents as unknown[]).includes(p))
+    : []
   return {
     agent,
     models,
@@ -359,7 +387,9 @@ export function sanitizeSettings(raw: unknown): AppSettings {
     pipelineFallbacks: sanitizeModeChain(s.pipelineFallbacks),
     ...(openrouter ? { openrouter } : {}),
     ...(catalogs ? { catalogs } : {}),
-    ...(keysOff.length ? { providerKeysOff: keysOff } : {})
+    ...(keysOff.length ? { providerKeysOff: keysOff } : {}),
+    ...(s.onboarded === true ? { onboarded: true as const } : {}),
+    ...(enabled.length ? { enabledAgents: enabled } : {})
   }
 }
 

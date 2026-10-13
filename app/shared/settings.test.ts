@@ -304,3 +304,17 @@ describe('withProviderKeyFlags', () => {
     expect(sanitizeSettings({ providerKeysOff: [] })).not.toHaveProperty('providerKeysOff')
   })
 })
+
+describe('onboarding settings', () => {
+  it('keeps the onboarded flag and known enabled agents only', () => {
+    const out = sanitizeSettings({ onboarded: true, enabledAgents: ['codex', 'nope', 'claude'] })
+    expect(out.onboarded).toBe(true)
+    expect(out.enabledAgents).toEqual(['claude', 'codex'])
+  })
+
+  it('leaves both absent by default', () => {
+    const out = sanitizeSettings({ onboarded: 'yes', enabledAgents: [] })
+    expect(out.onboarded).toBeUndefined()
+    expect(out.enabledAgents).toBeUndefined()
+  })
+})

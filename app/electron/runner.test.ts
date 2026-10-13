@@ -26,7 +26,11 @@ vi.mock('./session', () => ({
 }))
 vi.mock('./kill', () => ({ killPty: vi.fn(), killPidTree: vi.fn() }))
 vi.mock('./jev', () => ({ verdictFromOutput }))
-vi.mock('./remote', () => ({ openRemote: vi.fn(), SignInRequired: class SignInRequired extends Error {} }))
+vi.mock('./remote', () => ({
+  openRemote: vi.fn(),
+  SignInRequired: class SignInRequired extends Error {},
+  PaymentRequired: class PaymentRequired extends Error {}
+}))
 vi.mock('fs', () => ({
   default: {
     mkdirSync: vi.fn(),
@@ -36,7 +40,7 @@ vi.mock('fs', () => ({
 }))
 
 import { PipelineRunner } from './runner'
-import { SignInRequired } from './remote'
+import { PaymentRequired, SignInRequired } from './remote'
 
 const pipeline: Pipeline = {
   id: 'review',
@@ -291,6 +295,20 @@ describe('PipelineRunner remote target', () => {
     expect(result.ok).toBe(false)
     const output = events.flatMap((e) => (e.kind === 'output' ? [e.chunk] : [])).join('')
     expect(output).toContain('Sign in to run remote pipelines.')
+    expect(output).not.toMatch(/https?:|attempt/)
+  })
+
+  it('shows the 402 message, without retrying or links', async () => {
+    const events: RunEvent[] = []
+    const open = vi.fn().mockRejectedValue(new PaymentRequired('Free sandboxes used up.'))
+    const runner = new PipelineRunner((event) => events.push(event), open)
+
+    const result = await runner.run(remotePipeline, '/mock/project', 'main')
+
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(result.ok).toBe(false)
+    const output = events.flatMap((e) => (e.kind === 'output' ? [e.chunk] : [])).join('')
+    expect(output).toContain('Free sandboxes used up.')
     expect(output).not.toMatch(/https?:|attempt/)
   })
 

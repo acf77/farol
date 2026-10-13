@@ -1,11 +1,14 @@
 import { errorMessage } from '../shared/jev'
 import { shell } from 'electron'
 import type { RemoteAccount, RemoteSignInStart } from '../shared/types'
-import { checkoutSnapshot } from './checkout-snapshot'
-import { SIGN_IN_REQUIRED, snapshotSummary } from '../shared/remote'
+import { checkoutSnapshot, snapshotPlan } from './checkout-snapshot'
+import { buildManifest } from './snapshot-manifest'
+import { ServiceError, syncSnapshot, type SyncedSnapshot } from './snapshot-sync'
+import { SIGN_IN_REQUIRED, snapshotSummary, syncSummary } from '../shared/remote'
 import type { RemoteWorkspace } from './sandbox'
 import { clearSecret, peekSecret, setSecret } from './secrets'
 import { SERVICE_URL } from './service-url'
+import { clearBillingLinks, notePaymentRequired } from './billing-links'
 
 export type { RemoteWorkspace }
 
@@ -18,14 +21,21 @@ export class SignInRequired extends Error {
   }
 }
 
+/** The service wants payment before this run or workspace: 402. Retrying cannot help. */
+export class PaymentRequired extends ServiceError {
+  constructor(message: string) {
+    super(message, 402)
+  }
+}
+
 /** The session token for the built-in service; throws SignInRequired when there is none. */
-function session(): string {
+export function session(): string {
   const token = peekSecret('remoteSession')
   if (!token) throw new SignInRequired()
   return token
 }
 
-async function serviceCall(path: string, init: RequestInit & { token?: string }): Promise<Response> {
+export async function serviceCall(path: string, init: RequestInit & { token?: string }): Promise<Response> {
   const { token, ...rest } = init
   const res = await fetch(new URL(path, SERVICE_URL), {
     ...rest,
@@ -34,11 +44,16 @@ async function serviceCall(path: string, init: RequestInit & { token?: string })
   if (res.status === 401) {
     // The session expired or was revoked: forget it so the account menu offers Sign in.
     if (token && peekSecret('remoteSession') === token) clearSecret('remoteSession')
+    clearBillingLinks()
     throw new SignInRequired()
   }
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string }
-    throw new Error(body.error ?? `Remote service replied HTTP ${res.status}`)
+    const body = (await res.json().catch(() => ({}))) as { error?: string; upgradeUrl?: string }
+    if (res.status === 402) {
+      notePaymentRequired(body.upgradeUrl)
+      throw new PaymentRequired(body.error ?? 'Upgrade to keep running remote pipelines.')
+    }
+    throw new ServiceError(body.error ?? `Remote service replied HTTP ${res.status}`, res.status)
   }
   return res
 }
@@ -65,16 +80,74 @@ async function readExec(res: Response, onChunk: (chunk: string) => void): Promis
   return code
 }
 
+type Prepared = { plan: Awaited<ReturnType<typeof snapshotPlan>>; manifest: Awaited<ReturnType<typeof buildManifest>> }
+
+/**
+ * One run, one snapshot plan: the start-up retries share the run's abort signal, so
+ * they reuse the hashed manifest instead of walking the checkout again. Keying on
+ * the signal (not the directory) means a later run always sees the files as they are then.
+ */
+const preparedByRun = new WeakMap<AbortSignal, Promise<Prepared>>()
+
+function prepare(cwd: string, signal: AbortSignal, fresh = false): Promise<Prepared> {
+  let prepared = fresh ? undefined : preparedByRun.get(signal)
+  if (!prepared) {
+    prepared = snapshotPlan(cwd).then(async (plan) => ({ plan, manifest: await buildManifest(cwd, plan) }))
+    // A failed plan is not worth keeping: let the next attempt try again.
+    prepared.catch(() => preparedByRun.delete(signal))
+    preparedByRun.set(signal, prepared)
+  }
+  return prepared
+}
+
+/** Send the service what it lacks. A file edited while packing, or an evicted blob, gets one fresh try. */
+async function syncWithRetry(cwd: string, signal: AbortSignal, token: string): Promise<{ synced: SyncedSnapshot; files: number } | null> {
+  const call = (path: string, init: Parameters<typeof serviceCall>[1]) => serviceCall(path, { ...init, signal, token })
+  for (let attempt = 0; ; attempt++) {
+    const { plan, manifest } = await prepare(cwd, signal, attempt > 0)
+    try {
+      const synced = await syncSnapshot(call, cwd, plan, manifest)
+      return synced && { synced, files: manifest.entries.length }
+    } catch (err) {
+      if (attempt === 0 && err instanceof ServiceError && (err.status === 422 || err.status === 409)) continue
+      throw err
+    }
+  }
+}
+
+/** Create the workspace from a synced snapshot; if its files were evicted meanwhile, sync once more. */
+async function createWorkspace(cwd: string, signal: AbortSignal, token: string): Promise<{ id: string; summary: string }> {
+  for (let attempt = 0; ; attempt++) {
+    const synced = await syncWithRetry(cwd, signal, token)
+    if (!synced) {
+      // An older service: upload the whole archive, as before.
+      const { archive, count } = await checkoutSnapshot(cwd)
+      const created = await serviceCall('/v1/workspaces', { method: 'POST', body: new Uint8Array(archive), signal, token })
+      return { id: ((await created.json()) as { id: string }).id, summary: snapshotSummary(count, archive.length) }
+    }
+    try {
+      const created = await serviceCall('/v1/workspaces', {
+        method: 'POST',
+        headers: { 'X-Farol-Snapshot': synced.synced.id },
+        signal,
+        token
+      })
+      return { id: ((await created.json()) as { id: string }).id, summary: syncSummary(synced.files, synced.synced.uploadedBytes) }
+    } catch (err) {
+      if (attempt === 0 && err instanceof ServiceError && err.status === 409) continue
+      throw err
+    }
+  }
+}
+
 export const openRemote: OpenRemote = async (cwd, signal) => {
   const token = session()
-  const { archive, count } = await checkoutSnapshot(cwd)
-  const created = await serviceCall('/v1/workspaces', { method: 'POST', body: new Uint8Array(archive), signal, token })
-  const { id } = (await created.json()) as { id: string }
+  const { id, summary } = await createWorkspace(cwd, signal, token)
   let closed: Promise<unknown> | undefined
   // One command at a time: parallel commands on a single sandbox are unreliable.
   let queue: Promise<unknown> = Promise.resolve()
   return {
-    summary: snapshotSummary(count, archive.length),
+    summary,
     close: async () => {
       closed ??= serviceCall(`/v1/workspaces/${id}`, { method: 'DELETE', signal: AbortSignal.timeout(30_000), token }).catch(
         () => undefined
@@ -94,6 +167,7 @@ export const openRemote: OpenRemote = async (cwd, signal) => {
 /** Forget this machine's session. */
 export function signOutRemote(): void {
   clearSecret('remoteSession')
+  clearBillingLinks()
 }
 
 const AVATAR_HOST = 'avatars.githubusercontent.com'

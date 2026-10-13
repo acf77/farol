@@ -1,7 +1,10 @@
 import { useEffect } from 'react'
 import type { RemoteAccount } from '@shared/types'
 import { C, MONO } from '../theme'
+import { PAYMENT_NOT_SEEN, PLAN_LABEL } from '@shared/billing'
 import { remoteAccount, useRemoteAccount } from '../remote-account'
+import { remoteBilling, useRemoteBilling } from '../remote-billing'
+import { BillingButton } from './BillingButton'
 import { Button } from './controls'
 import { UserIcon } from './icons'
 import { CHROME_ROW } from './side-panel'
@@ -44,6 +47,8 @@ function Avatar({ account, size }: { account: RemoteAccount | null; size: number
 export default function AccountMenu({ liquid }: { liquid?: boolean }) {
   const { account, userCode, busy, error, menuOpen: open } = useRemoteAccount()
 
+  const { billing, notSeen } = useRemoteBilling()
+
   useEffect(() => remoteAccount.refresh(), [])
 
   useEffect(() => {
@@ -56,6 +61,21 @@ export default function AccountMenu({ liquid }: { liquid?: boolean }) {
   }, [open])
 
   const signedIn = account?.state === 'signedIn' ? account : null
+  const signedInLogin = signedIn?.login
+
+  // The plan is only worth asking for while signed in.
+  useEffect(() => {
+    if (signedInLogin === undefined) {
+      remoteBilling.reset()
+      return
+    }
+    return remoteBilling.start()
+  }, [signedInLogin])
+
+  useEffect(() => {
+    if (open && signedInLogin !== undefined) remoteBilling.refresh()
+  }, [open, signedInLogin])
+
   const label = signedIn ? `Account: ${signedIn.login}` : 'Account: not signed in'
 
   return (
@@ -136,6 +156,32 @@ export default function AccountMenu({ liquid }: { liquid?: boolean }) {
                     </div>
                   </div>
                 </div>
+                {billing?.state === 'ok' && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 10 }}>
+                    <span
+                      title="Your plan"
+                      style={{
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 6,
+                        padding: '1px 7px',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: C.textSoft
+                      }}
+                    >
+                      {PLAN_LABEL[billing.plan]}
+                    </span>
+                    <BillingButton />
+                  </div>
+                )}
+                {notSeen && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                    <span style={{ flex: 1, color: C.textSoft, lineHeight: 1.45 }}>{PAYMENT_NOT_SEEN}</span>
+                    <Button variant="secondary" onClick={remoteBilling.recheck}>
+                      Refresh
+                    </Button>
+                  </div>
+                )}
                 <div role="separator" style={{ height: 1, background: C.border, margin: '12px -12px 10px' }} />
                 <Button variant="secondary" disabled={busy} onClick={() => void remoteAccount.signOut()} style={{ width: '100%' }}>
                   Sign out

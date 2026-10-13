@@ -13,6 +13,8 @@ import type {
   OpenRouterSettings,
   SettingsResult,
   RemoteAccount,
+  RemoteBilling,
+  RemotePlan,
   RemoteSignInStart
 } from './settings'
 import type { ProviderUsage } from './usage'
@@ -33,6 +35,8 @@ export type {
   ProjectSession,
   SettingsResult,
   RemoteAccount,
+  RemoteBilling,
+  RemotePlan,
   RemoteSignInStart,
   WorktreeRequest
 }
@@ -676,6 +680,10 @@ export interface FarolApi {
     refresh(): Promise<SettingsResult>
     setPinned(ids: string[]): Promise<SettingsResult>
   }
+  /** Which coding CLIs are installed on this machine. */
+  agents: {
+    scan(): Promise<AgentScanResult[]>
+  }
   /** Refresh live `--model` lists from each installed coding CLI. */
   agentModels: {
     refresh(force?: boolean): Promise<SettingsResult>
@@ -692,6 +700,12 @@ export interface FarolApi {
     signInCancel(): Promise<void>
     /** Forget this machine's session. */
     signOut(): Promise<void>
+    /** The plan and which billing links exist; never the links themselves. */
+    billing(): Promise<RemoteBilling>
+    /** Open the upgrade or customer-portal page in the system browser. */
+    openBilling(kind: 'upgrade' | 'portal'): Promise<{ error?: string }>
+    /** The service answered a run or workspace call with 402. `canUpgrade`: it sent an upgrade link. */
+    onPaymentRequired(cb: (e: { canUpgrade: boolean }) => void): () => void
   }
   /** Direct Anthropic and OpenAI API keys, passed to the Claude and Codex CLIs. */
   providerKey: {
@@ -722,4 +736,12 @@ export interface FarolApi {
   ui: {
     onSettings(cb: () => void): () => void
   }
+}
+
+/** One coding CLI as found on this machine's PATH. `found` false means not installed. */
+export interface AgentScanResult {
+  provider: AiProvider
+  found: boolean
+  version?: string
+  path?: string
 }

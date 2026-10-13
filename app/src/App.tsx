@@ -69,6 +69,9 @@ import type { Surface } from './workspace-layout'
 import Toolbar from './components/Toolbar'
 import ErrorBoundary from './ErrorBoundary'
 import EmptyState from './components/EmptyState'
+import Onboarding from './components/Onboarding'
+import { RUN_ONBOARDING_EVENT } from './onboarding-event'
+import { remoteAccount } from './remote-account'
 import NewTabDialog from './components/NewTabDialog'
 import ChatPane from './components/ChatPane'
 import CodePane from './components/CodePane'
@@ -2598,6 +2601,8 @@ export default function App() {
   const [agentBusyPaths, setAgentBusyPaths] = useState<ReadonlySet<string>>(() => new Set())
   const [agentUnreadPaths, setAgentUnreadPaths] = useState<ReadonlySet<string>>(() => new Set())
   const hydrated = useRef(false)
+  /** Settings to onboard with; null once first-run setup is done or not needed. */
+  const [onboarding, setOnboarding] = useState<AppSettings | null>(null)
   const { usage, refresh: refreshUsage } = useUsage()
 
   const setAgentBusy = useCallback(
@@ -2671,7 +2676,10 @@ export default function App() {
       const restored = (
         await Promise.all(workspace.paths.map((projectPath) => api.project.openPath(projectPath)))
       ).filter((project): project is Project => project !== null)
+      // First run only: a machine that already has projects open is not new.
+      const stored = restored.length ? null : await api.settings.load()
       if (cancelled) return
+      if (stored && !stored.onboarded) setOnboarding(stored)
       setProjects(restored)
       setActivePath(
         restored.find((project) => project.path === workspace.activePath)?.path ??
@@ -2701,6 +2709,25 @@ export default function App() {
       activePath
     )
   }, [projects, activePath])
+
+  useEffect(() => {
+    const open = () => void api.settings.load().then(setOnboarding)
+    window.addEventListener(RUN_ONBOARDING_EVENT, open)
+    return () => window.removeEventListener(RUN_ONBOARDING_EVENT, open)
+  }, [])
+
+  if (onboarding) {
+    return (
+      <Onboarding
+        settings={onboarding}
+        onFinish={(next) => {
+          void api.settings.save(next)
+          remoteAccount.setMenuOpen(false)
+          setOnboarding(null)
+        }}
+      />
+    )
+  }
 
   if (!projects.length) {
     return (

@@ -1,3 +1,4 @@
+import { scanAgents } from './agent-scan'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell as electronShell } from 'electron'
 import path from 'path'
 import fs from 'fs'
@@ -30,6 +31,8 @@ import { refreshAgentCatalogs } from './agent-models'
 import { errorMessage } from '../shared/jev'
 import { checkJev, clearJev, saveJevKey } from './jev'
 import { clearProviderKey, saveProviderKey } from './provider-keys'
+import { onPaymentRequired } from './billing-links'
+import { openBilling, remoteBilling } from './billing'
 import { cancelRemoteSignIn, remoteAccount, signOutRemote, startRemoteSignIn, waitRemoteSignIn } from './remote'
 import { configureJevLogs } from './jev-log'
 import { configureAgentFailureLogs } from './agent-failure-log'
@@ -852,6 +855,9 @@ function registerRemoteIpc(): void {
   ipcMain.handle('remote:signInCancel', () => cancelRemoteSignIn())
   ipcMain.handle('remote:account', () => remoteAccount())
   ipcMain.handle('remote:signOut', () => signOutRemote())
+  ipcMain.handle('remote:billing', () => remoteBilling())
+  ipcMain.handle('remote:openBilling', (_e, kind: unknown) => openBilling(kind))
+  onPaymentRequired((e) => send('remote:paymentRequired', e))
 }
 
 function projectPathOrNull(value: unknown): string | null {
@@ -875,6 +881,7 @@ function registerAppIpc(): void {
   ipcMain.handle('openrouter:clearKey', clearOpenRouter)
   ipcMain.handle('openrouter:refresh', refreshOpenRouterCatalog)
   ipcMain.handle('openrouter:setPinned', (_e, ids: string[]) => setOpenRouterPinned(ids))
+  ipcMain.handle('agents:scan', scanAgents)
   ipcMain.handle('agentModels:refresh', (_e, force?: boolean) =>
     refreshAgentCatalogs({ forceRefresh: force === true })
   )

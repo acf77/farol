@@ -32,7 +32,7 @@ import { killPidTree, killPty } from './kill'
 import { errorMessage } from '../shared/jev'
 import { verdictFromOutput } from './jev'
 import { shellFamily } from './protocol'
-import { openRemote as openRemoteWorkspace, SignInRequired, type OpenRemote, type RemoteWorkspace } from './remote'
+import { openRemote as openRemoteWorkspace, PaymentRequired, SignInRequired, type OpenRemote, type RemoteWorkspace } from './remote'
 import { SIGN_IN_REQUIRED } from '../shared/remote'
 import { providerFailure } from '../shared/provider-failure'
 import { loadSettings } from './store'
@@ -460,9 +460,14 @@ export class PipelineRunner {
 
   /**
    * Tries to open the remote sandbox up to REMOTE_START_ATTEMPTS times; returns why it failed.
-   * Not being signed in is reported as is and never retried.
+   * Not being signed in, or owing payment, is reported as is (`final`) and never retried.
    */
-  private async retryOpenRemote(cwd: string, state: Active, graph: RunGraph, first: string): Promise<string> {
+  private async retryOpenRemote(
+    cwd: string,
+    state: Active,
+    graph: RunGraph,
+    first: string
+  ): Promise<{ reason: string; final: boolean }> {
     let failure = ''
     for (let attempt = 1; attempt <= REMOTE_START_ATTEMPTS && !state.remote; attempt++) {
       const retry = attempt > 1 ? ` (attempt ${attempt}/${REMOTE_START_ATTEMPTS})` : ''
@@ -471,7 +476,7 @@ export class PipelineRunner {
         state.remote = await this.openRemote(cwd, state.abort.signal)
       } catch (error) {
         const stop = this.remoteStartStop(error, state, graph, first)
-        if (stop !== undefined) return stop
+        if (stop !== undefined) return { reason: stop, final: true }
         failure = remoteStartErrorMessage(error)
         this.emitOut(state, graph, first, `farol: remote sandbox failed to start: ${failure}\r\n`)
         if (attempt < REMOTE_START_ATTEMPTS) {
@@ -479,10 +484,10 @@ export class PipelineRunner {
         }
       }
     }
-    return failure
+    return { reason: failure, final: false }
   }
 
-  /** Sign-in required, or undefined to keep retrying. */
+  /** Sign-in or payment required (retrying cannot help), or undefined to keep retrying. */
   private remoteStartStop(
     error: unknown,
     state: Active,
@@ -494,6 +499,10 @@ export class PipelineRunner {
       this.emitOut(state, graph, first, `farol: ${SIGN_IN_REQUIRED}\r\n`)
       return SIGN_IN_REQUIRED
     }
+    if (error instanceof PaymentRequired) {
+      this.emitOut(state, graph, first, `farol: ${error.message}\r\n`)
+      return error.message
+    }
     return undefined
   }
 
@@ -504,7 +513,8 @@ export class PipelineRunner {
     fallbackLocal: boolean
   ): Promise<boolean> {
     const first = graph.nodes[0]?.id ?? 'n1'
-    const failure = await this.retryOpenRemote(cwd, state, graph, first)
+    const { reason, final } = await this.retryOpenRemote(cwd, state, graph, first)
+
     if (!state.remote) {
       if (state.cancelled) {
         this.failRun(state, graph, undefined)
@@ -517,7 +527,7 @@ export class PipelineRunner {
       this.failRun(
         state,
         graph,
-        failure === SIGN_IN_REQUIRED ? failure : `remote run could not start after ${REMOTE_START_ATTEMPTS} attempts: ${failure}`
+        final ? reason : `remote run could not start after ${REMOTE_START_ATTEMPTS} attempts: ${reason}`
       )
       return false
     }

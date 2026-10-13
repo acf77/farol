@@ -1,3 +1,4 @@
+import { RUN_ONBOARDING_EVENT } from '../onboarding-event'
 import { Children, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { activePromptCount, type CustomPromptSet } from '@shared/custom-prompts'
@@ -1134,6 +1135,22 @@ export default function SettingsPage({
                     </Setting>
                   </Card>
                 </Group>
+                {import.meta.env.DEV && (
+                  <Group title="Developer">
+                    <Card>
+                      <Setting title="First-run setup" hint="Reopen the onboarding screens. Development builds only.">
+                        <Button
+                          onClick={() => {
+                            onClose()
+                            window.dispatchEvent(new Event(RUN_ONBOARDING_EVENT))
+                          }}
+                        >
+                          Run setup
+                        </Button>
+                      </Setting>
+                    </Card>
+                  </Group>
+                )}
               </>
             )}
 
