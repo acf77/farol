@@ -24,7 +24,7 @@ import {
   type PrCheckSummary,
   type PrDraft
 } from '@shared/types'
-import { useGitPanel, type GitAction, type GitLogEntry } from '../hooks/useGitPanel'
+import { useGitPanel, type GitAction, type GitLogEntry, type MergedPr } from '../hooks/useGitPanel'
 import { C, MONO, UI, ELLIPSIS } from '../theme'
 import { BranchDropdown, Button } from './controls'
 import { Field, HAIR, Seg, SettingsGroup, SparkIcon, fieldBox } from './editor-ui'
@@ -645,10 +645,12 @@ function PullRequestTab({
   baseOptions,
   base,
   prDraft,
+  mergedPr,
   provider,
   model,
   mergeStrategy,
   onBase,
+  onNewPr,
   onPrTitle,
   onPrDescription,
   onPreparePr,
@@ -664,19 +666,22 @@ function PullRequestTab({
   baseOptions: string[]
   base: string
   prDraft: PrDraft
+  mergedPr: MergedPr | null
   provider: AiProvider
   model?: string
   mergeStrategy: MergeStrategy | ''
   onBase: (base: string) => void
+  onNewPr: () => void
   onPrTitle: (title: string) => void
   onPrDescription: (description: string) => void
   onPreparePr: (base: string) => void
   onMergeStrategy: (strategy: MergeStrategy | '') => void
   onFixConflicts: () => void
   onCreatePr: (base: string, title: string, body: string) => void
-  onMergePr: (strategy: MergeStrategy) => void
+  onMergePr: (strategy: MergeStrategy, pr: MergedPr) => void
 }) {
   const attached = github?.available ? github.prs[0] : undefined
+  const merged = mergedPr?.branch === branch ? mergedPr : null
   const mergeLoaded = !!status?.conflicts.length || !!github || !!status?.baseMerge
   const mergeItems = mergeLoaded ? conflictStatusItems(status, github) : []
   const working = (status?.conflicts ?? []).map((file) => file.path)
@@ -802,7 +807,7 @@ function PullRequestTab({
               title={mergeReason ?? `Hold to ${mergeStrategy} merge pull request #${attached.number}`}
               onConfirm={() => {
                 if (!mergeStrategy) return
-                onMergePr(mergeStrategy)
+                onMergePr(mergeStrategy, { number: attached.number, url: attached.url })
               }}
               style={{ height: 32, padding: 0, borderRadius: 7, fontSize: 12.5, fontWeight: 600, opacity: canMerge || gitAction === 'merge' ? 1 : 0.35 }}
               primary
@@ -823,7 +828,28 @@ function PullRequestTab({
         </div>
       )}
 
-      {!attached && (
+      {!attached && merged && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: 14, borderRadius: 12, background: C.terminal, border: `1px solid ${CARD_BORDER}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ padding: '2px 8px', borderRadius: 20, background: 'oklch(0.78 0.09 160 / 0.14)', color: C.green, fontSize: 11, fontWeight: 500 }}>Merged</span>
+            <span style={{ fontFamily: MONO, fontSize: 11.5, color: C.faint }}>#{merged.number}</span>
+          </div>
+          <span style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.45 }}>The latest pull request was merged.</span>
+          <Button variant="primary" onClick={onNewPr}>Create another pull request</Button>
+          {merged.url && (
+            <button
+              type="button"
+              className="bf-focus bf-hover-fill"
+              onClick={() => window.open(merged.url, '_blank', 'noopener,noreferrer')}
+              style={{ padding: '7px 0', textAlign: 'center', borderRadius: 7, background: C.panel, border: `1px solid ${SOFT_BORDER}`, color: C.text, font: 'inherit', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
+            >
+              Open on GitHub
+            </button>
+          )}
+        </div>
+      )}
+
+      {!attached && !merged && (
         <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 18 }}>
@@ -969,6 +995,8 @@ export default function GitPane({
   gitAction,
   draft,
   prDraft,
+  mergedPr,
+  dismissMergedPr,
   selectedFiles,
   log,
   refreshError,
@@ -1112,6 +1140,8 @@ export default function GitPane({
                 baseOptions={baseOptions}
                 base={base}
                 prDraft={prDraft}
+                mergedPr={mergedPr}
+                onNewPr={dismissMergedPr}
                 provider={provider}
                 model={aiModel}
                 mergeStrategy={mergeStrategy}
@@ -1122,8 +1152,8 @@ export default function GitPane({
                 onMergeStrategy={setMergeStrategy}
                 onFixConflicts={resolveConflicts}
                 onCreatePr={createPr}
-                onMergePr={(strategy) => {
-                  void mergePr(strategy)
+                onMergePr={(strategy, pr) => {
+                  void mergePr(strategy, pr)
                   setMergeStrategy('squash')
                 }}
               />

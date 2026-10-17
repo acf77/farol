@@ -53,6 +53,12 @@ type RunRemote = (
   failed: string
 ) => Promise<RemoteResult | undefined>
 
+export interface MergedPr {
+  number: number
+  url?: string
+  branch?: string
+}
+
 export function useGitPanel(
   projectPath: string,
   ai: () => { agent: AiProvider; model?: string },
@@ -61,6 +67,7 @@ export function useGitPanel(
   const [gitAction, setGitAction] = useState<GitAction | null>(null)
   const [draft, setDraft] = useState<GitCommitDraft>(EMPTY_DRAFT)
   const [prDraft, setPrDraft] = useState<PrDraft>(EMPTY_PR_DRAFT)
+  const [mergedPr, setMergedPr] = useState<MergedPr | null>(null)
   const [log, setLog] = useState<GitLogEntry[]>([])
   const logId = useRef(0)
   // Callers pass `opts` inline; read `onAskAi` through a ref so it never destabilises the actions.
@@ -89,6 +96,7 @@ export function useGitPanel(
   useEffect(() => {
     setDraft(EMPTY_DRAFT)
     setPrDraft(EMPTY_PR_DRAFT)
+    setMergedPr(null)
     setConflictBase(undefined)
     setLog([])
     logId.current = 0
@@ -205,13 +213,24 @@ export function useGitPanel(
           },
           'Could not create the pull request'
         ),
-      mergePr: (strategy: MergeStrategy) =>
-        runRemote(
+      mergePr: async (strategy: MergeStrategy, pr: MergedPr) => {
+        const project = projectPath
+        const branch = githubBranchRef.current
+        const res = await runRemote(
           'merge',
           'Merge pull request',
           () => api.git.mergePr(projectPath, strategy),
           'Could not merge the pull request'
         )
+        if (
+          res?.ok &&
+          trimSlashes(projectRef.current) === trimSlashes(project) &&
+          githubBranchRef.current === branch
+        ) {
+          setMergedPr({ ...pr, branch })
+          setPrDraft(EMPTY_PR_DRAFT)
+        }
+      }
     }),
     [applyGithubPollResult, burstGithubPoll, githubBranchRef, githubGenRef, githubPollGenRef, projectPath, runRemote]
   )
@@ -256,6 +275,8 @@ export function useGitPanel(
     gitAction,
     draft,
     prDraft,
+    mergedPr,
+    dismissMergedPr: () => setMergedPr(null),
     log,
     setConflictBase,
     prepareCommit,
