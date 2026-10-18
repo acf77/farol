@@ -78,7 +78,7 @@ const todos = createTodoStore(
   (event) => send('todos:changed', event)
 )
 const prompts = createCustomPromptStore(() => app.getPath('userData'), pipelineStoreRootFor)
-const agents = new AgentController(runner, (event) => send('agent:event', event), undefined, todos, prompts)
+const agents = new AgentController(runner, (event) => send('agent:event', event), undefined, todos, prompts, loadPipelines)
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
 )
