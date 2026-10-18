@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
-import type { AppSettings, PipelineNode, StepType } from '@shared/types'
+import type { AppSettings, GitOp, PipelineNode, StepType } from '@shared/types'
 import { GIT_HOOK_EVENTS, aiSelectionLabel, normalizeAi } from '@shared/types'
+import { GIT_OPS, gitStepError, gitSummary } from '@shared/git-step'
 import { defaultGate, newPipelineNode, nodeGate, parallelAsClashIds, sanitizeAs, topoSort } from '@shared/graph'
 import { C, MONO, UI, ELLIPSIS } from '../theme'
 import { SIGN_IN_REQUIRED } from '@shared/remote'
@@ -467,7 +468,7 @@ export default function PipelineCanvas({
             const clash = asClashIds.has(n.id)
             const ring = clash ? C.red : on ? C.accent : null
             const gate = nodeGate(n)
-            const preview = n.cmd || (ai ? 'No prompt yet' : 'No command yet')
+            const preview = n.type === 'git' ? gitSummary(n) : n.cmd || (ai ? 'No prompt yet' : 'No command yet')
             return (
               <div
                 key={n.id}
@@ -586,6 +587,10 @@ export default function PipelineCanvas({
             <button type="button" className="bf-dashed" onClick={() => addNode('shell')} style={addBtn(C.textRow)}>
               <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
               <span>Shell step</span>
+            </button>
+            <button type="button" className="bf-dashed" onClick={() => addNode('git')} style={addBtn(C.textRow)}>
+              <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
+              <span>Git step</span>
             </button>
             <button type="button" className="bf-dashed" onClick={() => addNode('ai')} style={addBtn(C.purpleSoft)}>
               <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
@@ -917,6 +922,7 @@ function PipelineSettings({
 
 const TYPE_OPTIONS: { value: StepType; label: string }[] = [
   { value: 'shell', label: 'Shell' },
+  { value: 'git', label: 'Git' },
   { value: 'ai', label: 'AI' }
 ]
 
@@ -938,6 +944,7 @@ function Inspector({
   onDelete: () => void
 }) {
   const ai = node.type === 'ai'
+  const gitError = node.type === 'git' ? gitStepError(node) : null
   const [confirming, setConfirming] = useState(false)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -949,7 +956,11 @@ function Inspector({
         value={node.type}
         ai
         onChange={(t) =>
-          onPatch(t === 'ai' ? { type: t, ai: node.ai ?? 'claude', gate: false } : { type: t, gate: true })
+          onPatch(
+            t === 'ai'
+              ? { type: t, ai: node.ai ?? 'claude', gate: false }
+              : { type: t, gate: true, ...(t === 'git' ? { op: node.op ?? 'diff' } : {}) }
+          )
         }
       />
 
@@ -987,6 +998,48 @@ function Inspector({
               onChange={(p, m) => onPatch({ ai: p, model: m })}
             />
           </Field>
+        </>
+      ) : node.type === 'git' ? (
+        <>
+          <Field label="Operation" htmlFor="step-git-op">
+            <select
+              id="step-git-op"
+              className="bf-input"
+              value={node.op ?? 'diff'}
+              onChange={(e) => onPatch({ op: e.target.value as GitOp })}
+              style={fieldBox}
+            >
+              {GIT_OPS.map((op) => (
+                <option key={op} value={op}>
+                  {op}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Compare with" htmlFor="step-git-base">
+            <input
+              id="step-git-base"
+              className="bf-input"
+              value={node.base ?? ''}
+              onChange={(e) => onPatch({ base: e.target.value.trim() || undefined })}
+              placeholder="HEAD"
+              spellCheck={false}
+              style={{ ...fieldBox, fontFamily: MONO, fontSize: 12 }}
+            />
+          </Field>
+          <Field label="Only these paths" htmlFor="step-git-paths">
+            <textarea
+              id="step-git-paths"
+              className="bf-input"
+              value={node.paths?.join('\n') ?? ''}
+              onChange={(e) => onPatch({ paths: e.target.value ? e.target.value.split('\n') : undefined })}
+              placeholder="One path or glob per line, e.g. *.go"
+              rows={3}
+              spellCheck={false}
+              style={{ ...fieldBox, padding: '9px 10px', fontFamily: MONO, fontSize: 12, lineHeight: 1.55, resize: 'vertical' }}
+            />
+          </Field>
+          {gitError ? <span style={{ fontSize: 11.5, color: C.red, lineHeight: 1.45 }}>{gitError}</span> : null}
         </>
       ) : (
         <Field label="Command" htmlFor="step-command">
