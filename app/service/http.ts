@@ -76,6 +76,9 @@ function requestedPipeline(pipelines: Pipeline[], query: string): Pipeline {
   if (!found.ok) throw new HttpError(404, found.message, { candidates: found.candidates })
   const invalid = validateRunnable(found.pipeline.nodes)
   if (invalid) throw new HttpError(422, invalid)
+  if (found.pipeline.nodes.some((n) => n.type === 'git')) {
+    throw new HttpError(422, 'Pipelines with git steps cannot run on the service')
+  }
   const aiSteps = aiStepNames(found.pipeline)
   if (aiSteps.length) {
     throw new HttpError(422, 'Pipelines with AI steps cannot run on the service', { aiSteps })

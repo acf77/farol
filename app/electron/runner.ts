@@ -16,15 +16,20 @@ import { appendTail, plainText } from '../shared/terminal'
 import { exitCodeFromSignal } from '../shared/exit-code'
 import { parseVerdict, verdictPromptSuffix, type StepVerdict } from '../shared/verdict'
 import {
+  ancestors,
   ancestorVars,
   descendants,
-  expandVars,
+  expandWithin,
   nodeGate,
   quoteShellArg,
   readyIds,
   topoSort,
+  validateRemoteGit,
   validateRunnable
 } from '../shared/graph'
+import { isSecretPath } from '../shared/git-status'
+import { gitArgs, gitArtifactPath, gitNamesArgs } from '../shared/git-step'
+import { listGitFiles, runGitToArtifact } from './git-artifact'
 import { aiEnv, resolveBinFrom } from './bin'
 import { openRouterAgent } from './openrouter-agent'
 import { defaultShell, pipelineEnv, PtySession } from './session'
@@ -45,6 +50,8 @@ import { backoffDelayMs } from './backoff'
  * Shell cmds and AI prompts expand `${name}` from ancestor named outputs.
  * A `remote` pipeline runs its shell steps in a sandbox on the Farol service holding a snapshot of
  * the checkout; AI steps always run here, where the agent CLIs are signed in.
+ * `git` steps run here with fixed arguments. Each result is the step's `${as}` value and a file
+ * under `.farol/git/`; a remote run does them first and adds those files to the snapshot.
  */
 
 /** Live per-step stdout kept for named vars, failure reports, and settled results. */
@@ -55,6 +62,8 @@ const STEP_RESULT_LIMIT = 4000
 /** Tries to start a remote sandbox before the run fails (or falls back to this machine). */
 const REMOTE_START_ATTEMPTS = 3
 const REMOTE_START_BACKOFF_MS = 500
+/** Most bytes of an expanded step command, below the roughly 128 KB a single argument can hold. */
+const COMMAND_LIMIT = 120_000
 
 async function pauseUnlessCancelled(state: { cancelled: boolean }, ms: number): Promise<void> {
   if (state.cancelled || ms <= 0) return
@@ -149,12 +158,26 @@ interface Active {
   cancelled: boolean
 }
 
+/** `${name_file}` for each ancestor git step that succeeded; a named output of the same name wins. */
+function gitFileVars(graph: RunGraph, id: string): Record<string, string> {
+  const ancestorIds = new Set(ancestors(graph.nodes, id))
+  return Object.fromEntries(
+    graph.nodes
+      .filter((n) => n.type === 'git' && ancestorIds.has(n.id) && graph.stepResults.get(n.id)?.ok)
+      .map((n) => [`${n.as ?? n.id}_file`, gitArtifactPath(n, graph.pipelineId)])
+  )
+}
+
 interface RunGraph {
   pipelineId: string
+  /** The run goes to a sandbox, so git results must not carry what the snapshot leaves out. */
+  remote: boolean
   nodes: PipelineNode[]
   indexOf: Map<string, number>
   byId: Map<string, PipelineNode>
   outputs: Record<string, string>
+  /** Full result text of each finished git step; `outputs` keeps only the tail. */
+  artifacts: Record<string, string>
   done: Set<string>
   skipped: Set<string>
   started: Set<string>
@@ -341,14 +364,17 @@ export class PipelineRunner {
   private async executeRun(pipeline: Pipeline, cwd: string, state: Active): Promise<void> {
     const { runId, branch, origin } = state
     const pipelineId = pipeline.id
-    const invalid = validateRunnable(pipeline.nodes)
+    const remote = pipeline.target === 'remote'
+    const invalid = validateRunnable(pipeline.nodes) ?? (remote ? validateRemoteGit(pipeline.nodes) : null)
     const nodes = invalid ? pipeline.nodes : (topoSort(pipeline.nodes) as PipelineNode[])
     const graph: RunGraph = {
       pipelineId,
+      remote,
       nodes,
       indexOf: new Map(nodes.map((n, i) => [n.id, i])),
       byId: new Map(nodes.map((n) => [n.id, n])),
       outputs: {},
+      artifacts: {},
       done: new Set(),
       skipped: new Set(),
       started: new Set(),
@@ -363,10 +389,10 @@ export class PipelineRunner {
       return
     }
 
-    const opened =
-      pipeline.target === 'remote'
-        ? await this.openRemoteWorkspace(cwd, state, graph, pipeline.fallbackLocal === true)
-        : await this.openRunShell(cwd, state, graph)
+    if (remote) await this.runGitFirst(cwd, state, graph)
+    const opened = remote
+      ? await this.openRemoteWorkspace(cwd, state, graph, pipeline.fallbackLocal === true)
+      : await this.openRunShell(cwd, state, graph)
     if (!opened) return
 
     const inflight = new Map<string, Promise<void>>()
@@ -473,7 +499,8 @@ export class PipelineRunner {
       const retry = attempt > 1 ? ` (attempt ${attempt}/${REMOTE_START_ATTEMPTS})` : ''
       this.emitOut(state, graph, first, `farol: starting remote sandbox${retry}…\r\n`)
       try {
-        state.remote = await this.openRemote(cwd, state.abort.signal)
+        const files = graph.nodes.filter((n) => Object.hasOwn(graph.artifacts, n.id)).map((n) => gitArtifactPath(n, graph.pipelineId))
+        state.remote = await this.openRemote(cwd, state.abort.signal, files)
       } catch (error) {
         const stop = this.remoteStartStop(error, state, graph, first)
         if (stop !== undefined) return { reason: stop, final: true }
@@ -615,10 +642,13 @@ export class PipelineRunner {
       index,
       nodeId: node.id
     })
-    const vars = ancestorVars(graph.nodes, node.id, graph.outputs, graph.stepResults)
+    const vars = { ...gitFileVars(graph, node.id), ...ancestorVars(graph.nodes, node.id, { ...graph.outputs, ...graph.artifacts }, graph.stepResults) }
     const onChunk = (chunk: string): void => this.emitOut(state, graph, node.id, chunk)
     const startedAt = Date.now()
-    const code = await this.runStep(node, cwd, state, onChunk, vars)
+    const code =
+      node.type === 'git'
+        ? await this.runGitStep(node, cwd, state, graph, onChunk)
+        : await this.runStep(node, cwd, state, onChunk, vars)
     const durationMs = Date.now() - startedAt
     const ok = code === 0 && !state.cancelled
     graph.stepResults.set(node.id, {
@@ -739,16 +769,57 @@ export class PipelineRunner {
     })
   }
 
-  private runStep(
+  /** Git steps wait on nothing but other git steps, so a remote run does them before the sandbox opens. */
+  private async runGitFirst(cwd: string, state: Active, graph: RunGraph): Promise<void> {
+    for (const node of graph.nodes) {
+      if (node.type !== 'git' || state.cancelled || graph.skipped.has(node.id)) continue
+      graph.started.add(node.id)
+      await this.runGraphNode(cwd, state, graph, node)
+    }
+  }
+
+  /** Run the fixed git command; keep its output as `${as}` text and write it to the step's file. */
+  private async runGitStep(
+    node: PipelineNode,
+    cwd: string,
+    state: Active,
+    graph: RunGraph,
+    onChunk: (chunk: string) => void
+  ): Promise<number> {
+    if (state.cancelled) return 130
+    try {
+      const rel = gitArtifactPath(node, graph.pipelineId)
+      const { signal } = state.abort
+      // A diff of a likely-secret file (.env, keys) would reach the sandbox in the file and in `${as}`.
+      const hidden =
+        graph.remote && node.op === 'diff' ? (await listGitFiles(cwd, gitNamesArgs(node), signal)).filter(isSecretPath) : []
+      const { preview, truncated } = await runGitToArtifact(cwd, gitArgs(node, hidden), rel, signal)
+      const shown = truncated ? `${preview}\n[cut here; the full text is in ${rel}]` : preview
+      graph.artifacts[node.id] = shown
+      onChunk(shown.replace(/\r?\n/g, '\r\n'))
+      return 0
+    } catch (error) {
+      if (state.cancelled) return 130
+      const { stderr, code } = error as { stderr?: string; code?: unknown }
+      onChunk(`farol: ${(stderr || errorMessage(error)).trim().replace(/\r?\n/g, '\r\n')}\r\n`)
+      return typeof code === 'number' ? code : 1
+    }
+  }
+
+  private async runStep(
     node: PipelineNode,
     cwd: string,
     state: Active,
     onChunk: (chunk: string) => void,
     vars: Readonly<Record<string, string>>
   ): Promise<number> {
-    return node.type === 'shell'
-      ? this.runShellStep(node, expandVars(node.cmd, vars, { quote: quoteShellArg }), cwd, state, onChunk)
-      : this.runAiStep(node, expandVars(node.cmd, vars), cwd, state, onChunk)
+    const shell = node.type === 'shell'
+    const cmd = expandWithin(node.cmd, vars, COMMAND_LIMIT, shell ? { quote: quoteShellArg } : undefined)
+    if (cmd === null) {
+      onChunk(`farol: the command is over ${COMMAND_LIMIT} bytes before any value is added\r\n`)
+      return 1
+    }
+    return shell ? this.runShellStep(node, cmd, cwd, state, onChunk) : this.runAiStep(node, cmd, cwd, state, onChunk)
   }
 
   private async runShellStep(
