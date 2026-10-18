@@ -7,6 +7,7 @@ import {
   connectorKind,
   descendants,
   expandVars,
+  expandWithin,
   namedStepOutput,
   newPipelineNode,
   parallelAsClashIds,
@@ -15,6 +16,7 @@ import {
   sanitizeAs,
   sanitizePipeline,
   topoSort,
+  validateRemoteGit,
   validateRunnable
 } from './graph'
 import { VERDICT_MARKER } from './verdict'
@@ -380,6 +382,75 @@ describe('named outputs', () => {
         n('b', ['a'], { as: 'out' })
       ]).size
     ).toBe(0)
+  })
+})
+
+describe('expandWithin', () => {
+  const quote = { quote: quoteShellArg }
+  const argBytes = (text: string): number => new TextEncoder().encode(quoteShellArg(text)).length
+  const within = (...args: Parameters<typeof expandWithin>): string => expandWithin(...args) as string
+
+  it('is expandVars when the command fits', () => {
+    expect(within('echo ${a}', { a: 'hi' }, 1000, quote)).toBe("echo 'hi'")
+  })
+
+  it.each(['x', "'", '€'])('keeps the command within the limit for a big %s value used twice', (char) => {
+    const out = within('echo ${a} ${a}', { a: char.repeat(50_000) }, 10_000, quote)
+    expect(argBytes(out)).toBeLessThanOrEqual(10_000)
+    expect(out).toContain('[cut to fit')
+  })
+
+  it('keeps the limit across different values and leaves a small one whole', () => {
+    const out = within('a ${small} ${big1} ${big2}', { small: 'ok', big1: 'x'.repeat(40_000), big2: 'y'.repeat(40_000) }, 10_000, quote)
+    expect(argBytes(out)).toBeLessThanOrEqual(10_000)
+    expect(out).toContain("'ok'")
+  })
+
+  it('does not quote when no quote function is given', () => {
+    expect(argBytes(within('p ${a}', { a: "'".repeat(20_000) }, 10_000))).toBeLessThanOrEqual(10_000)
+  })
+
+  it('returns null when the text alone is over the limit, even with no values', () => {
+    expect(expandWithin('x'.repeat(200), {}, 100)).toBeNull()
+    expect(expandWithin('x'.repeat(200) + '${a}', { a: 'v' }, 100)).toBeNull()
+  })
+
+  it('drops a value when its share is too small for the note', () => {
+    const text = 'x'.repeat(90) + '${a}'
+    const out = within(text, { a: 'y'.repeat(500) }, 100)
+    expect(argBytes(out)).toBeLessThanOrEqual(100)
+    expect(out).not.toContain('y')
+  })
+})
+
+describe('git steps', () => {
+  const git = (id: string, after: string[] = [], extra: Partial<PipelineNode> = {}) =>
+    n(id, after, { type: 'git', op: 'diff', ...extra })
+
+  it('survive sanitizing with their fields, and need no cmd', () => {
+    const p = sanitizePipeline({
+      id: 'x',
+      name: 'X',
+      nodes: [{ id: 'a', type: 'git', op: 'diff', base: ' main ', paths: ['*.go', 7], as: 'diff', cmd: 'rm -rf /' }]
+    })
+    expect(p?.nodes[0]).toMatchObject({ type: 'git', op: 'diff', base: 'main', paths: ['*.go'], as: 'diff', gate: true })
+  })
+
+  it('are refused by validateRunnable when a value is unsafe', () => {
+    expect(validateRunnable([git('a')])).toBeNull()
+    expect(validateRunnable([git('a', [], { base: 'main; id' })])).toMatch(/base/)
+    expect(validateRunnable([git('a', [], { op: undefined })])).toMatch(/op/)
+  })
+
+  it('cannot share a result file', () => {
+    expect(validateRunnable([git('a', [], { as: 'x' }), git('b', ['a'], { as: 'x' })])).toMatch(/already writes/)
+    expect(validateRunnable([git('a', [], { as: 'x' }), git('b', ['a'], { as: 'y' })])).toBeNull()
+  })
+
+  it('cannot wait on a shell or AI step in a remote pipeline', () => {
+    expect(validateRemoteGit([git('a'), git('b', ['a']), n('s', ['b'], { type: 'shell' })])).toBeNull()
+    expect(validateRemoteGit([n('s', [], { type: 'shell' }), git('b', ['s'])])).toMatch(/cannot run after/)
+    expect(validateRemoteGit([n('s', [], { type: 'ai' }), git('b', ['s'])])).toMatch(/cannot run after/)
   })
 })
 

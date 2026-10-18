@@ -1,9 +1,22 @@
 import { GIT_HOOK_EVENTS, type GitHookEvent, type Pipeline, type PipelineNode, type PipelineStepResult, type Step, type StepType } from './types'
 import { normalizeAi, normalizeModel, type AiProvider } from './ai'
+import { GIT_OPS, gitArtifactPath, gitStepError } from './git-step'
 import { stripVerdictLine } from './verdict'
 
 const AS_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 const VAR_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g
+
+function stepType(raw: unknown): StepType {
+  return raw === 'ai' || raw === 'git' ? raw : 'shell'
+}
+
+/** The fields of a `git` step. Bad values stay as they are, so validation can name them. */
+function gitFields(raw: { op?: unknown; base?: unknown; paths?: unknown }): Pick<Step, 'op' | 'base' | 'paths'> {
+  const op = GIT_OPS.find((o) => o === raw.op)
+  const base = typeof raw.base === 'string' ? raw.base.trim() : ''
+  const paths = Array.isArray(raw.paths) ? raw.paths.filter((p): p is string => typeof p === 'string') : []
+  return { ...(op ? { op } : {}), ...(base ? { base } : {}), ...(paths.length ? { paths } : {}) }
+}
 
 function aiFields(raw: { ai?: unknown; model?: unknown }): { ai: AiProvider; model?: string } {
   const ai = normalizeAi(raw.ai)
@@ -45,8 +58,55 @@ export function expandVars(
   })
 }
 
+const CUT_NOTE = '\n[cut to fit the command size]'
+const utf8Bytes = (text: string): number => new TextEncoder().encode(text).length
+/** Bytes `text` takes as one more single-quoted shell argument, which is how `bash -lc '…'` receives a step. */
+const argBytes = (text: string): number => utf8Bytes(quoteShellArg(text))
+
+/** The longest start of `text` whose `cost` is at most `limit`. */
+function longestFit(text: string, limit: number, cost: (text: string) => number): string {
+  let [fit, over] = [0, text.length + 1]
+  while (over - fit > 1) {
+    const mid = (fit + over) >> 1
+    if (cost(text.slice(0, mid)) <= limit) fit = mid
+    else over = mid
+  }
+  return text.slice(0, fit)
+}
+
+/**
+ * Like `expandVars`, but the whole result stays within `limit` bytes (counted by `argBytes`), because one
+ * command argument cannot pass about 128 KB. The referenced values share what the rest of the text leaves;
+ * a value that does not fit its share is cut, with a note. Returns `null` when the text alone is over `limit`.
+ */
+export function expandWithin(
+  text: string,
+  vars: Readonly<Record<string, string>>,
+  limit: number,
+  opts?: { quote?: (value: string) => string }
+): string | null {
+  const fixed = expandVars(text, {}, opts)
+  const fixedBytes = argBytes(fixed)
+  if (fixedBytes > limit) return null
+  const full = expandVars(text, vars, opts)
+  if (argBytes(full) <= limit) return full
+  const names = new Set([...text.matchAll(VAR_REF_RE)].map((m) => m[1]))
+  const room = (limit - fixedBytes) / [...text.matchAll(VAR_REF_RE)].length
+  const noteBytes = utf8Bytes(CUT_NOTE)
+  const cost = (value: string): number => argBytes(opts?.quote ? opts.quote(value) : value)
+  const cut = Object.fromEntries(
+    [...names].map((name) => {
+      const value = vars[name] ?? ''
+      if (cost(value) <= room) return [name, value]
+      return [name, room > noteBytes ? longestFit(value, room - noteBytes, cost) + CUT_NOTE : '']
+    })
+  )
+  const result = expandVars(text, cut, opts)
+  return argBytes(result) <= limit ? result : fixed
+}
+
 export function defaultGate(type: StepType): boolean {
-  return type === 'shell'
+  return type !== 'ai'
 }
 
 export function nodeGate(n: PipelineNode): boolean {
@@ -62,6 +122,7 @@ export function chainToNodes(steps: Step[]): PipelineNode[] {
         type: s.type,
         cmd: s.cmd,
         ...(s.type === 'ai' ? aiFields(s) : {}),
+        ...(s.type === 'git' ? gitFields(s) : {}),
         after: i === 0 ? [] : [`n${i}`],
         gate: defaultGate(s.type),
         x: 72,
@@ -91,10 +152,11 @@ export function newNodePos(nodes: PipelineNode[]): { x: number; y: number } {
 export function newPipelineNode(nodes: PipelineNode[], type: StepType): PipelineNode {
   return {
     id: nextNodeId(nodes),
-    name: type === 'ai' ? 'AI step' : 'Shell step',
+    name: { ai: 'AI step', git: 'Git step', shell: 'Shell step' }[type],
     type,
     cmd: '',
     ...(type === 'ai' ? { ai: 'claude' as const } : {}),
+    ...(type === 'git' ? { op: 'diff' as const } : {}),
     after: [],
     gate: defaultGate(type),
     ...newNodePos(nodes)
@@ -305,7 +367,7 @@ export function chainLevels(nodes: PipelineNode[]): ChainLevel[] {
 function sanitizeNode(raw: unknown, fallbackId: string): PipelineNode | null {
   if (!raw || typeof raw !== 'object') return null
   const n = raw as Record<string, unknown>
-  const type: StepType = n.type === 'ai' ? 'ai' : 'shell'
+  const type = stepType(n.type)
   const id = typeof n.id === 'string' && n.id ? n.id : fallbackId
   const after = Array.isArray(n.after)
     ? n.after.filter((x): x is string => typeof x === 'string' && x !== id)
@@ -320,6 +382,7 @@ function sanitizeNode(raw: unknown, fallbackId: string): PipelineNode | null {
       type,
       cmd: typeof n.cmd === 'string' ? n.cmd : '',
       ...(type === 'ai' ? aiFields(n) : {}),
+      ...(type === 'git' ? gitFields(n) : {}),
       after,
       gate,
       x,
@@ -332,13 +395,14 @@ function sanitizeNode(raw: unknown, fallbackId: string): PipelineNode | null {
 function sanitizeStep(raw: unknown): Step | null {
   if (!raw || typeof raw !== 'object') return null
   const s = raw as Record<string, unknown>
-  const type: StepType = s.type === 'ai' ? 'ai' : 'shell'
+  const type = stepType(s.type)
   return withAs(
     {
       name: typeof s.name === 'string' ? s.name : '',
       type,
       cmd: typeof s.cmd === 'string' ? s.cmd : '',
-      ...(type === 'ai' ? aiFields(s) : {})
+      ...(type === 'ai' ? aiFields(s) : {}),
+      ...(type === 'git' ? gitFields(s) : {})
     },
     s.as
   )
@@ -415,7 +479,23 @@ export function validateRunnable(nodes: PipelineNode[]): string | null {
   if (parallelAsClashIds(nodes).size) {
     return 'Pipeline has parallel steps with the same output name (as)'
   }
+  const files = new Set<string>()
+  for (const n of nodes.filter((node) => node.type === 'git')) {
+    const error = gitStepError(n)
+    if (error) return `${n.name || n.id}: ${error}`
+    // Two git steps writing one file would hand a step the other's result.
+    const file = gitArtifactPath(n, '')
+    if (files.has(file)) return `${n.name || n.id}: another git step already writes ${file}; give each a different output name`
+    files.add(file)
+  }
   return null
+}
+
+/** A remote run does its git steps before the sandbox opens, so none may wait on a shell or AI step. */
+export function validateRemoteGit(nodes: PipelineNode[]): string | null {
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const late = nodes.find((n) => n.type === 'git' && ancestors(nodes, n.id).some((id) => byId.get(id)?.type !== 'git'))
+  return late ? `${late.name || late.id}: a git step in a remote pipeline cannot run after a shell or AI step` : null
 }
 
 export function sanitizePipelines(raw: unknown): Pipeline[] | null {
