@@ -144,6 +144,17 @@ that tab stops watching without cancelling the run.
   it at build time with `MAIN_VITE_FAROL_SERVICE_URL`), and sandbox credentials
   live on the service.
 
+- **Git steps** — a *Git* step runs one fixed git command on this machine; there is
+  no shell text. Pick an op (`diff`, `diff-stat`, `log`, `status`, `changed-files`),
+  an optional ref to compare with (default `HEAD`) and optional paths or globs. The
+  result is the step's `${name}` for later steps and is written to
+  `.farol/git/<pipeline id>/<name>.patch` (`.txt` for other ops; `<name>` is the output name, else the
+  step id; a shell step reads the file as `${name_file}`; a step command with every `${name}` expanded stays under about 120 KB, so large values share the room and end with a note when cut, while the file holds all; a command that is over the limit before any value is added fails; each git step in a pipeline needs its own name). Unlike `${name}` in a shell word, the file has no size limit. That
+  folder ignores itself, so git never lists it. In a remote pipeline the git steps run
+  first, before the sandbox opens, and their files are added to the snapshot, so a
+  shell step can read them; for this a git step may not wait on a shell or AI step. The
+  run service does not run git steps. In a remote pipeline a `diff` step leaves out the files that the snapshot also withholds (`.env`, keys, and similar), so their contents never reach the sandbox.
+
 - **Run service** — to start the same sandbox runs from a web or mobile app, deploy
   the standalone service in [`service/`](service/README.md). Clients upload a project
   snapshot with a GitHub session or an API key; it streams output and returns a

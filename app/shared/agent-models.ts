@@ -40,7 +40,7 @@ export function uniqueModels(rows: readonly AiModel[]): AiModel[] {
     if (!id || seen.has(id)) continue
     seen.add(id)
     const label = row.label.trim() || id
-    out.push({ id, label })
+    out.push({ ...row, id, label })
   }
   return out
 }
@@ -77,10 +77,96 @@ export function parseOpenCodeModels(text: string): AiModel[] {
 }
 
 const CLAUDE_LABELS: Record<string, string> = {
-  sonnet: 'Sonnet 5',
+  sonnet: 'Sonnet 5.5',
   opus: 'Opus 5.5',
   fable: 'Fable 5.1',
-  haiku: 'Haiku 4.5'
+  haiku: 'Haiku 5.5'
+}
+
+const CLAUDE_LINE = /opus|sonnet|haiku|fable/
+/** `anthropic/claude-sonnet-5.5`, `anthropic/claude-3-7-sonnet`: only line words and short versions; no dates, `-beta` or `:thinking`. */
+const CANONICAL_CLAUDE_SLUG =
+  /^anthropic\/claude(-(opus|sonnet|haiku|fable|\d{1,2}(\.\d{1,2})?))+$/
+
+interface AliasRow {
+  line: string | undefined
+  name: string
+  window: unknown
+}
+
+/** One alias per model line (`opus`, `sonnet`…) from rows ordered newest first. */
+function claudeAliases(rows: readonly AliasRow[]): AiModel[] {
+  const out = new Map<string, AiModel>()
+  for (const { line, name, window } of rows) {
+    if (!line || out.has(line)) continue
+    const label = name.replace(/^(anthropic:\s*)?claude\s+/i, '').trim() || line
+    out.set(line, {
+      id: line,
+      label,
+      ...(typeof window === 'number' && window > 0 ? { contextWindow: window } : {})
+    })
+  }
+  return [...out.values()]
+}
+
+/** Anthropic `GET /v1/models`: the newest active model of each line becomes its alias. */
+export function parseAnthropicModels(body: unknown): AiModel[] {
+  const rows = asRecord(body)?.data
+  if (!Array.isArray(rows)) return []
+  return claudeAliases(
+    rows.flatMap((row) => {
+      const rec = asRecord(row)
+      // A null `line` means no line; the id must not be used to guess one.
+      const line = trimmedString(rec?.line)
+      if (!rec || !line || (rec.lifecycle && rec.lifecycle !== 'active')) return []
+      return [{ line, name: trimmedString(rec.display_name), window: rec.max_input_tokens }]
+    })
+  )
+}
+
+/** OpenRouter `anthropic/*` rows, for users without an Anthropic key. */
+export function parseOpenRouterClaudeAliases(body: unknown): AiModel[] {
+  const rows = asRecord(body)?.data
+  if (!Array.isArray(rows)) return []
+  // Newest = highest version in the slug; variants such as `:thinking` or `:beta` are not canonical.
+  // Version parts (`3-7`, `5.10`) compare as integers; runs of three or more digits are build dates, not versions.
+  const parts = (rec: Record<string, unknown>): number[] =>
+    (trimmedString(rec.id).match(/\d+/g) ?? []).filter((n) => n.length <= 2).map(Number)
+  const byVersionDesc = (a: Record<string, unknown>, b: Record<string, unknown>): number => {
+    const [x, y] = [parts(a), parts(b)]
+    for (let i = 0; i < Math.max(x.length, y.length); i++) {
+      const diff = (y[i] ?? 0) - (x[i] ?? 0)
+      if (diff) return diff
+    }
+    return 0
+  }
+  return claudeAliases(
+    rows
+      .map(asRecord)
+      .filter((rec): rec is Record<string, unknown> => !!rec && CANONICAL_CLAUDE_SLUG.test(trimmedString(rec.id)))
+      .sort(byVersionDesc)
+      .map((rec) => ({
+        line: CLAUDE_LINE.exec(trimmedString(rec.id))?.[0],
+        name: trimmedString(rec.name),
+        window: rec.context_length
+      }))
+  )
+}
+
+let claudeCatalog: readonly AiModel[] = []
+
+/** Remember the last discovered Claude catalog so usage reports can read windows synchronously. */
+export function setClaudeCatalog(catalog: readonly AiModel[]): void {
+  claudeCatalog = catalog
+}
+
+/** Alias Farol assumes when no model is set. */
+const DEFAULT_CLAUDE_ALIAS = 'opus'
+
+/** Window of a Claude alias (`sonnet`; `opus` when unset); full ids and `[1m]` ids stay unknown. */
+export function claudeCatalogWindow(model: string | undefined): number | undefined {
+  const alias = model ?? DEFAULT_CLAUDE_ALIAS
+  return claudeCatalog.find((m) => m.id === alias)?.contextWindow
 }
 
 function claudeModelLabel(id: string): string {

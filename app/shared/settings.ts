@@ -251,19 +251,23 @@ export function defaultOpenRouter(): OpenRouterSettings {
   return { pinned: [], catalog: [], autoPinned: false }
 }
 
+function contextWindowField(value: unknown): { contextWindow?: number } {
+  return typeof value === 'number' && value > 0 ? { contextWindow: value } : {}
+}
+
 function sanitizeCatalog(raw: unknown): AiModel[] {
   if (!Array.isArray(raw)) return []
   const out: AiModel[] = []
   const seen = new Set<string>()
   for (const row of raw) {
     if (!row || typeof row !== 'object') continue
-    const rec = row as { id?: unknown; label?: unknown }
+    const rec = row as { id?: unknown; label?: unknown; contextWindow?: unknown }
     if (typeof rec.id !== 'string') continue
     const id = rec.id.trim()
     if (!id || seen.has(id)) continue
     seen.add(id)
     const label = typeof rec.label === 'string' && rec.label.trim() ? rec.label.trim() : id
-    out.push({ id, label })
+    out.push({ id, label, ...contextWindowField(rec.contextWindow) })
   }
   return out
 }

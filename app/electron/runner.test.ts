@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Pipeline, RunEvent } from '../shared/types'
+import { quoteShellArg } from '../shared/graph'
 import type { StepVerdict } from '../shared/verdict'
 
-const { spawn, onData, onExit, verdictFromOutput } = vi.hoisted(() => ({
+const { spawn, runGit, listGit, onData, onExit, verdictFromOutput } = vi.hoisted(() => ({
   spawn: vi.fn(),
+  listGit: vi.fn<(cwd: string, args: string[], signal: AbortSignal) => Promise<string[]>>(),
+  runGit: vi.fn<(cwd: string, args: string[], rel: string, signal: AbortSignal) => Promise<{ preview: string; truncated: boolean }>>(),
   onData: vi.fn<(listener: (chunk: string) => void) => void>(),
   onExit: vi.fn<(listener: (event: { exitCode: number; signal?: number }) => void) => void>(),
   verdictFromOutput: vi.fn<(output: string) => Promise<StepVerdict | null>>()
@@ -24,6 +27,7 @@ vi.mock('./session', () => ({
   defaultShell: vi.fn(() => '/bin/sh'),
   pipelineEnv: vi.fn(() => ({}))
 }))
+vi.mock('./git-artifact', () => ({ runGitToArtifact: runGit, listGitFiles: listGit }))
 vi.mock('./kill', () => ({ killPty: vi.fn(), killPidTree: vi.fn() }))
 vi.mock('./jev', () => ({ verdictFromOutput }))
 vi.mock('./remote', () => ({
@@ -64,6 +68,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   spawn.mockReset().mockReturnValue({ onData, onExit })
   verdictFromOutput.mockReset().mockResolvedValue(null)
+  listGit.mockReset().mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -253,6 +258,113 @@ describe('PipelineRunner remote target', () => {
     )
     expect(remote.close).toHaveBeenCalled()
     expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('runs git steps first, passes the result as a quoted ${as} and sends the file in the snapshot', async () => {
+    runGit.mockResolvedValue({ preview: "it's a diff\n", truncated: false })
+    const remote = workspace()
+    const openRemote = vi.fn(async () => remote)
+    const runner = new PipelineRunner(() => undefined, openRemote)
+    const gitPipeline: Pipeline = {
+      id: 'git',
+      name: 'Git',
+      target: 'remote',
+      nodes: [
+        { id: 'lint', name: 'Lint', type: 'shell', cmd: 'echo ${diff} ${diff_file}', after: ['d'], x: 0, y: 0 },
+        { id: 'd', name: 'Diff', type: 'git', op: 'diff', base: 'main', paths: ['*.go'], as: 'diff', cmd: '', after: [], x: 0, y: 0 }
+      ]
+    }
+
+    const result = await runner.run(gitPipeline, '/mock/project', 'main')
+
+    expect(runGit).toHaveBeenCalledWith(
+      '/mock/project',
+      ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', 'main', '--', '*.go'],
+      '.farol/git/git/diff.patch',
+      expect.any(AbortSignal)
+    )
+    expect(openRemote).toHaveBeenCalledWith('/mock/project', expect.any(AbortSignal), ['.farol/git/git/diff.patch'])
+    expect(remote.exec.mock.calls.map(([cmd]) => cmd)).toEqual([`echo 'it'\\''s a diff' '.farol/git/git/diff.patch'`])
+    expect(result.ok).toBe(true)
+  })
+
+  it('fails a step whose own text is over the command limit, without running it', async () => {
+    const remote = workspace()
+    const runner = new PipelineRunner(() => undefined, vi.fn(async () => remote))
+    const pipeline: Pipeline = {
+      id: 'big',
+      name: 'Big',
+      target: 'remote',
+      nodes: [{ id: 'a', name: 'A', type: 'shell', cmd: 'x'.repeat(130_000), after: [], x: 0, y: 0 }]
+    }
+
+    const result = await runner.run(pipeline, '/mock/project', 'main')
+
+    expect(result.ok).toBe(false)
+    expect(remote.exec).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['output longer than the preview', 'x'.repeat(100_000), true],
+    ['quotes, which grow when quoted', "'".repeat(30_000), false],
+    ['multibyte text', '€'.repeat(40_000), false]
+  ])('keeps a command with a long git result (%s) used twice within the limit', async (_, preview, truncated) => {
+    runGit.mockResolvedValue({ preview, truncated })
+    const remote = workspace()
+    const runner = new PipelineRunner(() => undefined, async () => remote)
+    await runner.run(
+      {
+        ...remotePipeline,
+        nodes: [
+          { id: 'd', name: 'Diff', type: 'git', op: 'diff', as: 'diff', cmd: '', after: [], x: 0, y: 0 },
+          { id: 's', name: 'Show', type: 'shell', cmd: 'echo ${diff} ${diff}', after: ['d'], x: 0, y: 0 }
+        ]
+      },
+      '/mock/project',
+      'main'
+    )
+    const [cmd] = remote.exec.mock.calls[0]
+    expect(Buffer.byteLength(quoteShellArg(cmd))).toBeLessThanOrEqual(120_000)
+    expect(cmd).toContain('[cut')
+  })
+
+  it('leaves likely-secret files out of a remote diff', async () => {
+    listGit.mockResolvedValue(['src/a.go', '.env', 'keys/id_rsa'])
+    runGit.mockResolvedValue({ preview: 'diff', truncated: false })
+    const runner = new PipelineRunner(() => undefined, async () => workspace())
+    await runner.run(
+      {
+        ...remotePipeline,
+        nodes: [{ id: 'd', name: 'Diff', type: 'git', op: 'diff', base: 'main', cmd: '', after: [], x: 0, y: 0 }]
+      },
+      '/mock/project',
+      'main'
+    )
+    expect(listGit).toHaveBeenCalledWith(
+      '/mock/project',
+      ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', 'main', '--'],
+      expect.any(AbortSignal)
+    )
+    expect(runGit.mock.calls[0][1]).toEqual([
+      'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', 'main', '--', ':(top,exclude,literal).env', ':(top,exclude,literal)keys/id_rsa'
+    ])
+  })
+
+  it('refuses a remote git step that waits on a shell step', async () => {
+    const runner = new PipelineRunner(() => undefined, async () => workspace())
+    const result = await runner.run(
+      {
+        ...remotePipeline,
+        nodes: [
+          remotePipeline.nodes[0],
+          { id: 'd', name: 'Diff', type: 'git', op: 'diff', cmd: '', after: ['lint'], x: 0, y: 0 }
+        ]
+      },
+      '/mock/project',
+      'main'
+    )
+    expect(result.ok).toBe(false)
+    expect(result.steps[0].output).toContain('cannot run after a shell or AI step')
   })
 
   it('fails the step and skips its descendants on a non-zero remote exit', async () => {

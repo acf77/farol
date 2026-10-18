@@ -1407,6 +1407,28 @@ describe('AgentController', () => {
     expect(run.mock.calls.map((call) => call[0].id)).toEqual(['validate'])
   })
 
+  it('runs a pipeline as saved now, not as it was when the chat started', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const loadPipelines = vi.fn().mockResolvedValue([{ ...request.pipelines[0] }])
+    const controller = new AgentController(
+      { run },
+      (event) => events.push(event),
+      selecting('validate'),
+      undefined,
+      undefined,
+      loadPipelines
+    )
+
+    controller.start({ ...request, cwd: '/tmp/project/sub', pipelines: [{ ...request.pipelines[0], target: 'remote' }] })
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(loadPipelines).toHaveBeenCalledWith('/tmp/project/sub')
+    expect(run.mock.calls[0][0].target).toBeUndefined()
+  })
+
   it('keeps the agent’s own selection when Jev fails soft', async () => {
     selectPipelines.mockClear()
     selectPipelines.mockResolvedValueOnce(null)

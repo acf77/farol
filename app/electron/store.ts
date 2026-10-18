@@ -11,7 +11,7 @@ import {
   type ProjectSession,
   type Workspace
 } from '../shared/session'
-import { mergeCatalogs, type AgentCatalogs } from '../shared/agent-models'
+import { mergeCatalogs, setClaudeCatalog, type AgentCatalogs } from '../shared/agent-models'
 import {
   retainCatalogs,
   sanitizeSettings,
@@ -484,6 +484,7 @@ export async function loadSettings(): Promise<AppSettings> {
   const stored = sanitizeSettings((await readWorkspace()).settings)
   setOpenRouterAgent(normalizeOpenRouterAgent(stored.openrouter?.agent))
   setProviderKeysOff(stored.providerKeysOff)
+  setClaudeCatalog(stored.catalogs?.claude ?? [])
   const withKeys = withProviderKeyFlags(stored, {
     anthropic: hasSecret('anthropicApiKey'),
     openai: hasSecret('openaiApiKey')

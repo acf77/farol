@@ -8,7 +8,12 @@ export const RUN_RESULT_SCHEMA = 1
 
 export type RunResultStatus = 'running' | 'passed' | 'failed' | 'cancelled'
 
-export type RunStepStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped'
+/**
+ * `needs-local`: an AI step stopped because credits ran out. Not a code failure; run it locally.
+ * The Farol API already sends it under schema 1 (farol/api internal/runs/result.go), so this type
+ * follows the server and the schema stays 1. A client that does not know the value must treat it as not passed.
+ */
+export type RunStepStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped' | 'needs-local'
 
 export interface RunResultStep {
   id: string

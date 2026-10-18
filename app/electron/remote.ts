@@ -12,7 +12,8 @@ import { clearBillingLinks, notePaymentRequired } from './billing-links'
 
 export type { RemoteWorkspace }
 
-export type OpenRemote = (cwd: string, signal: AbortSignal) => Promise<RemoteWorkspace>
+/** `extra`: checkout-relative files to add to the snapshot even when git ignores them. */
+export type OpenRemote = (cwd: string, signal: AbortSignal, extra?: string[]) => Promise<RemoteWorkspace>
 
 /** The user is not signed in, or the service no longer accepts their session. Not worth retrying. */
 export class SignInRequired extends Error {
@@ -89,10 +90,10 @@ type Prepared = { plan: Awaited<ReturnType<typeof snapshotPlan>>; manifest: Awai
  */
 const preparedByRun = new WeakMap<AbortSignal, Promise<Prepared>>()
 
-function prepare(cwd: string, signal: AbortSignal, fresh = false): Promise<Prepared> {
+function prepare(cwd: string, signal: AbortSignal, extra: string[], fresh = false): Promise<Prepared> {
   let prepared = fresh ? undefined : preparedByRun.get(signal)
   if (!prepared) {
-    prepared = snapshotPlan(cwd).then(async (plan) => ({ plan, manifest: await buildManifest(cwd, plan) }))
+    prepared = snapshotPlan(cwd, extra).then(async (plan) => ({ plan, manifest: await buildManifest(cwd, plan) }))
     // A failed plan is not worth keeping: let the next attempt try again.
     prepared.catch(() => preparedByRun.delete(signal))
     preparedByRun.set(signal, prepared)
@@ -101,10 +102,10 @@ function prepare(cwd: string, signal: AbortSignal, fresh = false): Promise<Prepa
 }
 
 /** Send the service what it lacks. A file edited while packing, or an evicted blob, gets one fresh try. */
-async function syncWithRetry(cwd: string, signal: AbortSignal, token: string): Promise<{ synced: SyncedSnapshot; files: number } | null> {
+async function syncWithRetry(cwd: string, signal: AbortSignal, token: string, extra: string[]): Promise<{ synced: SyncedSnapshot; files: number } | null> {
   const call = (path: string, init: Parameters<typeof serviceCall>[1]) => serviceCall(path, { ...init, signal, token })
   for (let attempt = 0; ; attempt++) {
-    const { plan, manifest } = await prepare(cwd, signal, attempt > 0)
+    const { plan, manifest } = await prepare(cwd, signal, extra, attempt > 0)
     try {
       const synced = await syncSnapshot(call, cwd, plan, manifest)
       return synced && { synced, files: manifest.entries.length }
@@ -116,12 +117,12 @@ async function syncWithRetry(cwd: string, signal: AbortSignal, token: string): P
 }
 
 /** Create the workspace from a synced snapshot; if its files were evicted meanwhile, sync once more. */
-async function createWorkspace(cwd: string, signal: AbortSignal, token: string): Promise<{ id: string; summary: string }> {
+async function createWorkspace(cwd: string, signal: AbortSignal, token: string, extra: string[]): Promise<{ id: string; summary: string }> {
   for (let attempt = 0; ; attempt++) {
-    const synced = await syncWithRetry(cwd, signal, token)
+    const synced = await syncWithRetry(cwd, signal, token, extra)
     if (!synced) {
       // An older service: upload the whole archive, as before.
-      const { archive, count } = await checkoutSnapshot(cwd)
+      const { archive, count } = await checkoutSnapshot(cwd, extra)
       const created = await serviceCall('/v1/workspaces', { method: 'POST', body: new Uint8Array(archive), signal, token })
       return { id: ((await created.json()) as { id: string }).id, summary: snapshotSummary(count, archive.length) }
     }
@@ -140,9 +141,9 @@ async function createWorkspace(cwd: string, signal: AbortSignal, token: string):
   }
 }
 
-export const openRemote: OpenRemote = async (cwd, signal) => {
+export const openRemote: OpenRemote = async (cwd, signal, extra = []) => {
   const token = session()
-  const { id, summary } = await createWorkspace(cwd, signal, token)
+  const { id, summary } = await createWorkspace(cwd, signal, token, extra)
   let closed: Promise<unknown> | undefined
   // One command at a time: parallel commands on a single sandbox are unreliable.
   let queue: Promise<unknown> = Promise.resolve()

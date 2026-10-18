@@ -20,6 +20,7 @@ import {
   normalizeModel
 } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
+import { claudeCatalogWindow } from '../shared/agent-models'
 import {
   FRESH_START_KEEP_FOLLOW_UPS,
   HANDOFF_MARKER,
@@ -77,6 +78,7 @@ import {
   type ToolPolicy,
   type ToolSelection
 } from '../shared/tool-policy'
+import { gitSummary } from '../shared/git-step'
 import { plainText } from '../shared/terminal'
 import { aiEnv, resolveBinFrom } from './bin'
 import { openRouterAgent } from './openrouter-agent'
@@ -383,7 +385,7 @@ function pipelineCatalog(pipelines: Pipeline[]): string {
             node.type === 'ai'
               ? `ai/${normalizeAi(node.ai)}${model ? `/${model}` : ''}`
               : node.type
-          return `  - ${node.name || node.id} (${kind}): ${node.cmd}`
+          return `  - ${node.name || node.id} (${kind}): ${node.type === 'git' ? gitSummary(node) : node.cmd}`
         })
         .join('\n')
       return `- ${pipeline.name} [id: ${pipeline.id}]${tag}\n${steps}`
@@ -399,7 +401,8 @@ export class AgentController {
     private emit: (event: AgentTaskEvent) => void,
     private executor?: AgentExecutor,
     private todoStore?: TodoStore,
-    private promptStore?: Pick<CustomPromptStore, 'activeBlock'>
+    private promptStore?: Pick<CustomPromptStore, 'activeBlock'>,
+    private loadPipelines?: (cwd: string) => Promise<Pipeline[]>
   ) {}
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
@@ -938,7 +941,9 @@ export class AgentController {
 
   private recordUsage(task: Task, provider: AiProvider, model: string | undefined, reading: ContextUsage): void {
     if (task.disposeWhenIdle || !(reading.tokens > 0)) return
-    const window = reading.window ?? knownContextWindow(cliFor(provider, openRouterAgent()), model)
+    const cli = cliFor(provider, openRouterAgent())
+    const window =
+      reading.window ?? (cli === 'claude' ? claudeCatalogWindow(model) : undefined) ?? knownContextWindow(cli, model)
     const usage: ContextUsage = { tokens: reading.tokens, ...(window ? { window } : {}) }
     if (task.usage?.tokens === usage.tokens && task.usage.window === usage.window) return
     task.usage = usage
@@ -1030,6 +1035,19 @@ export class AgentController {
     return { kind: 'done' }
   }
 
+  /**
+   * The request holds the pipelines as they were at the last user message, but the user can edit one (say,
+   * switch it from remote to this machine) while fixes and validation cycles go on. Run what is saved now.
+   */
+  private async refreshPipelines(task: Task): Promise<void> {
+    if (!this.loadPipelines) return
+    const saved = new Map((await this.loadPipelines(task.request.cwd)).map((pipeline) => [pipeline.id, pipeline]))
+    task.request.pipelines = task.request.pipelines.map((pipeline) => {
+      const next = saved.get(pipeline.id)
+      return next?.nodes.length ? next : pipeline
+    })
+  }
+
   /** Pick pipelines from the agent's marker and run them, or retry if invalid. */
   private async finishCycleAttempt(
     task: Task,
@@ -1037,6 +1055,7 @@ export class AgentController {
     scan: CycleScan
   ): Promise<CycleAttemptResult> {
     if (task.request.mode === 'plan') return this.finishPlanCycleAttempt(task, attempt, scan)
+    await this.refreshPipelines(task)
     const selection = selectedPipelines(scan.control, task.request.pipelines)
     const retryInvalid = (reason: string): CycleAttemptResult => ({
       kind: 'retry',

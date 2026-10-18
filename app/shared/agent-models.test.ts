@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  parseAnthropicModels,
+  parseOpenRouterClaudeAliases,
   filterModels,
   groupModels,
   mergeCatalogs,
@@ -56,9 +58,50 @@ describe('parseClaudeHelp', () => {
     expect(parseClaudeHelp(text)).toEqual([
       { id: 'fable', label: 'Fable 5.1' },
       { id: 'opus', label: 'Opus 5.5' },
-      { id: 'sonnet', label: 'Sonnet 5' },
+      { id: 'sonnet', label: 'Sonnet 5.5' },
       { id: 'claude-fable-5', label: 'claude-fable-5' }
     ])
+  })
+})
+
+describe('parseAnthropicModels', () => {
+  it('maps the newest active model of each line to its alias with its window', () => {
+    expect(
+      parseAnthropicModels({
+        data: [
+          { id: 'claude-sonnet-5-5', line: 'sonnet', display_name: 'Claude Sonnet 5.5', max_input_tokens: 1_000_000 },
+          { id: 'claude-haiku-5-5', line: 'haiku', display_name: 'Claude Haiku 5.5', max_input_tokens: 200_000 },
+          { id: 'claude-sonnet-5', line: 'sonnet', display_name: 'Claude Sonnet 5', max_input_tokens: 200_000 },
+          { id: 'claude-opus-4', line: 'opus', display_name: 'Claude Opus 4', lifecycle: 'retired' }
+        ]
+      })
+    ).toEqual([
+      { id: 'sonnet', label: 'Sonnet 5.5', contextWindow: 1_000_000 },
+      { id: 'haiku', label: 'Haiku 5.5', contextWindow: 200_000 }
+    ])
+  })
+})
+
+describe('parseOpenRouterClaudeAliases', () => {
+  it('compares version parts as integers and skips variants', () => {
+    const row = (id: string, w: number) => ({ id, name: `Anthropic: ${id}`, context_length: w })
+    expect(
+      parseOpenRouterClaudeAliases({
+        data: [row('anthropic/claude-sonnet-5.9', 1), row('anthropic/claude-sonnet-5.10', 2), row('anthropic/claude-sonnet-6:thinking', 3), row('anthropic/claude-sonnet-5-20260901', 4), row('anthropic/claude-sonnet-6-beta', 5), row('anthropic/claude-sonnet-5.10-20260901', 6)]
+      })
+    ).toMatchObject([{ id: 'sonnet', contextWindow: 2 }])
+  })
+
+  it('uses the newest anthropic row per line', () => {
+    expect(
+      parseOpenRouterClaudeAliases({
+        data: [
+          { id: 'anthropic/claude-sonnet-5', name: 'Anthropic: Claude Sonnet 5', created: 1, context_length: 200_000 },
+          { id: 'anthropic/claude-sonnet-5.5', name: 'Anthropic: Claude Sonnet 5.5', created: 2, context_length: 1_000_000 },
+          { id: 'openai/gpt-5.6', name: 'GPT', created: 3, context_length: 9 }
+        ]
+      })
+    ).toEqual([{ id: 'sonnet', label: 'Sonnet 5.5', contextWindow: 1_000_000 }])
   })
 })
 
