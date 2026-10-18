@@ -81,8 +81,9 @@ export interface SnapshotPlan {
   pipelinesRoot: string | null
 }
 
-export async function snapshotPlan(cwd: string): Promise<SnapshotPlan> {
-  const files = snapshotPaths(await gitFiles(cwd)).filter((file) => {
+export async function snapshotPlan(cwd: string, artifacts: string[] = []): Promise<SnapshotPlan> {
+  // Git step results are ignored by git, so they are added by name.
+  const files = [...new Set([...snapshotPaths(await gitFiles(cwd)), ...artifacts])].filter((file) => {
     try {
       const stat = fs.lstatSync(path.join(cwd, file))
       return stat.isFile() || stat.isSymbolicLink()
@@ -104,8 +105,8 @@ export function packSnapshot(cwd: string, files: string[], pipelinesRoot: string
 }
 
 /** Gzipped tar of the checkout for remote runs and the run-service CLI. */
-export async function checkoutSnapshot(cwd: string): Promise<{ archive: Buffer; count: number }> {
-  const plan = await snapshotPlan(cwd)
+export async function checkoutSnapshot(cwd: string, artifacts: string[] = []): Promise<{ archive: Buffer; count: number }> {
+  const plan = await snapshotPlan(cwd, artifacts)
   return {
     archive: await packFiles(cwd, plan.files, plan.pipelinesRoot),
     count: plan.files.length + (plan.pipelinesRoot ? 1 : 0)
