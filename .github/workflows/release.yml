@@ -65,6 +65,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Releases are immutable once published, so electron-builder uploads into a
+      # draft and it is only published after every asset is attached.
+      - name: Publish the release
+        if: steps.version.outputs.release == 'true'
+        run: gh release edit "${{ steps.version.outputs.tag }}" --draft=false --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       # Drop the tag if the build failed, so re-running the workflow retries this version.
       - name: Remove tag after failed release
         if: failure() && steps.version.outputs.release == 'true'
