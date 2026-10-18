@@ -61,13 +61,22 @@ export interface Project {
   display: string
 }
 
-export type StepType = 'shell' | 'ai'
+export type StepType = 'shell' | 'ai' | 'git'
+
+/** The fixed git operations a `git` step can run. */
+export type GitOp = 'diff' | 'diff-stat' | 'log' | 'status' | 'changed-files'
 
 export interface Step {
   name: string
   type: StepType
-  /** Shell command for `shell` steps, prompt text for `ai` steps. */
+  /** Shell command for `shell` steps, prompt text for `ai` steps, empty for `git` steps. */
   cmd: string
+  /** The operation of a `git` step. */
+  op?: GitOp
+  /** Ref a `git` step compares with; omitted means `HEAD`. */
+  base?: string
+  /** Pathspecs that limit a `git` step. */
+  paths?: string[]
   /** Named stdout for later `${as}` expansion (simple id). */
   as?: string
   /** Which CLI to invoke for `ai` steps. Omitted AI steps run Claude. */
