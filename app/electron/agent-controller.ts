@@ -20,6 +20,7 @@ import {
   normalizeModel
 } from '../shared/ai'
 import { AgentStreamParser } from '../shared/agent-stream'
+import { claudeCatalogWindow } from '../shared/agent-models'
 import {
   FRESH_START_KEEP_FOLLOW_UPS,
   HANDOFF_MARKER,
@@ -938,7 +939,9 @@ export class AgentController {
 
   private recordUsage(task: Task, provider: AiProvider, model: string | undefined, reading: ContextUsage): void {
     if (task.disposeWhenIdle || !(reading.tokens > 0)) return
-    const window = reading.window ?? knownContextWindow(cliFor(provider, openRouterAgent()), model)
+    const cli = cliFor(provider, openRouterAgent())
+    const window =
+      reading.window ?? (cli === 'claude' ? claudeCatalogWindow(model) : undefined) ?? knownContextWindow(cli, model)
     const usage: ContextUsage = { tokens: reading.tokens, ...(window ? { window } : {}) }
     if (task.usage?.tokens === usage.tokens && task.usage.window === usage.window) return
     task.usage = usage

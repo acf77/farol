@@ -44,7 +44,7 @@ describe('normalizeModel', () => {
 
   it('labels a stored id, including ones not in the catalog', () => {
     expect(aiSelectionLabel('claude', undefined)).toBe('Claude')
-    expect(aiSelectionLabel('claude', 'sonnet')).toBe('Claude · Sonnet 5')
+    expect(aiSelectionLabel('claude', 'sonnet')).toBe('Claude · Sonnet 5.5')
     expect(aiSelectionLabel('claude', 'custom-id')).toBe('Claude · custom-id')
     expect(aiSelectionLabel('cursor', undefined)).toBe('Cursor · Auto')
     expect(aiSelectionLabel('cursor', 'auto')).toBe('Cursor · Auto')

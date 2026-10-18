@@ -12,16 +12,24 @@ import {
   finalizeClaudeCatalog,
   parseClaudeHelp,
   parseClaudeModelOptions,
+  parseAnthropicModels,
   parseCodexModelsCache,
   parseCursorModels,
   parseOmpModelsJson,
-  parseOpenCodeModels
+  parseOpenCodeModels,
+  parseOpenRouterClaudeAliases,
+  uniqueModels
 } from '../shared/agent-models'
+import { OPENROUTER_MODELS_URL } from '../shared/openrouter'
+import { providerKeyOff } from './provider-keys-off'
+import { peekSecret } from './secrets'
 import { resolveBinFrom } from './bin'
 import { execCli } from './exec-cli'
 import { loadSettings, saveAgentCatalogs } from './store'
 
 const LIST_TIMEOUT_MS = 45_000
+/** Metadata fetches run in sequence, so each stays short. */
+const FETCH_TIMEOUT_MS = 10_000
 
 async function runBin(
   bins: string[],
@@ -63,10 +71,40 @@ function readClaudeOptionsCache(): AiModel[] {
   }
 }
 
+/** Newest model per line with its context window; empty when offline or rejected. */
+async function fetchJson(url: string, headers?: Record<string, string>): Promise<unknown> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers })
+    return res.ok ? ((await res.json()) as unknown) : null
+  } catch {
+    return null
+  }
+}
+
+async function fetchClaudeAliases(): Promise<AiModel[]> {
+  const key = providerKeyOff('anthropic') ? null : peekSecret('anthropicApiKey')
+  if (key) {
+    const body = await fetchJson('https://api.anthropic.com/v1/models?limit=1000', {
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01'
+    })
+    const aliases = parseAnthropicModels(body)
+    if (aliases.length) return aliases
+  }
+  // No usable key (missing, switched off or rejected): the public catalog still has the windows.
+  return parseOpenRouterClaudeAliases(await fetchJson(OPENROUTER_MODELS_URL))
+}
+
 async function discoverClaude(): Promise<AiModel[]> {
-  const text = await runBin(['claude'], ['--help'])
+  const [live, text] = await Promise.all([fetchClaudeAliases(), runBin(['claude'], ['--help'])])
   const fromHelp = text ? parseClaudeHelp(text) : []
-  return finalizeClaudeCatalog([...fromHelp, ...readClaudeOptionsCache(), ...AI_MODELS.claude])
+  const local = finalizeClaudeCatalog([...fromHelp, ...readClaudeOptionsCache(), ...AI_MODELS.claude])
+  // Per alias the order is live, then the last discovered catalog, then local, so a partial reply keeps known windows.
+  const cached = (await loadSettings()).catalogs?.claude ?? []
+  // A live row without a window takes the saved one, but only for the same model version (same label).
+  const withWindow = (m: AiModel): AiModel =>
+    m.contextWindow ? m : { ...m, contextWindow: cached.find((c) => c.id === m.id && c.label === m.label)?.contextWindow }
+  return uniqueModels([...live.map(withWindow), ...cached, ...local])
 }
 
 async function discoverCodex(forceRefresh: boolean): Promise<AiModel[]> {
