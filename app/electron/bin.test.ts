@@ -30,6 +30,30 @@ describe('extraBinDirs', () => {
   })
 })
 
+describe('extraBinDirs with nvm', () => {
+  const nvmDir = process.env.NVM_DIR
+
+  afterEach(() => {
+    if (nvmDir === undefined) delete process.env.NVM_DIR
+    else process.env.NVM_DIR = nvmDir
+  })
+
+  it('lists installed nvm Node versions newest first', () => {
+    const root = tmp()
+    for (const v of ['v22.23.2', 'v9.0.0', 'v25.1.0']) fs.mkdirSync(path.join(root, 'versions', 'node', v, 'bin'), { recursive: true })
+    process.env.NVM_DIR = root
+
+    const dirs = extraBinDirs().filter((dir) => dir.startsWith(root))
+    expect(dirs).toContain(path.join(root, 'versions', 'node', 'v25.1.0', 'bin'))
+    expect(dirs.indexOf(path.join(root, 'versions', 'node', 'v25.1.0', 'bin'))).toBeLessThan(
+      dirs.indexOf(path.join(root, 'versions', 'node', 'v22.23.2', 'bin'))
+    )
+    expect(dirs.indexOf(path.join(root, 'versions', 'node', 'v22.23.2', 'bin'))).toBeLessThan(
+      dirs.indexOf(path.join(root, 'versions', 'node', 'v9.0.0', 'bin'))
+    )
+  })
+})
+
 describe('resolveBin', () => {
   it('finds executables in extra bin dirs', () => {
     const binDir = path.join(tmp(), '.opencode', 'bin')

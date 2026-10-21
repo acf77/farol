@@ -8,6 +8,19 @@ import { OPENROUTER_API_KEY_ENV } from '../shared/openrouter'
 import { peekSecret } from './secrets'
 import { shellEnv } from './session'
 
+/** nvm installs each Node under `versions/node/<v>/bin`; `current` exists only with NVM_SYMLINK_CURRENT. Newest first. */
+function nvmVersionBins(nvmDir: string): string[] {
+  const root = path.join(nvmDir, 'versions', 'node')
+  try {
+    return fs
+      .readdirSync(root)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
+      .map((version) => path.join(root, version, 'bin'))
+  } catch {
+    return []
+  }
+}
+
 export function extraBinDirs(): string[] {
   const home = os.homedir()
   const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm')
@@ -22,7 +35,9 @@ export function extraBinDirs(): string[] {
     path.join(home, '.volta', 'bin'),
     path.join(home, '.fnm', 'aliases', 'default', 'bin'),
     path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'),
-    path.join(nvmDir, 'current', 'bin')
+    path.join(nvmDir, 'current', 'bin'),
+    ...nvmVersionBins(nvmDir),
+    process.env.PNPM_HOME || path.join(home, 'Library', 'pnpm')
   ]
 }
 
