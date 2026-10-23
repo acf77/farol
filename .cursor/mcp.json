@@ -1,13 +1,13 @@
 {
   "mcpServers": {
     "farol": {
-      "command": "/Users/acf/Documents/Github/pipe-builder-ai-feat-subagents/app/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+      "command": "/Applications/Farol.app/Contents/MacOS/Farol",
       "args": [
-        "/Users/acf/Documents/Github/pipe-builder-ai-feat-subagents/app/out/main/mcp.js"
+        "/Applications/Farol.app/Contents/Resources/app.asar/out/main/mcp.js"
       ],
       "env": {
         "ELECTRON_RUN_AS_NODE": "1",
-        "FAROL_SOCKET": "/var/folders/8c/dnq_8d0j6b10xklrxyqdt1fh0000gn/T/farol-2i2k3a1w0tvs0.sock"
+        "FAROL_SOCKET": "/var/folders/8c/dnq_8d0j6b10xklrxyqdt1fh0000gn/T/farol-gvim3m1ishf1m.sock"
       }
     }
   }
