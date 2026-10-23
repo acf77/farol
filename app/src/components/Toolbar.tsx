@@ -3,6 +3,7 @@ import type { Project } from '@shared/types'
 import { C } from '../theme'
 import type { View } from '../types'
 import { SURFACES, SURFACE_LABEL, type Surface } from '../workspace-layout'
+import { REMOTE_ENABLED } from '@shared/features'
 import AccountMenu from './AccountMenu'
 import { CHROME_ROW } from './side-panel'
 import ActivityDot from './ActivityDot'
@@ -340,7 +341,7 @@ export default function Toolbar({
           <SettingsIcon size={14} />
         </button>
 
-        <AccountMenu />
+        {REMOTE_ENABLED && <AccountMenu />}
       </div>
 
     </div>

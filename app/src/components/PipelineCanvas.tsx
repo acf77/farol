@@ -4,6 +4,7 @@ import { GIT_HOOK_EVENTS, aiSelectionLabel, normalizeAi } from '@shared/types'
 import { GIT_OPS, gitStepError, gitSummary } from '@shared/git-step'
 import { defaultGate, newPipelineNode, nodeGate, parallelAsClashIds, sanitizeAs, topoSort } from '@shared/graph'
 import { C, MONO, UI, ELLIPSIS } from '../theme'
+import { REMOTE_ENABLED } from '@shared/features'
 import { SIGN_IN_REQUIRED } from '@shared/remote'
 import { remoteAccount, useRemoteAccount } from '../remote-account'
 import { useRemoteBilling } from '../remote-billing'
@@ -843,6 +844,7 @@ function PipelineSettings({
           style={fieldBox}
         />
       </Field>
+      {(REMOTE_ENABLED || editor.target === 'remote') && (
       <Field label="Runs on">
         <Seg
           label="Run shell steps on"
@@ -880,6 +882,7 @@ function PipelineSettings({
           </SettingsGroup>
         )}
       </Field>
+      )}
       <SettingsGroup title="GIT HOOKS">
         {GIT_HOOK_EVENTS.map((event, i) => (
           <SwitchRow

@@ -12,6 +12,7 @@ import type {
 } from '../shared/types'
 import { aiCommand, aiSelectionLabel, normalizeAi, type AiProvider, type OpenRouterAgent } from '../shared/ai'
 import { FAILURE_REPORT_REL, failureReport, gitignoreWithEntry, REPORT_OUTPUT_LIMIT } from '../shared/failure'
+import { REMOTE_ENABLED } from '../shared/features'
 import { appendTail, plainText } from '../shared/terminal'
 import { exitCodeFromSignal } from '../shared/exit-code'
 import { parseVerdict, verdictPromptSuffix, type StepVerdict } from '../shared/verdict'
@@ -195,6 +196,13 @@ function settleSteps(nodes: PipelineNode[], stepResults: Map<string, PipelineSte
   return nodes.map((node) => stepResults.get(node.id) ?? defaultStepResult(node.id))
 }
 
+/** Why a pipeline cannot run, or null. Remote runs are deferred while `REMOTE_ENABLED` is off. */
+function runBlocker(pipeline: Pipeline): string | null {
+  const remote = pipeline.target === 'remote'
+  if (remote && !REMOTE_ENABLED) return 'Remote pipelines are not available yet. Set "Runs on" to this machine.'
+  return validateRunnable(pipeline.nodes) ?? (remote ? validateRemoteGit(pipeline.nodes) : null)
+}
+
 export class PipelineRunner {
   private active = new Map<string, Active>()
   private waiters = new Map<string, ((result: PipelineRunResult) => void)[]>()
@@ -365,7 +373,7 @@ export class PipelineRunner {
     const { runId, branch, origin } = state
     const pipelineId = pipeline.id
     const remote = pipeline.target === 'remote'
-    const invalid = validateRunnable(pipeline.nodes) ?? (remote ? validateRemoteGit(pipeline.nodes) : null)
+    const invalid = runBlocker(pipeline)
     const nodes = invalid ? pipeline.nodes : (topoSort(pipeline.nodes) as PipelineNode[])
     const graph: RunGraph = {
       pipelineId,

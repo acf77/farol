@@ -4,6 +4,7 @@ import { AI_LABELS, type AiProvider } from '@shared/ai'
 import type { AppSettings } from '@shared/settings'
 import { C, UI, MONO } from '../theme'
 import { Button } from './controls'
+import { REMOTE_ENABLED } from '@shared/features'
 import { remoteAccount, useRemoteAccount } from '../remote-account'
 import farolMark from '../assets/farol-mark.png'
 
@@ -380,7 +381,7 @@ function Agents({
   onFinish
 }: {
   settings: AppSettings
-  onBack: () => void
+  onBack?: () => void
   onFinish: (next: AppSettings) => void
 }) {
   const [scan, setScan] = useState<AgentScanResult[] | null>(null)
@@ -629,9 +630,9 @@ function Agents({
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Button onClick={onBack} style={{ padding: '7px 14px', height: 'auto', fontSize: 12.5 }}>
+        {onBack && <Button onClick={onBack} style={{ padding: '7px 14px', height: 'auto', fontSize: 12.5 }}>
           Back
-        </Button>
+        </Button>}
         <span style={{ flex: 1 }} />
         {!ready && scan && (
           <span style={{ fontSize: 12, color: C.faint }}>Turn on at least one agent</span>
@@ -655,7 +656,7 @@ function Agents({
  * agents found on this machine can be switched on.
  */
 export default function Onboarding({ settings, onFinish }: { settings: AppSettings; onFinish: (next: AppSettings) => void }) {
-  const [step, setStep] = useState<Step>('welcome')
+  const [step, setStep] = useState<Step>(REMOTE_ENABLED ? 'welcome' : 'agents')
   const stepIndex = step === 'welcome' ? 0 : 1
   return (
     <div
@@ -700,7 +701,7 @@ export default function Onboarding({ settings, onFinish }: { settings: AppSettin
         {step === 'welcome' ? (
           <Welcome onNext={() => setStep('agents')} />
         ) : (
-          <Agents settings={settings} onBack={() => setStep('welcome')} onFinish={onFinish} />
+          <Agents settings={settings} onBack={REMOTE_ENABLED ? () => setStep('welcome') : undefined} onFinish={onFinish} />
         )}
       </div>
     </div>
