@@ -5,12 +5,14 @@ import type {
   AgentTaskRequest,
   AgentTaskStatus,
   AiProvider,
+  ApprovalDecision,
   ModelChoice,
   Pipeline,
   PipelineRunResult
 } from '../shared/types'
 import {
   aiSelectionLabel,
+  canAskApproval,
   cliFor,
   isAiProvider,
   isUnknownJsonFormatError,
@@ -160,6 +162,15 @@ interface Task {
   delegateRuns: Map<string, DelegateRun>
   /** What the agent should hear first on the next turn (e.g. an Undo). */
   notes: string[]
+  /** The subagent running now, so its approval requests name it. */
+  activeDelegate?: { id: string; provider: AiProvider }
+  /** Approval requests waiting on the developer, by request id. */
+  approvals: Map<string, PendingApproval>
+  approvalSeq: number
+  /** Tools the developer allowed for the rest of this chat. */
+  allowedTools: Set<string>
+  /** Whether the agent's run in flight approves tools without asking; fixed when the run starts. */
+  runAutoApproves: boolean
   running: boolean
   cancelled: boolean
   /** Drop from the map once the in-flight cycle settles (cleared chats). */
@@ -447,6 +458,28 @@ async function treeChanges(
   return { ...(after ? { after } : {}), diffStat }
 }
 
+interface PendingApproval {
+  event: Extract<AgentTaskEvent, { kind: 'approval' }>
+  resolve: (answer: { allow: boolean; message?: string }) => void
+}
+
+/** The part of a tool call's input the developer needs to see to decide. */
+function approvalDetail(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object') return undefined
+  const fields = input as Record<string, unknown>
+  for (const key of ['command', 'file_path', 'path', 'url', 'pattern']) {
+    const value = fields[key]
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 500)
+  }
+  const json = JSON.stringify(input)
+  return json === '{}' ? undefined : json.slice(0, 500)
+}
+
+/** A write or shell call, the kind auto-approve lets through without asking. */
+function needsApproval(name: string): boolean {
+  return isWriteToolName(name) || isShellToolName(name)
+}
+
 interface DelegateRun {
   card: ReturnType<typeof delegateCard>
   state: 'done' | 'error'
@@ -496,7 +529,7 @@ export class AgentController {
     private promptStore?: Pick<CustomPromptStore, 'activeBlock'>,
     private loadPipelines?: (cwd: string) => Promise<Pipeline[]>,
     /** Farol's managed MCP server for a task, loaded by the providers that can take one per run. */
-    private managedMcp?: (taskId: string) => McpServerEntry
+    private managedMcp?: (taskId: string, delegateId?: string) => McpServerEntry
   ) {}
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
@@ -516,8 +549,7 @@ export class AgentController {
       existing.fallbacks = [...(request.fallbacks ?? [])]
       existing.sameModelAttempts = 0
       this.emit({ kind: 'user', taskId: request.id, text: clean })
-      const notes = existing.notes.splice(0).join('\n')
-      this.followUp(existing, notes ? `${notes}\n\n${clean}` : clean)
+      this.followUp(existing, clean)
       return { ok: true }
     }
     if (mode !== 'plan' && !request.pipelines.some((pipeline) => pipeline.nodes.length)) {
@@ -536,6 +568,10 @@ export class AgentController {
       delegateSeq: 0,
       delegateRuns: new Map(),
       notes: [],
+      approvals: new Map(),
+      approvalSeq: 0,
+      allowedTools: new Set(),
+      runAutoApproves: true,
       running: true,
       cancelled: false,
       disposeWhenIdle: false,
@@ -668,6 +704,7 @@ export class AgentController {
     task.abort.abort()
     if (task.process?.pid) killPidTree(task.process.pid)
     if (task.child?.pid) killPidTree(task.child.pid)
+    this.expireApprovals(task)
     this.status(task, 'cancelled', 0, 'Cancelled by user')
   }
 
@@ -689,6 +726,7 @@ export class AgentController {
     const provider = ask.provider
     const model = normalizeModel(ask.model)
     task.delegating = true
+    task.activeDelegate = undefined
     task.delegateSeq += 1
     const delegateId = `${taskId}:d${task.delegateSeq}`
     const card = delegateCard(task, delegateId, provider, model, work)
@@ -696,7 +734,8 @@ export class AgentController {
     const cwd = task.request.cwd
     const before = await captureTree(cwd).catch(() => undefined)
 
-    const { sink, run } = this.delegateSink(task, delegateId)
+    task.activeDelegate = { id: delegateId, provider }
+    const { sink, run } = this.delegateSink(task, delegateId, this.autoApproves(task, provider))
     const onAbort = (): void => {
       if (task.child?.pid) killPidTree(task.child.pid)
     }
@@ -707,13 +746,14 @@ export class AgentController {
       const prompt = this.delegatePrompt(task, work, ask.context)
       code = this.executor
         ? await this.executor({ ...task.request, provider, model }, prompt, sink.text, sink.tool)
-        : await this.runAgent(task, prompt, sink, false, { child: { provider, model } })
+        : await this.runAgent(task, prompt, sink, false, { child: { provider, model, delegateId } })
     } catch (error) {
       run.diagnostics = `${run.diagnostics}\n${errorMessage(error)}`
     } finally {
       signal?.removeEventListener('abort', onAbort)
       task.child = null
       task.delegating = false
+      task.activeDelegate = undefined
     }
 
     const { after, diffStat } = await treeChanges(cwd, before)
@@ -792,6 +832,97 @@ export class AgentController {
     return { ok: true }
   }
 
+  /**
+   * Whether a run on `provider` approves tools without asking: always, unless
+   * the chat turned auto-approve off and the CLI can ask (and is in Build,
+   * where there is something to approve, with the managed server to ask through).
+   */
+  private autoApproves(task: Task, provider: AiProvider): boolean {
+    return !(
+      task.request.autoApprove === false &&
+      canAskApproval(provider) &&
+      task.request.mode !== 'plan' &&
+      this.managedMcp
+    )
+  }
+
+  /** Turn auto-approve on or off; the next run picks it up, a running one keeps its own. */
+  setAutoApprove(taskId: string, on: boolean): { ok: boolean; message?: string } {
+    const task = this.tasks.get(taskId)
+    if (!task) return { ok: false, message: 'This agent task is no longer available.' }
+    task.request.autoApprove = on
+    return { ok: true }
+  }
+
+  /**
+   * Ask the developer whether a tool call may run, for Claude's permission
+   * prompt. Resolves when they answer, or with a deny when nobody can any
+   * more: the turn was stopped or the asking agent went away (`signal`).
+   */
+  requestApproval(
+    taskId: string,
+    ask: { toolName: string; input: unknown; delegateId?: string },
+    signal?: AbortSignal
+  ): Promise<{ allow: boolean; message?: string }> {
+    const task = this.tasks.get(taskId)
+    if (!task?.running || task.cancelled) return Promise.resolve({ allow: false, message: 'This Chat turn is no longer running.' })
+    if (task.allowedTools.has(ask.toolName)) return Promise.resolve({ allow: true })
+    task.approvalSeq += 1
+    const requestId = `${taskId}:a${task.approvalSeq}`
+    const delegate = ask.delegateId && task.activeDelegate?.id === ask.delegateId ? task.activeDelegate : undefined
+    const detail = approvalDetail(ask.input)
+    const event: PendingApproval['event'] = {
+      kind: 'approval',
+      taskId,
+      requestId,
+      provider: delegate?.provider ?? task.request.provider,
+      ...(delegate ? { delegateId: delegate.id } : {}),
+      toolName: ask.toolName,
+      ...(detail ? { detail } : {})
+    }
+    return new Promise((resolve) => {
+      const settle = (answer: { allow: boolean; message?: string }): void => {
+        signal?.removeEventListener('abort', onAbort)
+        resolve(answer)
+      }
+      const onAbort = (): void => this.settleApproval(task, requestId, 'expired')
+      task.approvals.set(requestId, { event, resolve: settle })
+      signal?.addEventListener('abort', onAbort)
+      this.emit(event)
+    })
+  }
+
+  /** The developer's answer to an approval request. */
+  respondApproval(taskId: string, requestId: string, decision: 'once' | 'chat' | 'deny'): { ok: boolean; message?: string } {
+    const task = this.tasks.get(taskId)
+    if (!task?.approvals.has(requestId)) return { ok: false, message: 'This request is no longer waiting.' }
+    this.settleApproval(task, requestId, decision)
+    return { ok: true }
+  }
+
+  private settleApproval(task: Task, requestId: string, decision: ApprovalDecision): void {
+    const pending = task.approvals.get(requestId)
+    if (!pending) return
+    task.approvals.delete(requestId)
+    if (decision === 'chat') task.allowedTools.add(pending.event.toolName)
+    this.emit({ ...pending.event, decision })
+    pending.resolve(
+      decision === 'once' || decision === 'chat'
+        ? { allow: true }
+        : {
+            allow: false,
+            message:
+              decision === 'deny'
+                ? 'The developer declined this tool call. Do not retry it; ask or take another approach.'
+                : 'Nobody could approve this tool call (the turn was stopped), so it did not run.'
+          }
+    )
+  }
+
+  private expireApprovals(task: Task): void {
+    for (const requestId of [...task.approvals.keys()]) this.settleApproval(task, requestId, 'expired')
+  }
+
   /** Why a `delegate` call cannot start, or undefined when it can. */
   private delegateRefusal(task: Task | undefined, provider: string, work: string): string | undefined {
     if (!task?.running || task.cancelled) return 'No Chat turn is running for this task.'
@@ -802,7 +933,7 @@ export class AgentController {
   }
 
   /** Routes a subagent's output to its card and records what it wrote and said. */
-  private delegateSink(task: Task, delegateId: string) {
+  private delegateSink(task: Task, delegateId: string, autoApproves: boolean) {
     const taskId = task.request.id
     const scan = task.activeScan
     const run = { said: '', lastTurn: '', diagnostics: '' }
@@ -817,7 +948,8 @@ export class AgentController {
         this.emit({ kind: 'assistant', taskId, text, delegateId })
       },
       tool: (event) => {
-        this.emit({ kind: 'tool', taskId, ...event, toolId: `${delegateId}:${event.toolId}`, delegateId })
+        const auto = autoApproves && needsApproval(event.name)
+        this.emit({ kind: 'tool', taskId, ...event, toolId: `${delegateId}:${event.toolId}`, delegateId, ...(auto ? { auto } : {}) })
         if (event.state !== 'done' || !isWriteToolName(event.name)) return
         task.mandatoryOutstanding = true
         if (scan) noteWrite(scan, event.detail)
@@ -1024,7 +1156,10 @@ export class AgentController {
   }
 
   /** Append a user follow-up and start a new cycle that continues the chat. */
-  private followUp(task: Task, userText: string): void {
+  private followUp(task: Task, message: string): void {
+    // Farol's own notes (an Undo) go first, and into the history like the message.
+    const notes = task.notes.splice(0).join('\n')
+    const userText = notes ? `${notes}\n\n${message}` : message
     task.askEpoch += 1
     task.context = addFollowUp(task.context, userText)
     task.request.prompt = historyText(task.context)
@@ -1109,7 +1244,8 @@ export class AgentController {
       },
       tool: (event) => {
         if (event.state === 'running' && isDelegateToolName(event.name)) task.delegateToolId = event.toolId
-        this.emit({ kind: 'tool', taskId: task.request.id, ...event })
+        const auto = task.runAutoApproves && needsApproval(event.name)
+        this.emit({ kind: 'tool', taskId: task.request.id, ...event, ...(auto ? { auto } : {}) })
         scan.toolNames.push(event.name)
         // Codex sometimes only fills command on item.completed; accept either.
         if (event.detail && isShellToolName(event.name) && event.state !== 'error') {
@@ -1693,6 +1829,7 @@ export class AgentController {
       toolNames: []
     }
     const policy = await this.resolveToolPolicy(task, opening.text, attempt)
+    task.runAutoApproves = this.autoApproves(task, task.request.provider)
     const clause = toolPolicyPrompt(policy)
     const effective = clause ? `${prompt}\n\n${clause}` : prompt
     const sink = this.cycleSink(task, scan)
@@ -1724,6 +1861,7 @@ export class AgentController {
     task.running = false
     if (task.process?.pid) killPidTree(task.process.pid)
     if (task.child?.pid) killPidTree(task.child.pid)
+    this.expireApprovals(task)
     this.status(
       task,
       'failed',
@@ -1853,7 +1991,7 @@ export class AgentController {
       webSearch?: boolean
       session?: AgentSessionIo
       /** Run a subagent with this provider/model instead of the task's own agent. */
-      child?: { provider: AiProvider; model?: string }
+      child?: { provider: AiProvider; model?: string; delegateId: string }
     }
   ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
@@ -1861,14 +1999,22 @@ export class AgentController {
     const child = opts?.child
     const provider = child?.provider ?? task.request.provider
     const model = child ? child.model : task.request.model
-    // Subagents get no managed server, so they cannot delegate in turn.
-    const mcp = this.managedMcp && !child ? this.managedMcp(task.request.id) : undefined
+    const askApproval = !this.autoApproves(task, provider)
+    // A subagent's server can only ask for approval, so it gets one only to ask.
+    const mcp = !this.managedMcp
+      ? undefined
+      : !child
+        ? this.managedMcp(task.request.id)
+        : askApproval
+          ? this.managedMcp(task.request.id, child.delegateId)
+          : undefined
     const isChild = !!child
     const spec = managedAiCommand(provider, prompt, model, {
       jsonFormat: !plain,
       via,
       mode: task.request.mode,
-      ...commandExtras(opts, mcp)
+      ...commandExtras(opts, mcp),
+      ...(askApproval && mcp ? { askApproval } : {})
     })
     const env = aiEnv(provider, via)
     // Claude's limit on one MCP call; a `delegate` waits as long as its subagent runs.

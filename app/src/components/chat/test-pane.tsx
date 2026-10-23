@@ -12,6 +12,8 @@ export const chatPaneNoop = {
   onProviderChange: vi.fn(),
   onModeChange: vi.fn(),
   onExecutePlan: vi.fn(),
+  onAutoApproveChange: vi.fn(),
+  onApprove: vi.fn(),
   onOpenPipeline: vi.fn(),
   onNewChat: vi.fn()
 }
@@ -40,6 +42,7 @@ export function renderChatPane(props: Partial<ComponentProps<typeof ChatPane>> =
       projectPath: '/Users/dev/repo',
       defaultProvider: 'claude',
       usage: [],
+      autoApprove: true,
       ...chatPaneNoop,
       ...props
     })

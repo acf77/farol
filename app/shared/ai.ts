@@ -2,7 +2,14 @@
 
 import { FAILURE_REPORT_REL } from './failure'
 import { openCodeModel } from './openrouter'
-import { claudeMcpConfig, codexMcpOverrides, PIPELINE_MCP_TOOLS, type McpServerEntry } from './mcp-config'
+import {
+  APPROVE_TOOL,
+  claudeMcpConfig,
+  codexMcpOverrides,
+  DELEGATE_TOOL,
+  PIPELINE_MCP_TOOLS,
+  type McpServerEntry
+} from './mcp-config'
 
 export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'omp', 'openrouter'] as const
 export type AiProvider = (typeof AI_PROVIDERS)[number]
@@ -96,6 +103,15 @@ export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
   ],
   /** Filled from the user's OpenRouter pins (or its whole catalog, unpinned). */
   openrouter: []
+}
+
+/**
+ * Whether the CLI can stop a headless run to ask the developer about a tool
+ * call. Only Claude can, through `--permission-prompt-tool`; every other CLI
+ * runs with all tools approved, so auto-approve is always on for it.
+ */
+export function canAskApproval(provider: AiProvider): boolean {
+  return provider === 'claude'
 }
 
 export function isAiProvider(value: unknown): value is AiProvider {
@@ -462,8 +478,11 @@ function managedClaudeCommand(
   plan: boolean,
   tools: string | undefined,
   resume?: string,
-  mcp?: McpServerEntry
+  mcp?: McpServerEntry,
+  askApproval?: boolean
 ): AiCommand {
+  // Asking goes through the managed server, so it needs one; Plan keeps its own read-only mode.
+  const ask = !!(askApproval && mcp && !plan)
   return {
     bins: ['claude'],
     // `--verbose` is what makes stream-json emit each turn as it happens;
@@ -483,8 +502,9 @@ function managedClaudeCommand(
         ...(mcp ? ['--mcp-config', claudeMcpConfig(mcp)] : []),
         '--disallowedTools',
         PIPELINE_MCP_TOOLS.join(','),
+        ...(ask ? ['--allowedTools', DELEGATE_TOOL, '--permission-prompt-tool', APPROVE_TOOL] : []),
         '--permission-mode',
-        plan ? 'plan' : 'bypassPermissions',
+        plan ? 'plan' : ask ? 'default' : 'bypassPermissions',
         ...toolsArgv(tools),
         ...resumeArgv('--resume', resume),
         prompt
@@ -529,6 +549,8 @@ export function managedAiCommand(
     resume?: string
     /** Farol's managed server for this task; Claude and Codex load it for the run. */
     mcp?: McpServerEntry
+    /** Ask the developer before tool calls instead of approving them all (Claude, Build, with `mcp`). */
+    askApproval?: boolean
   }
 ): AiCommand {
   const cli = cliFor(provider, opts?.via)
@@ -549,7 +571,7 @@ export function managedAiCommand(
     case 'pi':
       return managedPiCommand(prompt, passed, plan, tools)
     case 'claude':
-      return managedClaudeCommand(prompt, passed, plan, tools, resume, opts?.mcp)
+      return managedClaudeCommand(prompt, passed, plan, tools, resume, opts?.mcp, opts?.askApproval)
   }
 }
 

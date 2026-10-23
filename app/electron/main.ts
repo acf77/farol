@@ -93,7 +93,7 @@ const agents = new AgentController(
   todos,
   prompts,
   loadPipelines,
-  MANAGED_MCP_TOOLS.length ? (taskId) => managedMcpEntry(managedMcpScript(), taskId) : undefined
+  MANAGED_MCP_TOOLS.length ? (taskId, delegateId) => managedMcpEntry(managedMcpScript(), taskId, delegateId) : undefined
 )
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
@@ -444,7 +444,7 @@ async function runHookPipelines(
 }
 
 async function handleBridge(
-  req: Exclude<BridgeRequest, { op: 'delegate' }>,
+  req: Exclude<BridgeRequest, { op: 'delegate' | 'approve' }>,
   projectPath: string
 ): Promise<BridgeReply> {
   if (!(await cwdAllowedForProject(projectPath, req.cwd))) {
@@ -551,8 +551,8 @@ function listenBridge(
 
 function startBridge(projectPath: string): void {
   listenBridge(socketPath(projectPath), async (req) =>
-    req.op === 'delegate'
-      ? { id: req.id, ok: false, message: 'delegate is only available in managed Chat.' }
+    req.op === 'delegate' || req.op === 'approve'
+      ? { id: req.id, ok: false, message: `${req.op} is only available in managed Chat.` }
       : handleBridge(req, projectPath)
   )
 }
@@ -566,8 +566,18 @@ const managedToken = randomBytes(24).toString('hex')
 
 function startManagedBridge(): void {
   listenBridge(managedSocket, async (req, signal) => {
-    if (req.op !== 'delegate') return { id: req.id, ok: false, message: 'Only delegate is served here.' }
+    if (req.op !== 'delegate' && req.op !== 'approve') {
+      return { id: req.id, ok: false, message: 'Only managed Chat tools are served here.' }
+    }
     if (req.token !== managedToken) return { id: req.id, ok: false, message: 'Not authorized.' }
+    if (req.op === 'approve') {
+      const answer = await agents.requestApproval(
+        req.taskId,
+        { toolName: req.toolName, input: req.input, ...(req.delegateId ? { delegateId: req.delegateId } : {}) },
+        signal
+      )
+      return { id: req.id, ok: true, op: 'approve', ...answer }
+    }
     const result = await agents.delegate(
       req.taskId,
       { provider: req.provider, model: req.model, task: req.task, context: req.context },
@@ -912,6 +922,12 @@ function registerTaskIpc(): void {
   )
   ipcMain.handle('agent:cancel', (_e, taskId: string) => agents.cancel(taskId))
   ipcMain.handle('agent:dispose', (_e, taskId: string) => agents.dispose(taskId))
+  ipcMain.handle('agent:respondApproval', (_e, taskId: string, requestId: string, decision: unknown) =>
+    decision === 'once' || decision === 'chat' || decision === 'deny'
+      ? agents.respondApproval(taskId, requestId, decision)
+      : { ok: false, message: 'Unknown decision.' }
+  )
+  ipcMain.handle('agent:setAutoApprove', (_e, taskId: string, on: unknown) => agents.setAutoApprove(taskId, on !== false))
   ipcMain.handle('agent:undoDelegate', (_e, taskId: string, delegateId: string, restore?: boolean) =>
     agents.undoDelegate(taskId, delegateId, restore === true)
   )

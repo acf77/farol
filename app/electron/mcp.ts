@@ -22,7 +22,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { errorMessage } from '../shared/jev'
 import { AI_PROVIDERS } from '../shared/ai'
-import { servesPipelineTools, TASK_ENV, TOKEN_ENV } from '../shared/mcp-config'
+import { DELEGATE_ENV, servesPipelineTools, TASK_ENV, TOKEN_ENV } from '../shared/mcp-config'
 import { requestBridge } from './bridge-client'
 
 const APP_DOWN =
@@ -86,6 +86,10 @@ function registerPipelineTools(server: McpServer, cwd: string): void {
 function registerManagedTools(server: McpServer): void {
   const taskId = process.env[TASK_ENV] ?? ''
   const token = process.env[TOKEN_ENV] ?? ''
+  const delegateId = process.env[DELEGATE_ENV] || undefined
+  registerApprove(server, taskId, token, delegateId)
+  // A subagent's server only asks for approval; subagents cannot delegate further.
+  if (delegateId) return
   server.registerTool(
     'delegate',
     {
@@ -114,6 +118,46 @@ function registerManagedTools(server: McpServer): void {
       if (!reply.ok) return fail(reply.message)
       if (reply.op !== 'delegate') return fail('Unexpected reply from Farol')
       return reply.failed ? fail(reply.text) : text(reply.text)
+    }
+  )
+}
+
+/**
+ * Claude's `--permission-prompt-tool`: Claude calls it before a tool that
+ * needs permission and runs that tool only if the reply allows it. The reply
+ * is JSON text, `{ behavior: 'allow', updatedInput }` or
+ * `{ behavior: 'deny', message }`; a deny message reaches the agent as the
+ * tool's error.
+ */
+function registerApprove(server: McpServer, taskId: string, token: string, delegateId: string | undefined): void {
+  const answer = (body: { behavior: 'allow'; updatedInput: unknown } | { behavior: 'deny'; message: string }) =>
+    text(JSON.stringify(body))
+  server.registerTool(
+    'approve',
+    {
+      title: 'Ask the developer',
+      description: "Farol's permission prompt. Claude calls it itself before a tool that needs approval; do not call it directly.",
+      inputSchema: {
+        tool_name: z.string(),
+        input: z.record(z.string(), z.unknown()).optional(),
+        tool_use_id: z.string().optional()
+      }
+    },
+    async ({ tool_name, input }) => {
+      const reply = await requestBridge({
+        op: 'approve',
+        token,
+        taskId,
+        toolName: tool_name,
+        input: input ?? {},
+        ...(delegateId ? { delegateId } : {})
+      })
+      if (!reply || !reply.ok || reply.op !== 'approve') {
+        return answer({ behavior: 'deny', message: 'Farol could not ask the developer, so this was not run.' })
+      }
+      return reply.allow
+        ? answer({ behavior: 'allow', updatedInput: input ?? {} })
+        : answer({ behavior: 'deny', message: reply.message ?? 'The developer declined this.' })
     }
   )
 }

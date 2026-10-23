@@ -57,6 +57,8 @@ export const MANAGED_ENV = 'FAROL_MANAGED'
 export const TASK_ENV = 'FAROL_TASK_ID'
 /** The secret the managed bridge expects with every request. */
 export const TOKEN_ENV = 'FAROL_CHAT_TOKEN'
+/** Set when the server belongs to a subagent: it may ask for approval but not delegate. */
+export const DELEGATE_ENV = 'FAROL_DELEGATE_ID'
 
 /**
  * The project `farol` server's tools, as managed Claude names them. Chat must
@@ -71,11 +73,19 @@ export const PIPELINE_MCP_TOOLS = [`mcp__${MCP_SERVER_KEY}__list_pipelines`, `mc
  * start the server at all: a server with no tools fails the client's tool
  * listing and shows up as a broken server.
  */
-export const MANAGED_MCP_TOOLS: readonly string[] = ['delegate']
+export const MANAGED_MCP_TOOLS: readonly string[] = ['delegate', 'approve']
+
+/**
+ * The managed tool Claude's `--permission-prompt-tool` points at: it asks the
+ * developer in Chat whether a tool call may run.
+ */
+export const APPROVE_TOOL = `mcp__${MANAGED_MCP_SERVER_KEY}__approve`
+/** Farol's own delegate tool, which never needs the developer's approval. */
+export const DELEGATE_TOOL = `mcp__${MANAGED_MCP_SERVER_KEY}__delegate`
 
 /** How each provider's stream names the managed `delegate` call (Claude, Codex). */
 export function isDelegateToolName(name: string): boolean {
-  return name === `mcp__${MANAGED_MCP_SERVER_KEY}__delegate` || name === `${MANAGED_MCP_SERVER_KEY}.delegate`
+  return name === DELEGATE_TOOL || name === `${MANAGED_MCP_SERVER_KEY}.delegate`
 }
 
 /**
@@ -91,8 +101,11 @@ export function servesPipelineTools(env: Record<string, string | undefined>): bo
 }
 
 /** `base` (the app's `mcp.js` entry, pointed at the managed socket) started for one managed Chat task. */
-export function managedMcpEntry(base: McpServerEntry, taskId: string): McpServerEntry {
-  return { ...base, env: { ...base.env, [MANAGED_ENV]: '1', [TASK_ENV]: taskId } }
+export function managedMcpEntry(base: McpServerEntry, taskId: string, delegateId?: string): McpServerEntry {
+  return {
+    ...base,
+    env: { ...base.env, [MANAGED_ENV]: '1', [TASK_ENV]: taskId, ...(delegateId ? { [DELEGATE_ENV]: delegateId } : {}) }
+  }
 }
 
 /** Inline value for Claude's `--mcp-config`, which takes a JSON string as well as a path. */

@@ -142,7 +142,71 @@ export function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool
           {tool.detail}
         </span>
       )}
+      {tool.auto && (
+        <span
+          title="Ran without asking, because auto-approve is on"
+          style={{ flex: 'none', marginLeft: 'auto', fontSize: 10.5, color: C.faint, letterSpacing: 0.2 }}
+        >
+          auto
+        </span>
+      )}
     </div>
+  )
+}
+
+const DECIDED = {
+  once: 'Allowed once',
+  chat: 'Allowed for this chat',
+  deny: 'Declined',
+  expired: 'No longer waiting'
+} as const
+
+/**
+ * The agent wants to run a tool and auto-approve is off. Claude is paused on
+ * this until the developer answers; once answered it shrinks to one line.
+ */
+export function ApprovalCard({
+  card,
+  onDecide
+}: {
+  card: NonNullable<AgentMessage['approval']>
+  onDecide?: (decision: 'once' | 'chat' | 'deny') => void
+}) {
+  const who = `${AI_LABELS[card.provider]}${card.delegateId ? ' subagent' : ''}`
+  if (card.decision) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0, fontSize: 12, color: C.faint }}>
+        <span style={{ flex: 'none', color: card.decision === 'deny' ? C.red : undefined }}>{DECIDED[card.decision]}</span>
+        <span style={{ flex: 'none', fontFamily: MONO, fontSize: 11.5, color: C.textRow }}>{card.toolName}</span>
+        {card.detail && (
+          <span title={card.detail} style={{ minWidth: 0, fontFamily: MONO, fontSize: 11, ...ELLIPSIS }}>
+            {card.detail}
+          </span>
+        )}
+      </div>
+    )
+  }
+  return (
+    <ChatCard title={`${who} asks to run ${card.toolName}`}>
+      <div role="alert" style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+        {card.detail && (
+          <pre style={{ margin: 0, fontFamily: MONO, fontSize: 11.5, color: C.textRow, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text' }}>
+            {card.detail}
+          </pre>
+        )}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <Button variant="primary" disabled={!onDecide} onClick={() => onDecide?.('once')}>
+            Allow once
+          </Button>
+          <Button disabled={!onDecide} onClick={() => onDecide?.('chat')}>
+            Allow {card.toolName} for this chat
+          </Button>
+          <Button variant="ghost" disabled={!onDecide} onClick={() => onDecide?.('deny')}>
+            Deny
+          </Button>
+        </div>
+      </div>
+    </ChatCard>
   )
 }
 

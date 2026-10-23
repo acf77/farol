@@ -85,6 +85,23 @@ A proposed implementation plan that the agent explicitly marks as complete and r
 The existing read-only enforcement a provider already uses for pipeline reviews. Prompt-only instructions are not a **Review gate**.
 _Avoid_: sandbox (as the product name for this rule), ask mode (except as Cursor’s review mechanism)
 
+### Subagents and approvals
+
+**Subagent**:
+Another provider's or model's CLI that the Chat's agent hands one piece of work to with **Delegate**, in the same checkout, while it waits.
+_Avoid_: child agent, worker, sub-agent (as the product term)
+
+**Delegate**:
+The managed Chat tool an agent calls to run a **Subagent** and get back its summary and the files it changed.
+
+**Auto-approve**:
+A Chat's choice to let the agent's tools run without asking. On by default for new chats (Settings); each chat can change it for itself.
+_Avoid_: YOLO mode, bypass (as the product name)
+
+**Approval request**:
+A tool call the agent is paused on until the developer allows it once, allows that tool for the rest of the Chat, or denies it.
+_Avoid_: permission prompt (except as Claude's own mechanism)
+
 ### Agent Git actions
 
 **Git action**:
@@ -231,6 +248,17 @@ _Avoid_: a sign-in form in Settings, showing the service address, retrying a run
 - Reopening a Chat or restarting Farol restores the Execute button for its latest unexecuted **Finished plan**, provided no follow-up message has invalidated it.
 - Selecting **Execute plan** consumes that plan's Execute button permanently, even if implementation fails or is canceled; the Chat stays in **Build mode** until the developer selects **Plan mode** again.
 - Selecting **Build mode** manually does not consume the latest **Finished plan**'s Execute button; **Execute plan** remains available until a follow-up is sent or **Execute plan** is selected, and it starts implementation even if the Chat is already in **Build mode**.
+
+### Subagents and approvals
+
+- Only the Chat's own agent can **Delegate**; a **Subagent** cannot delegate further, run Farol pipelines, or ask the developer questions.
+- One **Subagent** runs at a time, and the agent waits on it, so nothing else edits the checkout while it runs.
+- A **Subagent** can be undone from its card while the Chat is idle; when later edits overlap, Farol changes nothing and offers to restore the checkout to before it ran instead.
+- **Auto-approve** is shown in the composer whenever it applies: a chip beside **Plan | Build** reads “Auto-approve” when on and “Ask first” when off. It is hidden in **Plan mode**, which has nothing to approve.
+- Only Claude can raise an **Approval request**. For every other provider the chip stays on and disabled, with a tooltip naming the provider and the reason “Cannot ask for approval”.
+- Changing **Auto-approve** applies from the next turn; a running turn keeps the mode it started with. The change appears as one line in the Chat.
+- Tool cards for writes and shell commands that ran under **Auto-approve** carry an “auto” marker.
+- An **Approval request** that nobody can answer any more (the turn was stopped or the agent went away) is denied and marked “No longer waiting”.
 
 ### Agent Git actions
 

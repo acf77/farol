@@ -65,6 +65,7 @@ export function applyDelegateActivity(messages: AgentMessage[], event: DelegateA
       toolId: event.toolId,
       name: event.name || prior?.name || 'tool',
       ...((event.detail ?? prior?.detail) ? { detail: event.detail ?? prior?.detail } : {}),
+      ...((event.auto ?? prior?.auto) ? { auto: true } : {}),
       state: event.state
     }
     tools = prior

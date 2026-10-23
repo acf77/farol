@@ -27,6 +27,7 @@ describe('sanitizeSettings', () => {
       models: { claude: 'opus', cursor: 'grok-4.6' },
       commitMessage: { agent: 'cursor', model: 'grok-4.6' },
       autoFix: false,
+      autoApprove: true,
       modeDefaults: { plan: [], build: [] },
       pipelineFallbacks: []
     })
@@ -49,9 +50,15 @@ describe('sanitizeSettings', () => {
       models: {},
       commitMessage: { agent: 'cursor' },
       autoFix: true,
+      autoApprove: true,
       modeDefaults: { plan: [], build: [] },
       pipelineFallbacks: []
     })
+  })
+
+  it('keeps a saved auto-approve default and turns junk into on', () => {
+    expect(sanitizeSettings({ agent: 'claude', autoApprove: false }).autoApprove).toBe(false)
+    expect(sanitizeSettings({ agent: 'claude', autoApprove: 'no' }).autoApprove).toBe(true)
   })
 
   it('falls back to defaults for junk input', () => {
@@ -78,6 +85,7 @@ describe('sanitizeSettings', () => {
       models: {},
       commitMessage: { agent: 'openrouter' },
       autoFix: true,
+      autoApprove: true,
       modeDefaults: { plan: [], build: [] },
       pipelineFallbacks: [],
       openrouter: {

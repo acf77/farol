@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentMode, AgentSkill, AiProvider, AppSettings, ProviderUsage } from '@shared/types'
-import { aiSelectionLabel } from '@shared/ai'
+import { AI_LABELS, aiSelectionLabel, canAskApproval } from '@shared/ai'
 import {
   convertSkillDraft,
   filterSkills,
@@ -463,6 +463,56 @@ export function ChatModeSwitch({
   )
 }
 
+/**
+ * Whether tools run without asking, always in view while it is on. Only
+ * Claude can stop to ask, so for other CLIs the chip stays on and disabled.
+ * Plan is read-only already, so there is nothing to approve and no chip.
+ */
+export function AutoApproveChip({
+  on,
+  provider,
+  mode,
+  onChange
+}: {
+  on: boolean
+  provider: AiProvider
+  mode: AgentMode
+  onChange: (on: boolean) => void
+}) {
+  if (mode === 'plan') return null
+  const canAsk = canAskApproval(provider)
+  const active = on || !canAsk
+  const title = !canAsk
+    ? `${AI_LABELS[provider]}: Cannot ask for approval`
+    : active
+      ? `Tools run without asking. Turn off to have ${AI_LABELS[provider]} ask in Chat first (from the next turn).`
+      : `${AI_LABELS[provider]} asks in Chat before running tools. Turn on to run them without asking (from the next turn).`
+  return (
+    <button
+      type="button"
+      className="bf-focus bf-composer-btn"
+      disabled={!canAsk}
+      aria-pressed={active}
+      title={title}
+      onClick={() => onChange(!on)}
+      style={{
+        border: `1px solid ${active ? 'oklch(0.75 0.12 75 / 0.35)' : C.hair}`,
+        borderRadius: 7,
+        padding: '3px 9px',
+        background: active ? 'oklch(0.75 0.12 75 / 0.12)' : 'transparent',
+        color: active ? 'oklch(0.85 0.1 80)' : C.faint,
+        fontFamily: 'inherit',
+        fontSize: 12,
+        whiteSpace: 'nowrap',
+        cursor: canAsk ? 'pointer' : 'default',
+        opacity: canAsk ? 1 : 0.7
+      }}
+    >
+      {active ? 'Auto-approve' : 'Ask first'}
+    </button>
+  )
+}
+
 function ComposerToolbar({
   agentBtnRef,
   provider,
@@ -474,6 +524,8 @@ function ComposerToolbar({
   isBusy,
   modeLocked,
   canSend,
+  autoApprove,
+  onAutoApproveChange,
   onOpenAgentMenu,
   onModeChange,
   onAttach,
@@ -490,6 +542,8 @@ function ComposerToolbar({
   isBusy: boolean
   modeLocked: boolean
   canSend: boolean
+  autoApprove: boolean
+  onAutoApproveChange: (on: boolean) => void
   onOpenAgentMenu: () => void
   onModeChange: (mode: AgentMode) => void
   onAttach: () => void
@@ -511,6 +565,7 @@ function ComposerToolbar({
   return (
     <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '8px 10px 10px 12px' }}>
       <ChatModeSwitch mode={mode} locked={modeLocked} onChange={onModeChange} />
+      <AutoApproveChip on={autoApprove} provider={provider} mode={mode} onChange={onAutoApproveChange} />
       <button
         type="button"
         className="bf-focus bf-composer-btn"
@@ -613,6 +668,8 @@ export function ComposerBox({
   onCancel,
   onProviderChange,
   onModeChange,
+  autoApprove,
+  onAutoApproveChange,
   sendTextRef,
   showFade,
   hasRequired,
@@ -635,6 +692,8 @@ export function ComposerBox({
   onCancel: () => void
   onProviderChange: (provider: AiProvider, model?: string) => void
   onModeChange: (mode: AgentMode) => void
+  autoApprove: boolean
+  onAutoApproveChange: (on: boolean) => void
   /** Lets the parent fire the same send path suggestions used before (incl. history). */
   sendTextRef: React.MutableRefObject<(clean: string) => void>
   showFade: boolean
@@ -951,6 +1010,8 @@ export function ComposerBox({
           isBusy={isBusy}
           modeLocked={modeLocked}
           canSend={canSend}
+          autoApprove={autoApprove}
+          onAutoApproveChange={onAutoApproveChange}
           onModeChange={onModeChange}
           onOpenAgentMenu={openAgentMenu}
           onAttach={() => fileInputRef.current?.click()}

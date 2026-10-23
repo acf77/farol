@@ -336,12 +336,20 @@ export type AgentTaskStatus =
 /** Statuses that mean the agent is still in flight. */
 export const AGENT_LIVE: ReadonlySet<string> = new Set(['working', 'validating', 'repairing'])
 
+/** How the developer answered an approval request; `expired` when nobody can answer any more. */
+export type ApprovalDecision = 'once' | 'chat' | 'deny' | 'expired'
+
 export interface AgentTaskRequest {
   id: string
   prompt: string
   provider: AiProvider
   /** Build can change files; Plan is enforced read-only by a Review gate. */
   mode?: AgentMode
+  /**
+   * Run tools without asking. Absent means on. Off only changes providers that
+   * can ask for approval headlessly (Claude); the rest always auto-approve.
+   */
+  autoApprove?: boolean
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
   /** Rungs to try, in order, if `provider`/`model` fails for provider-side reasons. */
@@ -397,6 +405,22 @@ export type AgentTaskEvent =
       detail?: string
       state: 'running' | 'done' | 'error'
       delegateId?: string
+      /** A write or shell call that ran without asking, because auto-approve was on. */
+      auto?: boolean
+    }
+  /**
+   * The agent (or a subagent, `delegateId`) asks to run a tool; repeats with
+   * `decision` once the developer answers or the request lapses.
+   */
+  | {
+      kind: 'approval'
+      taskId: string
+      requestId: string
+      provider: AiProvider
+      delegateId?: string
+      toolName: string
+      detail?: string
+      decision?: ApprovalDecision
     }
   /**
    * A subagent run the agent asked for with `delegate`; repeats when it ends.
@@ -689,6 +713,10 @@ export interface FarolApi {
      * edits overlap; calling again with `restore` puts the checkout back to
      * before the run, discarding that many files' changes.
      */
+    /** Answer a pending approval request. */
+    respondApproval(taskId: string, requestId: string, decision: 'once' | 'chat' | 'deny'): Promise<{ ok: boolean; message?: string }>
+    /** Turn auto-approve on or off for the chat's next turn. */
+    setAutoApprove(taskId: string, on: boolean): Promise<{ ok: boolean; message?: string }>
     undoDelegate(
       taskId: string,
       delegateId: string,

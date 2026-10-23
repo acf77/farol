@@ -241,4 +241,97 @@ describe('AgentController.delegate', () => {
     const end = quiet.events.filter((e) => e.kind === 'delegate').pop()
     expect(end?.kind === 'delegate' && end.undoable).toBeFalsy()
   })
+
+  describe('approvals', () => {
+    /** A parent turn that asks for approvals while it runs, then finishes. */
+    function asking(during: (c: AgentController) => Promise<unknown>) {
+      const events: AgentTaskEvent[] = []
+      const answers: unknown[] = []
+      const execute = vi.fn<AgentExecutor>(async (_req, _prompt, output) => {
+        answers.push(await during(controller))
+        output('Done\nFAROL_PIPELINES: []\n')
+        return 0
+      })
+      const controller: AgentController = new AgentController({ run: vi.fn() }, (e) => events.push(e), execute)
+      return { controller, events, answers }
+    }
+    const pending = (events: AgentTaskEvent[]) =>
+      events.filter((e): e is Extract<AgentTaskEvent, { kind: 'approval' }> => e.kind === 'approval' && !e.decision)
+
+    it('asks in Chat and runs the tool once allowed; "for this chat" stops asking for that tool', async () => {
+      const { controller, events, answers } = asking(async (c) => {
+        const first = c.requestApproval('task-1', { toolName: 'Bash', input: { command: 'npm test' } })
+        await vi.waitFor(() => expect(pending(events)).toHaveLength(1))
+        const ask = pending(events)[0]
+        expect(ask).toMatchObject({ provider: 'claude', toolName: 'Bash', detail: 'npm test' })
+        expect(c.respondApproval('task-1', ask.requestId, 'chat')).toEqual({ ok: true })
+        const again = await c.requestApproval('task-1', { toolName: 'Bash', input: { command: 'ls' } })
+        return [await first, again]
+      })
+      controller.start(request())
+      await vi.waitFor(() => expect(completed(events)).toBe(true))
+      expect(answers[0]).toEqual([{ allow: true }, { allow: true }])
+      expect(events.filter((e) => e.kind === 'approval')).toHaveLength(2)
+      expect(events.some((e) => e.kind === 'approval' && e.decision === 'chat')).toBe(true)
+    })
+
+    it('passes a deny back to the agent as its reason', async () => {
+      const { controller, events, answers } = asking(async (c) => {
+        const answer = c.requestApproval('task-1', { toolName: 'Write', input: { file_path: 'a.txt' } })
+        await vi.waitFor(() => expect(pending(events)).toHaveLength(1))
+        c.respondApproval('task-1', pending(events)[0].requestId, 'deny')
+        return answer
+      })
+      controller.start(request())
+      await vi.waitFor(() => expect(completed(events)).toBe(true))
+      expect(answers[0]).toMatchObject({ allow: false, message: expect.stringContaining('declined') })
+    })
+
+    it('lapses when the asking agent goes away or the turn is stopped', async () => {
+      const gone = new AbortController()
+      const { controller, events, answers } = asking(async (c) => {
+        const first = c.requestApproval('task-1', { toolName: 'Bash', input: {} }, gone.signal)
+        await vi.waitFor(() => expect(pending(events)).toHaveLength(1))
+        gone.abort()
+        const second = c.requestApproval('task-1', { toolName: 'Edit', input: {} })
+        await vi.waitFor(() => expect(pending(events)).toHaveLength(2))
+        c.cancel('task-1')
+        return [await first, await second]
+      })
+      controller.start(request())
+      await vi.waitFor(() => expect(answers).toHaveLength(1))
+      expect(answers[0]).toEqual([
+        expect.objectContaining({ allow: false }),
+        expect.objectContaining({ allow: false })
+      ])
+      expect(events.filter((e) => e.kind === 'approval' && e.decision === 'expired')).toHaveLength(2)
+      expect(controller.respondApproval('task-1', 'task-1:a1', 'once')).toEqual({
+        ok: false,
+        message: 'This request is no longer waiting.'
+      })
+    })
+
+    it('refuses outright when no turn is running', async () => {
+      const controller = new AgentController({ run: vi.fn() }, () => {}, vi.fn())
+      expect(await controller.requestApproval('nope', { toolName: 'Bash', input: {} })).toMatchObject({ allow: false })
+    })
+
+    it('marks writes and shell calls that ran without asking', async () => {
+      const events: AgentTaskEvent[] = []
+      const execute = vi.fn<AgentExecutor>(async (_req, _prompt, output, tool) => {
+        tool?.({ toolId: 'r', name: 'Read', state: 'done' })
+        tool?.({ toolId: 'w', name: 'Write', detail: 'a.txt', state: 'done' })
+        tool?.({ toolId: 'b', name: 'Bash', detail: 'ls', state: 'done' })
+        output('Done\nFAROL_PIPELINES: []\n')
+        return 0
+      })
+      const controller = new AgentController({ run: vi.fn() }, (e) => events.push(e), execute)
+      controller.start(request())
+      await vi.waitFor(() => expect(completed(events)).toBe(true))
+      const auto = Object.fromEntries(
+        events.flatMap((e) => (e.kind === 'tool' ? [[e.name, e.auto === true]] : []))
+      )
+      expect(auto).toEqual({ Read: false, Write: true, Bash: true })
+    })
+  })
 })

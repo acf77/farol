@@ -138,6 +138,17 @@ Done when: from a Claude chat, "have Codex implement X" runs Codex in the same c
 
 Done when: in a Claude chat with auto-approve off, a Bash call shows a card, Allow runs it, Deny returns the reason to the agent, and Stop while a card is pending cancels cleanly.
 
+**Status: landed.** Notes from the implementation:
+
+- Verified against the real Claude CLI (2.1.x): Claude calls the prompt tool with `{ tool_name, input, tool_use_id }` (the id is also in `_meta["claudecode/toolUseId"]`); an `allow` reply runs the tool, and a `deny` message reaches the agent verbatim. An end-to-end run with Farol's exact argv, the built `mcp.js` and a stand-in bridge allowed `Write` and denied `Bash` as expected.
+- `--permission-mode default` still works, although the newer CLI lists `manual` in its help; `default` keeps older CLIs working.
+- `delegate` is pre-allowed (`--allowedTools mcp__farol-chat__delegate`) so handing off work never asks.
+- A Claude subagent in a chat that asks first gets a managed server with only `approve`; its requests are labelled as the subagent's. Subagents that auto-approve get no server, as before.
+- The chip reads "Ask first" when off rather than disappearing, so it can be turned back on. It is hidden in Plan.
+- The Settings switch "Auto-approve tools in new chats" holds the default; the chip changes only that chat, which is saved with the pane.
+- "auto" marks only writes and shell calls, the kinds that would have asked.
+- A pending request that nobody can answer (Stop, the agent's process going away, the cycle failing) is denied and shown as "No longer waiting".
+
 ## Phase 4 — Other providers (spikes, then per-provider work)
 
 For each CLI, answer two questions — can Farol inject an MCP server per run, and is there a headless approval callback — then decide integrate vs. keep auto-approve.

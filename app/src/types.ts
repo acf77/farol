@@ -3,6 +3,7 @@ import type {
   AgentQuestion,
   AgentTaskStatus,
   AiProvider,
+  ApprovalDecision,
   GitHookEvent,
   PipelineNode,
   PipelineTarget,
@@ -60,6 +61,19 @@ export interface AgentToolCard {
   name: string
   detail?: string
   state: 'running' | 'done' | 'error'
+  /** Ran without asking, because auto-approve was on. */
+  auto?: boolean
+}
+
+/** A tool call waiting on, or answered by, the developer. */
+export interface AgentApprovalCard {
+  requestId: string
+  provider: AiProvider
+  /** Set when a subagent asks, rather than the chat's own agent. */
+  delegateId?: string
+  toolName: string
+  detail?: string
+  decision?: ApprovalDecision
 }
 
 /** A subagent run from the agent's `delegate` call, with what it is doing folded in. */
@@ -85,6 +99,7 @@ export interface AgentMessage {
   pipeline?: AgentPipelineCard
   tool?: AgentToolCard
   delegate?: AgentDelegateCard
+  approval?: AgentApprovalCard
   question?: AgentQuestionCard
   /**
    * Epoch ms, shown under user bubbles. Render-only — the session sanitizer
@@ -104,6 +119,8 @@ export interface AgentPane extends BasePane {
   mode: AgentMode
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
+  /** Run tools without asking. Absent follows the Settings default. */
+  autoApprove?: boolean
   messages: AgentMessage[]
   /** The agent's handoff note and CLI session, so the chat continues after a restart. */
   context?: SavedAgentContext

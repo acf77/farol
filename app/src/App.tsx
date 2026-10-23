@@ -47,6 +47,7 @@ import { clearIndent, emptyTerm, ensureNewline, setIndent, trimTo, write, writeL
 import { agentPaneFor, chatOwnerFor, chatTabFor, trimAgentMessages } from './chat-context'
 import { fmtDuration, pipelineActivityText, projectRunChat, upsertMessage } from './pipeline-chat'
 import { applyDelegateActivity, applyDelegateEvent, isDelegateActivity } from './delegate-chat'
+import { applyApprovalEvent, autoApproveNotice } from './approval-chat'
 import { bindLatestRunId, bindRunStart, runOutcomeLabel, syncAgentPipelineRun } from './run-slot'
 import { CHROME_ROW } from './components/side-panel'
 import { leaf, leaves, removeLeaf, setSize, splitLeaf } from './layout'
@@ -307,6 +308,7 @@ function tabsFromSession(sess: ProjectSession): Tab[] {
               provider: p.provider,
               mode: normalizeMode(p.mode),
               ...(p.model ? { model: p.model } : {}),
+              ...(p.autoApprove === false ? { autoApprove: false } : {}),
               ...(p.context ? { context: p.context } : {}),
               messages: trimAgentMessages(
                 [
@@ -553,6 +555,7 @@ function applyAgentToolEvent(
     ...card,
     name: event.name || card.name,
     ...(event.detail ? { detail: event.detail } : {}),
+    ...(event.auto ? { auto: true } : {}),
     state: event.state
   }
   const message = {
@@ -636,6 +639,7 @@ function applyAgentEvent(
   // A subagent's own activity stays on its card.
   if (isDelegateActivity(event)) return appendAgentMessages(pane, applyDelegateActivity(pane.messages, event))
   if (event.kind === 'delegate') return appendAgentMessages(pane, applyDelegateEvent(pane.messages, event))
+  if (event.kind === 'approval') return appendAgentMessages(pane, applyApprovalEvent(pane.messages, event))
   if (event.kind === 'output') return applyAgentOutputEvent(pane, event)
   if (event.kind === 'assistant') {
     return appendAgentMessages(pane, [
@@ -1727,6 +1731,7 @@ export function ProjectWorkspace({
         provider,
         ...(model ? { model } : {}),
         mode,
+        autoApprove: pane.autoApprove ?? settingsRef.current.autoApprove,
         ...(fallbacks.length ? { fallbacks } : {}),
         pipelines: availablePipelines,
         cwd,
@@ -1860,6 +1865,26 @@ export function ProjectWorkspace({
         current.kind === 'agent' ? { ...current, mode: next, provider, model } : current
       )
       void api.agent.setProvider(pane.taskId, provider, model, next)
+    },
+    [chatPane, ensureChat, patchPane]
+  )
+
+  const setAgentAutoApprove = useCallback(
+    (on: boolean) => {
+      const pane = chatPane ?? ensureChat()?.pane
+      if (!pane) return
+      patchPane(pane.id, (current) =>
+        current.kind === 'agent'
+          ? {
+              ...current,
+              autoApprove: on,
+              messages: current.messages.length
+                ? trimAgentMessages([...current.messages, autoApproveNotice(on)])
+                : current.messages
+            }
+          : current
+      )
+      void api.agent.setAutoApprove(pane.taskId, on)
     },
     [chatPane, ensureChat, patchPane]
   )
@@ -2427,6 +2452,11 @@ export function ProjectWorkspace({
                     onProviderChange={setAgentProvider}
                     onModeChange={setAgentMode}
                     onExecutePlan={executePlan}
+                    autoApprove={chatPane?.autoApprove ?? settings.autoApprove}
+                    onAutoApproveChange={setAgentAutoApprove}
+                    onApprove={(requestId, decision) => {
+                      if (chatPane) void api.agent.respondApproval(chatPane.taskId, requestId, decision)
+                    }}
                     onUndoDelegate={(delegateId, restore) =>
                       chatPane
                         ? api.agent.undoDelegate(chatPane.taskId, delegateId, restore)

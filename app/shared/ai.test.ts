@@ -4,6 +4,7 @@ import {
   aiCommand,
   aiFixCommand,
   aiSelectionLabel,
+  canAskApproval,
   cliFor,
   interactiveAiCommand,
   isAiProvider,
@@ -301,6 +302,26 @@ describe('managedAiCommand', () => {
     expect(managedAiCommand('cursor', 'fix this', undefined, { mcp }).args).toEqual(
       managedAiCommand('cursor', 'fix this').args
     )
+  })
+
+  it('asks through farol-chat only for Claude in Build with the managed server', () => {
+    const mcp = { command: '/app/Farol', args: ['/app/mcp.js'] }
+    const ask = managedAiCommand('claude', 'fix this', undefined, { mcp, askApproval: true }).args
+    expect(ask[ask.indexOf('--permission-mode') + 1]).toBe('default')
+    expect(ask[ask.indexOf('--permission-prompt-tool') + 1]).toBe('mcp__farol-chat__approve')
+    expect(ask[ask.indexOf('--allowedTools') + 1]).toBe('mcp__farol-chat__delegate')
+    expect(ask.indexOf('--permission-mode')).toBeGreaterThan(ask.indexOf('--allowedTools'))
+
+    // No server to ask through, or Plan: unchanged.
+    const noServer = managedAiCommand('claude', 'fix this', undefined, { askApproval: true }).args
+    expect(noServer).not.toContain('--permission-prompt-tool')
+    expect(noServer[noServer.indexOf('--permission-mode') + 1]).toBe('bypassPermissions')
+    const plan = managedAiCommand('claude', 'x', undefined, { mcp, askApproval: true, mode: 'plan' }).args
+    expect(plan).not.toContain('--permission-prompt-tool')
+    expect(plan[plan.indexOf('--permission-mode') + 1]).toBe('plan')
+
+    expect(canAskApproval('claude')).toBe(true)
+    expect(canAskApproval('codex')).toBe(false)
   })
 
   it('passes a native --tools allowlist for Claude and OMP when supplied', () => {
