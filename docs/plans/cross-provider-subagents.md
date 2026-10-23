@@ -149,19 +149,39 @@ Done when: in a Claude chat with auto-approve off, a Bash call shows a card, All
 - "auto" marks only writes and shell calls, the kinds that would have asked.
 - A pending request that nobody can answer (Stop, the agent's process going away, the cycle failing) is denied and shown as "No longer waiting".
 
-## Phase 4 — Other providers (spikes, then per-provider work)
+## Phase 4 — Other providers
 
-For each CLI, answer two questions — can Farol inject an MCP server per run, and is there a headless approval callback — then decide integrate vs. keep auto-approve.
+### Findings (verified 2026-10-23 against the installed CLIs)
 
-| CLI | Per-run MCP | Approval callback | First guess |
+| CLI (version tested) | Per-run MCP | Headless approval route | Verified how |
 |---|---|---|---|
-| Claude | `--mcp-config` | `--permission-prompt-tool` | Phases 1–3 |
-| Codex | `-c mcp_servers.*` | not in `exec`; `app-server` JSON-RPC has approval requests | Phase 1 now; approvals need an `app-server` migration |
-| Cursor | ? (`~/.cursor/mcp.json` only?) | ? | spike |
-| OpenCode | config file / server mode | `opencode serve` permission events | spike |
-| OMP / Pi | ? | ? | spike |
+| Claude 2.1.309 | `--mcp-config` | `--permission-prompt-tool` | Phase 3, real CLI |
+| Codex 0.164.0 | `-c mcp_servers.*` | **`PreToolUse` hook passed with `-c hooks.PreToolUse=[…]`** in `codex exec`; or `app-server` approval requests | Real `codex exec` against a stand-in model server |
+| OpenCode 1.19.4 | ACP `session/new.mcpServers` | ACP `session/request_permission`; permission rules set per run via `OPENCODE_CONFIG_CONTENT` | ACP handshake and per-session MCP; the model call was blocked by this container's proxy |
+| OMP 18.12.6 | ACP `session/new.mcpServers`; `--config` overlay | ACP `session/request_permission`; `--approval-mode` | ACP handshake and per-session MCP (no model configured) |
+| Pi 0.73.1 | none (no MCP by design) | Extension (`-e file`) `tool_call` handler returns `{ block, reason }`; `pi.registerTool` can add `delegate` | Docs shipped in the package |
+| Cursor | ? | ? | Not installable here (installer host blocked) |
 
-Every "?" must be verified against the installed CLI before committing to work.
+**Codex details**
+- In 0.164 the shell tool is `exec_command`; `approval_policy = "untrusted"` was removed (`on-request`, `never`, `granular` remain).
+- `codex exec` waits on stdin unless it is closed; Farol already spawns it with stdin ignored.
+- A `PreToolUse` hook gets Claude-style input: `{ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command }, tool_use_id, cwd, … }`.
+- Deny: print `{ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason } }`. The command does not run, and the model sees "Command blocked by PreToolUse hook: <reason>". Allow: print nothing. `permissionDecision: "allow"` and `"ask"` are rejected as unsupported.
+- **Hooks passed with `-c` are silently ignored without `--dangerously-bypass-hook-trust`.** A gate built on them must check that it actually ran (see below).
+- In tests, the flag did not make an untrusted project's `.codex/config.toml` hooks run (the project config is not loaded at all). The case of a project the user trusts was inconclusive, so it stays an open risk.
+- A `PermissionRequest` hook event also exists (it fires only when Codex itself would ask). The `app-server` protocol has `item/commandExecution/requestApproval` and `item/fileChange/requestApproval` with `accept` / `acceptForSession` / `decline` / `cancel`. That is a full protocol migration away from `exec --json`.
+
+**Other findings**
+- OpenCode's `run` no longer lists `--dangerously-skip-permissions`, but still accepts it. Farol's managed command keeps working; `--auto` is the documented flag now.
+- `@mariozechner/pi-coding-agent` is deprecated in favour of `@earendil-works/pi-coding-agent`; Farol's Pi install hint names the old package.
+- ACP (Agent Client Protocol) is shared by OpenCode and OMP. It carries both per-session MCP servers and permission requests, so one ACP client in Farol could cover both, and any other CLI that speaks ACP.
+
+### Options
+
+1. **Codex: `PreToolUse` hook gate** (small, about 1–2 days). A `codex-hook.js` entry (like `git-hook.js`) asks over the managed bridge using the existing `approve` op. It is passed with `-c hooks.PreToolUse` and `--dangerously-bypass-hook-trust` only while the chat is set to Ask first. Fail-safe: if a shell or write tool completes in an Ask-first Codex run with no approval request before it, Farol stops the run and reports that asking is not working.
+2. **Pi: Farol extension** (small to medium). `-e` loads a Farol extension that gates `tool_call` through the bridge and registers `delegate`. Also fix the install hint.
+3. **OpenCode and OMP: ACP client** (medium to large). A new run path that speaks ACP instead of `run --format json` / `--mode json`. It gives both CLIs per-session MCP (so `delegate`) and approvals.
+4. **Cursor:** verify when a machine with the CLI is available.
 
 ## Deferred
 
