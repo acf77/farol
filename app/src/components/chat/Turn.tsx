@@ -3,7 +3,7 @@ import type { AgentMessage } from '../../types'
 import { C } from '../../theme'
 import { MarkdownBody } from '../../markdown'
 import { Button } from '../controls'
-import { AssistantFooter, PipelineMsgCard, QuestionCard, ToolCard } from './cards'
+import { AssistantFooter, DelegateCard, PipelineMsgCard, QuestionCard, ToolCard } from './cards'
 
 function fmtClock(epoch: number): string {
   const d = new Date(epoch)
@@ -63,6 +63,7 @@ export function Turn({
 
   if (m.question) return <QuestionCard card={m.question} onAnswer={onAnswer} />
   if (m.tool) return <ToolCard tool={m.tool} tight={!!messages[i - 1]?.tool} />
+  if (m.delegate) return <DelegateCard card={m.delegate} />
 
   const pc = m.pipeline
   // The footer closes an answer: the last plain reply, once nothing newer has been said.

@@ -457,7 +457,7 @@ export default function ChatPane({
                     onExecutePlan={onExecutePlan} />
                 </MessageErrorBoundary>
               ))}
-              {isBusy && status !== 'asking' && !messages[messages.length - 1]?.tool && <WorkingRow />}
+              {isBusy && status !== 'asking' && !messages[messages.length - 1]?.tool && !messages[messages.length - 1]?.delegate && <WorkingRow />}
             </div>
           )}
         </div>

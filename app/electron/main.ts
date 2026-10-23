@@ -45,6 +45,7 @@ import { clearSpendKey, readSpend, saveSpendKey, spendKeyStatus } from './spend'
 import {
   MANAGED_MCP_TOOLS,
   managedMcpEntry,
+  TOKEN_ENV,
   mergeMcpConfig,
   MCP_CONFIG_REL_PATHS,
   type McpServerEntry
@@ -61,6 +62,7 @@ import { closedProjects } from '../shared/session'
 import { owningWorktree } from '../shared/worktree'
 import { scopedRuntimeId } from '../shared/runtime'
 import net from 'net'
+import { randomBytes } from 'crypto'
 import os from 'os'
 
 let win: BrowserWindow | null = null
@@ -91,7 +93,7 @@ const agents = new AgentController(
   todos,
   prompts,
   loadPipelines,
-  MANAGED_MCP_TOOLS.length ? (taskId) => managedMcpEntry(mcpScript(), taskId) : undefined
+  MANAGED_MCP_TOOLS.length ? (taskId) => managedMcpEntry(managedMcpScript(), taskId) : undefined
 )
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
@@ -441,7 +443,10 @@ async function runHookPipelines(
   return { id: req.id, ok: true, op: 'hook', text: parts.join('\n\n'), failed }
 }
 
-async function handleBridge(req: BridgeRequest, projectPath: string): Promise<BridgeReply> {
+async function handleBridge(
+  req: Exclude<BridgeRequest, { op: 'delegate' }>,
+  projectPath: string
+): Promise<BridgeReply> {
   if (!(await cwdAllowedForProject(projectPath, req.cwd))) {
     return {
       id: req.id,
@@ -483,8 +488,15 @@ async function handleBridge(req: BridgeRequest, projectPath: string): Promise<Br
 
 const bridges = new Map<string, net.Server>()
 
-function startBridge(projectPath: string): void {
-  const file = socketPath(projectPath)
+/**
+ * Serve NDJSON bridge requests on `file`. `signal` aborts when the asking
+ * socket closes, so a caller that goes away (an agent killed mid-call) does
+ * not leave its work running.
+ */
+function listenBridge(
+  file: string,
+  handle: (req: BridgeRequest, signal: AbortSignal) => Promise<BridgeReply>
+): net.Server {
   bridges.get(file)?.close()
   bridges.delete(file)
   try {
@@ -495,6 +507,8 @@ function startBridge(projectPath: string): void {
   const server = net.createServer((socket) => {
     let buffer = ''
     const BRIDGE_BUFFER_LIMIT = 256 * 1024
+    const gone = new AbortController()
+    socket.on('close', () => gone.abort())
     socket.on('data', (chunk) => {
       buffer += chunk.toString()
       if (buffer.length > BRIDGE_BUFFER_LIMIT) {
@@ -510,7 +524,7 @@ function startBridge(projectPath: string): void {
         } catch {
           continue
         }
-        void handleBridge(req, projectPath)
+        void handle(req, gone.signal)
           .then((reply) => socket.write(JSON.stringify(reply) + '\n'))
           .catch((err) =>
             socket.write(
@@ -532,6 +546,37 @@ function startBridge(projectPath: string): void {
   })
   server.listen(file)
   bridges.set(file, server)
+  return server
+}
+
+function startBridge(projectPath: string): void {
+  listenBridge(socketPath(projectPath), async (req) =>
+    req.op === 'delegate'
+      ? { id: req.id, ok: false, message: 'delegate is only available in managed Chat.' }
+      : handleBridge(req, projectPath)
+  )
+}
+
+/**
+ * Managed Chat's own socket, one for the whole app: its requests name a task,
+ * not a project, and the controller already knows each task's checkout.
+ */
+const managedSocket = path.join(os.tmpdir(), `farol-chat-${process.pid}.sock`)
+const managedToken = randomBytes(24).toString('hex')
+
+function startManagedBridge(): void {
+  listenBridge(managedSocket, async (req, signal) => {
+    if (req.op !== 'delegate') return { id: req.id, ok: false, message: 'Only delegate is served here.' }
+    if (req.token !== managedToken) return { id: req.id, ok: false, message: 'Not authorized.' }
+    const result = await agents.delegate(
+      req.taskId,
+      { provider: req.provider, model: req.model, task: req.task, context: req.context },
+      signal
+    )
+    return result.ok
+      ? { id: req.id, ok: true, op: 'delegate', text: result.text, failed: result.failed }
+      : { id: req.id, ok: false, message: result.message }
+  })
 }
 
 function socketPath(projectPath: string): string {
@@ -545,6 +590,11 @@ function mcpScript(): McpServerEntry {
     args: [path.join(app.getAppPath(), 'out', 'main', 'mcp.js')],
     env: { ELECTRON_RUN_AS_NODE: '1' }
   }
+}
+
+function managedMcpScript(): McpServerEntry {
+  const script = mcpScript()
+  return { ...script, env: { ...script.env, [BRIDGE_ENV]: managedSocket, [TOKEN_ENV]: managedToken } }
 }
 
 function mcpEntry(projectPath: string): McpServerEntry {
@@ -960,6 +1010,7 @@ app.whenReady().then(() => {
   configureAgentFailureLogs(userData)
   applyBrandIcon()
   registerIpc()
+  startManagedBridge()
   // Mirrors the OpenRouter CLI choice before anything spawns an agent.
   void loadSettings()
   buildMenu()

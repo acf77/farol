@@ -62,11 +62,27 @@ export interface AgentToolCard {
   state: 'running' | 'done' | 'error'
 }
 
+/** A subagent run from the agent's `delegate` call, with what it is doing folded in. */
+export interface AgentDelegateCard {
+  delegateId: string
+  provider: AiProvider
+  model?: string
+  task: string
+  state: 'running' | 'done' | 'error'
+  diffStat?: string
+  message?: string
+  /** The subagent's own tool calls, latest last. */
+  tools: AgentToolCard[]
+  /** What the subagent last said. */
+  said: string
+}
+
 export interface AgentMessage {
   role: 'user' | 'assistant' | 'system'
   text: string
   pipeline?: AgentPipelineCard
   tool?: AgentToolCard
+  delegate?: AgentDelegateCard
   question?: AgentQuestionCard
   /**
    * Epoch ms, shown under user bubbles. Render-only — the session sanitizer

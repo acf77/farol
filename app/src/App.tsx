@@ -46,6 +46,7 @@ import { parallelAsClashIds, remoteFields, sanitizeAs, topoSort } from '@shared/
 import { clearIndent, emptyTerm, ensureNewline, setIndent, trimTo, write, writeLine } from './ansi'
 import { agentPaneFor, chatOwnerFor, chatTabFor, trimAgentMessages } from './chat-context'
 import { fmtDuration, pipelineActivityText, projectRunChat, upsertMessage } from './pipeline-chat'
+import { applyDelegateActivity, applyDelegateEvent, isDelegateActivity } from './delegate-chat'
 import { bindLatestRunId, bindRunStart, runOutcomeLabel, syncAgentPipelineRun } from './run-slot'
 import { CHROME_ROW } from './components/side-panel'
 import { leaf, leaves, removeLeaf, setSize, splitLeaf } from './layout'
@@ -632,6 +633,9 @@ function applyAgentEvent(
   project: Project | null,
   git: GitInfo
 ): AgentPane {
+  // A subagent's own activity stays on its card.
+  if (isDelegateActivity(event)) return appendAgentMessages(pane, applyDelegateActivity(pane.messages, event))
+  if (event.kind === 'delegate') return appendAgentMessages(pane, applyDelegateEvent(pane.messages, event))
   if (event.kind === 'output') return applyAgentOutputEvent(pane, event)
   if (event.kind === 'assistant') {
     return appendAgentMessages(pane, [

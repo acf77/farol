@@ -5,6 +5,7 @@ import type { AgentMessage } from '../../types'
 import { C, MONO, ELLIPSIS } from '../../theme'
 import { stripControlMarkers } from '../../markdown'
 import { Button } from '../controls'
+import { TraceCollapsible, TraceLine } from './trace'
 import {
   CheckIcon,
   Spinner,
@@ -142,6 +143,74 @@ export function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool
         </span>
       )}
     </div>
+  )
+}
+
+/**
+ * A subagent the agent handed work to. Its own tool calls fold away under one
+ * line, so a long run does not bury the conversation it belongs to.
+ */
+export function DelegateCard({ card }: { card: NonNullable<AgentMessage['delegate']> }) {
+  const label = aiSelectionLabel(card.provider, card.model)
+  const last = card.tools[card.tools.length - 1]
+  const status =
+    card.state === 'running'
+      ? last
+        ? `${last.name}${last.detail ? ` — ${last.detail}` : ''}`
+        : 'Starting'
+      : card.state === 'done'
+        ? card.diffStat
+          ? 'Finished'
+          : 'Finished, no files changed'
+        : (card.message ?? 'Failed')
+  return (
+    <ChatCard
+      title={`${label} subagent`}
+      extra={
+        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}>
+          {card.state === 'running' ? (
+            <Spinner size={10} />
+          ) : (
+            <span
+              aria-label={card.state === 'done' ? 'Finished' : 'Failed'}
+              style={{ width: 6, height: 6, borderRadius: '50%', background: card.state === 'done' ? C.green : C.red }}
+            />
+          )}
+        </span>
+      }
+    >
+      <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+        <div style={{ fontSize: 13, lineHeight: 1.5, color: C.textRow, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text' }}>
+          {card.task}
+        </div>
+        <TraceCollapsible
+          line={
+            <TraceLine
+              icon={<ToolIcon />}
+              title={`${card.tools.length} tool call${card.tools.length === 1 ? '' : 's'}`}
+              description={status}
+              status={card.state === 'running' ? 'running' : card.state === 'error' ? 'error' : undefined}
+            />
+          }
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {card.tools.map((tool) => (
+              <ToolCard key={tool.toolId} tool={tool} tight={false} />
+            ))}
+            {card.said.trim() && (
+              <div style={{ marginTop: 6, fontSize: 12.5, lineHeight: 1.5, color: C.textMuted, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text' }}>
+                {stripControlMarkers(card.said).trim()}
+              </div>
+            )}
+          </div>
+        </TraceCollapsible>
+        {card.diffStat && (
+          <pre style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: C.faint, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text' }}>
+            {card.diffStat}
+          </pre>
+        )}
+      </div>
+    </ChatCard>
   )
 }
 

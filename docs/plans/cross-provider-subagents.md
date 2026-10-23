@@ -105,6 +105,16 @@ Code: a new `app/electron/delegate-snapshot.ts` (capture, diff, undo, cleanup) w
 
 Done when: from a Claude chat, "have Codex implement X" runs Codex in the same checkout, its tool cards appear nested, Claude sees the result and diff, then Farol runs the pipelines Claude selects.
 
+**Status: delegate and cards landed; Undo next.** Notes from the implementation:
+
+- One app-wide managed socket (`farol-chat-<pid>.sock`) with a per-launch secret (`FAROL_CHAT_TOKEN`); requests name a task id, which the controller already maps to its checkout. Project sockets refuse `delegate`.
+- If the asking agent's socket closes (its process died or was stopped), the subagent is killed and reported as stopped.
+- Subagents **cannot ask the user questions**: a question would end the turn, and the calling agent is still waiting. The subagent prompt tells it to make a reasonable choice or report what it needs; question events from it are ignored.
+- No handoff marker from subagents; their final reply is the summary returned to the agent.
+- Subagent file writes count as the turn's writes, so mandatory pipelines still trigger.
+- Client timeouts are set to a day (`MCP_TOOL_TIMEOUT`, Codex `tool_timeout_sec`); Farol itself sets no cap.
+- The diff stat already comes from before/after snapshot trees (`app/electron/delegate-snapshot.ts`); Undo builds on the same snapshots.
+
 ## Phase 3 — Approvals surfaced in Chat (Claude) · ~3–5 days
 
 - **`approve` tool** (`mcp.ts`, managed only) implementing Claude's `--permission-prompt-tool` contract: input `{ tool_name, input, tool_use_id }`, output JSON `{ behavior: 'allow', updatedInput }` or `{ behavior: 'deny', message }`.

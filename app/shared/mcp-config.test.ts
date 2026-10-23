@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   claudeMcpConfig,
+  isDelegateToolName,
   managedMcpEntry,
   mergeMcpConfig,
   MCP_CONFIG_REL_PATHS,
@@ -162,6 +163,12 @@ describe('managed MCP server', () => {
 
   it('uses its own key so the project farol entry cannot shadow it', () => {
     expect(Object.keys(JSON.parse(claudeMcpConfig(script)).mcpServers)).toEqual(['farol-chat'])
+  })
+
+  it('recognises the delegate call as Claude and Codex name it', () => {
+    expect(isDelegateToolName('mcp__farol-chat__delegate')).toBe(true)
+    expect(isDelegateToolName('farol-chat.delegate')).toBe(true)
+    expect(isDelegateToolName('mcp__farol__run_pipeline')).toBe(false)
   })
 
   it('offers pipeline tools only outside managed Chat', () => {

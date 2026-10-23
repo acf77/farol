@@ -380,10 +380,14 @@ export type AgentTaskEvent =
       durationMs?: number
       runId?: string
     }
-  /** Plain-text stdout, appended to the assistant turn in progress. */
-  | { kind: 'output'; taskId: string; chunk: string }
+  /**
+   * Plain-text stdout, appended to the assistant turn in progress.
+   * `output`, `assistant` and `tool` carry `delegateId` when a subagent said
+   * or did it; they belong under that `delegate` card, not the main transcript.
+   */
+  | { kind: 'output'; taskId: string; chunk: string; delegateId?: string }
   /** One complete assistant turn from a streaming provider. */
-  | { kind: 'assistant'; taskId: string; text: string }
+  | { kind: 'assistant'; taskId: string; text: string; delegateId?: string }
   /** A tool the agent invoked; `toolId` repeats when the call finishes. */
   | {
       kind: 'tool'
@@ -392,6 +396,24 @@ export type AgentTaskEvent =
       name: string
       detail?: string
       state: 'running' | 'done' | 'error'
+      delegateId?: string
+    }
+  /**
+   * A subagent run the agent asked for with `delegate`; repeats when it ends.
+   * `parentToolId` is the agent's own `delegate` tool call, when its stream named one.
+   */
+  | {
+      kind: 'delegate'
+      taskId: string
+      delegateId: string
+      parentToolId?: string
+      provider: AiProvider
+      model?: string
+      task: string
+      state: 'running' | 'done' | 'error'
+      /** `git diff --stat` of what the subagent changed; empty when nothing. */
+      diffStat?: string
+      message?: string
     }
   | { kind: 'user'; taskId: string; text: string }
   /** The task moved down its fallback chain after a provider-side failure. */

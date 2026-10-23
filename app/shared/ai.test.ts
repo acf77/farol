@@ -289,6 +289,8 @@ describe('managedAiCommand', () => {
       'mcp_servers.farol-chat.args=["/app/mcp.js"]',
       '-c',
       'mcp_servers.farol-chat.env={ "FAROL_MANAGED" = "1", "FAROL_TASK_ID" = "t1" }',
+      '-c',
+      'mcp_servers.farol-chat.tool_timeout_sec=86400',
       'fix this'
     ])
     const resumed = managedAiCommand('codex', 'next', undefined, { mcp, resume: 't9' }).args

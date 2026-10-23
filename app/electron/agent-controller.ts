@@ -19,7 +19,8 @@ import {
   normalizeMode,
   normalizeModel
 } from '../shared/ai'
-import type { McpServerEntry } from '../shared/mcp-config'
+import { isDelegateToolName, MANAGED_TOOL_TIMEOUT_SEC, type McpServerEntry } from '../shared/mcp-config'
+import { captureTree, treeDiffStat } from './delegate-snapshot'
 import { AgentStreamParser } from '../shared/agent-stream'
 import { claudeCatalogWindow } from '../shared/agent-models'
 import {
@@ -36,7 +37,13 @@ import {
   type AgentContext,
   type ContextUsage
 } from '../shared/agent-context'
-import { appendControlLines, flushControlLines, lastControlLine, type ControlLineState } from '../shared/control-line'
+import {
+  appendControlLines,
+  flushControlLines,
+  lastControlLine,
+  stripControlMarkerLines,
+  type ControlLineState
+} from '../shared/control-line'
 import {
   BLOCK_MARKER,
   FINISHED_PLAN,
@@ -141,6 +148,14 @@ interface AgentSink {
 interface Task {
   request: AgentTaskRequest
   process: ChildProcess | null
+  /** The subagent a `delegate` call is running; at most one, while the agent waits on it. */
+  child: ChildProcess | null
+  delegating: boolean
+  delegateSeq: number
+  /** The agent's latest `delegate` tool call, so its subagent's card can sit under it. */
+  delegateToolId?: string
+  /** The attempt in flight, so a subagent's file writes count as this turn's. */
+  activeScan?: CycleScan
   running: boolean
   cancelled: boolean
   /** Drop from the map once the in-flight cycle settles (cleared chats). */
@@ -439,6 +454,9 @@ export class AgentController {
         pipelines: request.pipelines.filter((pipeline) => pipeline.nodes.length)
       },
       process: null,
+      child: null,
+      delegating: false,
+      delegateSeq: 0,
       running: true,
       cancelled: false,
       disposeWhenIdle: false,
@@ -570,7 +588,133 @@ export class AgentController {
     task.pendingQuestions = undefined
     task.abort.abort()
     if (task.process?.pid) killPidTree(task.process.pid)
+    if (task.child?.pid) killPidTree(task.child.pid)
     this.status(task, 'cancelled', 0, 'Cancelled by user')
+  }
+
+  /**
+   * Run a subagent for the agent's `delegate` call and resolve with what it
+   * did. The agent is blocked on the call meanwhile, so the subagent has the
+   * checkout to itself. `signal` aborts when the asking agent goes away.
+   */
+  async delegate(
+    taskId: string,
+    ask: { provider: string; model?: string; task: string; context?: string },
+    signal?: AbortSignal
+  ): Promise<{ ok: true; text: string; failed: boolean } | { ok: false; message: string }> {
+    const task = this.tasks.get(taskId)
+    if (!task?.running || task.cancelled) return { ok: false, message: 'No Chat turn is running for this task.' }
+    if (!isAiProvider(ask.provider)) return { ok: false, message: `Unknown provider: ${ask.provider}` }
+    const work = ask.task.trim()
+    if (!work) return { ok: false, message: 'Describe the task for the subagent.' }
+    if (task.delegating) return { ok: false, message: 'A subagent is already running. Wait for it to finish.' }
+
+    const provider = ask.provider
+    const model = normalizeModel(ask.model)
+    task.delegating = true
+    task.delegateSeq += 1
+    const delegateId = `${taskId}:d${task.delegateSeq}`
+    const card = {
+      kind: 'delegate' as const,
+      taskId,
+      delegateId,
+      ...(task.delegateToolId ? { parentToolId: task.delegateToolId } : {}),
+      provider,
+      ...(model ? { model } : {}),
+      task: work
+    }
+    this.emit({ ...card, state: 'running' })
+    const cwd = task.request.cwd
+    const before = await captureTree(cwd).catch(() => undefined)
+
+    let said = ''
+    let lastTurn = ''
+    let diagnostics = ''
+    const scan = task.activeScan
+    const sink: AgentSink = {
+      text: (chunk) => {
+        said = (said + chunk).slice(-SCAN_WINDOW)
+        this.emit({ kind: 'output', taskId, chunk, delegateId })
+      },
+      turn: (text) => {
+        lastTurn = text
+        said = `${said}\n${text}`.slice(-SCAN_WINDOW)
+        this.emit({ kind: 'assistant', taskId, text, delegateId })
+      },
+      tool: (event) => {
+        this.emit({ kind: 'tool', taskId, ...event, toolId: `${delegateId}:${event.toolId}`, delegateId })
+        if (event.state === 'done' && isWriteToolName(event.name)) {
+          task.mandatoryOutstanding = true
+          if (scan) {
+            scan.filesChanged = true
+            const target = event.detail?.trim()
+            if (target && !scan.changedTargets.includes(target)) scan.changedTargets.push(target)
+          }
+        }
+      },
+      // A subagent cannot stop to ask; its prompt says to report open questions instead.
+      question: () => undefined,
+      noise: (chunk) => {
+        diagnostics = (diagnostics + chunk).slice(-SCAN_WINDOW)
+      }
+    }
+    const onAbort = (): void => {
+      if (task.child?.pid) killPidTree(task.child.pid)
+    }
+    signal?.addEventListener('abort', onAbort)
+
+    let code = 1
+    try {
+      const prompt = this.delegatePrompt(task, work, ask.context)
+      code = this.executor
+        ? await this.executor({ ...task.request, provider, model }, prompt, sink.text, sink.tool)
+        : await this.runAgent(task, prompt, sink, false, { child: { provider, model } })
+    } catch (error) {
+      diagnostics = `${diagnostics}\n${errorMessage(error)}`
+    } finally {
+      signal?.removeEventListener('abort', onAbort)
+      task.child = null
+      task.delegating = false
+    }
+
+    const after = before ? await captureTree(cwd).catch(() => undefined) : undefined
+    const diffStat = before && after ? await treeDiffStat(cwd, before, after).catch(() => '') : ''
+    const stopped = task.cancelled || signal?.aborted === true
+    const failed = stopped || code !== 0
+    const summary = stripControlMarkerLines(lastTurn || plainText(said)).trim()
+    const label = aiSelectionLabel(provider, model)
+    const message = stopped
+      ? 'Stopped before it finished.'
+      : failed
+        ? `${label} exited with code ${code}.${diagnostics.trim() ? `\n${diagnostics.trim().slice(-2000)}` : ''}`
+        : undefined
+    this.emit({ ...card, state: failed ? 'error' : 'done', diffStat, ...(message ? { message } : {}) })
+    const text = [
+      message ?? `${label} finished.`,
+      summary ? `Summary:\n${summary}` : 'It gave no summary.',
+      diffStat ? `Files it changed:\n${diffStat}` : 'It changed no files.'
+    ].join('\n\n')
+    return { ok: true, text, failed }
+  }
+
+  private delegatePrompt(task: Task, work: string, context?: string): string {
+    const plan = task.request.mode === 'plan'
+    const handoff = task.context.handoff?.trim()
+    return [
+      `You are a subagent. Another coding agent, working in Farol, handed you the task below and is waiting for your result.`,
+      `Work only in ${task.request.cwd}. Nobody else edits these files while you run.`,
+      plan
+        ? `This is read-only: inspect and report, but do not change project files or modify external systems.`
+        : `You may change files as the task needs. Do not run git commands that commit, push, or rewrite history.`,
+      `You cannot ask the user anything. If something is unclear, make the most reasonable choice and say so, or stop and report what you need.`,
+      `Do not run Farol pipelines and do not print Farol control lines (lines starting with FAROL_). The agent that called you decides on validation.`,
+      `Finish with a short summary: what you did, what you found, and anything left open.`,
+      handoff ? `\nWhere the chat stands (the calling agent's handoff note):\n${handoff}` : '',
+      context?.trim() ? `\nContext from the calling agent:\n${context.trim()}` : '',
+      `\nTask:\n${work}`
+    ]
+      .filter(Boolean)
+      .join('\n')
   }
 
   /**
@@ -826,6 +970,7 @@ export class AgentController {
         check()
       },
       tool: (event) => {
+        if (event.state === 'running' && isDelegateToolName(event.name)) task.delegateToolId = event.toolId
         this.emit({ kind: 'tool', taskId: task.request.id, ...event })
         scan.toolNames.push(event.name)
         // Codex sometimes only fills command on item.completed; accept either.
@@ -1413,6 +1558,7 @@ export class AgentController {
     const clause = toolPolicyPrompt(policy)
     const effective = clause ? `${prompt}\n\n${clause}` : prompt
     const sink = this.cycleSink(task, scan)
+    task.activeScan = scan
     const epoch = task.askEpoch
     const { provider, model } = task.request
     const session: AgentSessionIo = {
@@ -1439,6 +1585,7 @@ export class AgentController {
     }
     task.running = false
     if (task.process?.pid) killPidTree(task.process.pid)
+    if (task.child?.pid) killPidTree(task.child.pid)
     this.status(
       task,
       'failed',
@@ -1558,20 +1705,36 @@ export class AgentController {
     prompt: string,
     sink: AgentSink,
     plain = false,
-    opts?: { tools?: string[]; webSearch?: boolean; session?: AgentSessionIo }
+    opts?: {
+      tools?: string[]
+      webSearch?: boolean
+      session?: AgentSessionIo
+      /** Run a subagent with this provider/model instead of the task's own agent. */
+      child?: { provider: AiProvider; model?: string }
+    }
   ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
     const via = openRouterAgent()
-    const spec = managedAiCommand(task.request.provider, prompt, task.request.model, {
+    const provider = opts?.child?.provider ?? task.request.provider
+    const model = opts?.child ? opts.child.model : task.request.model
+    // Subagents get no managed server, so they cannot delegate in turn.
+    const mcp = this.managedMcp && !opts?.child ? this.managedMcp(task.request.id) : undefined
+    const slot = (proc: ChildProcess | null): void => {
+      if (opts?.child) task.child = proc
+      else task.process = proc
+    }
+    const spec = managedAiCommand(provider, prompt, model, {
       jsonFormat: !plain,
       via,
       mode: task.request.mode,
       ...(opts?.tools?.length ? { tools: opts.tools } : {}),
       ...(opts?.webSearch ? { webSearch: true } : {}),
       ...(opts?.session?.resume ? { resume: opts.session.resume } : {}),
-      ...(this.managedMcp ? { mcp: this.managedMcp(task.request.id) } : {})
+      ...(mcp ? { mcp } : {})
     })
-    const env = aiEnv(task.request.provider, via)
+    const env = aiEnv(provider, via)
+    // Claude's limit on one MCP call; a `delegate` waits as long as its subagent runs.
+    if (mcp) env.MCP_TOOL_TIMEOUT = String(MANAGED_TOOL_TIMEOUT_SEC * 1000)
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       sink.text(`farol: ${spec.hint}\n`)
@@ -1613,7 +1776,7 @@ export class AgentController {
       const done = (exit: number): void => {
         if (settled) return
         settled = true
-        task.process = null
+        slot(null)
         let code = exit
         if (parser) {
           consume(parser.flush())
@@ -1637,7 +1800,7 @@ export class AgentController {
         done(127)
         return
       }
-      task.process = child
+      slot(child)
       child.stdout?.on('data', (chunk: Buffer) => {
         // JSON carries its own escaping, and plainText's per-line trimming
         // would eat a space that straddles two chunks. Parse the bytes as-is.
@@ -1667,10 +1830,10 @@ export class AgentController {
         if (
           !settled &&
           !task.cancelled &&
-          shouldRetryPlainOpenCode(plain, exit, task.request.provider, `${diagnostics}\n${stdoutScan}`)
+          shouldRetryPlainOpenCode(plain, exit, provider, `${diagnostics}\n${stdoutScan}`)
         ) {
           settled = true
-          task.process = null
+          slot(null)
           void this.runAgent(task, prompt, sink, true, opts).then(resolve)
           return
         }

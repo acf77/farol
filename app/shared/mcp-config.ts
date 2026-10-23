@@ -55,6 +55,8 @@ export const MANAGED_MCP_SERVER_KEY = 'farol-chat'
 export const MANAGED_ENV = 'FAROL_MANAGED'
 /** The Chat task a managed server belongs to. */
 export const TASK_ENV = 'FAROL_TASK_ID'
+/** The secret the managed bridge expects with every request. */
+export const TOKEN_ENV = 'FAROL_CHAT_TOKEN'
 
 /**
  * The project `farol` server's tools, as managed Claude names them. Chat must
@@ -69,14 +71,26 @@ export const PIPELINE_MCP_TOOLS = [`mcp__${MCP_SERVER_KEY}__list_pipelines`, `mc
  * start the server at all: a server with no tools fails the client's tool
  * listing and shows up as a broken server.
  */
-export const MANAGED_MCP_TOOLS: readonly string[] = []
+export const MANAGED_MCP_TOOLS: readonly string[] = ['delegate']
+
+/** How each provider's stream names the managed `delegate` call (Claude, Codex). */
+export function isDelegateToolName(name: string): boolean {
+  return name === `mcp__${MANAGED_MCP_SERVER_KEY}__delegate` || name === `${MANAGED_MCP_SERVER_KEY}.delegate`
+}
+
+/**
+ * How long the parent CLI may wait on one managed tool call. Subagents have no
+ * time cap of their own, so this is only there because the clients insist on
+ * one: a day, in each client's unit.
+ */
+export const MANAGED_TOOL_TIMEOUT_SEC = 24 * 60 * 60
 
 /** Whether this MCP server process should offer `list_pipelines` / `run_pipeline`. */
 export function servesPipelineTools(env: Record<string, string | undefined>): boolean {
   return env[MANAGED_ENV] !== '1'
 }
 
-/** `base` (the app's `mcp.js` entry) started for one managed Chat task. */
+/** `base` (the app's `mcp.js` entry, pointed at the managed socket) started for one managed Chat task. */
 export function managedMcpEntry(base: McpServerEntry, taskId: string): McpServerEntry {
   return { ...base, env: { ...base.env, [MANAGED_ENV]: '1', [TASK_ENV]: taskId } }
 }
@@ -101,6 +115,8 @@ export function codexMcpOverrides(entry: McpServerEntry): string[] {
     `${key}.command=${JSON.stringify(entry.command)}`,
     '-c',
     `${key}.args=${JSON.stringify(entry.args)}`,
-    ...(env ? ['-c', `${key}.env={ ${env} }`] : [])
+    ...(env ? ['-c', `${key}.env={ ${env} }`] : []),
+    '-c',
+    `${key}.tool_timeout_sec=${MANAGED_TOOL_TIMEOUT_SEC}`
   ]
 }
