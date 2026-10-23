@@ -43,6 +43,29 @@ describe('listAgentSkills', () => {
     ])
   })
 
+  it('lists Claude skills from .agents/skills, with .claude winning a name clash', () => {
+    const cwd = tmp()
+    const home = tmp()
+    writeSkill(home, '.agents/skills', 'grill-me')
+    writeSkill(home, '.agents/skills', 'shared')
+    writeSkill(home, '.claude/skills', 'shared')
+
+    expect(listAgentSkills(cwd, 'claude', home).map((s) => s.name)).toEqual(['grill-me', 'shared'])
+  })
+
+  it('follows symlinked skill folders and ignores broken links', () => {
+    const cwd = tmp()
+    const home = tmp()
+    const store = tmp()
+    writeSkill(store, '.', 'linked')
+    const root = path.join(home, '.claude', 'skills')
+    fs.mkdirSync(root, { recursive: true })
+    fs.symlinkSync(path.join(store, 'linked'), path.join(root, 'linked'))
+    fs.symlinkSync(path.join(store, 'missing'), path.join(root, 'broken'))
+
+    expect(listAgentSkills(cwd, 'claude', home)).toEqual([{ name: 'linked', token: '/linked' }])
+  })
+
   it('uses Codex $ tokens and OpenCode slash:false', () => {
     const cwd = tmp()
     const home = tmp()

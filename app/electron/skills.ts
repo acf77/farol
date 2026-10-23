@@ -22,6 +22,27 @@ function readSkillFile(file: string): string | null {
   }
 }
 
+function isHidden(name: string): boolean {
+  return name.startsWith('.') || SKIP_DIRS.has(name)
+}
+
+function readSkill(dir: string, file: string, provider: AiProvider): AgentSkill | null {
+  const name = path.basename(dir)
+  if (!isSkillName(name)) return null
+  const src = readSkillFile(path.join(dir, file))
+  if (src === null || !isUserInvocable(parseSkillFrontmatter(src))) return null
+  return { name, token: skillToken(provider, name) }
+}
+
+/** `Dirent.isDirectory()` is false for a symlink, so installers that link skill folders need a stat. */
+function isDirectory(dir: string): boolean {
+  try {
+    return fs.statSync(dir).isDirectory()
+  } catch {
+    return false
+  }
+}
+
 function collectFromRoot(
   root: string,
   rank: number,
@@ -37,17 +58,14 @@ function collectFromRoot(
 
   const skillMd = entries.find((entry) => entry.isFile() && entry.name.toLowerCase() === 'skill.md')
   if (skillMd) {
-    const name = path.basename(root)
-    if (!isSkillName(name)) return
-    const src = readSkillFile(path.join(root, skillMd.name))
-    if (src === null || !isUserInvocable(parseSkillFrontmatter(src))) return
-    out.push({ name, token: skillToken(provider, name), rank })
+    const skill = readSkill(root, skillMd.name, provider)
+    if (skill) out.push({ ...skill, rank })
     return
   }
 
   for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue
-    collectFromRoot(path.join(root, entry.name), rank, provider, out)
+    const dir = path.join(root, entry.name)
+    if (!isHidden(entry.name) && isDirectory(dir)) collectFromRoot(dir, rank, provider, out)
   }
 }
 

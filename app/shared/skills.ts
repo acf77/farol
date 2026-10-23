@@ -32,8 +32,10 @@ export function skillRoots(provider: AiProvider, via?: OpenRouterAgent): SkillRo
   switch (cliFor(provider, via)) {
     case 'claude':
       return [
-        { kind: 'user', rel: '.claude/skills', rank: 1 },
-        { kind: 'project', rel: '.claude/skills', rank: 10 }
+        { kind: 'user', rel: '.agents/skills', rank: 1 },
+        { kind: 'user', rel: '.claude/skills', rank: 2 },
+        { kind: 'project', rel: '.agents/skills', rank: 10 },
+        { kind: 'project', rel: '.claude/skills', rank: 11 }
       ]
     case 'cursor':
       return [

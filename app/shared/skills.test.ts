@@ -23,6 +23,15 @@ describe('skillRoots', () => {
     ])
     expect(skillRoots('openrouter')).toEqual(skillRoots('opencode'))
   })
+
+  it('ranks .claude above .agents for Claude, project above user', () => {
+    expect(skillRoots('claude').map((r) => `${r.kind}:${r.rel}`)).toEqual([
+      'user:.agents/skills',
+      'user:.claude/skills',
+      'project:.agents/skills',
+      'project:.claude/skills'
+    ])
+  })
 })
 
 describe('skillToken', () => {
