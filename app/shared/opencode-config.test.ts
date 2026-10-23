@@ -12,6 +12,14 @@ describe('opencode run config', () => {
     expect(opencodeRunConfig('build', false)).toBeUndefined()
   })
 
+  it('lets MCP calls wait as long as a delegate runs when Farol’s server rides along', () => {
+    expect(opencodeRunConfig('build', false, true)).toEqual({ experimental: { mcp_timeout: 86_400_000 } })
+    expect(opencodeRunConfig('plan', true, true)).toEqual({
+      agent: { plan: { permission: { bash: 'deny' } } },
+      experimental: { mcp_timeout: 86_400_000 }
+    })
+  })
+
   it('merges over the developer’s own config content, Farol’s rules winning', () => {
     const existing = JSON.stringify({ model: 'x/y', permission: { bash: 'allow', read: 'allow' } })
     expect(JSON.parse(opencodeConfigContent(existing, { permission: { bash: 'ask' } }))).toEqual({

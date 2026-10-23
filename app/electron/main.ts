@@ -51,6 +51,8 @@ import {
   type McpServerEntry
 } from '../shared/mcp-config'
 import { codexHookCommand } from '../shared/codex-hook'
+import type { ProjectSession } from '../shared/session'
+import { pruneTrees } from './delegate-snapshot'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
 import { isAiProvider } from '../shared/ai'
 import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
@@ -555,6 +557,18 @@ function listenBridge(
   return server
 }
 
+/**
+ * Drop subagent snapshots for chats that are gone: neither saved in the
+ * project's session nor held by the app. Best effort; a project that is not a
+ * git checkout has none.
+ */
+async function pruneDelegateSnapshots(projectPath: string, session: ProjectSession | null): Promise<void> {
+  const saved = (session?.tabs ?? []).flatMap((tab) =>
+    tab.panes.flatMap((pane) => (pane.kind === 'agent' ? [pane.taskId] : []))
+  )
+  await pruneTrees(projectPath, [...saved, ...agents.taskIds()]).catch(() => undefined)
+}
+
 function startBridge(projectPath: string): void {
   listenBridge(socketPath(projectPath), async (req) =>
     req.op === 'delegate' || req.op === 'approve'
@@ -736,9 +750,11 @@ function registerSessionIpc(): void {
       )
     }
   )
-  ipcMain.handle('session:load', (_e, projectPath: string) =>
-    loadProjectSession(projectPath, projectPath)
-  )
+  ipcMain.handle('session:load', async (_e, projectPath: string) => {
+    const session = await loadProjectSession(projectPath, projectPath)
+    void pruneDelegateSnapshots(projectPath, session)
+    return session
+  })
   ipcMain.handle('session:save', (_e, projectPath: string, session: unknown, last: boolean) => {
     if (typeof projectPath !== 'string') return
     return saveProjectSession(

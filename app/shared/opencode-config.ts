@@ -8,6 +8,7 @@
  */
 
 import type { AgentMode } from './ai'
+import { MANAGED_TOOL_TIMEOUT_SEC } from './mcp-config'
 
 /** The env var OpenCode reads an extra JSON config layer from. */
 export const OPENCODE_CONFIG_ENV = 'OPENCODE_CONFIG_CONTENT'
@@ -27,13 +28,19 @@ function merge(base: Json, overlay: Json): Json {
 
 /**
  * What Farol needs from OpenCode for one run: Plan's shell denied so Plan
- * stays read-only, and with `askFirst`, edits, shell and web fetches set to
- * ask so they reach the developer.
+ * stays read-only; with `askFirst`, edits, shell and web fetches set to ask so
+ * they reach the developer; and with `managedServer`, MCP calls allowed to
+ * wait as long as a `delegate` runs (OpenCode otherwise gives up after about a
+ * minute, verified on 1.19.4).
  */
-export function opencodeRunConfig(mode: AgentMode, askFirst: boolean): Json | undefined {
-  if (mode === 'plan') return { agent: { plan: { permission: { bash: 'deny' } } } }
-  if (askFirst) return { permission: { edit: 'ask', bash: 'ask', webfetch: 'ask' } }
-  return undefined
+export function opencodeRunConfig(mode: AgentMode, askFirst: boolean, managedServer = false): Json | undefined {
+  const parts: Json[] = [
+    mode === 'plan' ? { agent: { plan: { permission: { bash: 'deny' } } } } : {},
+    mode !== 'plan' && askFirst ? { permission: { edit: 'ask', bash: 'ask', webfetch: 'ask' } } : {},
+    managedServer ? { experimental: { mcp_timeout: MANAGED_TOOL_TIMEOUT_SEC * 1000 } } : {}
+  ]
+  const config = parts.reduce(merge, {})
+  return Object.keys(config).length ? config : undefined
 }
 
 /**
@@ -51,4 +58,9 @@ export function opencodeConfigContent(existing: string | undefined, overlay: Jso
     }
   }
   return JSON.stringify(merge(base, overlay))
+}
+
+/** Lay a command's OpenCode run config (if any) into the env it is spawned with. */
+export function applyOpencodeConfig(env: Record<string, string | undefined>, config: Json | undefined): void {
+  if (config) env[OPENCODE_CONFIG_ENV] = opencodeConfigContent(env[OPENCODE_CONFIG_ENV], config)
 }

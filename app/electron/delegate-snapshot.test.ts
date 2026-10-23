@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { captureTree, pinTree, releaseTrees, restoreTree, treeDiffStat, undoChange } from './delegate-snapshot'
+import { captureTree, pinTree, pruneTrees, releaseTrees, restoreTree, treeDiffStat, undoChange } from './delegate-snapshot'
 
 let repo: string
 const git = (...args: string[]): string => execFileSync('git', args, { cwd: repo, encoding: 'utf8' })
@@ -125,5 +125,18 @@ describe('pinned snapshots', () => {
     const left = git('for-each-ref', '--format=%(refname)', 'refs/farol/')
     expect(left).not.toContain('task-1-x')
     expect(left).toContain('refs/farol/delegate/other/')
+  })
+
+  it('prunes the snapshots of chats that no longer exist, from any checkout', async () => {
+    const tree = (await captureTree(repo))!
+    await pinTree(repo, 'live', 'live:d1', 'before', tree)
+    await pinTree(repo, 'gone/1', 'gone/1:d1', 'before', tree)
+    await pinTree(repo, 'gone/1', 'gone/1:d1', 'after', tree)
+    fs.mkdirSync(path.join(repo, 'sub'))
+    expect(await pruneTrees(path.join(repo, 'sub'), ['live'])).toBe(2)
+    const left = git('for-each-ref', '--format=%(refname)', 'refs/farol/')
+    expect(left).toContain('refs/farol/delegate/live/')
+    expect(left).not.toContain('gone')
+    expect(await pruneTrees(repo, ['live'])).toBe(0)
   })
 })

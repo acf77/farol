@@ -30,7 +30,7 @@ import {
   type ManagedTool,
   type McpServerEntry
 } from '../shared/mcp-config'
-import { OPENCODE_CONFIG_ENV, opencodeConfigContent, opencodeRunConfig } from '../shared/opencode-config'
+import { applyOpencodeConfig, opencodeRunConfig } from '../shared/opencode-config'
 import { acpApprovalAsk, acpMcpServer } from '../shared/acp'
 import { openCodeModel } from '../shared/openrouter'
 import { runAcp } from './acp-run'
@@ -1196,6 +1196,11 @@ export class AgentController {
     if (!task.running) this.tasks.delete(taskId)
   }
 
+  /** Chats the main process still holds, whatever their state. */
+  taskIds(): string[] {
+    return [...this.tasks.keys()]
+  }
+
   cancelAll(): void {
     for (const id of this.tasks.keys()) this.cancel(id)
   }
@@ -2079,11 +2084,9 @@ export class AgentController {
     const plan = task.request.mode === 'plan'
     const askFirst = !this.autoApproves(task, provider)
     const env = aiEnv(provider, via)
-    const config = opencodeRunConfig(plan ? 'plan' : 'build', askFirst)
-    if (config) env[OPENCODE_CONFIG_ENV] = opencodeConfigContent(env[OPENCODE_CONFIG_ENV], config)
     // Subagents get no managed server, so they cannot delegate in turn; ACP asks for approval itself.
     const mcp = this.managed && !child ? this.managed.mcp(task.request.id, undefined, ['delegate']) : undefined
-    if (mcp) env.MCP_TOOL_TIMEOUT = String(MANAGED_TOOL_TIMEOUT_SEC * 1000)
+    applyOpencodeConfig(env, opencodeRunConfig(plan ? 'plan' : 'build', askFirst, !!mcp))
     const result = await runAcp({
       bin,
       args: ['acp'],
@@ -2157,7 +2160,7 @@ export class AgentController {
       ...(codexHook ? { codexHook } : {})
     })
     const env = aiEnv(provider, via)
-    if (spec.opencodeConfig) env[OPENCODE_CONFIG_ENV] = opencodeConfigContent(env[OPENCODE_CONFIG_ENV], spec.opencodeConfig)
+    applyOpencodeConfig(env, spec.opencodeConfig)
     // Claude's limit on one MCP call; a `delegate` waits as long as its subagent runs.
     if (mcp) env.MCP_TOOL_TIMEOUT = String(MANAGED_TOOL_TIMEOUT_SEC * 1000)
     const bin = resolveBinFrom(spec.bins)

@@ -319,8 +319,11 @@ export function aiCommand(
     case 'opencode':
       return {
         bins: ['opencode'],
-        args: withModel(['run', '--auto', prompt], passed),
-        hint: 'Install the OpenCode CLI (https://opencode.ai) to run OpenCode steps.'
+        // Read-only like every other CLI here: the plan agent has no write
+        // tools, and its shell is denied for the run (`--auto` would approve an `ask`).
+        args: withModel(['run', '--auto', '--agent', 'plan', prompt], passed),
+        hint: 'Install the OpenCode CLI (https://opencode.ai) to run OpenCode steps.',
+        opencodeConfig: opencodeRunConfig('plan', false)
       }
     case 'omp':
       return {

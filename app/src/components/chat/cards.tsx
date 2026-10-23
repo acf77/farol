@@ -6,6 +6,7 @@ import { C, MONO, ELLIPSIS } from '../../theme'
 import { stripControlMarkers } from '../../markdown'
 import { Button } from '../controls'
 import { ProviderMark } from './ProviderMark'
+import { TraceCollapsible, TraceLine } from './trace'
 import {
   CheckIcon,
   Spinner,
@@ -111,12 +112,31 @@ export function ChatBanner({
  * happening and what it is touching, not to reproduce a terminal.
  */
 export function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool']>; tight: boolean }) {
+  const icon =
+    tool.state === 'running' ? (
+      <Spinner size={10} />
+    ) : (
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: tool.state === 'done' ? C.green : C.red }} />
+    )
+  const status = tool.state === 'running' ? 'running' : tool.state === 'error' ? 'error' : undefined
+  const line = (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 9, flex: 1, minWidth: 0, color: C.textRow }}>
+      <TraceLine icon={icon} title={tool.name} description={tool.detail} status={status} />
+      {tool.auto && (
+        <span
+          title="Ran without asking, because auto-approve is on"
+          style={{ flex: 'none', marginLeft: 'auto', fontSize: 10.5, color: C.faint, letterSpacing: 0.2 }}
+        >
+          auto
+        </span>
+      )}
+    </span>
+  )
   return (
     <div
       style={{
         display: 'flex',
-        alignItems: 'center',
-        gap: 9,
+        flexDirection: 'column',
         padding: '6px 12px',
         marginTop: tight ? -16 : 0,
         borderRadius: 8,
@@ -125,30 +145,16 @@ export function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool
         minWidth: 0
       }}
     >
-      {tool.state === 'running' ? (
-        <Spinner size={10} />
+      {tool.detail ? (
+        <TraceCollapsible line={line}>
+          <pre
+            style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: C.faint, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text' }}
+          >
+            {tool.detail}
+          </pre>
+        </TraceCollapsible>
       ) : (
-        <span
-          aria-hidden
-          style={{ width: 6, height: 6, flex: 'none', borderRadius: '50%', background: tool.state === 'done' ? C.green : C.red }}
-        />
-      )}
-      <span style={{ flex: 'none', fontFamily: MONO, fontSize: 11.5, color: C.textRow }}>{tool.name}</span>
-      {tool.detail && (
-        <span
-          title={tool.detail}
-          style={{ flex: 1, minWidth: 0, fontFamily: MONO, fontSize: 11, color: C.faint, ...ELLIPSIS, userSelect: 'text' }}
-        >
-          {tool.detail}
-        </span>
-      )}
-      {tool.auto && (
-        <span
-          title="Ran without asking, because auto-approve is on"
-          style={{ flex: 'none', marginLeft: 'auto', fontSize: 10.5, color: C.faint, letterSpacing: 0.2 }}
-        >
-          auto
-        </span>
+        line
       )}
     </div>
   )

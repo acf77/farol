@@ -113,3 +113,23 @@ export async function restoreTree(cwd: string, before: string): Promise<void> {
   const now = await captureTree(cwd)
   if (now) await applyChange(cwd, now, before, false)
 }
+
+/**
+ * Drop the snapshots of every chat not in `keep` (task ids). Run when a
+ * project's saved session loads, it catches what clearing a chat cannot: a
+ * chat cleared after a restart, when the app no longer knew its runs, or one
+ * whose worktree was removed. Refs live in the repository's shared git dir, so
+ * any checkout of it sees them all.
+ */
+export async function pruneTrees(cwd: string, keep: Iterable<string>): Promise<number> {
+  const kept = new Set([...keep].map(refPart))
+  const refs = (await git(cwd, ['for-each-ref', '--format=%(refname)', `${REF_ROOT}/`])).split('\n').filter(Boolean)
+  let dropped = 0
+  for (const ref of refs) {
+    const task = ref.slice(REF_ROOT.length + 1).split('/')[0]
+    if (kept.has(task)) continue
+    await git(cwd, ['update-ref', '-d', ref])
+    dropped += 1
+  }
+  return dropped
+}

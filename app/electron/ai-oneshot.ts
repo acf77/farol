@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 import { aiCommand, type AiProvider } from '../shared/ai'
 import { errorMessage } from '../shared/jev'
+import { applyOpencodeConfig } from '../shared/opencode-config'
 import { aiEnv, resolveBinFrom } from './bin'
 import { openRouterAgent } from './openrouter-agent'
 
@@ -20,6 +21,8 @@ export function runAiOnce(
     return Promise.resolve({ ok: false, text: '', error: `${listed} is not on PATH. ${spec.hint}` })
   }
 
+  const env = aiEnv(provider, via)
+  applyOpencodeConfig(env, spec.opencodeConfig)
   return new Promise((resolve) => {
     let stdout = ''
     let stderr = ''
@@ -27,7 +30,7 @@ export function runAiOnce(
     try {
       proc = spawn(bin, spec.args, {
         cwd,
-        env: aiEnv(provider, via),
+        env,
         stdio: ['ignore', 'pipe', 'pipe']
       })
     } catch (error) {

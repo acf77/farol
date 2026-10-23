@@ -201,7 +201,14 @@ Chosen: 1 and 3 (OpenCode first; it is used more than Pi).
 - After a reject, OpenCode ends the turn rather than letting the model try something else.
 - The managed server now offers only what a run needs (`FAROL_TOOLS`): `delegate` for the chat's own agent, and `approve` only where Claude asks through it.
 - End to end with the real `opencode acp` 1.19.4, a stand-in model and Farol's `runAcp`: Ask first denied → not written; allowed → written; Plan → shell not even offered; auto → written without asking; the model saw `farol-chat_delegate` and no other Farol tool.
-- Still open: OpenCode MCP tool-call timeouts for long `delegate` runs (no per-run setting found); OMP over ACP (needs its Plan mode and tool allowlist checked against a model before it can replace `--mode json`). Separately, OpenCode pipeline AI steps (`aiCommand`) can still write; that is queued as its own task.
+- OpenCode gives up on an MCP call after about a minute by default ("MCP error -32001: Request timed out", verified with a 70-second tool). Runs that carry Farol's server now set `experimental.mcp_timeout` to a day, and the same 70-second call completed.
+- Still open: OMP over ACP (needs its Plan mode and tool allowlist checked against a model before it can replace `--mode json`).
+
+### Gaps closed after Phase 4
+
+- **Snapshot refs after a restart or a removed worktree.** When a project's saved session loads, Farol deletes `refs/farol/delegate/*` for every chat that is neither saved in that session nor held by the app (`pruneTrees`).
+- **OpenCode pipeline AI steps could write.** `aiCommand` ran `opencode run --auto` with the default `build` agent. It now runs `--agent plan` with shell denied for the run, the same as Chat's Plan. Verified with the real CLI: neither `bash` nor `write` from a step changed anything. `aiFixCommand`, which is meant to fix code, is unchanged.
+- **`ToolCard` tests failing on `main`.** The tests (added with `TraceLine` / `TraceCollapsible` in `8c0a250`) described a `ToolCard` built on those components, but the card was never switched over. It now is: a call with a detail expands to show it in full, and a running call shimmers.
 
 ## Deferred
 

@@ -11,6 +11,7 @@ import type {
   RunOrigin
 } from '../shared/types'
 import { aiCommand, aiSelectionLabel, normalizeAi, type AiProvider, type OpenRouterAgent } from '../shared/ai'
+import { applyOpencodeConfig } from '../shared/opencode-config'
 import { FAILURE_REPORT_REL, failureReport, gitignoreWithEntry, REPORT_OUTPUT_LIMIT } from '../shared/failure'
 import { REMOTE_ENABLED } from '../shared/features'
 import { appendTail, plainText } from '../shared/terminal'
@@ -961,13 +962,15 @@ export class PipelineRunner {
       }
 
       let proc: pty.IPty
+      const env = aiEnv(normalizeAi(agent), via)
+      applyOpencodeConfig(env, spec.opencodeConfig)
       try {
         proc = pty.spawn(bin, spec.args, {
           name: 'xterm-256color',
           cols: 110,
           rows: 40,
           cwd,
-          env: aiEnv(normalizeAi(agent), via)
+          env
         })
       } catch (err) {
         onChunk(`farol: ${errorMessage(err)}\r\n`)
