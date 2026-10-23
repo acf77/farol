@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import type { AiProvider } from '@shared/types'
-import { aiSelectionLabel } from '@shared/ai'
+import { AI_LABELS, aiModelLabel, aiSelectionLabel } from '@shared/ai'
 import type { AgentMessage } from '../../types'
 import { C, MONO, ELLIPSIS } from '../../theme'
 import { stripControlMarkers } from '../../markdown'
 import { Button } from '../controls'
-import { TraceCollapsible, TraceLine } from './trace'
+import { ProviderMark } from './ProviderMark'
 import {
   CheckIcon,
   Spinner,
@@ -146,71 +146,32 @@ export function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool
   )
 }
 
-/**
- * A subagent the agent handed work to. Its own tool calls fold away under one
- * line, so a long run does not bury the conversation it belongs to.
- */
+const COMMAND_MAX = 60
+
+const DELEGATE_VERB = { running: 'Recruiting', done: 'Recruited', error: 'Failed recruiting' } as const
+
+/** One quiet line for a subagent: who, on which model, and what it runs now. */
 export function DelegateCard({ card }: { card: NonNullable<AgentMessage['delegate']> }) {
-  const label = aiSelectionLabel(card.provider, card.model)
   const last = card.tools[card.tools.length - 1]
-  const status =
+  const tail =
     card.state === 'running'
-      ? last
-        ? `${last.name}${last.detail ? ` — ${last.detail}` : ''}`
-        : 'Starting'
-      : card.state === 'done'
-        ? card.diffStat
-          ? 'Finished'
-          : 'Finished, no files changed'
-        : (card.message ?? 'Failed')
+      ? last && `${last.name} ${last.detail ?? ''}`.trim().slice(0, COMMAND_MAX)
+      : card.state === 'error'
+        ? card.message?.split('\n')[0]
+        : undefined
   return (
-    <ChatCard
-      title={`${label} subagent`}
-      extra={
-        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}>
-          {card.state === 'running' ? (
-            <Spinner size={10} />
-          ) : (
-            <span
-              aria-label={card.state === 'done' ? 'Finished' : 'Failed'}
-              style={{ width: 6, height: 6, borderRadius: '50%', background: card.state === 'done' ? C.green : C.red }}
-            />
-          )}
-        </span>
-      }
+    <div
+      title={card.task}
+      style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, fontSize: 13, color: C.faint }}
     >
-      <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
-        <div style={{ fontSize: 13, lineHeight: 1.5, color: C.textRow, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text' }}>
-          {card.task}
-        </div>
-        <TraceCollapsible
-          line={
-            <TraceLine
-              icon={<ToolIcon />}
-              title={`${card.tools.length} tool call${card.tools.length === 1 ? '' : 's'}`}
-              description={status}
-              status={card.state === 'running' ? 'running' : card.state === 'error' ? 'error' : undefined}
-            />
-          }
-        >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {card.tools.map((tool) => (
-              <ToolCard key={tool.toolId} tool={tool} tight={false} />
-            ))}
-            {card.said.trim() && (
-              <div style={{ marginTop: 6, fontSize: 12.5, lineHeight: 1.5, color: C.textMuted, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text' }}>
-                {stripControlMarkers(card.said).trim()}
-              </div>
-            )}
-          </div>
-        </TraceCollapsible>
-        {card.diffStat && (
-          <pre style={{ margin: 0, fontFamily: MONO, fontSize: 11, color: C.faint, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text' }}>
-            {card.diffStat}
-          </pre>
-        )}
-      </div>
-    </ChatCard>
+      <ProviderMark provider={card.provider} />
+      <span style={{ minWidth: 0, ...ELLIPSIS }}>
+        <span style={{ color: card.state === 'error' ? C.red : undefined }}>{DELEGATE_VERB[card.state]}</span>{' '}
+        <b style={{ color: C.text, fontWeight: 600 }}>{AI_LABELS[card.provider]}</b> using{' '}
+        <span style={{ color: C.textRow }}>{aiModelLabel(card.provider, card.model) ?? 'Default'}</span>
+        {tail && ` – ${tail}`}
+      </span>
+    </div>
   )
 }
 

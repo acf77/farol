@@ -409,6 +409,64 @@ function pipelineCatalog(pipelines: Pipeline[]): string {
     .join('\n')
 }
 
+/** The optional parts of an agent command, present only when set. */
+function commandExtras(
+  opts: { tools?: string[]; webSearch?: boolean; session?: AgentSessionIo } | undefined,
+  mcp: McpServerEntry | undefined
+) {
+  return {
+    ...(opts?.tools?.length ? { tools: opts.tools } : {}),
+    ...(opts?.webSearch ? { webSearch: true } : {}),
+    ...(opts?.session?.resume ? { resume: opts.session.resume } : {}),
+    ...(mcp ? { mcp } : {})
+  }
+}
+
+/** Why a subagent run did not succeed, or undefined when it did. */
+function delegateFailure(
+  label: string,
+  run: { stopped: boolean; failed: boolean; code: number; diagnostics: string }
+): string | undefined {
+  if (run.stopped) return 'Stopped before it finished.'
+  if (!run.failed) return undefined
+  const tail = run.diagnostics.trim().slice(-2000)
+  return `${label} exited with code ${run.code}.${tail ? `\n${tail}` : ''}`
+}
+
+/** Files changed since `before`, as a diffstat; empty when the tree could not be read. */
+async function treeChanges(cwd: string, before: Awaited<ReturnType<typeof captureTree>> | undefined): Promise<string> {
+  const after = before ? await captureTree(cwd).catch(() => undefined) : undefined
+  return before && after ? await treeDiffStat(cwd, before, after).catch(() => '') : ''
+}
+
+function delegateCard(task: Task, delegateId: string, provider: AiProvider, model: string | undefined, work: string) {
+  return {
+    kind: 'delegate' as const,
+    taskId: task.request.id,
+    delegateId,
+    ...(task.delegateToolId ? { parentToolId: task.delegateToolId } : {}),
+    provider,
+    ...(model ? { model } : {}),
+    task: work
+  }
+}
+
+/** What the asking agent reads back when its subagent is done. */
+function delegateReport(headline: string, summary: string, diffStat: string): string {
+  return [
+    headline,
+    summary ? `Summary:\n${summary}` : 'It gave no summary.',
+    diffStat ? `Files it changed:\n${diffStat}` : 'It changed no files.'
+  ].join('\n\n')
+}
+
+/** Record a file the agent wrote on the turn's scan. */
+function noteWrite(scan: { filesChanged: boolean; changedTargets: string[] }, detail?: string): void {
+  scan.filesChanged = true
+  const target = detail?.trim()
+  if (target && !scan.changedTargets.includes(target)) scan.changedTargets.push(target)
+}
+
 export class AgentController {
   private tasks = new Map<string, Task>()
 
@@ -603,61 +661,21 @@ export class AgentController {
     signal?: AbortSignal
   ): Promise<{ ok: true; text: string; failed: boolean } | { ok: false; message: string }> {
     const task = this.tasks.get(taskId)
-    if (!task?.running || task.cancelled) return { ok: false, message: 'No Chat turn is running for this task.' }
-    if (!isAiProvider(ask.provider)) return { ok: false, message: `Unknown provider: ${ask.provider}` }
     const work = ask.task.trim()
-    if (!work) return { ok: false, message: 'Describe the task for the subagent.' }
-    if (task.delegating) return { ok: false, message: 'A subagent is already running. Wait for it to finish.' }
+    const refusal = this.delegateRefusal(task, ask.provider, work)
+    if (refusal || !task || !isAiProvider(ask.provider)) return { ok: false, message: refusal ?? 'Unavailable.' }
 
     const provider = ask.provider
     const model = normalizeModel(ask.model)
     task.delegating = true
     task.delegateSeq += 1
     const delegateId = `${taskId}:d${task.delegateSeq}`
-    const card = {
-      kind: 'delegate' as const,
-      taskId,
-      delegateId,
-      ...(task.delegateToolId ? { parentToolId: task.delegateToolId } : {}),
-      provider,
-      ...(model ? { model } : {}),
-      task: work
-    }
+    const card = delegateCard(task, delegateId, provider, model, work)
     this.emit({ ...card, state: 'running' })
     const cwd = task.request.cwd
     const before = await captureTree(cwd).catch(() => undefined)
 
-    let said = ''
-    let lastTurn = ''
-    let diagnostics = ''
-    const scan = task.activeScan
-    const sink: AgentSink = {
-      text: (chunk) => {
-        said = (said + chunk).slice(-SCAN_WINDOW)
-        this.emit({ kind: 'output', taskId, chunk, delegateId })
-      },
-      turn: (text) => {
-        lastTurn = text
-        said = `${said}\n${text}`.slice(-SCAN_WINDOW)
-        this.emit({ kind: 'assistant', taskId, text, delegateId })
-      },
-      tool: (event) => {
-        this.emit({ kind: 'tool', taskId, ...event, toolId: `${delegateId}:${event.toolId}`, delegateId })
-        if (event.state === 'done' && isWriteToolName(event.name)) {
-          task.mandatoryOutstanding = true
-          if (scan) {
-            scan.filesChanged = true
-            const target = event.detail?.trim()
-            if (target && !scan.changedTargets.includes(target)) scan.changedTargets.push(target)
-          }
-        }
-      },
-      // A subagent cannot stop to ask; its prompt says to report open questions instead.
-      question: () => undefined,
-      noise: (chunk) => {
-        diagnostics = (diagnostics + chunk).slice(-SCAN_WINDOW)
-      }
-    }
+    const { sink, run } = this.delegateSink(task, delegateId)
     const onAbort = (): void => {
       if (task.child?.pid) killPidTree(task.child.pid)
     }
@@ -670,31 +688,60 @@ export class AgentController {
         ? await this.executor({ ...task.request, provider, model }, prompt, sink.text, sink.tool)
         : await this.runAgent(task, prompt, sink, false, { child: { provider, model } })
     } catch (error) {
-      diagnostics = `${diagnostics}\n${errorMessage(error)}`
+      run.diagnostics = `${run.diagnostics}\n${errorMessage(error)}`
     } finally {
       signal?.removeEventListener('abort', onAbort)
       task.child = null
       task.delegating = false
     }
 
-    const after = before ? await captureTree(cwd).catch(() => undefined) : undefined
-    const diffStat = before && after ? await treeDiffStat(cwd, before, after).catch(() => '') : ''
+    const diffStat = await treeChanges(cwd, before)
     const stopped = task.cancelled || signal?.aborted === true
     const failed = stopped || code !== 0
-    const summary = stripControlMarkerLines(lastTurn || plainText(said)).trim()
     const label = aiSelectionLabel(provider, model)
-    const message = stopped
-      ? 'Stopped before it finished.'
-      : failed
-        ? `${label} exited with code ${code}.${diagnostics.trim() ? `\n${diagnostics.trim().slice(-2000)}` : ''}`
-        : undefined
+    const message = delegateFailure(label, { stopped, failed, code, diagnostics: run.diagnostics })
     this.emit({ ...card, state: failed ? 'error' : 'done', diffStat, ...(message ? { message } : {}) })
-    const text = [
-      message ?? `${label} finished.`,
-      summary ? `Summary:\n${summary}` : 'It gave no summary.',
-      diffStat ? `Files it changed:\n${diffStat}` : 'It changed no files.'
-    ].join('\n\n')
-    return { ok: true, text, failed }
+    const summary = stripControlMarkerLines(run.lastTurn || plainText(run.said)).trim()
+    return { ok: true, text: delegateReport(message ?? `${label} finished.`, summary, diffStat), failed }
+  }
+
+  /** Why a `delegate` call cannot start, or undefined when it can. */
+  private delegateRefusal(task: Task | undefined, provider: string, work: string): string | undefined {
+    if (!task?.running || task.cancelled) return 'No Chat turn is running for this task.'
+    if (!isAiProvider(provider)) return `Unknown provider: ${provider}`
+    if (!work) return 'Describe the task for the subagent.'
+    if (task.delegating) return 'A subagent is already running. Wait for it to finish.'
+    return undefined
+  }
+
+  /** Routes a subagent's output to its card and records what it wrote and said. */
+  private delegateSink(task: Task, delegateId: string) {
+    const taskId = task.request.id
+    const scan = task.activeScan
+    const run = { said: '', lastTurn: '', diagnostics: '' }
+    const sink: AgentSink = {
+      text: (chunk) => {
+        run.said = (run.said + chunk).slice(-SCAN_WINDOW)
+        this.emit({ kind: 'output', taskId, chunk, delegateId })
+      },
+      turn: (text) => {
+        run.lastTurn = text
+        run.said = `${run.said}\n${text}`.slice(-SCAN_WINDOW)
+        this.emit({ kind: 'assistant', taskId, text, delegateId })
+      },
+      tool: (event) => {
+        this.emit({ kind: 'tool', taskId, ...event, toolId: `${delegateId}:${event.toolId}`, delegateId })
+        if (event.state !== 'done' || !isWriteToolName(event.name)) return
+        task.mandatoryOutstanding = true
+        if (scan) noteWrite(scan, event.detail)
+      },
+      // A subagent cannot stop to ask; its prompt says to report open questions instead.
+      question: () => undefined,
+      noise: (chunk) => {
+        run.diagnostics = (run.diagnostics + chunk).slice(-SCAN_WINDOW)
+      }
+    }
+    return { sink, run }
   }
 
   private delegatePrompt(task: Task, work: string, context?: string): string {
@@ -1700,6 +1747,11 @@ export class AgentController {
     return `Farol pipeline activity for this chat:\n${lines.join('\n')}`
   }
 
+  private setProcess(task: Task, child: boolean, proc: ChildProcess | null): void {
+    if (child) task.child = proc
+    else task.process = proc
+  }
+
   private runAgent(
     task: Task,
     prompt: string,
@@ -1715,22 +1767,17 @@ export class AgentController {
   ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
     const via = openRouterAgent()
-    const provider = opts?.child?.provider ?? task.request.provider
-    const model = opts?.child ? opts.child.model : task.request.model
+    const child = opts?.child
+    const provider = child?.provider ?? task.request.provider
+    const model = child ? child.model : task.request.model
     // Subagents get no managed server, so they cannot delegate in turn.
-    const mcp = this.managedMcp && !opts?.child ? this.managedMcp(task.request.id) : undefined
-    const slot = (proc: ChildProcess | null): void => {
-      if (opts?.child) task.child = proc
-      else task.process = proc
-    }
+    const mcp = this.managedMcp && !child ? this.managedMcp(task.request.id) : undefined
+    const isChild = !!child
     const spec = managedAiCommand(provider, prompt, model, {
       jsonFormat: !plain,
       via,
       mode: task.request.mode,
-      ...(opts?.tools?.length ? { tools: opts.tools } : {}),
-      ...(opts?.webSearch ? { webSearch: true } : {}),
-      ...(opts?.session?.resume ? { resume: opts.session.resume } : {}),
-      ...(mcp ? { mcp } : {})
+      ...commandExtras(opts, mcp)
     })
     const env = aiEnv(provider, via)
     // Claude's limit on one MCP call; a `delegate` waits as long as its subagent runs.
@@ -1776,7 +1823,7 @@ export class AgentController {
       const done = (exit: number): void => {
         if (settled) return
         settled = true
-        slot(null)
+        this.setProcess(task, isChild, null)
         let code = exit
         if (parser) {
           consume(parser.flush())
@@ -1800,7 +1847,7 @@ export class AgentController {
         done(127)
         return
       }
-      slot(child)
+      this.setProcess(task, isChild, child)
       child.stdout?.on('data', (chunk: Buffer) => {
         // JSON carries its own escaping, and plainText's per-line trimming
         // would eat a space that straddles two chunks. Parse the bytes as-is.
@@ -1833,7 +1880,7 @@ export class AgentController {
           shouldRetryPlainOpenCode(plain, exit, provider, `${diagnostics}\n${stdoutScan}`)
         ) {
           settled = true
-          slot(null)
+          this.setProcess(task, isChild, null)
           void this.runAgent(task, prompt, sink, true, opts).then(resolve)
           return
         }
