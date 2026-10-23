@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { GitInfo, Project } from '@shared/types'
 import { groupOpenProjects, shortPath } from '@shared/project-groups'
 import { C, MONO, ELLIPSIS } from '../theme'
@@ -117,7 +117,8 @@ function ActivityMark({ activity, size }: { activity: Activity; size: number }) 
         flex: 'none',
         borderRadius: '50%',
         background: activity === 'busy' ? C.accent : activity === 'unread' ? C.purpleSoft : C.border,
-        boxShadow: activity === 'busy' ? '0 0 0 3px oklch(0.91 0.19 115 / 0.18)' : 'none'
+        boxShadow: activity === 'busy' ? '0 0 0 3px oklch(0.91 0.19 115 / 0.18)' : 'none',
+        animation: activity === 'busy' ? 'bfpulse 1.1s ease-in-out infinite' : 'none'
       }}
     />
   )
@@ -354,7 +355,10 @@ export default function ProjectRail({
         <PinButton pinned={pinned} onClick={togglePin} />
         <div style={{ width: 20, height: 1, background: 'oklch(1 0 0 / 0.08)' }} />
 
-        {projects.map((project) => {
+        {groups.map((group, index) => (
+          <Fragment key={group.id}>
+            {index > 0 && <div style={{ width: 12, height: 1, background: 'oklch(1 0 0 / 0.08)' }} />}
+            {group.projects.map(({ project }) => {
           const busy = agentBusy(project.path)
           const unread = agentUnread(project.path)
           const on = project.path === activePath
@@ -374,7 +378,9 @@ export default function ProjectRail({
               <ActivityMark activity={activityOf(busy, unread)} size={8} />
             </button>
           )
-        })}
+            })}
+          </Fragment>
+        ))}
 
         <span style={{ flex: 1 }} />
         {showGit && onGitToggle && gitButton('rail')}

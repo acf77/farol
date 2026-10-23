@@ -155,7 +155,8 @@ function CollapsedRail({
                 height: 9,
                 borderRadius: '50%',
                 background: hollow ? 'transparent' : dotColor(status),
-                border: hollow ? `1.5px solid ${C.faint}` : 'none'
+                border: hollow ? `1.5px solid ${C.faint}` : 'none',
+                animation: status === 'running' ? 'bfpulse 1.1s ease-in-out infinite' : 'none'
               }}
             />
           </button>

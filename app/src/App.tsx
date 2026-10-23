@@ -1111,7 +1111,7 @@ export function ProjectWorkspace({
     return false
   }, [runs, runBranchForBusy])
 
-  const worktreeBusyFlag = agentBusy || pipelineBusy
+  const worktreeBusyFlag = agentBusy || pipelineBusy || terminalBusy
   const wasWorktreeBusy = useRef(false)
   const chatOpen = visible && surfaces.includes('chat')
 
