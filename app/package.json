@@ -1,6 +1,6 @@
 {
   "name": "farol",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "private": true,
   "author": "Farol",
   "description": "A terminal workspace with runnable shell + AI pipelines.",
