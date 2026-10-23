@@ -20,7 +20,15 @@ An agent in managed Chat can hand a piece of work to another provider/model (Cla
 2. **Farol still owns validation.** Subagents never select or run pipelines; the parent selects them after the subagent returns, so the repair loop is unchanged.
 3. **A subagent never exceeds its parent.** Plan parent → Plan subagent (Review gate required). Depth is 1: a subagent gets no `delegate` tool.
 4. **Visible, cancellable, attributed.** Subagent activity renders nested under the parent's `delegate` card; Stop kills both; usage/spend is attributed to the subagent's provider.
-5. **Approvals are surfaced where the provider allows it**, and auto-approve remains available as an explicit per-chat choice.
+5. **Approvals are surfaced where the provider allows it.** Auto-approve stays the default, but Chat always shows when it is on.
+6. **Every subagent run can be undone** as a unit from its card.
+7. **No time cap.** A subagent runs until it finishes or the developer presses Stop.
+
+## Decisions
+
+- Auto-approve is **on by default**, and Chat shows that it is on (Phase 3).
+- Each `delegate` run gets **Undo** (Phase 2).
+- Subagents have **no time cap**; Stop is the only limit (Phase 2).
 
 ## Phase 1 — Managed MCP config (unblock MCP) · ~1–2 days
 
@@ -37,7 +45,7 @@ Replace "no MCP" with "user's MCP + a managed-only Farol server".
 
 Done when: a user's own MCP server is callable from managed Claude/Codex, and `FAROL_PIPELINES` still drives validation (regression test for the original reason).
 
-## Phase 2 — Synchronous `delegate` (shared checkout, can edit) · ~1 week
+## Phase 2 — Synchronous `delegate` (shared checkout, can edit, undoable) · ~1.5 weeks
 
 **Tool contract** (`mcp.ts`, managed only):
 
@@ -63,12 +71,25 @@ delegate({
 - No fallback chain for subagents: on provider failure return `failed: true` with the reason and let the parent decide.
 - Return: last assistant text, parsed handoff, `git diff --stat` since the call started.
 
-**MCP tool timeouts** (key risk): long subagent runs exceed default MCP client timeouts. Set `MCP_TOOL_TIMEOUT` in the managed Claude env and `tool_timeout_sec` for Codex's `farol-chat` server to the delegate cap (e.g. 30 min); have `delegate` enforce the same cap itself.
+**No time cap, but client timeouts still apply.** Farol sets no limit of its own, yet the parent CLI gives up on an MCP call after its own timeout and would orphan a running subagent. Raise those to the maximum each CLI accepts: `MCP_TOOL_TIMEOUT` in the managed Claude env, `tool_timeout_sec` on Codex's `farol-chat` server. If the parent's call is dropped anyway (parent process exits), kill the subagent and mark its card failed rather than leaving it running unseen. Verify each CLI's ceiling in the spike; if one has a hard ceiling, `delegate` needs a resume path (return "still running" with a run id the parent polls) before that CLI can delegate long tasks.
+
+**Undo.** Each subagent run can be undone from its card, without touching changes made before it or (where possible) after it.
+
+- *Before* the subagent starts: capture the checkout as a tree without touching the working copy or the real index — `GIT_INDEX_FILE=<tmp> git add -A && git write-tree` (tracked + untracked, `.gitignore` respected). Pin it under `refs/farol/delegate/<taskId>/<runId>/before` so `git gc` keeps it.
+- *After* it returns: capture the same way as `…/after`. The card's diff and the `git diff --stat` returned to the parent both come from `before..after`, so they show only the subagent's changes.
+- *Undo*: reverse-apply exactly that diff — `git diff --binary after before | git apply --3way` against the working copy. Later edits by the parent or the developer survive if they don't overlap.
+- *Conflict*: if the reverse apply does not apply cleanly, change nothing and offer two choices on the card: open the conflicting files, or "Restore checkout to before this subagent", which discards everything since (confirm first, naming how many files change).
+- Undo is offered while the turn is idle; during a running turn it is disabled with a tooltip.
+- Undo is recorded in Chat as a user event and fed to the agent's next turn ("the developer undid the Codex subagent's changes to …").
+- Refs for a chat are deleted when the chat is cleared or the worktree is removed.
+- Not a git commit and not a stash: the developer's branch, index and stash list are never touched.
+
+Code: a new `app/electron/delegate-snapshot.ts` (capture, diff, undo, cleanup) with tests against a temp repo covering untracked files, deletions, binary files, an overlapping later edit (conflict) and a non-overlapping one (clean undo).
 
 **Events / UI** (`app/shared/types.ts`, `app/src`):
 
 - Add optional `parentToolId` to `tool` / `assistant` / `output` / `question` events.
-- Render subagent events nested under the parent's `delegate` tool card, labelled with provider + model (`aiSelectionLabel`).
+- Render subagent events nested under the parent's `delegate` tool card, labelled with provider + model (`aiSelectionLabel`). The card footer shows the diff stat and the **Undo** action.
 - Busy indicator and worktree-busy flag already cover the task; verify nothing reads "idle" while a child runs.
 
 **Usage / spend**: record the subagent's usage under its provider; the context meter stays the parent's.
@@ -77,13 +98,19 @@ delegate({
 
 Done when: from a Claude chat, "have Codex implement X" runs Codex in the same checkout, its tool cards appear nested, Claude sees the result and diff, then Farol runs the pipelines Claude selects.
 
-## Phase 3 — Approvals surfaced in Chat (Claude) · ~2–4 days
+## Phase 3 — Approvals surfaced in Chat (Claude) · ~3–5 days
 
 - **`approve` tool** (`mcp.ts`, managed only) implementing Claude's `--permission-prompt-tool` contract: input `{ tool_name, input, tool_use_id }`, output JSON `{ behavior: 'allow', updatedInput }` or `{ behavior: 'deny', message }`.
 - **Bridge** `op: 'approve'` → `AgentController.requestApproval(taskId, …)` → new event `{ kind: 'approval'; taskId; requestId; tool; detail; provider; parentToolId?; decision? }`.
 - **Chat card** modelled on the question card: Allow once · Allow this tool for this chat · Deny (with optional reason). "Allow for this chat" is remembered per task in main.
 - **`managedClaudeCommand`**: when approvals are on, `--permission-mode default --permission-prompt-tool mcp__farol-chat__approve` instead of `bypassPermissions`. Plan mode unchanged.
-- **Setting**: per-chat "Auto-approve tools" toggle next to Plan | Build; default **on** to preserve today's behavior (see open questions).
+- **Setting**: per-chat "Auto-approve" toggle, default **on** (today's behavior). New chats inherit the last choice made in Settings.
+- **Showing it in Chat** — the developer must always be able to tell that tools run without asking:
+  - A persistent **Auto-approve** chip in the composer bar beside Plan | Build, shown whenever it is on, for every provider (including those still forced to auto-approve). Clicking it turns auto-approve off for this chat; for providers without an approval callback it is disabled with a tooltip naming the provider and the reason ("Cannot ask for approval").
+  - Tool cards that ran under auto-approve carry a small "auto" marker, so the transcript records it after the fact.
+  - Turning it off or on mid-chat appears as one line in the transcript.
+  - Takes effect from the next turn; a running turn keeps the mode it started with.
+- **CONTEXT.md**: add an **Auto-approve** entry next to **Plan mode** / **Review gate**, with the chip, tooltip and mid-turn rules above.
 - Approvals from a Claude subagent route to the same card, labelled with the subagent.
 - Remote runs (`REMOTE_ENABLED`) keep auto-approve; no developer is attached.
 
@@ -110,15 +137,14 @@ Every "?" must be verified against the installed CLI before committing to work.
 
 ## Open questions
 
-1. Default for "Auto-approve tools": on (today's behavior) or off (safer, more prompts)?
-2. Should a subagent's edits be reviewable/revertable as a unit (snapshot before `delegate`)?
-3. Do headless Claude runs load project `.mcp.json` servers that the user never approved interactively? If not, Phase 1's "user's MCP comes back" applies only to user-scope servers.
-4. Delegate cap: 30 min? Configurable?
-5. Which providers may be delegated to from Plan mode (all have a Review gate today — confirm per subagent spawn path)?
+1. Do headless Claude runs load project `.mcp.json` servers that the user never approved interactively? If not, Phase 1's "user's MCP comes back" applies only to user-scope servers.
+2. Which providers may be delegated to from Plan mode (all have a Review gate today — confirm per subagent spawn path)?
+3. Should Undo also be offered for the parent agent's own turns, reusing the same snapshot code?
 
 ## Risks
 
-- MCP tool timeouts cutting off long subagent runs (mitigated above; verify per CLI).
+- With no time cap, a CLI's own MCP timeout can still cut off a long subagent run; verify each CLI's ceiling and add the resume path where needed.
+- Undo snapshots of very large untracked trees are slow; skip files above the existing snapshot size limit and say so on the card.
 - The project `farol` entry still exposing pipeline tools if `--disallowedTools` naming changes upstream — keep the regression test.
 - Prompt-only rules for providers without per-run MCP control (Cursor) — unchanged from today, but worth stating.
 - Cost surprises from delegating to expensive models — show provider/model on the card and in spend.
