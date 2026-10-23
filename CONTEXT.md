@@ -255,7 +255,8 @@ _Avoid_: a sign-in form in Settings, showing the service address, retrying a run
 - One **Subagent** runs at a time, and the agent waits on it, so nothing else edits the checkout while it runs.
 - A **Subagent** can be undone from its card while the Chat is idle; when later edits overlap, Farol changes nothing and offers to restore the checkout to before it ran instead.
 - **Auto-approve** is shown in the composer whenever it applies: a chip beside **Plan | Build** reads “Auto-approve” when on and “Ask first” when off. It is hidden in **Plan mode**, which has nothing to approve.
-- Only Claude can raise an **Approval request**. For every other provider the chip stays on and disabled, with a tooltip naming the provider and the reason “Cannot ask for approval”.
+- Claude and Codex can raise an **Approval request**. For every other provider the chip stays on and disabled, with a tooltip naming the provider and the reason “Cannot ask for approval”.
+- A Codex run set to ask first is stopped if a write or shell call runs that the developer did not approve, so a Codex that cannot ask never quietly runs tools.
 - Changing **Auto-approve** applies from the next turn; a running turn keeps the mode it started with. The change appears as one line in the Chat.
 - Tool cards for writes and shell commands that ran under **Auto-approve** carry an “auto” marker.
 - An **Approval request** that nobody can answer any more (the turn was stopped or the agent went away) is denied and marked “No longer waiting”.

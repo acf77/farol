@@ -334,4 +334,66 @@ describe('AgentController.delegate', () => {
       expect(auto).toEqual({ Read: false, Write: true, Bash: true })
     })
   })
+
+  describe('Codex Ask first', () => {
+    const managed = { mcp: () => ({ command: 'x', args: [] }), codexHook: () => 'hook' }
+    const codexRequest = () => ({ ...request(), provider: 'codex' as const, autoApprove: false })
+
+    function codexRun(during: (c: AgentController, tool: NonNullable<Parameters<AgentExecutor>[3]>) => Promise<void>) {
+      const events: AgentTaskEvent[] = []
+      const execute = vi.fn<AgentExecutor>(async (_req, _prompt, output, tool) => {
+        await during(controller, tool!)
+        output('Done\nFAROL_PIPELINES: []\n')
+        return 0
+      })
+      const controller: AgentController = new AgentController(
+        { run: vi.fn() },
+        (e) => events.push(e),
+        execute,
+        undefined,
+        undefined,
+        undefined,
+        managed
+      )
+      return { controller, events }
+    }
+    const stopped = (events: AgentTaskEvent[]) =>
+      events.find((e) => e.kind === 'status' && e.status === 'needs-attention')
+
+    it('lets through each write or shell call the developer approved, one for one', async () => {
+      const { controller, events } = codexRun(async (c, tool) => {
+        const answer = c.requestApproval('task-1', { toolName: 'Bash', input: { command: 'ls' } })
+        await vi.waitFor(() => expect(events.some((e) => e.kind === 'approval' && !e.decision)).toBe(true))
+        const ask = events.find((e) => e.kind === 'approval')
+        if (ask?.kind === 'approval') c.respondApproval('task-1', ask.requestId, 'once')
+        await answer
+        tool({ toolId: 'i1', name: 'shell', detail: 'ls', state: 'running' })
+        tool({ toolId: 'i1', name: 'shell', state: 'done' })
+      })
+      controller.start(codexRequest())
+      await vi.waitFor(() => expect(completed(events)).toBe(true))
+      expect(stopped(events)).toBeUndefined()
+      expect(events.some((e) => e.kind === 'tool' && e.auto)).toBe(false)
+    })
+
+    it('stops the run when a write or shell call comes through unapproved', async () => {
+      const { controller, events } = codexRun(async (_c, tool) => {
+        tool({ toolId: 'i1', name: 'apply_patch', detail: 'a.txt', state: 'running' })
+      })
+      controller.start(codexRequest())
+      await vi.waitFor(() => expect(stopped(events)).toBeDefined())
+      const status = stopped(events)
+      expect(status?.kind === 'status' && status.message).toContain('Codex ran apply_patch without asking')
+    })
+
+    it('does not gate a Codex chat that auto-approves', async () => {
+      const { controller, events } = codexRun(async (_c, tool) => {
+        tool({ toolId: 'i1', name: 'shell', detail: 'ls', state: 'done' })
+      })
+      controller.start({ ...codexRequest(), autoApprove: true })
+      await vi.waitFor(() => expect(completed(events)).toBe(true))
+      expect(stopped(events)).toBeUndefined()
+      expect(events.some((e) => e.kind === 'tool' && e.auto)).toBe(true)
+    })
+  })
 })

@@ -7,12 +7,13 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        // `mcp` and `git-hook` are their own entries: both run as their own
-        // process, started by an agent or by git rather than by the app.
+        // `mcp`, `git-hook` and `codex-hook` are their own entries: each runs as
+        // its own process, started by an agent or by git rather than by the app.
         input: {
           index: resolve(__dirname, 'electron/main.ts'),
           mcp: resolve(__dirname, 'electron/mcp.ts'),
-          'git-hook': resolve(__dirname, 'electron/git-hook.ts')
+          'git-hook': resolve(__dirname, 'electron/git-hook.ts'),
+          'codex-hook': resolve(__dirname, 'electron/codex-hook.ts')
         },
         output: { entryFileNames: '[name].js' }
       }

@@ -178,10 +178,20 @@ Done when: in a Claude chat with auto-approve off, a Bash call shows a card, All
 
 ### Options
 
-1. **Codex: `PreToolUse` hook gate** (small, about 1–2 days). A `codex-hook.js` entry (like `git-hook.js`) asks over the managed bridge using the existing `approve` op. It is passed with `-c hooks.PreToolUse` and `--dangerously-bypass-hook-trust` only while the chat is set to Ask first. Fail-safe: if a shell or write tool completes in an Ask-first Codex run with no approval request before it, Farol stops the run and reports that asking is not working.
+1. **Codex: `PreToolUse` hook gate** (small, about 1–2 days). **Status: landed.** A `codex-hook.js` entry (like `git-hook.js`) asks over the managed bridge using the existing `approve` op. It is passed with `-c hooks.PreToolUse` and `--dangerously-bypass-hook-trust` only while the chat is set to Ask first. Fail-safe: if a shell or write tool completes in an Ask-first Codex run with no approval request before it, Farol stops the run and reports that asking is not working.
 2. **Pi: Farol extension** (small to medium). `-e` loads a Farol extension that gates `tool_call` through the bridge and registers `delegate`. Also fix the install hint.
 3. **OpenCode and OMP: ACP client** (medium to large). A new run path that speaks ACP instead of `run --format json` / `--mode json`. It gives both CLIs per-session MCP (so `delegate`) and approvals.
 4. **Cursor:** verify when a machine with the CLI is available.
+
+Chosen: 1 and 3 (OpenCode first; it is used more than Pi).
+
+**Codex hook gate, notes from the implementation**
+- `electron/codex-hook.ts` is its own build entry (`out/main/codex-hook.js`), started by Codex through `env … '<Farol>' '<codex-hook.js>'` with the managed socket, token and task id. It fails closed: no app, a bad reply or unreadable input all deny.
+- The hook timeout is a day: a hook that times out lets the call through (verified), and a developer can take a while to answer.
+- An `apply_patch` request shows the files the patch touches, not the patch text.
+- Codex's `--dangerously-bypass-hook-trust` warning (`error` items) is dropped from the transcript.
+- Fail-safe: each approved write or shell request lets exactly one such call through. A call nobody approved stops the run ("Codex ran … without asking"), and a subagent's run fails the same way. A blocked call emits no item, so a deny never trips it.
+- End to end with the real `codex exec` 0.164, Farol's argv and the built hook: the approved edit was written and the denied command never ran.
 
 ## Deferred
 

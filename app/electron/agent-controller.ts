@@ -171,6 +171,8 @@ interface Task {
   allowedTools: Set<string>
   /** Whether the agent's run in flight approves tools without asking; fixed when the run starts. */
   runAutoApproves: boolean
+  /** Ask-first Codex runs in flight, by `PARENT_GATE` or the subagent's delegate id. */
+  gates: Map<string, Gate>
   running: boolean
   cancelled: boolean
   /** Drop from the map once the in-flight cycle settles (cleared chats). */
@@ -458,6 +460,26 @@ async function treeChanges(
   return { ...(after ? { after } : {}), diffStat }
 }
 
+/** How a run reaches Farol's managed tools; `delegateId` names a subagent's run. */
+export interface ManagedTools {
+  /** The managed MCP server (Claude, Codex). */
+  mcp(taskId: string, delegateId?: string): McpServerEntry
+  /** Codex's Ask-first `PreToolUse` hook command (see `shared/codex-hook.ts`). */
+  codexHook?(taskId: string, delegateId?: string): string
+}
+
+/**
+ * A Codex run set to Ask first. Its hook can fail open (a timeout, or a Codex
+ * that ignores hooks passed with `-c`), so every write or shell call it makes
+ * must follow an approval Farol granted, one for one.
+ */
+interface Gate {
+  credits: number
+  seen: Set<string>
+}
+
+const PARENT_GATE = 'parent'
+
 interface PendingApproval {
   event: Extract<AgentTaskEvent, { kind: 'approval' }>
   resolve: (answer: { allow: boolean; message?: string }) => void
@@ -528,8 +550,8 @@ export class AgentController {
     private todoStore?: TodoStore,
     private promptStore?: Pick<CustomPromptStore, 'activeBlock'>,
     private loadPipelines?: (cwd: string) => Promise<Pipeline[]>,
-    /** Farol's managed MCP server for a task, loaded by the providers that can take one per run. */
-    private managedMcp?: (taskId: string, delegateId?: string) => McpServerEntry
+    /** Farol's managed tools for a task, for the providers that can take them per run. */
+    private managed?: ManagedTools
   ) {}
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
@@ -572,6 +594,7 @@ export class AgentController {
       approvalSeq: 0,
       allowedTools: new Set(),
       runAutoApproves: true,
+      gates: new Map(),
       running: true,
       cancelled: false,
       disposeWhenIdle: false,
@@ -735,6 +758,7 @@ export class AgentController {
     const before = await captureTree(cwd).catch(() => undefined)
 
     task.activeDelegate = { id: delegateId, provider }
+    this.setGate(task, delegateId, provider)
     const { sink, run } = this.delegateSink(task, delegateId, this.autoApproves(task, provider))
     const onAbort = (): void => {
       if (task.child?.pid) killPidTree(task.child.pid)
@@ -754,6 +778,7 @@ export class AgentController {
       task.child = null
       task.delegating = false
       task.activeDelegate = undefined
+      task.gates.delete(delegateId)
     }
 
     const { after, diffStat } = await treeChanges(cwd, before)
@@ -838,12 +863,35 @@ export class AgentController {
    * where there is something to approve, with the managed server to ask through).
    */
   private autoApproves(task: Task, provider: AiProvider): boolean {
-    return !(
-      task.request.autoApprove === false &&
-      canAskApproval(provider) &&
-      task.request.mode !== 'plan' &&
-      this.managedMcp
-    )
+    // Claude asks through the managed server, Codex through its hook.
+    const route = provider === 'codex' ? !!this.managed?.codexHook : !!this.managed
+    return !(task.request.autoApprove === false && canAskApproval(provider) && task.request.mode !== 'plan' && route)
+  }
+
+  /** Open (or clear) the Ask-first gate for a run that is about to start. */
+  private setGate(task: Task, key: string, provider: AiProvider): void {
+    const gated =
+      !this.autoApproves(task, provider) && cliFor(provider, openRouterAgent()) === 'codex' && !!this.managed?.codexHook
+    if (gated) task.gates.set(key, { credits: 0, seen: new Set() })
+    else task.gates.delete(key)
+  }
+
+  /** An approval the developer granted lets one write or shell call through its run's gate. */
+  private creditGate(task: Task, delegateId: string | undefined, toolName: string): void {
+    const gate = task.gates.get(delegateId ?? PARENT_GATE)
+    if (gate && needsApproval(toolName)) gate.credits += 1
+  }
+
+  /** Why a gated run must stop: a write or shell call ran that nobody approved. */
+  private passGate(task: Task, key: string, event: { toolId: string; name: string }): string | undefined {
+    const gate = task.gates.get(key)
+    if (!gate || !needsApproval(event.name) || gate.seen.has(event.toolId)) return undefined
+    gate.seen.add(event.toolId)
+    if (gate.credits > 0) {
+      gate.credits -= 1
+      return undefined
+    }
+    return `Codex ran ${event.name} without asking, so Farol stopped it. Ask first is not working with this Codex version; turn on Auto-approve to keep using Codex, or switch to Claude.`
   }
 
   /** Turn auto-approve on or off; the next run picks it up, a running one keeps its own. */
@@ -866,7 +914,10 @@ export class AgentController {
   ): Promise<{ allow: boolean; message?: string }> {
     const task = this.tasks.get(taskId)
     if (!task?.running || task.cancelled) return Promise.resolve({ allow: false, message: 'This Chat turn is no longer running.' })
-    if (task.allowedTools.has(ask.toolName)) return Promise.resolve({ allow: true })
+    if (task.allowedTools.has(ask.toolName)) {
+      this.creditGate(task, ask.delegateId, ask.toolName)
+      return Promise.resolve({ allow: true })
+    }
     task.approvalSeq += 1
     const requestId = `${taskId}:a${task.approvalSeq}`
     const delegate = ask.delegateId && task.activeDelegate?.id === ask.delegateId ? task.activeDelegate : undefined
@@ -905,6 +956,7 @@ export class AgentController {
     if (!pending) return
     task.approvals.delete(requestId)
     if (decision === 'chat') task.allowedTools.add(pending.event.toolName)
+    if (decision === 'once' || decision === 'chat') this.creditGate(task, pending.event.delegateId, pending.event.toolName)
     this.emit({ ...pending.event, decision })
     pending.resolve(
       decision === 'once' || decision === 'chat'
@@ -948,6 +1000,11 @@ export class AgentController {
         this.emit({ kind: 'assistant', taskId, text, delegateId })
       },
       tool: (event) => {
+        const breach = this.passGate(task, delegateId, event)
+        if (breach) {
+          run.diagnostics = `${run.diagnostics}\n${breach}`
+          if (task.child?.pid) killPidTree(task.child.pid)
+        }
         const auto = autoApproves && needsApproval(event.name)
         this.emit({ kind: 'tool', taskId, ...event, toolId: `${delegateId}:${event.toolId}`, delegateId, ...(auto ? { auto } : {}) })
         if (event.state !== 'done' || !isWriteToolName(event.name)) return
@@ -1244,6 +1301,12 @@ export class AgentController {
       },
       tool: (event) => {
         if (event.state === 'running' && isDelegateToolName(event.name)) task.delegateToolId = event.toolId
+        const breach = this.passGate(task, PARENT_GATE, event)
+        if (breach && !scan.blocked) {
+          scan.blocked = breach
+          scan.blockedByProvider = false
+          if (task.process?.pid) killPidTree(task.process.pid)
+        }
         const auto = task.runAutoApproves && needsApproval(event.name)
         this.emit({ kind: 'tool', taskId: task.request.id, ...event, ...(auto ? { auto } : {}) })
         scan.toolNames.push(event.name)
@@ -1830,6 +1893,7 @@ export class AgentController {
     }
     const policy = await this.resolveToolPolicy(task, opening.text, attempt)
     task.runAutoApproves = this.autoApproves(task, task.request.provider)
+    this.setGate(task, PARENT_GATE, task.request.provider)
     const clause = toolPolicyPrompt(policy)
     const effective = clause ? `${prompt}\n\n${clause}` : prompt
     const sink = this.cycleSink(task, scan)
@@ -2001,20 +2065,22 @@ export class AgentController {
     const model = child ? child.model : task.request.model
     const askApproval = !this.autoApproves(task, provider)
     // A subagent's server can only ask for approval, so it gets one only to ask.
-    const mcp = !this.managedMcp
+    const mcp = !this.managed
       ? undefined
       : !child
-        ? this.managedMcp(task.request.id)
+        ? this.managed.mcp(task.request.id)
         : askApproval
-          ? this.managedMcp(task.request.id, child.delegateId)
+          ? this.managed.mcp(task.request.id, child.delegateId)
           : undefined
+    const codexHook = askApproval ? this.managed?.codexHook?.(task.request.id, child?.delegateId) : undefined
     const isChild = !!child
     const spec = managedAiCommand(provider, prompt, model, {
       jsonFormat: !plain,
       via,
       mode: task.request.mode,
       ...commandExtras(opts, mcp),
-      ...(askApproval && mcp ? { askApproval } : {})
+      ...(askApproval && mcp ? { askApproval } : {}),
+      ...(codexHook ? { codexHook } : {})
     })
     const env = aiEnv(provider, via)
     // Claude's limit on one MCP call; a `delegate` waits as long as its subagent runs.

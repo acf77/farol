@@ -50,6 +50,7 @@ import {
   MCP_CONFIG_REL_PATHS,
   type McpServerEntry
 } from '../shared/mcp-config'
+import { codexHookCommand } from '../shared/codex-hook'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
 import { isAiProvider } from '../shared/ai'
 import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
@@ -93,7 +94,12 @@ const agents = new AgentController(
   todos,
   prompts,
   loadPipelines,
-  MANAGED_MCP_TOOLS.length ? (taskId, delegateId) => managedMcpEntry(managedMcpScript(), taskId, delegateId) : undefined
+  MANAGED_MCP_TOOLS.length
+    ? {
+        mcp: (taskId, delegateId) => managedMcpEntry(managedScript('mcp.js'), taskId, delegateId),
+        codexHook: (taskId, delegateId) => codexHookCommand(managedMcpEntry(managedScript('codex-hook.js'), taskId, delegateId))
+      }
+    : undefined
 )
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
@@ -593,17 +599,18 @@ function socketPath(projectPath: string): string {
   return socketPathFor(projectPath, os.tmpdir(), path.sep)
 }
 
-/** Farol's MCP server script, run as plain Node through the app's own Electron. */
-function mcpScript(): McpServerEntry {
+/** One of Farol's own scripts, run as plain Node through the app's own Electron. */
+function mcpScript(file = 'mcp.js'): McpServerEntry {
   return {
     command: process.execPath,
-    args: [path.join(app.getAppPath(), 'out', 'main', 'mcp.js')],
+    args: [path.join(app.getAppPath(), 'out', 'main', file)],
     env: { ELECTRON_RUN_AS_NODE: '1' }
   }
 }
 
-function managedMcpScript(): McpServerEntry {
-  const script = mcpScript()
+/** A script managed Chat starts, pointed at the managed socket. */
+function managedScript(file: string): McpServerEntry {
+  const script = mcpScript(file)
   return { ...script, env: { ...script.env, [BRIDGE_ENV]: managedSocket, [TOKEN_ENV]: managedToken } }
 }
 

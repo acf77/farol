@@ -1,5 +1,6 @@
 /** Which coding CLI an AI pipeline step invokes. */
 
+import { codexHookArgs } from './codex-hook'
 import { FAILURE_REPORT_REL } from './failure'
 import { openCodeModel } from './openrouter'
 import {
@@ -107,11 +108,12 @@ export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
 
 /**
  * Whether the CLI can stop a headless run to ask the developer about a tool
- * call. Only Claude can, through `--permission-prompt-tool`; every other CLI
- * runs with all tools approved, so auto-approve is always on for it.
+ * call: Claude through `--permission-prompt-tool`, Codex through a
+ * `PreToolUse` hook. Every other CLI runs with all tools approved, so
+ * auto-approve is always on for it.
  */
 export function canAskApproval(provider: AiProvider): boolean {
-  return provider === 'claude'
+  return provider === 'claude' || provider === 'codex'
 }
 
 export function isAiProvider(value: unknown): value is AiProvider {
@@ -343,9 +345,12 @@ function managedCodexCommand(
   plan: boolean,
   webSearch?: boolean,
   resume?: string,
-  mcp?: McpServerEntry
+  mcp?: McpServerEntry,
+  hook?: string
 ): AiCommand {
   const sandbox = plan ? 'read-only' : 'workspace-write'
+  // Ask first: a PreToolUse hook gates every call; Plan's read-only sandbox needs none.
+  const gate = hook && !plan ? codexHookArgs(hook) : []
   if (resume) {
     // `exec resume` takes no `--sandbox`; the config key sets the same mode.
     return {
@@ -361,6 +366,7 @@ function managedCodexCommand(
           `sandbox_mode="${sandbox}"`,
           ...(webSearch ? ['-c', 'web_search=live'] : []),
           ...(mcp ? codexMcpOverrides(mcp) : []),
+          ...gate,
           resume,
           prompt
         ],
@@ -388,6 +394,7 @@ function managedCodexCommand(
         sandbox,
         ...(webSearch ? ['-c', 'web_search=live'] : []),
         ...(mcp ? codexMcpOverrides(mcp) : []),
+        ...gate,
         prompt
       ],
       passed
@@ -551,6 +558,8 @@ export function managedAiCommand(
     mcp?: McpServerEntry
     /** Ask the developer before tool calls instead of approving them all (Claude, Build, with `mcp`). */
     askApproval?: boolean
+    /** Codex's Ask-first hook command (see `shared/codex-hook.ts`); Build only. */
+    codexHook?: string
   }
 ): AiCommand {
   const cli = cliFor(provider, opts?.via)
@@ -561,7 +570,7 @@ export function managedAiCommand(
   const tools = opts?.tools?.length ? opts.tools.join(',') : undefined
   switch (cli) {
     case 'codex':
-      return managedCodexCommand(prompt, passed, plan, opts?.webSearch, resume, opts?.mcp)
+      return managedCodexCommand(prompt, passed, plan, opts?.webSearch, resume, opts?.mcp, opts?.codexHook)
     case 'cursor':
       return managedCursorCommand(prompt, passed, plan, resume)
     case 'opencode':

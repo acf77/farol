@@ -321,7 +321,22 @@ describe('managedAiCommand', () => {
     expect(plan[plan.indexOf('--permission-mode') + 1]).toBe('plan')
 
     expect(canAskApproval('claude')).toBe(true)
-    expect(canAskApproval('codex')).toBe(false)
+    expect(canAskApproval('codex')).toBe(true)
+    expect(canAskApproval('cursor')).toBe(false)
+  })
+
+  it('gates Codex with its PreToolUse hook in Build only, on fresh and resumed runs', () => {
+    const codexHook = "env A='1' '/bin/hook'"
+    const fresh = managedAiCommand('codex', 'fix this', undefined, { codexHook }).args
+    expect(fresh).toContain('--dangerously-bypass-hook-trust')
+    expect(fresh.find((a) => a.startsWith('hooks.PreToolUse='))).toContain(codexHook)
+    expect(fresh.at(-1)).toBe('fix this')
+    const resumed = managedAiCommand('codex', 'next', undefined, { codexHook, resume: 't1' }).args
+    expect(resumed).toContain('--dangerously-bypass-hook-trust')
+    expect(resumed.slice(-2)).toEqual(['t1', 'next'])
+    expect(managedAiCommand('codex', 'x', undefined, { codexHook, mode: 'plan' }).args).not.toContain(
+      '--dangerously-bypass-hook-trust'
+    )
   })
 
   it('passes a native --tools allowlist for Claude and OMP when supplied', () => {

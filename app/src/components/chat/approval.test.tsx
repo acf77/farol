@@ -47,6 +47,13 @@ describe('applyApprovalEvent', () => {
 })
 
 describe('AutoApproveChip', () => {
+  it('can be turned off for Codex too', () => {
+    const onChange = vi.fn()
+    render(<AutoApproveChip on provider="codex" mode="build" onChange={onChange} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Auto-approve' }))
+    expect(onChange).toHaveBeenCalledWith(false)
+  })
+
   it('shows on, and turns off for Claude', () => {
     const onChange = vi.fn()
     render(<AutoApproveChip on provider="claude" mode="build" onChange={onChange} />)
@@ -62,10 +69,10 @@ describe('AutoApproveChip', () => {
   })
 
   it('stays on and disabled for a CLI that cannot ask, naming it', () => {
-    render(<AutoApproveChip on={false} provider="codex" mode="build" onChange={vi.fn()} />)
+    render(<AutoApproveChip on={false} provider="cursor" mode="build" onChange={vi.fn()} />)
     const chip = screen.getByRole('button', { name: 'Auto-approve' }) as HTMLButtonElement
     expect(chip.disabled).toBe(true)
-    expect(chip.title).toBe('Codex: Cannot ask for approval')
+    expect(chip.title).toBe('Cursor: Cannot ask for approval')
   })
 
   it('is hidden in Plan', () => {
