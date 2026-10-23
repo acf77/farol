@@ -912,6 +912,9 @@ function registerTaskIpc(): void {
   )
   ipcMain.handle('agent:cancel', (_e, taskId: string) => agents.cancel(taskId))
   ipcMain.handle('agent:dispose', (_e, taskId: string) => agents.dispose(taskId))
+  ipcMain.handle('agent:undoDelegate', (_e, taskId: string, delegateId: string, restore?: boolean) =>
+    agents.undoDelegate(taskId, delegateId, restore === true)
+  )
   ipcMain.handle(
     'agent:answer',
     (_e, taskId: string, requestId: string, answers: string[][] | null) =>

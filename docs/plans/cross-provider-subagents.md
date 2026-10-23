@@ -105,7 +105,7 @@ Code: a new `app/electron/delegate-snapshot.ts` (capture, diff, undo, cleanup) w
 
 Done when: from a Claude chat, "have Codex implement X" runs Codex in the same checkout, its tool cards appear nested, Claude sees the result and diff, then Farol runs the pipelines Claude selects.
 
-**Status: delegate and cards landed; Undo next.** Notes from the implementation:
+**Status: landed, including Undo.** Notes from the implementation:
 
 - One app-wide managed socket (`farol-chat-<pid>.sock`) with a per-launch secret (`FAROL_CHAT_TOKEN`); requests name a task id, which the controller already maps to its checkout. Project sockets refuse `delegate`.
 - If the asking agent's socket closes (its process died or was stopped), the subagent is killed and reported as stopped.
@@ -114,6 +114,11 @@ Done when: from a Claude chat, "have Codex implement X" runs Codex in the same c
 - Subagent file writes count as the turn's writes, so mandatory pipelines still trigger.
 - Client timeouts are set to a day (`MCP_TOOL_TIMEOUT`, Codex `tool_timeout_sec`); Farol itself sets no cap.
 - The diff stat already comes from before/after snapshot trees (`app/electron/delegate-snapshot.ts`); Undo builds on the same snapshots.
+- Undo checks the reverse patch with `git apply --check` and only then applies it to the working copy. `--3way` was ruled out: it writes the index and leaves conflict markers, and the plan promises neither.
+- A failed run that still changed files can be undone too.
+- The card stays one line: "N files changed · Undo". On overlap it turns into "Overlaps later edits · Restore checkout (N files) · Cancel", and the Restore button names the file count, standing in for a separate confirm dialog.
+- The Undo note reaches the agent as text in front of the developer's next message, and is kept in the chat history.
+- Snapshots are released when the chat is cleared. After an app restart the main process no longer knows a chat's runs, so Undo is gone and their refs are never released (clearing the chat can't find them either). Removing a worktree doesn't release them. Follow-up: release by task id from the renderer's saved chats, or sweep `refs/farol/delegate/` refs whose chat no longer exists.
 
 ## Phase 3 — Approvals surfaced in Chat (Claude) · ~3–5 days
 

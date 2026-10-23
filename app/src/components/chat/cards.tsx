@@ -150,8 +150,23 @@ const COMMAND_MAX = 60
 
 const DELEGATE_VERB = { running: 'Recruiting', done: 'Recruited', error: 'Failed recruiting' } as const
 
+export type UndoResult = { ok: true } | { ok: false; message: string; restoreFiles?: number }
+
+/** "2 files changed, 5 insertions(+)" from the last line of a diffstat. */
+function changeSummary(diffStat: string): string {
+  return diffStat.trim().split('\n').pop()?.split(',')[0].trim() ?? ''
+}
+
 /** One quiet line for a subagent: who, on which model, and what it runs now. */
-export function DelegateCard({ card }: { card: NonNullable<AgentMessage['delegate']> }) {
+export function DelegateCard({
+  card,
+  busy,
+  onUndo
+}: {
+  card: NonNullable<AgentMessage['delegate']>
+  busy: boolean
+  onUndo?: (restore: boolean) => Promise<UndoResult>
+}) {
   const last = card.tools[card.tools.length - 1]
   const tail =
     card.state === 'running'
@@ -171,7 +186,62 @@ export function DelegateCard({ card }: { card: NonNullable<AgentMessage['delegat
         <span style={{ color: C.textRow }}>{aiModelLabel(card.provider, card.model) ?? 'Default'}</span>
         {tail && ` – ${tail}`}
       </span>
+      {card.state !== 'running' && card.diffStat && (
+        <span title={card.diffStat} style={{ flex: 'none', marginLeft: 'auto', fontSize: 12 }}>
+          {card.undone === 'restore' ? 'Checkout restored' : card.undone ? 'Undone' : changeSummary(card.diffStat)}
+        </span>
+      )}
+      {card.undoable && !card.undone && onUndo && <UndoAction busy={busy} onUndo={onUndo} />}
     </div>
+  )
+}
+
+/**
+ * Undo, and the way out when it cannot apply: later edits overlap, so the
+ * only clean option left is restoring the checkout, which discards them too.
+ */
+function UndoAction({ busy, onUndo }: { busy: boolean; onUndo: (restore: boolean) => Promise<UndoResult> }) {
+  const [phase, setPhase] = useState<
+    { kind: 'idle' } | { kind: 'working' } | { kind: 'conflict'; files: number; message: string } | { kind: 'failed'; message: string }
+  >({ kind: 'idle' })
+  const run = async (restore: boolean) => {
+    setPhase({ kind: 'working' })
+    const result = await onUndo(restore)
+    if (result.ok) return
+    setPhase(
+      result.restoreFiles !== undefined && !restore
+        ? { kind: 'conflict', files: result.restoreFiles, message: result.message }
+        : { kind: 'failed', message: result.message }
+    )
+  }
+  const disabled = busy || phase.kind === 'working'
+  const waitTitle = busy ? 'Wait for the agent to finish' : undefined
+
+  if (phase.kind === 'conflict') {
+    return (
+      <span role="alert" style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+        <span title={phase.message} style={{ color: C.red }}>Overlaps later edits</span>
+        <Button
+          variant="danger"
+          disabled={disabled}
+          title={waitTitle ?? `Discards every change since this subagent ran, in ${phase.files} file${phase.files === 1 ? '' : 's'}`}
+          onClick={() => void run(true)}
+        >
+          Restore checkout ({phase.files} file{phase.files === 1 ? '' : 's'})
+        </Button>
+        <Button variant="ghost" onClick={() => setPhase({ kind: 'idle' })}>
+          Cancel
+        </Button>
+      </span>
+    )
+  }
+  return (
+    <span style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+      {phase.kind === 'failed' && <span style={{ color: C.red }}>{phase.message}</span>}
+      <Button variant="ghost" disabled={disabled} title={waitTitle ?? 'Revert only what this subagent changed'} onClick={() => void run(false)}>
+        {phase.kind === 'working' ? <Spinner size={10} /> : 'Undo'}
+      </Button>
+    </span>
   )
 }
 

@@ -170,4 +170,75 @@ describe('AgentController.delegate', () => {
     expect(results[0]).toMatchObject({ ok: true, failed: true })
     expect(results[0].ok && results[0].text).toContain('Stopped before it finished.')
   })
+
+  it('undoes a finished run, tells the agent on the next turn, and refuses while busy', async () => {
+    let busyResult: Awaited<ReturnType<AgentController['undoDelegate']>> | undefined
+    const child = vi.fn<AgentExecutor>(async () => {
+      fs.writeFileSync(path.join(repo, 'b.txt'), 'x\n')
+      fs.writeFileSync(path.join(repo, 'a.txt'), 'two\n')
+      return 0
+    })
+    const { controller, events, execute } = harness(child, async (c) => {
+      const result = await c.delegate('task-1', { provider: 'codex', task: 'Write b.txt' })
+      busyResult = await c.undoDelegate('task-1', 'task-1:d1')
+      return [result]
+    })
+    controller.start(request())
+    await vi.waitFor(() => expect(completed(events)).toBe(true))
+
+    expect(busyResult).toEqual({ ok: false, message: 'Wait for the agent to finish, then undo.' })
+    expect(events.some((e) => e.kind === 'delegate' && e.state === 'done' && e.undoable)).toBe(true)
+    // The developer's own edit after the run survives the undo.
+    fs.writeFileSync(path.join(repo, 'mine.txt'), 'mine\n')
+
+    expect(await controller.undoDelegate('task-1', 'task-1:d1')).toEqual({ ok: true })
+    expect(fs.existsSync(path.join(repo, 'b.txt'))).toBe(false)
+    expect(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8')).toBe('one\n')
+    expect(fs.readFileSync(path.join(repo, 'mine.txt'), 'utf8')).toBe('mine\n')
+    expect(events.some((e) => e.kind === 'delegate' && e.undone === 'undo')).toBe(true)
+    expect(await controller.undoDelegate('task-1', 'task-1:d1')).toEqual({ ok: false, message: 'Already undone.' })
+
+    const calls = execute.mock.calls.length
+    controller.start({ ...request(), prompt: 'Carry on' })
+    await vi.waitFor(() => expect(execute.mock.calls.length).toBeGreaterThan(calls))
+    expect(execute.mock.calls[calls][1]).toContain("the developer undid the Codex subagent's changes")
+  })
+
+  it('offers a restore when later edits overlap, and restores on request', async () => {
+    const { controller, events } = harness(async () => {
+      fs.writeFileSync(path.join(repo, 'a.txt'), 'subagent\n')
+      return 0
+    })
+    controller.start(request())
+    await vi.waitFor(() => expect(completed(events)).toBe(true))
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'developer\n')
+
+    const outcome = await controller.undoDelegate('task-1', 'task-1:d1')
+    expect(outcome).toMatchObject({ ok: false, restoreFiles: 1 })
+    expect(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8')).toBe('developer\n')
+
+    expect(await controller.undoDelegate('task-1', 'task-1:d1', true)).toEqual({ ok: true })
+    expect(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8')).toBe('one\n')
+    expect(events.some((e) => e.kind === 'delegate' && e.undone === 'restore')).toBe(true)
+  })
+
+  it('offers no undo for a run that changed nothing, and drops snapshots when the chat is cleared', async () => {
+    const { controller, events } = harness(async () => {
+      fs.writeFileSync(path.join(repo, 'b.txt'), 'x\n')
+      return 0
+    })
+    controller.start(request())
+    await vi.waitFor(() => expect(completed(events)).toBe(true))
+    const refs = () => execFileSync('git', ['for-each-ref', 'refs/farol/'], { cwd: repo, encoding: 'utf8' })
+    expect(refs()).toContain('refs/farol/delegate/task-1/task-1-d1/before')
+
+    controller.dispose('task-1')
+    await vi.waitFor(() => expect(refs()).toBe(''))
+
+    const quiet = harness(async () => 0)
+    quiet.controller.start({ ...request(), id: 'task-1' })
+    await vi.waitFor(() => expect(completed(quiet.events)).toBe(true))
+    const end = quiet.events.filter((e) => e.kind === 'delegate').pop()
+    expect(end?.kind === 'delegate' && end.undoable).toBeFalsy()
+  })
 })

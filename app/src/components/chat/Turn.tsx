@@ -3,7 +3,7 @@ import type { AgentMessage } from '../../types'
 import { C } from '../../theme'
 import { MarkdownBody } from '../../markdown'
 import { Button } from '../controls'
-import { AssistantFooter, DelegateCard, PipelineMsgCard, QuestionCard, ToolCard } from './cards'
+import { AssistantFooter, DelegateCard, PipelineMsgCard, QuestionCard, ToolCard, type UndoResult } from './cards'
 
 function fmtClock(epoch: number): string {
   const d = new Date(epoch)
@@ -22,7 +22,8 @@ export function Turn({
   onNewChat,
   onAnswer,
   canExecutePlan,
-  onExecutePlan
+  onExecutePlan,
+  onUndoDelegate
 }: {
   m: AgentMessage
   i: number
@@ -35,6 +36,7 @@ export function Turn({
   onAnswer: (requestId: string, answers: string[][] | null) => void
   canExecutePlan: boolean
   onExecutePlan: (index: number) => void
+  onUndoDelegate?: (delegateId: string, restore: boolean) => Promise<UndoResult>
 }) {
   if (m.role === 'user') {
     return (
@@ -63,7 +65,16 @@ export function Turn({
 
   if (m.question) return <QuestionCard card={m.question} onAnswer={onAnswer} />
   if (m.tool) return <ToolCard tool={m.tool} tight={!!messages[i - 1]?.tool} />
-  if (m.delegate) return <DelegateCard card={m.delegate} />
+  if (m.delegate) {
+    const { delegateId } = m.delegate
+    return (
+      <DelegateCard
+        card={m.delegate}
+        busy={isBusy}
+        {...(onUndoDelegate ? { onUndo: (restore: boolean) => onUndoDelegate(delegateId, restore) } : {})}
+      />
+    )
+  }
 
   const pc = m.pipeline
   // The footer closes an answer: the last plain reply, once nothing newer has been said.

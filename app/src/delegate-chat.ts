@@ -23,7 +23,8 @@ function delegateText(card: AgentDelegateCard): string {
       : card.state === 'done'
         ? `${label} subagent finished`
         : `${label} subagent failed`
-  return [`${head}: ${card.task}`, card.diffStat].filter(Boolean).join('\n')
+  const undone = card.undone === 'restore' ? 'Checkout restored to before it ran.' : card.undone ? 'Its changes were undone.' : ''
+  return [`${head}: ${card.task}`, card.diffStat, undone].filter(Boolean).join('\n')
 }
 
 function message(card: AgentDelegateCard): AgentMessage {
@@ -44,7 +45,9 @@ export function applyDelegateEvent(messages: AgentMessage[], event: DelegateEven
     task: event.task,
     state: event.state,
     ...(event.diffStat ? { diffStat: event.diffStat } : {}),
-    ...(event.message ? { message: event.message } : {})
+    ...(event.message ? { message: event.message } : {}),
+    ...(event.undoable ? { undoable: true } : {}),
+    ...(event.undone ? { undone: event.undone } : {})
   }
   return upsertMessage(messages, sameRun(event.delegateId), message(card))
 }

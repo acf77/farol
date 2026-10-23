@@ -414,6 +414,10 @@ export type AgentTaskEvent =
       /** `git diff --stat` of what the subagent changed; empty when nothing. */
       diffStat?: string
       message?: string
+      /** Its changes can be undone from the card. */
+      undoable?: boolean
+      /** Set once the developer undid the run, or restored the checkout to before it. */
+      undone?: 'undo' | 'restore'
     }
   | { kind: 'user'; taskId: string; text: string }
   /** The task moved down its fallback chain after a provider-side failure. */
@@ -680,6 +684,16 @@ export interface FarolApi {
     cancel(taskId: string): Promise<void>
     /** Cancel and drop the task so cleared chats cannot retain prompt history. */
     dispose(taskId: string): Promise<void>
+    /**
+     * Undo one subagent run's changes. Fails with `restoreFiles` when later
+     * edits overlap; calling again with `restore` puts the checkout back to
+     * before the run, discarding that many files' changes.
+     */
+    undoDelegate(
+      taskId: string,
+      delegateId: string,
+      restore?: boolean
+    ): Promise<{ ok: true } | { ok: false; message: string; restoreFiles?: number }>
     /** Reply to an `asking` turn. `answers: null` dismisses the questions. */
     answer(
       taskId: string,

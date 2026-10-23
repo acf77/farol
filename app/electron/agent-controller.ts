@@ -20,7 +20,7 @@ import {
   normalizeModel
 } from '../shared/ai'
 import { isDelegateToolName, MANAGED_TOOL_TIMEOUT_SEC, type McpServerEntry } from '../shared/mcp-config'
-import { captureTree, treeDiffStat } from './delegate-snapshot'
+import { captureTree, pinTree, releaseTrees, restoreTree, treeDiffStat, undoChange } from './delegate-snapshot'
 import { AgentStreamParser } from '../shared/agent-stream'
 import { claudeCatalogWindow } from '../shared/agent-models'
 import {
@@ -156,6 +156,10 @@ interface Task {
   delegateToolId?: string
   /** The attempt in flight, so a subagent's file writes count as this turn's. */
   activeScan?: CycleScan
+  /** Subagent runs that changed files, kept so Undo can reverse exactly them. */
+  delegateRuns: Map<string, DelegateRun>
+  /** What the agent should hear first on the next turn (e.g. an Undo). */
+  notes: string[]
   running: boolean
   cancelled: boolean
   /** Drop from the map once the in-flight cycle settles (cleared chats). */
@@ -434,9 +438,23 @@ function delegateFailure(
 }
 
 /** Files changed since `before`, as a diffstat; empty when the tree could not be read. */
-async function treeChanges(cwd: string, before: Awaited<ReturnType<typeof captureTree>> | undefined): Promise<string> {
+async function treeChanges(
+  cwd: string,
+  before: string | undefined
+): Promise<{ after?: string; diffStat: string }> {
   const after = before ? await captureTree(cwd).catch(() => undefined) : undefined
-  return before && after ? await treeDiffStat(cwd, before, after).catch(() => '') : ''
+  const diffStat = before && after ? await treeDiffStat(cwd, before, after).catch(() => '') : ''
+  return { ...(after ? { after } : {}), diffStat }
+}
+
+interface DelegateRun {
+  card: ReturnType<typeof delegateCard>
+  state: 'done' | 'error'
+  diffStat: string
+  message?: string
+  before: string
+  after: string
+  undone?: 'undo' | 'restore'
 }
 
 function delegateCard(task: Task, delegateId: string, provider: AiProvider, model: string | undefined, work: string) {
@@ -498,7 +516,8 @@ export class AgentController {
       existing.fallbacks = [...(request.fallbacks ?? [])]
       existing.sameModelAttempts = 0
       this.emit({ kind: 'user', taskId: request.id, text: clean })
-      this.followUp(existing, clean)
+      const notes = existing.notes.splice(0).join('\n')
+      this.followUp(existing, notes ? `${notes}\n\n${clean}` : clean)
       return { ok: true }
     }
     if (mode !== 'plan' && !request.pipelines.some((pipeline) => pipeline.nodes.length)) {
@@ -515,6 +534,8 @@ export class AgentController {
       child: null,
       delegating: false,
       delegateSeq: 0,
+      delegateRuns: new Map(),
+      notes: [],
       running: true,
       cancelled: false,
       disposeWhenIdle: false,
@@ -695,14 +716,80 @@ export class AgentController {
       task.delegating = false
     }
 
-    const diffStat = await treeChanges(cwd, before)
+    const { after, diffStat } = await treeChanges(cwd, before)
     const stopped = task.cancelled || signal?.aborted === true
     const failed = stopped || code !== 0
     const label = aiSelectionLabel(provider, model)
     const message = delegateFailure(label, { stopped, failed, code, diagnostics: run.diagnostics })
-    this.emit({ ...card, state: failed ? 'error' : 'done', diffStat, ...(message ? { message } : {}) })
+    const state = failed ? 'error' : 'done'
+    // A run that changed files can be undone, failed or not: a crash halfway through still left edits.
+    const undoable = !!(before && after && diffStat) && (await this.keepRun(task, delegateId, {
+      card, state, diffStat, ...(message ? { message } : {}), before: before!, after: after!
+    }))
+    this.emit({ ...card, state, diffStat, ...(message ? { message } : {}), ...(undoable ? { undoable } : {}) })
     const summary = stripControlMarkerLines(run.lastTurn || plainText(run.said)).trim()
     return { ok: true, text: delegateReport(message ?? `${label} finished.`, summary, diffStat), failed }
+  }
+
+  /** Pin a run's snapshots so Undo can use them; false when git would not keep them. */
+  private async keepRun(task: Task, delegateId: string, run: DelegateRun): Promise<boolean> {
+    try {
+      await pinTree(task.request.cwd, task.request.id, delegateId, 'before', run.before)
+      await pinTree(task.request.cwd, task.request.id, delegateId, 'after', run.after)
+    } catch {
+      return false
+    }
+    task.delegateRuns.set(delegateId, run)
+    return true
+  }
+
+  /**
+   * Undo one subagent run: reverse exactly its changes, keeping later edits
+   * that do not overlap. With `restore`, put the whole checkout back to how
+   * it was before the run, discarding everything since — the way out when
+   * the plain undo would conflict. Only while the chat is idle.
+   */
+  async undoDelegate(
+    taskId: string,
+    delegateId: string,
+    restore = false
+  ): Promise<{ ok: true } | { ok: false; message: string; restoreFiles?: number }> {
+    const task = this.tasks.get(taskId)
+    const run = task?.delegateRuns.get(delegateId)
+    if (!task || !run) return { ok: false, message: 'This subagent run can no longer be undone.' }
+    if (task.running) return { ok: false, message: 'Wait for the agent to finish, then undo.' }
+    if (run.undone) return { ok: false, message: 'Already undone.' }
+    const cwd = task.request.cwd
+    try {
+      if (restore) await restoreTree(cwd, run.before)
+      else {
+        const outcome = await undoChange(cwd, run.before, run.after)
+        if (!outcome.ok) {
+          return {
+            ok: false,
+            message: 'Later changes overlap with this subagent’s, so nothing was undone.',
+            restoreFiles: outcome.restoreFiles
+          }
+        }
+      }
+    } catch (error) {
+      return { ok: false, message: errorMessage(error) }
+    }
+    run.undone = restore ? 'restore' : 'undo'
+    const label = aiSelectionLabel(run.card.provider, run.card.model)
+    task.notes.push(
+      restore
+        ? `Note from Farol: the developer restored the checkout to how it was before the ${label} subagent ran (task: ${run.card.task}). Every change since then, including later ones, is gone.`
+        : `Note from Farol: the developer undid the ${label} subagent's changes (task: ${run.card.task}). These are reverted:\n${run.diffStat}`
+    )
+    this.emit({
+      ...run.card,
+      state: run.state,
+      diffStat: run.diffStat,
+      ...(run.message ? { message: run.message } : {}),
+      undone: run.undone
+    })
+    return { ok: true }
   }
 
   /** Why a `delegate` call cannot start, or undefined when it can. */
@@ -898,6 +985,10 @@ export class AgentController {
     if (!task) return
     task.disposeWhenIdle = true
     task.guidance.length = 0
+    if (task.delegateRuns.size) {
+      task.delegateRuns.clear()
+      void releaseTrees(task.request.cwd, taskId).catch(() => undefined)
+    }
     this.cancel(taskId)
     if (!task.running) this.tasks.delete(taskId)
   }

@@ -2427,6 +2427,11 @@ export function ProjectWorkspace({
                     onProviderChange={setAgentProvider}
                     onModeChange={setAgentMode}
                     onExecutePlan={executePlan}
+                    onUndoDelegate={(delegateId, restore) =>
+                      chatPane
+                        ? api.agent.undoDelegate(chatPane.taskId, delegateId, restore)
+                        : Promise.resolve({ ok: false, message: 'This chat is no longer open.' })
+                    }
                     onOpenPipeline={showTerminal}
                     onNewChat={requestNewChat}
                     clearChatConfirm={clearChatConfirm}

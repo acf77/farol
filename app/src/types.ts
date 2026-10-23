@@ -71,6 +71,8 @@ export interface AgentDelegateCard {
   state: 'running' | 'done' | 'error'
   diffStat?: string
   message?: string
+  undoable?: boolean
+  undone?: 'undo' | 'restore'
   /** The subagent's own tool calls, latest last. */
   tools: AgentToolCard[]
   /** What the subagent last said. */

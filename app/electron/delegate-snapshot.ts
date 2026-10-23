@@ -52,3 +52,64 @@ export async function treeDiffStat(cwd: string, before: string, after: string): 
   if (before === after) return ''
   return (await git(cwd, ['diff', '--stat', '--no-color', before, after])).trimEnd()
 }
+
+const REF_ROOT = 'refs/farol/delegate'
+
+/** Ref names allow only a narrow alphabet; task and run ids may hold anything. */
+function refPart(id: string): string {
+  return id.replace(/[^A-Za-z0-9._-]/g, '-').replace(/^\.+/, '') || '-'
+}
+
+/** Keep a snapshot from `git gc` until its chat is cleared. */
+export async function pinTree(cwd: string, taskId: string, runId: string, name: 'before' | 'after', tree: string): Promise<void> {
+  await git(cwd, ['update-ref', `${REF_ROOT}/${refPart(taskId)}/${refPart(runId)}/${name}`, tree])
+}
+
+/** Drop every snapshot a chat pinned. */
+export async function releaseTrees(cwd: string, taskId: string): Promise<void> {
+  const refs = (await git(cwd, ['for-each-ref', '--format=%(refname)', `${REF_ROOT}/${refPart(taskId)}/`]))
+    .split('\n')
+    .filter(Boolean)
+  for (const ref of refs) await git(cwd, ['update-ref', '-d', ref])
+}
+
+/** Apply the change from `from` to `to` onto the working copy only; never the index. */
+async function applyChange(cwd: string, from: string, to: string, check: boolean): Promise<void> {
+  const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trim()
+  const patch = await git(root, ['diff', '--binary', '--no-color', '--no-ext-diff', from, to])
+  if (!patch) return
+  await new Promise<void>((resolve, reject) => {
+    const proc = execFile('git', ['apply', ...(check ? ['--check'] : []), '-'], { cwd: root }, (error, _out, stderr) =>
+      error ? reject(new Error(stderr.trim() || error.message)) : resolve()
+    )
+    proc.stdin?.end(patch)
+  })
+}
+
+export type UndoOutcome =
+  | { ok: true }
+  /** Later edits overlap; nothing was changed. `restoreFiles` is what restoring `before` would touch. */
+  | { ok: false; conflict: string; restoreFiles: number }
+
+/**
+ * Reverse exactly what happened between `before` and `after`, keeping later
+ * edits that do not overlap. All or nothing: a reverse patch that does not
+ * apply cleanly changes no file.
+ */
+export async function undoChange(cwd: string, before: string, after: string): Promise<UndoOutcome> {
+  try {
+    await applyChange(cwd, after, before, true)
+  } catch (error) {
+    const now = await captureTree(cwd)
+    const files = now ? (await git(cwd, ['diff', '--name-only', now, before])).split('\n').filter(Boolean).length : 0
+    return { ok: false, conflict: error instanceof Error ? error.message : String(error), restoreFiles: files }
+  }
+  await applyChange(cwd, after, before, false)
+  return { ok: true }
+}
+
+/** Put the whole working copy back to `before`, discarding everything since. */
+export async function restoreTree(cwd: string, before: string): Promise<void> {
+  const now = await captureTree(cwd)
+  if (now) await applyChange(cwd, now, before, false)
+}
