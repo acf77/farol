@@ -1,6 +1,7 @@
 /** Which coding CLI an AI pipeline step invokes. */
 
 import { FAILURE_REPORT_REL } from './failure'
+import { opencodeRunConfig } from './opencode-config'
 import { openCodeModel } from './openrouter'
 
 export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'omp', 'openrouter'] as const
@@ -236,6 +237,8 @@ export interface AiCommand {
    * `shared/agent-stream.ts`. Absent means stdout is plain text to show as-is.
    */
   stream?: 'ndjson'
+  /** OpenCode settings for this run only, merged into `OPENCODE_CONFIG_CONTENT` (see `opencode-config.ts`). */
+  opencodeConfig?: Record<string, unknown>
 }
 
 /** Older OpenCode builds reject `--format json` with an unknown-option error. */
@@ -294,8 +297,11 @@ export function aiCommand(
     case 'opencode':
       return {
         bins: ['opencode'],
-        args: withModel(['run', '--auto', prompt], passed),
-        hint: 'Install the OpenCode CLI (https://opencode.ai) to run OpenCode steps.'
+        // Read-only like every other CLI here: the plan agent has no write
+        // tools, and its shell is denied for the run (`--auto` would approve an `ask`).
+        args: withModel(['run', '--auto', '--agent', 'plan', prompt], passed),
+        hint: 'Install the OpenCode CLI (https://opencode.ai) to run OpenCode steps.',
+        opencodeConfig: opencodeRunConfig('plan')
       }
     case 'omp':
       return {

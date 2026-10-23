@@ -79,8 +79,11 @@ describe('aiCommand', () => {
       'text',
       'review this'
     ])
-    expect(aiCommand('opencode', 'review this').args).toEqual(['run', '--auto', 'review this'])
-    expect(aiCommand('openrouter', 'review this').args).toEqual(['run', '--auto', 'review this'])
+    // OpenCode's plan agent has no write tools; its shell is denied for the run.
+    expect(aiCommand('opencode', 'review this').args).toEqual(['run', '--auto', '--agent', 'plan', 'review this'])
+    expect(aiCommand('opencode', 'review this').opencodeConfig).toEqual({ agent: { plan: { permission: { bash: 'deny' } } } })
+    expect(aiCommand('openrouter', 'review this').args).toEqual(['run', '--auto', '--agent', 'plan', 'review this'])
+    expect(aiCommand('openrouter', 'review this').opencodeConfig).toEqual({ agent: { plan: { permission: { bash: 'deny' } } } })
     // omp has no read-only sandbox flag, so the tool set enforces it.
     expect(aiCommand('omp', 'review this').args).toEqual([
       '-p',
@@ -119,6 +122,13 @@ describe('aiCommand', () => {
       'auto',
       'review this'
     ])
+  })
+
+  it('only gives OpenCode a run config', () => {
+    for (const provider of ['claude', 'codex', 'cursor', 'omp'] as const) {
+      expect(aiCommand(provider, 'x').opencodeConfig).toBeUndefined()
+    }
+    expect(aiCommand('openrouter', 'x', undefined, 'pi').opencodeConfig).toBeUndefined()
   })
 
   it('tries Cursor as agent, then cursor-agent', () => {
@@ -308,6 +318,8 @@ describe('managedAiCommand', () => {
     expect(aiCommand('openrouter', 'review this', 'anthropic/claude-sonnet-4').args).toEqual([
       'run',
       '--auto',
+      '--agent',
+      'plan',
       '--model',
       'openrouter/anthropic/claude-sonnet-4',
       'review this'
