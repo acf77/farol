@@ -573,15 +573,16 @@ export function managedAiCommand(
     codexHook?: string
   }
 ): AiCommand {
-  const cli = cliFor(provider, opts?.via)
-  const resume = opts?.resume?.trim() || undefined
+  const { via, resume: resumeId, mode, tools: toolList, webSearch, mcp, askApproval, codexHook } = opts ?? {}
+  const cli = cliFor(provider, via)
+  const resume = resumeId?.trim() || undefined
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
   const jsonFormat = opts?.jsonFormat !== false
-  const plan = opts?.mode === 'plan'
-  const tools = opts?.tools?.length ? opts.tools.join(',') : undefined
+  const plan = mode === 'plan'
+  const tools = toolList?.length ? toolList.join(',') : undefined
   switch (cli) {
     case 'codex':
-      return managedCodexCommand(prompt, passed, plan, opts?.webSearch, resume, opts?.mcp, opts?.codexHook)
+      return managedCodexCommand(prompt, passed, plan, webSearch, resume, mcp, codexHook)
     case 'cursor':
       return managedCursorCommand(prompt, passed, plan, resume)
     case 'opencode':
@@ -591,7 +592,7 @@ export function managedAiCommand(
     case 'pi':
       return managedPiCommand(prompt, passed, plan, tools)
     case 'claude':
-      return managedClaudeCommand(prompt, passed, plan, tools, resume, opts?.mcp, opts?.askApproval)
+      return managedClaudeCommand(prompt, passed, plan, tools, resume, mcp, askApproval)
   }
 }
 

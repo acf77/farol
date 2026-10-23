@@ -441,13 +441,40 @@ function pipelineCatalog(pipelines: Pipeline[]): string {
 /** The optional parts of an agent command, present only when set. */
 function commandExtras(
   opts: { tools?: string[]; webSearch?: boolean; session?: AgentSessionIo } | undefined,
-  mcp: McpServerEntry | undefined
+  extra: { mcp?: McpServerEntry; askApproval: boolean; codexHook?: string }
 ) {
+  const { mcp, askApproval, codexHook } = extra
   return {
     ...(opts?.tools?.length ? { tools: opts.tools } : {}),
     ...(opts?.webSearch ? { webSearch: true } : {}),
     ...(opts?.session?.resume ? { resume: opts.session.resume } : {}),
-    ...(mcp ? { mcp } : {})
+    ...(mcp ? { mcp } : {}),
+    ...(askApproval && mcp ? { askApproval } : {}),
+    ...(codexHook ? { codexHook } : {})
+  }
+}
+
+/** Turns an agent's stream events into chat output, reporting context use when it changes. */
+function streamConsumer(
+  parser: AgentStreamParser | null,
+  sink: AgentSink,
+  onUsage: ((usage: ContextUsage) => void) | undefined
+): (events: ReturnType<AgentStreamParser['push']>) => void {
+  let reported: ContextUsage | undefined
+  return (events) => {
+    if (parser?.contextTokens) {
+      const usage = { tokens: parser.contextTokens, ...(parser.contextWindow ? { window: parser.contextWindow } : {}) }
+      if (reported?.tokens !== usage.tokens || reported.window !== usage.window) {
+        reported = usage
+        onUsage?.(usage)
+      }
+    }
+    for (const event of events) {
+      if (event.kind === 'text') sink.turn(event.text)
+      else if (event.kind === 'raw') sink.text(plainText(event.text))
+      else if (event.kind === 'question') sink.question(event.questions)
+      else sink.tool(event)
+    }
   }
 }
 
@@ -798,14 +825,24 @@ export class AgentController {
     const failed = stopped || code !== 0
     const label = aiSelectionLabel(provider, model)
     const message = delegateFailure(label, { stopped, failed, code, diagnostics: run.diagnostics })
-    const state = failed ? 'error' : 'done'
-    // A run that changed files can be undone, failed or not: a crash halfway through still left edits.
-    const undoable = !!(before && after && diffStat) && (await this.keepRun(task, delegateId, {
-      card, state, diffStat, ...(message ? { message } : {}), before: before!, after: after!
-    }))
-    this.emit({ ...card, state, diffStat, ...(message ? { message } : {}), ...(undoable ? { undoable } : {}) })
+    await this.reportDelegate(task, delegateId, card, { state: failed ? 'error' : 'done', diffStat, message, before, after })
     const summary = stripControlMarkerLines(run.lastTurn || plainText(run.said)).trim()
     return { ok: true, text: delegateReport(message ?? `${label} finished.`, summary, diffStat), failed }
+  }
+
+  /** Show how a subagent run ended; a run that changed files can be undone, failed or not, since a crash halfway still left edits. */
+  private async reportDelegate(
+    task: Task,
+    delegateId: string,
+    card: DelegateRun['card'],
+    end: { state: DelegateRun['state']; diffStat: string; message?: string; before?: string; after?: string }
+  ): Promise<void> {
+    const { state, diffStat, message, before, after } = end
+    const note = message ? { message } : {}
+    const undoable =
+      !!(before && after && diffStat) &&
+      (await this.keepRun(task, delegateId, { card, state, diffStat, ...note, before: before!, after: after! }))
+    this.emit({ ...card, state, diffStat, ...note, ...(undoable ? { undoable } : {}) })
   }
 
   /** Pin a run's snapshots so Undo can use them; false when git would not keep them. */
@@ -986,7 +1023,7 @@ export class AgentController {
   }
 
   private expireApprovals(task: Task): void {
-    for (const requestId of [...task.approvals.keys()]) this.settleApproval(task, requestId, 'expired')
+    for (const requestId of task.approvals.keys()) this.settleApproval(task, requestId, 'expired')
   }
 
   /** Why a `delegate` call cannot start, or undefined when it can. */
@@ -2097,29 +2134,69 @@ export class AgentController {
       ...(model ? { model: provider === 'openrouter' ? openCodeModel(model) : model } : {}),
       ...(opts?.session?.resume ? { resume: opts.session.resume } : {}),
       mcpServers: mcp ? [acpMcpServer(MANAGED_MCP_SERVER_KEY, mcp)] : [],
-      permission: async (call) => {
-        if (plan) return false
-        if (!askFirst) return true
-        const answer = await this.requestApproval(task.request.id, {
-          ...acpApprovalAsk(call),
-          ...(child ? { delegateId: child.delegateId } : {})
-        })
-        return answer.allow
-      },
-      onText: (chunk) => sink.text(chunk),
-      onTool: (event) => sink.tool(event),
-      onNoise: (chunk) => sink.noise(chunk),
-      onSession: (id) => opts?.session?.onSession(id),
-      onUsage: (tokens) => opts?.session?.onUsage?.({ tokens }),
-      onProcess: (proc) => this.setProcess(task, !!child, proc)
+      permission: this.acpPermission(task, plan, askFirst, child?.delegateId),
+      ...this.acpCallbacks(task, sink, opts, !!child)
     })
     if (result.unsupported && !task.cancelled) return this.runAgent(task, prompt, sink, false, { ...opts, noAcp: true })
     return result.code
   }
 
+  /** Answers the agent's permission requests: no in Plan, yes under auto-approve, otherwise the developer decides. */
+  private acpPermission(task: Task, plan: boolean, askFirst: boolean, delegateId: string | undefined) {
+    return async (call: Parameters<typeof acpApprovalAsk>[0]): Promise<boolean> => {
+      if (plan) return false
+      if (!askFirst) return true
+      const answer = await this.requestApproval(task.request.id, {
+        ...acpApprovalAsk(call),
+        ...(delegateId ? { delegateId } : {})
+      })
+      return answer.allow
+    }
+  }
+
+  /** Passes an ACP run's output, session, usage and process on to the chat. */
+  private acpCallbacks(task: Task, sink: AgentSink, opts: Parameters<AgentController['runAgent']>[4], child: boolean) {
+    return {
+      onText: (chunk: string) => sink.text(chunk),
+      onTool: (event: Parameters<AgentSink['tool']>[0]) => sink.tool(event),
+      onNoise: (chunk: string) => sink.noise(chunk),
+      onSession: (id: string) => opts?.session?.onSession(id),
+      onUsage: (tokens: number) => opts?.session?.onUsage?.({ tokens }),
+      onProcess: (proc: ChildProcess | null) => this.setProcess(task, child, proc)
+    }
+  }
+
   private setProcess(task: Task, child: boolean, proc: ChildProcess | null): void {
     if (child) task.child = proc
     else task.process = proc
+  }
+
+  /** The CLI command and environment for a managed run: tools, Farol's server, approvals and mode. */
+  private agentCommand(
+    task: Task,
+    prompt: string,
+    plain: boolean,
+    opts: Parameters<AgentController['runAgent']>[4],
+    who: { provider: AiProvider; model: string | undefined; via: ReturnType<typeof openRouterAgent> }
+  ) {
+    const { provider, model, via } = who
+    const child = opts?.child
+    const askApproval = !this.autoApproves(task, provider)
+    const tools = managedToolsFor({ subagent: !!child, claudeAsks: askApproval && provider === 'claude' })
+    // A server with no tools shows up as broken, so a run with nothing to offer gets none.
+    const mcp = this.managed && tools.length ? this.managed.mcp(task.request.id, child?.delegateId, tools) : undefined
+    const codexHook = askApproval ? this.managed?.codexHook?.(task.request.id, child?.delegateId) : undefined
+    const spec = managedAiCommand(provider, prompt, model, {
+      jsonFormat: !plain,
+      via,
+      mode: task.request.mode,
+      ...commandExtras(opts, { mcp, askApproval, codexHook })
+    })
+    const env = aiEnv(provider, via)
+    applyOpencodeConfig(env, spec.opencodeConfig)
+    // Claude's limit on one MCP call; a `delegate` waits as long as its subagent runs.
+    if (mcp) env.MCP_TOOL_TIMEOUT = String(MANAGED_TOOL_TIMEOUT_SEC * 1000)
+    return { spec, env }
   }
 
   private runAgent(
@@ -2145,24 +2222,8 @@ export class AgentController {
     if (!plain && !opts?.noAcp && ACP_CLIS.includes(cliFor(provider, via))) {
       return this.runAcpAgent(task, prompt, sink, opts)
     }
-    const askApproval = !this.autoApproves(task, provider)
-    const tools = managedToolsFor({ subagent: !!child, claudeAsks: askApproval && provider === 'claude' })
-    // A server with no tools shows up as broken, so a run with nothing to offer gets none.
-    const mcp = this.managed && tools.length ? this.managed.mcp(task.request.id, child?.delegateId, tools) : undefined
-    const codexHook = askApproval ? this.managed?.codexHook?.(task.request.id, child?.delegateId) : undefined
     const isChild = !!child
-    const spec = managedAiCommand(provider, prompt, model, {
-      jsonFormat: !plain,
-      via,
-      mode: task.request.mode,
-      ...commandExtras(opts, mcp),
-      ...(askApproval && mcp ? { askApproval } : {}),
-      ...(codexHook ? { codexHook } : {})
-    })
-    const env = aiEnv(provider, via)
-    applyOpencodeConfig(env, spec.opencodeConfig)
-    // Claude's limit on one MCP call; a `delegate` waits as long as its subagent runs.
-    if (mcp) env.MCP_TOOL_TIMEOUT = String(MANAGED_TOOL_TIMEOUT_SEC * 1000)
+    const { spec, env } = this.agentCommand(task, prompt, plain, opts, { provider, model, via })
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       sink.text(`farol: ${spec.hint}\n`)
@@ -2178,26 +2239,7 @@ export class AgentController {
     const stdoutText = new StringDecoder('utf8')
     const stderrText = new StringDecoder('utf8')
 
-    let reported: ContextUsage | undefined
-    const reportUsage = (): void => {
-      if (!parser?.contextTokens) return
-      const usage = {
-        tokens: parser.contextTokens,
-        ...(parser.contextWindow ? { window: parser.contextWindow } : {})
-      }
-      if (reported?.tokens === usage.tokens && reported.window === usage.window) return
-      reported = usage
-      opts?.session?.onUsage?.(usage)
-    }
-    const consume = (events: ReturnType<AgentStreamParser['push']>): void => {
-      reportUsage()
-      for (const event of events) {
-        if (event.kind === 'text') sink.turn(event.text)
-        else if (event.kind === 'raw') sink.text(plainText(event.text))
-        else if (event.kind === 'question') sink.question(event.questions)
-        else sink.tool(event)
-      }
-    }
+    const consume = streamConsumer(parser, sink, opts?.session?.onUsage)
 
     return new Promise((resolve) => {
       let settled = false

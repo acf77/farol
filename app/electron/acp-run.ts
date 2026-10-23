@@ -57,6 +57,44 @@ interface Pending {
   resolve(message: Record<string, unknown>): void
 }
 
+/** The error text of a failed reply, or undefined when the call succeeded. */
+function failed(message: Record<string, unknown>): string | undefined {
+  const error = message.error as Record<string, unknown> | undefined
+  return error ? String(error.message ?? 'ACP request failed') : undefined
+}
+
+/** Pass the agent's text and tool progress on. Tool names arrive on the first update; later ones may omit them. */
+function relayUpdate(opts: AcpRunOptions, names: Map<string, string>, update: Record<string, unknown>): void {
+  const kind = update.sessionUpdate
+  if (kind === 'agent_message_chunk') {
+    const content = update.content as Record<string, unknown> | undefined
+    if (content?.type === 'text' && typeof content.text === 'string') opts.onText(content.text)
+    return
+  }
+  if (kind !== 'tool_call' && kind !== 'tool_call_update') return
+  const tool = update as AcpToolCall
+  const toolId = typeof tool.toolCallId === 'string' ? tool.toolCallId : ''
+  const state = acpToolState(tool.status)
+  if (!toolId || !state) return
+  const name = acpToolName(tool, names.get(toolId))
+  if (!names.has(toolId) || (name !== 'tool' && names.get(toolId) === 'tool')) names.set(toolId, name)
+  const detail = acpToolDetail(tool)
+  opts.onTool({ toolId, name: names.get(toolId) ?? name, ...(detail ? { detail } : {}), state })
+}
+
+/** Ask the developer, then reply to the agent's permission request with the matching option. */
+async function answerPermission(
+  opts: AcpRunOptions,
+  send: (message: Record<string, unknown>) => void,
+  id: unknown,
+  params: Record<string, unknown>
+): Promise<void> {
+  const options = Array.isArray(params.options) ? (params.options as AcpPermissionOption[]) : []
+  const allow = await opts.permission((params.toolCall ?? {}) as AcpToolCall).catch(() => false)
+  const optionId = acpPermissionChoice(options, allow)
+  send({ id, result: { outcome: optionId ? { outcome: 'selected', optionId } : { outcome: 'cancelled' } } })
+}
+
 export function runAcp(opts: AcpRunOptions): Promise<AcpRunResult> {
   return new Promise((resolve) => {
     let proc: ChildProcess
@@ -90,30 +128,22 @@ export function runAcp(opts: AcpRunOptions): Promise<AcpRunResult> {
         send({ id, method, params })
       })
 
-    // Tool names arrive on the first update; later updates for the same call may omit them.
     const names = new Map<string, string>()
-    const onUpdate = (update: Record<string, unknown>): void => {
-      const kind = update.sessionUpdate
-      if (kind === 'agent_message_chunk') {
-        const content = update.content as Record<string, unknown> | undefined
-        if (content?.type === 'text' && typeof content.text === 'string') opts.onText(content.text)
-        return
+
+    const route = (message: Record<string, unknown>): void => {
+      const method = typeof message.method === 'string' ? message.method : undefined
+      if (!method && typeof message.id === 'number') {
+        pending.get(message.id)?.resolve(message)
+        pending.delete(message.id)
+      } else if (method === 'session/update') {
+        const update = (message.params as Record<string, unknown> | undefined)?.update
+        if (update && typeof update === 'object') relayUpdate(opts, names, update as Record<string, unknown>)
+      } else if (method === 'session/request_permission') {
+        void answerPermission(opts, send, message.id, (message.params ?? {}) as Record<string, unknown>)
+      } else if (method && message.id !== undefined) {
+        // Farol offers no file system or terminal to the agent; it uses its own tools.
+        send({ id: message.id, error: { code: -32601, message: `Farol does not support ${method}` } })
       }
-      if (kind !== 'tool_call' && kind !== 'tool_call_update') return
-      const tool = update as AcpToolCall
-      const toolId = typeof tool.toolCallId === 'string' ? tool.toolCallId : ''
-      const state = acpToolState(tool.status)
-      if (!toolId || !state) return
-      const name = acpToolName(tool, names.get(toolId))
-      if (!names.has(toolId) || (name !== 'tool' && names.get(toolId) === 'tool')) names.set(toolId, name)
-      const detail = acpToolDetail(tool)
-      opts.onTool({ toolId, name: names.get(toolId) ?? name, ...(detail ? { detail } : {}), state })
-    }
-    const onPermission = async (id: unknown, params: Record<string, unknown>): Promise<void> => {
-      const options = Array.isArray(params.options) ? (params.options as AcpPermissionOption[]) : []
-      const allow = await opts.permission((params.toolCall ?? {}) as AcpToolCall).catch(() => false)
-      const optionId = acpPermissionChoice(options, allow)
-      send({ id, result: { outcome: optionId ? { outcome: 'selected', optionId } : { outcome: 'cancelled' } } })
     }
 
     const decoder = new StringDecoder('utf8')
@@ -132,19 +162,7 @@ export function runAcp(opts: AcpRunOptions): Promise<AcpRunResult> {
           opts.onNoise(`${line}\n`)
           continue
         }
-        const method = typeof message.method === 'string' ? message.method : undefined
-        if (!method && typeof message.id === 'number') {
-          pending.get(message.id)?.resolve(message)
-          pending.delete(message.id)
-        } else if (method === 'session/update') {
-          const update = (message.params as Record<string, unknown> | undefined)?.update
-          if (update && typeof update === 'object') onUpdate(update as Record<string, unknown>)
-        } else if (method === 'session/request_permission') {
-          void onPermission(message.id, (message.params ?? {}) as Record<string, unknown>)
-        } else if (method && message.id !== undefined) {
-          // Farol offers no file system or terminal to the agent; it uses its own tools.
-          send({ id: message.id, error: { code: -32601, message: `Farol does not support ${method}` } })
-        }
+        route(message)
       }
     })
     const stderr = new StringDecoder('utf8')
@@ -162,9 +180,59 @@ export function runAcp(opts: AcpRunOptions): Promise<AcpRunResult> {
       finish(initialized ? { code: code || 1 } : { code: code ?? 1, unsupported: true })
     })
 
-    const failed = (message: Record<string, unknown>): string | undefined => {
-      const error = message.error as Record<string, unknown> | undefined
-      return error ? String(error.message ?? 'ACP request failed') : undefined
+    /** Resume the asked-for session or open a new one; ends the run and returns nothing when neither works. */
+    const openSession = async (
+      canResume: boolean
+    ): Promise<{ sessionId: string; configOptions?: AcpConfigOption[] } | undefined> => {
+      if (opts.resume) {
+        if (!canResume) {
+          opts.onNoise('session not found: this CLI cannot resume over ACP\n')
+          finish({ code: 1 })
+          return undefined
+        }
+        const resumed = await call('session/resume', { sessionId: opts.resume, cwd: opts.cwd, mcpServers: opts.mcpServers })
+        if (failed(resumed)) {
+          // The controller retries once on a new session with the whole history.
+          opts.onNoise(`session not found: ${failed(resumed)}\n`)
+          finish({ code: 1 })
+          return undefined
+        }
+        const configOptions = (resumed.result as Record<string, unknown> | undefined)?.configOptions as AcpConfigOption[] | undefined
+        return { sessionId: opts.resume, configOptions }
+      }
+      const created = await call('session/new', { cwd: opts.cwd, mcpServers: opts.mcpServers })
+      const result = created.result as Record<string, unknown> | undefined
+      if (failed(created) || typeof result?.sessionId !== 'string') {
+        opts.onNoise(`${failed(created) ?? 'The agent did not open a session.'}\n`)
+        finish({ code: 1 })
+        return undefined
+      }
+      return { sessionId: result.sessionId, configOptions: result.configOptions as AcpConfigOption[] | undefined }
+    }
+
+    /** Apply the chosen mode and model; ends the run and returns false when one cannot be set. */
+    const configure = async (sessionId: string, configOptions: AcpConfigOption[] | undefined): Promise<boolean> => {
+      const mode = acpModeValue(opts.mode, configOptions)
+      if (!mode && opts.mode === 'plan') {
+        // No read-only mode to switch to: refuse rather than plan with write access.
+        opts.onText('farol: this CLI offers no Plan mode over ACP, so Farol cannot keep it read-only.\n')
+        finish({ code: 1 })
+        return false
+      }
+      const settings = [
+        mode && { configId: 'mode', value: mode, hint: `could not switch the agent to ${mode} mode: ` },
+        opts.model && { configId: 'model', value: opts.model, hint: '' }
+      ]
+      for (const setting of settings) {
+        if (!setting) continue
+        const set = await call('session/set_config_option', { sessionId, configId: setting.configId, value: setting.value })
+        if (failed(set)) {
+          opts.onText(`farol: ${setting.hint}${failed(set)}\n`)
+          finish({ code: 1 })
+        return false
+        }
+      }
+      return true
     }
 
     void (async () => {
@@ -180,57 +248,14 @@ export function runAcp(opts: AcpRunOptions): Promise<AcpRunResult> {
       const caps = ((init.result as Record<string, unknown> | undefined)?.agentCapabilities ?? {}) as Record<string, unknown>
       const canResume = !!(caps.sessionCapabilities as Record<string, unknown> | undefined)?.resume
 
-      let sessionId: string | undefined
-      let configOptions: AcpConfigOption[] | undefined
-      if (opts.resume) {
-        if (!canResume) {
-          opts.onNoise('session not found: this CLI cannot resume over ACP\n')
-          return finish({ code: 1 })
-        }
-        const resumed = await call('session/resume', { sessionId: opts.resume, cwd: opts.cwd, mcpServers: opts.mcpServers })
-        if (failed(resumed)) {
-          // The controller retries once on a new session with the whole history.
-          opts.onNoise(`session not found: ${failed(resumed)}\n`)
-          return finish({ code: 1 })
-        }
-        sessionId = opts.resume
-        configOptions = (resumed.result as Record<string, unknown> | undefined)?.configOptions as AcpConfigOption[] | undefined
-      } else {
-        const created = await call('session/new', { cwd: opts.cwd, mcpServers: opts.mcpServers })
-        const result = created.result as Record<string, unknown> | undefined
-        if (failed(created) || typeof result?.sessionId !== 'string') {
-          opts.onNoise(`${failed(created) ?? 'The agent did not open a session.'}\n`)
-          return finish({ code: 1 })
-        }
-        sessionId = result.sessionId
-        configOptions = result.configOptions as AcpConfigOption[] | undefined
-      }
+      const session = await openSession(canResume)
+      if (!session) return
       if (settled) return
-      opts.onSession(sessionId)
-
-      const mode = acpModeValue(opts.mode, configOptions)
-      if (!mode && opts.mode === 'plan') {
-        // No read-only mode to switch to: refuse rather than plan with write access.
-        opts.onText('farol: this CLI offers no Plan mode over ACP, so Farol cannot keep it read-only.\n')
-        return finish({ code: 1 })
-      }
-      if (mode) {
-        const set = await call('session/set_config_option', { sessionId, configId: 'mode', value: mode })
-        if (failed(set)) {
-          opts.onText(`farol: could not switch the agent to ${mode} mode: ${failed(set)}\n`)
-          return finish({ code: 1 })
-        }
-      }
-      if (opts.model) {
-        const set = await call('session/set_config_option', { sessionId, configId: 'model', value: opts.model })
-        if (failed(set)) {
-          opts.onText(`farol: ${failed(set)}\n`)
-          return finish({ code: 1 })
-        }
-      }
+      opts.onSession(session.sessionId)
+      if (!(await configure(session.sessionId, session.configOptions))) return
       if (settled) return
 
-      const reply = await call('session/prompt', { sessionId, prompt: [{ type: 'text', text: opts.prompt }] })
+      const reply = await call('session/prompt', { sessionId: session.sessionId, prompt: [{ type: 'text', text: opts.prompt }] })
       const error = failed(reply)
       if (error) {
         opts.onText(`${error}\n`)
