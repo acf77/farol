@@ -5,12 +5,15 @@ import type {
   AgentTaskRequest,
   AgentTaskStatus,
   AiProvider,
+  ApprovalDecision,
   ModelChoice,
   Pipeline,
   PipelineRunResult
 } from '../shared/types'
 import {
+  ACP_CLIS,
   aiSelectionLabel,
+  canAskApproval,
   cliFor,
   isAiProvider,
   isUnknownJsonFormatError,
@@ -19,6 +22,19 @@ import {
   normalizeMode,
   normalizeModel
 } from '../shared/ai'
+import {
+  isDelegateToolName,
+  MANAGED_MCP_SERVER_KEY,
+  MANAGED_TOOL_TIMEOUT_SEC,
+  managedToolsFor,
+  type ManagedTool,
+  type McpServerEntry
+} from '../shared/mcp-config'
+import { applyOpencodeConfig, opencodeRunConfig } from '../shared/opencode-config'
+import { acpApprovalAsk, acpMcpServer } from '../shared/acp'
+import { openCodeModel } from '../shared/openrouter'
+import { runAcp } from './acp-run'
+import { captureTree, pinTree, releaseTrees, restoreTree, treeDiffStat, undoChange } from './delegate-snapshot'
 import { AgentStreamParser } from '../shared/agent-stream'
 import { claudeCatalogWindow } from '../shared/agent-models'
 import {
@@ -35,7 +51,13 @@ import {
   type AgentContext,
   type ContextUsage
 } from '../shared/agent-context'
-import { appendControlLines, flushControlLines, lastControlLine, type ControlLineState } from '../shared/control-line'
+import {
+  appendControlLines,
+  flushControlLines,
+  lastControlLine,
+  stripControlMarkerLines,
+  type ControlLineState
+} from '../shared/control-line'
 import {
   BLOCK_MARKER,
   FINISHED_PLAN,
@@ -140,6 +162,29 @@ interface AgentSink {
 interface Task {
   request: AgentTaskRequest
   process: ChildProcess | null
+  /** The subagent a `delegate` call is running; at most one, while the agent waits on it. */
+  child: ChildProcess | null
+  delegating: boolean
+  delegateSeq: number
+  /** The agent's latest `delegate` tool call, so its subagent's card can sit under it. */
+  delegateToolId?: string
+  /** The attempt in flight, so a subagent's file writes count as this turn's. */
+  activeScan?: CycleScan
+  /** Subagent runs that changed files, kept so Undo can reverse exactly them. */
+  delegateRuns: Map<string, DelegateRun>
+  /** What the agent should hear first on the next turn (e.g. an Undo). */
+  notes: string[]
+  /** The subagent running now, so its approval requests name it. */
+  activeDelegate?: { id: string; provider: AiProvider }
+  /** Approval requests waiting on the developer, by request id. */
+  approvals: Map<string, PendingApproval>
+  approvalSeq: number
+  /** Tools the developer allowed for the rest of this chat. */
+  allowedTools: Set<string>
+  /** Whether the agent's run in flight approves tools without asking; fixed when the run starts. */
+  runAutoApproves: boolean
+  /** Ask-first Codex runs in flight, by `PARENT_GATE` or the subagent's delegate id. */
+  gates: Map<string, Gate>
   running: boolean
   cancelled: boolean
   /** Drop from the map once the in-flight cycle settles (cleared chats). */
@@ -393,6 +438,147 @@ function pipelineCatalog(pipelines: Pipeline[]): string {
     .join('\n')
 }
 
+/** The optional parts of an agent command, present only when set. */
+function commandExtras(
+  opts: { tools?: string[]; webSearch?: boolean; session?: AgentSessionIo } | undefined,
+  extra: { mcp?: McpServerEntry; askApproval: boolean; codexHook?: string }
+) {
+  const { mcp, askApproval, codexHook } = extra
+  return {
+    ...(opts?.tools?.length ? { tools: opts.tools } : {}),
+    ...(opts?.webSearch ? { webSearch: true } : {}),
+    ...(opts?.session?.resume ? { resume: opts.session.resume } : {}),
+    ...(mcp ? { mcp } : {}),
+    ...(askApproval && mcp ? { askApproval } : {}),
+    ...(codexHook ? { codexHook } : {})
+  }
+}
+
+/** Turns an agent's stream events into chat output, reporting context use when it changes. */
+function streamConsumer(
+  parser: AgentStreamParser | null,
+  sink: AgentSink,
+  onUsage: ((usage: ContextUsage) => void) | undefined
+): (events: ReturnType<AgentStreamParser['push']>) => void {
+  let reported: ContextUsage | undefined
+  return (events) => {
+    if (parser?.contextTokens) {
+      const usage = { tokens: parser.contextTokens, ...(parser.contextWindow ? { window: parser.contextWindow } : {}) }
+      if (reported?.tokens !== usage.tokens || reported.window !== usage.window) {
+        reported = usage
+        onUsage?.(usage)
+      }
+    }
+    for (const event of events) {
+      if (event.kind === 'text') sink.turn(event.text)
+      else if (event.kind === 'raw') sink.text(plainText(event.text))
+      else if (event.kind === 'question') sink.question(event.questions)
+      else sink.tool(event)
+    }
+  }
+}
+
+/** Why a subagent run did not succeed, or undefined when it did. */
+function delegateFailure(
+  label: string,
+  run: { stopped: boolean; failed: boolean; code: number; diagnostics: string }
+): string | undefined {
+  if (run.stopped) return 'Stopped before it finished.'
+  if (!run.failed) return undefined
+  const tail = run.diagnostics.trim().slice(-2000)
+  return `${label} exited with code ${run.code}.${tail ? `\n${tail}` : ''}`
+}
+
+/** Files changed since `before`, as a diffstat; empty when the tree could not be read. */
+async function treeChanges(
+  cwd: string,
+  before: string | undefined
+): Promise<{ after?: string; diffStat: string }> {
+  const after = before ? await captureTree(cwd).catch(() => undefined) : undefined
+  const diffStat = before && after ? await treeDiffStat(cwd, before, after).catch(() => '') : ''
+  return { ...(after ? { after } : {}), diffStat }
+}
+
+/** How a run reaches Farol's managed tools; `delegateId` names a subagent's run. */
+export interface ManagedTools {
+  /** The managed MCP server offering `tools` (Claude, Codex, ACP CLIs). */
+  mcp(taskId: string, delegateId: string | undefined, tools: readonly ManagedTool[]): McpServerEntry
+  /** Codex's Ask-first `PreToolUse` hook command (see `shared/codex-hook.ts`). */
+  codexHook?(taskId: string, delegateId?: string): string
+}
+
+/**
+ * A Codex run set to Ask first. Its hook can fail open (a timeout, or a Codex
+ * that ignores hooks passed with `-c`), so every write or shell call it makes
+ * must follow an approval Farol granted, one for one.
+ */
+interface Gate {
+  credits: number
+  seen: Set<string>
+}
+
+const PARENT_GATE = 'parent'
+
+interface PendingApproval {
+  event: Extract<AgentTaskEvent, { kind: 'approval' }>
+  resolve: (answer: { allow: boolean; message?: string }) => void
+}
+
+/** The part of a tool call's input the developer needs to see to decide. */
+function approvalDetail(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object') return undefined
+  const fields = input as Record<string, unknown>
+  for (const key of ['command', 'file_path', 'path', 'url', 'pattern']) {
+    const value = fields[key]
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 500)
+  }
+  const json = JSON.stringify(input)
+  return json === '{}' ? undefined : json.slice(0, 500)
+}
+
+/** A write or shell call, the kind auto-approve lets through without asking. */
+function needsApproval(name: string): boolean {
+  return isWriteToolName(name) || isShellToolName(name)
+}
+
+interface DelegateRun {
+  card: ReturnType<typeof delegateCard>
+  state: 'done' | 'error'
+  diffStat: string
+  message?: string
+  before: string
+  after: string
+  undone?: 'undo' | 'restore'
+}
+
+function delegateCard(task: Task, delegateId: string, provider: AiProvider, model: string | undefined, work: string) {
+  return {
+    kind: 'delegate' as const,
+    taskId: task.request.id,
+    delegateId,
+    ...(task.delegateToolId ? { parentToolId: task.delegateToolId } : {}),
+    provider,
+    ...(model ? { model } : {}),
+    task: work
+  }
+}
+
+/** What the asking agent reads back when its subagent is done. */
+function delegateReport(headline: string, summary: string, diffStat: string): string {
+  return [
+    headline,
+    summary ? `Summary:\n${summary}` : 'It gave no summary.',
+    diffStat ? `Files it changed:\n${diffStat}` : 'It changed no files.'
+  ].join('\n\n')
+}
+
+/** Record a file the agent wrote on the turn's scan. */
+function noteWrite(scan: { filesChanged: boolean; changedTargets: string[] }, detail?: string): void {
+  scan.filesChanged = true
+  const target = detail?.trim()
+  if (target && !scan.changedTargets.includes(target)) scan.changedTargets.push(target)
+}
+
 export class AgentController {
   private tasks = new Map<string, Task>()
 
@@ -402,7 +588,9 @@ export class AgentController {
     private executor?: AgentExecutor,
     private todoStore?: TodoStore,
     private promptStore?: Pick<CustomPromptStore, 'activeBlock'>,
-    private loadPipelines?: (cwd: string) => Promise<Pipeline[]>
+    private loadPipelines?: (cwd: string) => Promise<Pipeline[]>,
+    /** Farol's managed tools for a task, for the providers that can take them per run. */
+    private managed?: ManagedTools
   ) {}
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
@@ -436,6 +624,16 @@ export class AgentController {
         pipelines: request.pipelines.filter((pipeline) => pipeline.nodes.length)
       },
       process: null,
+      child: null,
+      delegating: false,
+      delegateSeq: 0,
+      delegateRuns: new Map(),
+      notes: [],
+      approvals: new Map(),
+      approvalSeq: 0,
+      allowedTools: new Set(),
+      runAutoApproves: true,
+      gates: new Map(),
       running: true,
       cancelled: false,
       disposeWhenIdle: false,
@@ -567,7 +765,330 @@ export class AgentController {
     task.pendingQuestions = undefined
     task.abort.abort()
     if (task.process?.pid) killPidTree(task.process.pid)
+    if (task.child?.pid) killPidTree(task.child.pid)
+    this.expireApprovals(task)
     this.status(task, 'cancelled', 0, 'Cancelled by user')
+  }
+
+  /**
+   * Run a subagent for the agent's `delegate` call and resolve with what it
+   * did. The agent is blocked on the call meanwhile, so the subagent has the
+   * checkout to itself. `signal` aborts when the asking agent goes away.
+   */
+  async delegate(
+    taskId: string,
+    ask: { provider: string; model?: string; task: string; context?: string },
+    signal?: AbortSignal
+  ): Promise<{ ok: true; text: string; failed: boolean } | { ok: false; message: string }> {
+    const task = this.tasks.get(taskId)
+    const work = ask.task.trim()
+    const refusal = this.delegateRefusal(task, ask.provider, work)
+    if (refusal || !task || !isAiProvider(ask.provider)) return { ok: false, message: refusal ?? 'Unavailable.' }
+
+    const provider = ask.provider
+    const model = normalizeModel(ask.model)
+    task.delegating = true
+    task.activeDelegate = undefined
+    task.delegateSeq += 1
+    const delegateId = `${taskId}:d${task.delegateSeq}`
+    const card = delegateCard(task, delegateId, provider, model, work)
+    this.emit({ ...card, state: 'running' })
+    const cwd = task.request.cwd
+    const before = await captureTree(cwd).catch(() => undefined)
+
+    task.activeDelegate = { id: delegateId, provider }
+    this.setGate(task, delegateId, provider)
+    const { sink, run } = this.delegateSink(task, delegateId, this.autoApproves(task, provider))
+    const onAbort = (): void => {
+      if (task.child?.pid) killPidTree(task.child.pid)
+    }
+    signal?.addEventListener('abort', onAbort)
+
+    let code = 1
+    try {
+      const prompt = this.delegatePrompt(task, work, ask.context)
+      code = this.executor
+        ? await this.executor({ ...task.request, provider, model }, prompt, sink.text, sink.tool)
+        : await this.runAgent(task, prompt, sink, false, { child: { provider, model, delegateId } })
+    } catch (error) {
+      run.diagnostics = `${run.diagnostics}\n${errorMessage(error)}`
+    } finally {
+      signal?.removeEventListener('abort', onAbort)
+      task.child = null
+      task.delegating = false
+      task.activeDelegate = undefined
+      task.gates.delete(delegateId)
+    }
+
+    const { after, diffStat } = await treeChanges(cwd, before)
+    const stopped = task.cancelled || signal?.aborted === true
+    const failed = stopped || code !== 0
+    const label = aiSelectionLabel(provider, model)
+    const message = delegateFailure(label, { stopped, failed, code, diagnostics: run.diagnostics })
+    await this.reportDelegate(task, delegateId, card, { state: failed ? 'error' : 'done', diffStat, message, before, after })
+    const summary = stripControlMarkerLines(run.lastTurn || plainText(run.said)).trim()
+    return { ok: true, text: delegateReport(message ?? `${label} finished.`, summary, diffStat), failed }
+  }
+
+  /** Show how a subagent run ended; a run that changed files can be undone, failed or not, since a crash halfway still left edits. */
+  private async reportDelegate(
+    task: Task,
+    delegateId: string,
+    card: DelegateRun['card'],
+    end: { state: DelegateRun['state']; diffStat: string; message?: string; before?: string; after?: string }
+  ): Promise<void> {
+    const { state, diffStat, message, before, after } = end
+    const note = message ? { message } : {}
+    const undoable =
+      !!(before && after && diffStat) &&
+      (await this.keepRun(task, delegateId, { card, state, diffStat, ...note, before: before!, after: after! }))
+    this.emit({ ...card, state, diffStat, ...note, ...(undoable ? { undoable } : {}) })
+  }
+
+  /** Pin a run's snapshots so Undo can use them; false when git would not keep them. */
+  private async keepRun(task: Task, delegateId: string, run: DelegateRun): Promise<boolean> {
+    try {
+      await pinTree(task.request.cwd, task.request.id, delegateId, 'before', run.before)
+      await pinTree(task.request.cwd, task.request.id, delegateId, 'after', run.after)
+    } catch {
+      return false
+    }
+    task.delegateRuns.set(delegateId, run)
+    return true
+  }
+
+  /**
+   * Undo one subagent run: reverse exactly its changes, keeping later edits
+   * that do not overlap. With `restore`, put the whole checkout back to how
+   * it was before the run, discarding everything since — the way out when
+   * the plain undo would conflict. Only while the chat is idle.
+   */
+  async undoDelegate(
+    taskId: string,
+    delegateId: string,
+    restore = false
+  ): Promise<{ ok: true } | { ok: false; message: string; restoreFiles?: number }> {
+    const task = this.tasks.get(taskId)
+    const run = task?.delegateRuns.get(delegateId)
+    if (!task || !run) return { ok: false, message: 'This subagent run can no longer be undone.' }
+    if (task.running) return { ok: false, message: 'Wait for the agent to finish, then undo.' }
+    if (run.undone) return { ok: false, message: 'Already undone.' }
+    const cwd = task.request.cwd
+    try {
+      if (restore) await restoreTree(cwd, run.before)
+      else {
+        const outcome = await undoChange(cwd, run.before, run.after)
+        if (!outcome.ok) {
+          return {
+            ok: false,
+            message: 'Later changes overlap with this subagent’s, so nothing was undone.',
+            restoreFiles: outcome.restoreFiles
+          }
+        }
+      }
+    } catch (error) {
+      return { ok: false, message: errorMessage(error) }
+    }
+    run.undone = restore ? 'restore' : 'undo'
+    const label = aiSelectionLabel(run.card.provider, run.card.model)
+    task.notes.push(
+      restore
+        ? `Note from Farol: the developer restored the checkout to how it was before the ${label} subagent ran (task: ${run.card.task}). Every change since then, including later ones, is gone.`
+        : `Note from Farol: the developer undid the ${label} subagent's changes (task: ${run.card.task}). These are reverted:\n${run.diffStat}`
+    )
+    this.emit({
+      ...run.card,
+      state: run.state,
+      diffStat: run.diffStat,
+      ...(run.message ? { message: run.message } : {}),
+      undone: run.undone
+    })
+    return { ok: true }
+  }
+
+  /**
+   * Whether a run on `provider` approves tools without asking: always, unless
+   * the chat turned auto-approve off and the CLI can ask (and is in Build,
+   * where there is something to approve, with the managed server to ask through).
+   */
+  private autoApproves(task: Task, provider: AiProvider): boolean {
+    // Claude asks through the managed server, Codex through its hook, ACP CLIs over ACP itself.
+    const via = openRouterAgent()
+    const route =
+      provider === 'codex' ? !!this.managed?.codexHook : ACP_CLIS.includes(cliFor(provider, via)) || !!this.managed
+    return !(task.request.autoApprove === false && canAskApproval(provider, via) && task.request.mode !== 'plan' && route)
+  }
+
+  /** Open (or clear) the Ask-first gate for a run that is about to start. */
+  private setGate(task: Task, key: string, provider: AiProvider): void {
+    const gated =
+      !this.autoApproves(task, provider) && cliFor(provider, openRouterAgent()) === 'codex' && !!this.managed?.codexHook
+    if (gated) task.gates.set(key, { credits: 0, seen: new Set() })
+    else task.gates.delete(key)
+  }
+
+  /** An approval the developer granted lets one write or shell call through its run's gate. */
+  private creditGate(task: Task, delegateId: string | undefined, toolName: string): void {
+    const gate = task.gates.get(delegateId ?? PARENT_GATE)
+    if (gate && needsApproval(toolName)) gate.credits += 1
+  }
+
+  /** Why a gated run must stop: a write or shell call ran that nobody approved. */
+  private passGate(task: Task, key: string, event: { toolId: string; name: string }): string | undefined {
+    const gate = task.gates.get(key)
+    if (!gate || !needsApproval(event.name) || gate.seen.has(event.toolId)) return undefined
+    gate.seen.add(event.toolId)
+    if (gate.credits > 0) {
+      gate.credits -= 1
+      return undefined
+    }
+    return `Codex ran ${event.name} without asking, so Farol stopped it. Ask first is not working with this Codex version; turn on Auto-approve to keep using Codex, or switch to Claude.`
+  }
+
+  /** Turn auto-approve on or off; the next run picks it up, a running one keeps its own. */
+  setAutoApprove(taskId: string, on: boolean): { ok: boolean; message?: string } {
+    const task = this.tasks.get(taskId)
+    if (!task) return { ok: false, message: 'This agent task is no longer available.' }
+    task.request.autoApprove = on
+    return { ok: true }
+  }
+
+  /**
+   * Ask the developer whether a tool call may run, for Claude's permission
+   * prompt. Resolves when they answer, or with a deny when nobody can any
+   * more: the turn was stopped or the asking agent went away (`signal`).
+   */
+  requestApproval(
+    taskId: string,
+    ask: { toolName: string; input: unknown; delegateId?: string },
+    signal?: AbortSignal
+  ): Promise<{ allow: boolean; message?: string }> {
+    const task = this.tasks.get(taskId)
+    if (!task?.running || task.cancelled) return Promise.resolve({ allow: false, message: 'This Chat turn is no longer running.' })
+    if (task.allowedTools.has(ask.toolName)) {
+      this.creditGate(task, ask.delegateId, ask.toolName)
+      return Promise.resolve({ allow: true })
+    }
+    task.approvalSeq += 1
+    const requestId = `${taskId}:a${task.approvalSeq}`
+    const delegate = ask.delegateId && task.activeDelegate?.id === ask.delegateId ? task.activeDelegate : undefined
+    const detail = approvalDetail(ask.input)
+    const event: PendingApproval['event'] = {
+      kind: 'approval',
+      taskId,
+      requestId,
+      provider: delegate?.provider ?? task.request.provider,
+      ...(delegate ? { delegateId: delegate.id } : {}),
+      toolName: ask.toolName,
+      ...(detail ? { detail } : {})
+    }
+    return new Promise((resolve) => {
+      const settle = (answer: { allow: boolean; message?: string }): void => {
+        signal?.removeEventListener('abort', onAbort)
+        resolve(answer)
+      }
+      const onAbort = (): void => this.settleApproval(task, requestId, 'expired')
+      task.approvals.set(requestId, { event, resolve: settle })
+      signal?.addEventListener('abort', onAbort)
+      this.emit(event)
+    })
+  }
+
+  /** The developer's answer to an approval request. */
+  respondApproval(taskId: string, requestId: string, decision: 'once' | 'chat' | 'deny'): { ok: boolean; message?: string } {
+    const task = this.tasks.get(taskId)
+    if (!task?.approvals.has(requestId)) return { ok: false, message: 'This request is no longer waiting.' }
+    this.settleApproval(task, requestId, decision)
+    return { ok: true }
+  }
+
+  private settleApproval(task: Task, requestId: string, decision: ApprovalDecision): void {
+    const pending = task.approvals.get(requestId)
+    if (!pending) return
+    task.approvals.delete(requestId)
+    if (decision === 'chat') task.allowedTools.add(pending.event.toolName)
+    if (decision === 'once' || decision === 'chat') this.creditGate(task, pending.event.delegateId, pending.event.toolName)
+    this.emit({ ...pending.event, decision })
+    pending.resolve(
+      decision === 'once' || decision === 'chat'
+        ? { allow: true }
+        : {
+            allow: false,
+            message:
+              decision === 'deny'
+                ? 'The developer declined this tool call. Do not retry it; ask or take another approach.'
+                : 'Nobody could approve this tool call (the turn was stopped), so it did not run.'
+          }
+    )
+  }
+
+  private expireApprovals(task: Task): void {
+    for (const requestId of task.approvals.keys()) this.settleApproval(task, requestId, 'expired')
+  }
+
+  /** Why a `delegate` call cannot start, or undefined when it can. */
+  private delegateRefusal(task: Task | undefined, provider: string, work: string): string | undefined {
+    if (!task?.running || task.cancelled) return 'No Chat turn is running for this task.'
+    if (!isAiProvider(provider)) return `Unknown provider: ${provider}`
+    if (!work) return 'Describe the task for the subagent.'
+    if (task.delegating) return 'A subagent is already running. Wait for it to finish.'
+    return undefined
+  }
+
+  /** Routes a subagent's output to its card and records what it wrote and said. */
+  private delegateSink(task: Task, delegateId: string, autoApproves: boolean) {
+    const taskId = task.request.id
+    const scan = task.activeScan
+    const run = { said: '', lastTurn: '', diagnostics: '' }
+    const sink: AgentSink = {
+      text: (chunk) => {
+        run.said = (run.said + chunk).slice(-SCAN_WINDOW)
+        this.emit({ kind: 'output', taskId, chunk, delegateId })
+      },
+      turn: (text) => {
+        run.lastTurn = text
+        run.said = `${run.said}\n${text}`.slice(-SCAN_WINDOW)
+        this.emit({ kind: 'assistant', taskId, text, delegateId })
+      },
+      tool: (event) => {
+        const breach = this.passGate(task, delegateId, event)
+        if (breach) {
+          run.diagnostics = `${run.diagnostics}\n${breach}`
+          if (task.child?.pid) killPidTree(task.child.pid)
+        }
+        const auto = autoApproves && needsApproval(event.name)
+        this.emit({ kind: 'tool', taskId, ...event, toolId: `${delegateId}:${event.toolId}`, delegateId, ...(auto ? { auto } : {}) })
+        if (event.state !== 'done' || !isWriteToolName(event.name)) return
+        task.mandatoryOutstanding = true
+        if (scan) noteWrite(scan, event.detail)
+      },
+      // A subagent cannot stop to ask; its prompt says to report open questions instead.
+      question: () => undefined,
+      noise: (chunk) => {
+        run.diagnostics = (run.diagnostics + chunk).slice(-SCAN_WINDOW)
+      }
+    }
+    return { sink, run }
+  }
+
+  private delegatePrompt(task: Task, work: string, context?: string): string {
+    const plan = task.request.mode === 'plan'
+    const handoff = task.context.handoff?.trim()
+    return [
+      `You are a subagent. Another coding agent, working in Farol, handed you the task below and is waiting for your result.`,
+      `Work only in ${task.request.cwd}. Nobody else edits these files while you run.`,
+      plan
+        ? `This is read-only: inspect and report, but do not change project files or modify external systems.`
+        : `You may change files as the task needs. Do not run git commands that commit, push, or rewrite history.`,
+      `You cannot ask the user anything. If something is unclear, make the most reasonable choice and say so, or stop and report what you need.`,
+      `Do not run Farol pipelines and do not print Farol control lines (lines starting with FAROL_). The agent that called you decides on validation.`,
+      `Finish with a short summary: what you did, what you found, and anything left open.`,
+      handoff ? `\nWhere the chat stands (the calling agent's handoff note):\n${handoff}` : '',
+      context?.trim() ? `\nContext from the calling agent:\n${context.trim()}` : '',
+      `\nTask:\n${work}`
+    ]
+      .filter(Boolean)
+      .join('\n')
   }
 
   /**
@@ -704,8 +1225,17 @@ export class AgentController {
     if (!task) return
     task.disposeWhenIdle = true
     task.guidance.length = 0
+    if (task.delegateRuns.size) {
+      task.delegateRuns.clear()
+      void releaseTrees(task.request.cwd, taskId).catch(() => undefined)
+    }
     this.cancel(taskId)
     if (!task.running) this.tasks.delete(taskId)
+  }
+
+  /** Chats the main process still holds, whatever their state. */
+  taskIds(): string[] {
+    return [...this.tasks.keys()]
   }
 
   cancelAll(): void {
@@ -739,7 +1269,10 @@ export class AgentController {
   }
 
   /** Append a user follow-up and start a new cycle that continues the chat. */
-  private followUp(task: Task, userText: string): void {
+  private followUp(task: Task, message: string): void {
+    // Farol's own notes (an Undo) go first, and into the history like the message.
+    const notes = task.notes.splice(0).join('\n')
+    const userText = notes ? `${notes}\n\n${message}` : message
     task.askEpoch += 1
     task.context = addFollowUp(task.context, userText)
     task.request.prompt = historyText(task.context)
@@ -823,7 +1356,15 @@ export class AgentController {
         check()
       },
       tool: (event) => {
-        this.emit({ kind: 'tool', taskId: task.request.id, ...event })
+        if (event.state === 'running' && isDelegateToolName(event.name)) task.delegateToolId = event.toolId
+        const breach = this.passGate(task, PARENT_GATE, event)
+        if (breach && !scan.blocked) {
+          scan.blocked = breach
+          scan.blockedByProvider = false
+          if (task.process?.pid) killPidTree(task.process.pid)
+        }
+        const auto = task.runAutoApproves && needsApproval(event.name)
+        this.emit({ kind: 'tool', taskId: task.request.id, ...event, ...(auto ? { auto } : {}) })
         scan.toolNames.push(event.name)
         // Codex sometimes only fills command on item.completed; accept either.
         if (event.detail && isShellToolName(event.name) && event.state !== 'error') {
@@ -1407,9 +1948,12 @@ export class AgentController {
       toolNames: []
     }
     const policy = await this.resolveToolPolicy(task, opening.text, attempt)
+    task.runAutoApproves = this.autoApproves(task, task.request.provider)
+    this.setGate(task, PARENT_GATE, task.request.provider)
     const clause = toolPolicyPrompt(policy)
     const effective = clause ? `${prompt}\n\n${clause}` : prompt
     const sink = this.cycleSink(task, scan)
+    task.activeScan = scan
     const epoch = task.askEpoch
     const { provider, model } = task.request
     const session: AgentSessionIo = {
@@ -1436,6 +1980,8 @@ export class AgentController {
     }
     task.running = false
     if (task.process?.pid) killPidTree(task.process.pid)
+    if (task.child?.pid) killPidTree(task.child.pid)
+    this.expireApprovals(task)
     this.status(
       task,
       'failed',
@@ -1513,7 +2059,7 @@ export class AgentController {
       plan
         ? `Do not run validation pipelines in Plan mode.`
         : `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
-      `Do not call the Farol MCP tools in this managed Chat session. They are not available here — they require approval in some providers, and the managed harness executes your selected pipelines directly.`,
+      `Never call the Farol MCP pipeline tools (list_pipelines, run_pipeline) in this managed Chat session; select pipelines with ${PIPELINES_MARKER} and the harness runs them. Other MCP tools available to you may be used.`,
       `When you propose or complete a change, include a Mermaid diagram in a \`\`\`mermaid fenced block so Chat can render it. Prefer flowchart TD or sequenceDiagram with 4–12 well-defined steps — detailed but not crowded. In Plan mode, diagram the intended approach. After changing files in Build mode, diagram what changed and why. Keep node labels short; put extra detail in the surrounding prose. Skip a diagram for questions-only or status-only replies.`,
       plan
         ? `End every response with exactly one final line: ${QUESTIONS_MARKER} [...] when you need a decision, ${FINISHED_PLAN} when the plan is complete, or ${PIPELINES_MARKER} [] for an ordinary response.`
@@ -1550,24 +2096,134 @@ export class AgentController {
     return `Farol pipeline activity for this chat:\n${lines.join('\n')}`
   }
 
+  /**
+   * A run over ACP (OpenCode): Farol's managed server rides in the session,
+   * and permission requests go to the developer, or are answered by
+   * auto-approve. Plan answers every request with no: its run config already
+   * denies shell, and nothing in Plan should need permission.
+   */
+  private async runAcpAgent(
+    task: Task,
+    prompt: string,
+    sink: AgentSink,
+    opts: Parameters<AgentController['runAgent']>[4]
+  ): Promise<number> {
+    const via = openRouterAgent()
+    const child = opts?.child
+    const provider = child?.provider ?? task.request.provider
+    const model = child ? child.model : task.request.model
+    const cli = cliFor(provider, via)
+    const bin = resolveBinFrom([cli])
+    if (!bin) {
+      sink.text(`farol: ${managedAiCommand(provider, prompt, model, { via }).hint}\n`)
+      return 127
+    }
+    const plan = task.request.mode === 'plan'
+    const askFirst = !this.autoApproves(task, provider)
+    const env = aiEnv(provider, via)
+    // Subagents get no managed server, so they cannot delegate in turn; ACP asks for approval itself.
+    const mcp = this.managed && !child ? this.managed.mcp(task.request.id, undefined, ['delegate']) : undefined
+    applyOpencodeConfig(env, opencodeRunConfig(plan ? 'plan' : 'build', askFirst, !!mcp))
+    const result = await runAcp({
+      bin,
+      args: ['acp'],
+      cwd: task.request.cwd,
+      env,
+      prompt,
+      mode: plan ? 'plan' : 'build',
+      ...(model ? { model: provider === 'openrouter' ? openCodeModel(model) : model } : {}),
+      ...(opts?.session?.resume ? { resume: opts.session.resume } : {}),
+      mcpServers: mcp ? [acpMcpServer(MANAGED_MCP_SERVER_KEY, mcp)] : [],
+      permission: this.acpPermission(task, plan, askFirst, child?.delegateId),
+      ...this.acpCallbacks(task, sink, opts, !!child)
+    })
+    if (result.unsupported && !task.cancelled) return this.runAgent(task, prompt, sink, false, { ...opts, noAcp: true })
+    return result.code
+  }
+
+  /** Answers the agent's permission requests: no in Plan, yes under auto-approve, otherwise the developer decides. */
+  private acpPermission(task: Task, plan: boolean, askFirst: boolean, delegateId: string | undefined) {
+    return async (call: Parameters<typeof acpApprovalAsk>[0]): Promise<boolean> => {
+      if (plan) return false
+      if (!askFirst) return true
+      const answer = await this.requestApproval(task.request.id, {
+        ...acpApprovalAsk(call),
+        ...(delegateId ? { delegateId } : {})
+      })
+      return answer.allow
+    }
+  }
+
+  /** Passes an ACP run's output, session, usage and process on to the chat. */
+  private acpCallbacks(task: Task, sink: AgentSink, opts: Parameters<AgentController['runAgent']>[4], child: boolean) {
+    return {
+      onText: (chunk: string) => sink.text(chunk),
+      onTool: (event: Parameters<AgentSink['tool']>[0]) => sink.tool(event),
+      onNoise: (chunk: string) => sink.noise(chunk),
+      onSession: (id: string) => opts?.session?.onSession(id),
+      onUsage: (tokens: number) => opts?.session?.onUsage?.({ tokens }),
+      onProcess: (proc: ChildProcess | null) => this.setProcess(task, child, proc)
+    }
+  }
+
+  private setProcess(task: Task, child: boolean, proc: ChildProcess | null): void {
+    if (child) task.child = proc
+    else task.process = proc
+  }
+
+  /** The CLI command and environment for a managed run: tools, Farol's server, approvals and mode. */
+  private agentCommand(
+    task: Task,
+    prompt: string,
+    plain: boolean,
+    opts: Parameters<AgentController['runAgent']>[4],
+    who: { provider: AiProvider; model: string | undefined; via: ReturnType<typeof openRouterAgent> }
+  ) {
+    const { provider, model, via } = who
+    const child = opts?.child
+    const askApproval = !this.autoApproves(task, provider)
+    const tools = managedToolsFor({ subagent: !!child, claudeAsks: askApproval && provider === 'claude' })
+    // A server with no tools shows up as broken, so a run with nothing to offer gets none.
+    const mcp = this.managed && tools.length ? this.managed.mcp(task.request.id, child?.delegateId, tools) : undefined
+    const codexHook = askApproval ? this.managed?.codexHook?.(task.request.id, child?.delegateId) : undefined
+    const spec = managedAiCommand(provider, prompt, model, {
+      jsonFormat: !plain,
+      via,
+      mode: task.request.mode,
+      ...commandExtras(opts, { mcp, askApproval, codexHook })
+    })
+    const env = aiEnv(provider, via)
+    applyOpencodeConfig(env, spec.opencodeConfig)
+    // Claude's limit on one MCP call; a `delegate` waits as long as its subagent runs.
+    if (mcp) env.MCP_TOOL_TIMEOUT = String(MANAGED_TOOL_TIMEOUT_SEC * 1000)
+    return { spec, env }
+  }
+
   private runAgent(
     task: Task,
     prompt: string,
     sink: AgentSink,
     plain = false,
-    opts?: { tools?: string[]; webSearch?: boolean; session?: AgentSessionIo }
+    opts?: {
+      tools?: string[]
+      webSearch?: boolean
+      session?: AgentSessionIo
+      /** Run a subagent with this provider/model instead of the task's own agent. */
+      child?: { provider: AiProvider; model?: string; delegateId: string }
+      /** The CLI turned out not to speak ACP; use its JSON mode. */
+      noAcp?: boolean
+    }
   ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
     const via = openRouterAgent()
-    const spec = managedAiCommand(task.request.provider, prompt, task.request.model, {
-      jsonFormat: !plain,
-      via,
-      mode: task.request.mode,
-      ...(opts?.tools?.length ? { tools: opts.tools } : {}),
-      ...(opts?.webSearch ? { webSearch: true } : {}),
-      ...(opts?.session?.resume ? { resume: opts.session.resume } : {})
-    })
-    const env = aiEnv(task.request.provider, via)
+    const child = opts?.child
+    const provider = child?.provider ?? task.request.provider
+    const model = child ? child.model : task.request.model
+    if (!plain && !opts?.noAcp && ACP_CLIS.includes(cliFor(provider, via))) {
+      return this.runAcpAgent(task, prompt, sink, opts)
+    }
+    const isChild = !!child
+    const { spec, env } = this.agentCommand(task, prompt, plain, opts, { provider, model, via })
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       sink.text(`farol: ${spec.hint}\n`)
@@ -1583,33 +2239,14 @@ export class AgentController {
     const stdoutText = new StringDecoder('utf8')
     const stderrText = new StringDecoder('utf8')
 
-    let reported: ContextUsage | undefined
-    const reportUsage = (): void => {
-      if (!parser?.contextTokens) return
-      const usage = {
-        tokens: parser.contextTokens,
-        ...(parser.contextWindow ? { window: parser.contextWindow } : {})
-      }
-      if (reported?.tokens === usage.tokens && reported.window === usage.window) return
-      reported = usage
-      opts?.session?.onUsage?.(usage)
-    }
-    const consume = (events: ReturnType<AgentStreamParser['push']>): void => {
-      reportUsage()
-      for (const event of events) {
-        if (event.kind === 'text') sink.turn(event.text)
-        else if (event.kind === 'raw') sink.text(plainText(event.text))
-        else if (event.kind === 'question') sink.question(event.questions)
-        else sink.tool(event)
-      }
-    }
+    const consume = streamConsumer(parser, sink, opts?.session?.onUsage)
 
     return new Promise((resolve) => {
       let settled = false
       const done = (exit: number): void => {
         if (settled) return
         settled = true
-        task.process = null
+        this.setProcess(task, isChild, null)
         let code = exit
         if (parser) {
           consume(parser.flush())
@@ -1633,7 +2270,7 @@ export class AgentController {
         done(127)
         return
       }
-      task.process = child
+      this.setProcess(task, isChild, child)
       child.stdout?.on('data', (chunk: Buffer) => {
         // JSON carries its own escaping, and plainText's per-line trimming
         // would eat a space that straddles two chunks. Parse the bytes as-is.
@@ -1663,10 +2300,10 @@ export class AgentController {
         if (
           !settled &&
           !task.cancelled &&
-          shouldRetryPlainOpenCode(plain, exit, task.request.provider, `${diagnostics}\n${stdoutScan}`)
+          shouldRetryPlainOpenCode(plain, exit, provider, `${diagnostics}\n${stdoutScan}`)
         ) {
           settled = true
-          task.process = null
+          this.setProcess(task, isChild, null)
           void this.runAgent(task, prompt, sink, true, opts).then(resolve)
           return
         }

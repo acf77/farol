@@ -1,7 +1,17 @@
 /** Which coding CLI an AI pipeline step invokes. */
 
+import { codexHookArgs } from './codex-hook'
 import { FAILURE_REPORT_REL } from './failure'
+import { opencodeRunConfig } from './opencode-config'
 import { openCodeModel } from './openrouter'
+import {
+  APPROVE_TOOL,
+  claudeMcpConfig,
+  codexMcpOverrides,
+  DELEGATE_TOOL,
+  PIPELINE_MCP_TOOLS,
+  type McpServerEntry
+} from './mcp-config'
 
 export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'omp', 'openrouter'] as const
 export type AiProvider = (typeof AI_PROVIDERS)[number]
@@ -95,6 +105,19 @@ export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
   ],
   /** Filled from the user's OpenRouter pins (or its whole catalog, unpinned). */
   openrouter: []
+}
+
+/** CLIs Farol runs over ACP in managed Chat (see `shared/acp.ts`). */
+export const ACP_CLIS: readonly AiCli[] = ['opencode']
+
+/**
+ * Whether the CLI can stop a headless run to ask the developer about a tool
+ * call: Claude through `--permission-prompt-tool`, Codex through a
+ * `PreToolUse` hook, ACP CLIs through `session/request_permission`. Every
+ * other CLI runs with all tools approved, so auto-approve is always on for it.
+ */
+export function canAskApproval(provider: AiProvider, via: OpenRouterAgent = 'opencode'): boolean {
+  return provider === 'claude' || provider === 'codex' || ACP_CLIS.includes(cliFor(provider, via))
 }
 
 export function isAiProvider(value: unknown): value is AiProvider {
@@ -236,6 +259,8 @@ export interface AiCommand {
    * `shared/agent-stream.ts`. Absent means stdout is plain text to show as-is.
    */
   stream?: 'ndjson'
+  /** OpenCode settings for this run only, merged into `OPENCODE_CONFIG_CONTENT` (see `opencode-config.ts`). */
+  opencodeConfig?: Record<string, unknown>
 }
 
 /** Older OpenCode builds reject `--format json` with an unknown-option error. */
@@ -294,8 +319,11 @@ export function aiCommand(
     case 'opencode':
       return {
         bins: ['opencode'],
-        args: withModel(['run', '--auto', prompt], passed),
-        hint: 'Install the OpenCode CLI (https://opencode.ai) to run OpenCode steps.'
+        // Read-only like every other CLI here: the plan agent has no write
+        // tools, and its shell is denied for the run (`--auto` would approve an `ask`).
+        args: withModel(['run', '--auto', '--agent', 'plan', prompt], passed),
+        hint: 'Install the OpenCode CLI (https://opencode.ai) to run OpenCode steps.',
+        opencodeConfig: opencodeRunConfig('plan', false)
       }
     case 'omp':
       return {
@@ -325,9 +353,13 @@ function managedCodexCommand(
   passed: string | undefined,
   plan: boolean,
   webSearch?: boolean,
-  resume?: string
+  resume?: string,
+  mcp?: McpServerEntry,
+  hook?: string
 ): AiCommand {
   const sandbox = plan ? 'read-only' : 'workspace-write'
+  // Ask first: a PreToolUse hook gates every call; Plan's read-only sandbox needs none.
+  const gate = hook && !plan ? codexHookArgs(hook) : []
   if (resume) {
     // `exec resume` takes no `--sandbox`; the config key sets the same mode.
     return {
@@ -342,6 +374,8 @@ function managedCodexCommand(
           '-c',
           `sandbox_mode="${sandbox}"`,
           ...(webSearch ? ['-c', 'web_search=live'] : []),
+          ...(mcp ? codexMcpOverrides(mcp) : []),
+          ...gate,
           resume,
           prompt
         ],
@@ -368,6 +402,8 @@ function managedCodexCommand(
         '--sandbox',
         sandbox,
         ...(webSearch ? ['-c', 'web_search=live'] : []),
+        ...(mcp ? codexMcpOverrides(mcp) : []),
+        ...gate,
         prompt
       ],
       passed
@@ -405,10 +441,11 @@ function managedOpencodeCommand(
   jsonFormat: boolean,
   resume?: string
 ): AiCommand {
-  // OpenCode's built-in `plan` agent is read-only; `--dangerously-skip-permissions`
-  // only bypasses tool-approval prompts, it does not grant plan the write tools
-  // it already lacks, so the two flags are safe to combine.
+  // OpenCode's `plan` agent lacks the write tools, which
+  // `--dangerously-skip-permissions` does not grant back; but it runs `bash`
+  // freely, so Plan also denies shell through the run's config.
   const planArgv = [...(plan ? ['--agent', 'plan'] : []), ...resumeArgv('--session', resume)]
+  const config = opencodeRunConfig(plan ? 'plan' : 'build', false)
   return {
     bins: ['opencode'],
     args: withModel(
@@ -418,7 +455,8 @@ function managedOpencodeCommand(
       passed
     ),
     hint: 'Install OpenCode (https://opencode.ai) to use managed Chat. Farol needs a build that accepts `opencode run --format json`.',
-    ...(jsonFormat ? { stream: 'ndjson' as const } : {})
+    ...(jsonFormat ? { stream: 'ndjson' as const } : {}),
+    ...(config ? { opencodeConfig: config } : {})
   }
 }
 
@@ -457,26 +495,34 @@ function managedClaudeCommand(
   passed: string | undefined,
   plan: boolean,
   tools: string | undefined,
-  resume?: string
+  resume?: string,
+  mcp?: McpServerEntry,
+  askApproval?: boolean
 ): AiCommand {
+  // Asking goes through the managed server, so it needs one; Plan keeps its own read-only mode.
+  const ask = !!(askApproval && mcp && !plan)
   return {
     bins: ['claude'],
     // `--verbose` is what makes stream-json emit each turn as it happens;
     // without it the CLI still waits and prints one final event.
-    // `--strict-mcp-config` with no `--mcp-config` loads zero MCP servers.
-    // Claude Code otherwise picks up project `.mcp.json` (Farol's
-    // list_pipelines / run_pipeline) and calls those instead of emitting
-    // FAROL_PIPELINES — so the managed harness never runs validation, and
+    // The user's MCP servers load as usual, but the project `farol` server's
+    // pipeline tools are disallowed: called instead of emitting
+    // FAROL_PIPELINES, the managed harness would never run validation, and
     // MCP runs use origin `agent`, which does not hand failures back.
+    // `--mcp-config` and `--disallowedTools` take several values, so a
+    // single-valued flag must follow them before the prompt.
     args: withModel(
       [
         '-p',
         '--output-format',
         'stream-json',
         '--verbose',
+        ...(mcp ? ['--mcp-config', claudeMcpConfig(mcp)] : []),
+        '--disallowedTools',
+        PIPELINE_MCP_TOOLS.join(','),
+        ...(ask ? ['--allowedTools', DELEGATE_TOOL, '--permission-prompt-tool', APPROVE_TOOL] : []),
         '--permission-mode',
-        plan ? 'plan' : 'bypassPermissions',
-        '--strict-mcp-config',
+        plan ? 'plan' : ask ? 'default' : 'bypassPermissions',
         ...toolsArgv(tools),
         ...resumeArgv('--resume', resume),
         prompt
@@ -519,17 +565,24 @@ export function managedAiCommand(
     webSearch?: boolean
     via?: OpenRouterAgent
     resume?: string
+    /** Farol's managed server for this task; Claude and Codex load it for the run. */
+    mcp?: McpServerEntry
+    /** Ask the developer before tool calls instead of approving them all (Claude, Build, with `mcp`). */
+    askApproval?: boolean
+    /** Codex's Ask-first hook command (see `shared/codex-hook.ts`); Build only. */
+    codexHook?: string
   }
 ): AiCommand {
-  const cli = cliFor(provider, opts?.via)
-  const resume = opts?.resume?.trim() || undefined
+  const { via, resume: resumeId, mode, tools: toolList, webSearch, mcp, askApproval, codexHook } = opts ?? {}
+  const cli = cliFor(provider, via)
+  const resume = resumeId?.trim() || undefined
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
   const jsonFormat = opts?.jsonFormat !== false
-  const plan = opts?.mode === 'plan'
-  const tools = opts?.tools?.length ? opts.tools.join(',') : undefined
+  const plan = mode === 'plan'
+  const tools = toolList?.length ? toolList.join(',') : undefined
   switch (cli) {
     case 'codex':
-      return managedCodexCommand(prompt, passed, plan, opts?.webSearch, resume)
+      return managedCodexCommand(prompt, passed, plan, webSearch, resume, mcp, codexHook)
     case 'cursor':
       return managedCursorCommand(prompt, passed, plan, resume)
     case 'opencode':
@@ -539,7 +592,7 @@ export function managedAiCommand(
     case 'pi':
       return managedPiCommand(prompt, passed, plan, tools)
     case 'claude':
-      return managedClaudeCommand(prompt, passed, plan, tools, resume)
+      return managedClaudeCommand(prompt, passed, plan, tools, resume, mcp, askApproval)
   }
 }
 

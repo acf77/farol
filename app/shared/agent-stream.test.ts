@@ -405,6 +405,16 @@ describe('AgentStreamParser', () => {
     expect(parse(parser, `${reconnect}\n`)).toEqual([])
   })
 
+  it('drops Codex’s warning about the hook-trust flag Farol passes for Ask first', () => {
+    const parser = new AgentStreamParser()
+    // As Codex 0.164 prints it: an `error` item, once per enabled hook source.
+    const warning = JSON.stringify({
+      type: 'item.completed',
+      item: { id: 'item_0', type: 'error', message: '`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.' }
+    })
+    expect(parse(parser, `${warning}\n`)).toEqual([])
+  })
+
   it('ignores an unknown event type rather than showing its JSON', () => {
     const parser = new AgentStreamParser()
     expect(parse(parser, `${JSON.stringify({ type: 'something_new', data: 1 })}\n`)).toEqual([])

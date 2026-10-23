@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { mergeMcpConfig, MCP_CONFIG_REL_PATHS } from './mcp-config'
+import {
+  claudeMcpConfig,
+  isDelegateToolName,
+  managedMcpEntry,
+  managedToolsFor,
+  servedTools,
+  mergeMcpConfig,
+  MCP_CONFIG_REL_PATHS,
+  servesPipelineTools
+} from './mcp-config'
 import { socketPathFor, takeLines } from './bridge'
 import { resolvePipeline } from './graph'
 import type { Pipeline } from './types'
@@ -140,5 +149,50 @@ describe('takeLines', () => {
 
   it('ignores blank frames', () => {
     expect(takeLines('\n\n{"a":1}\n').lines).toEqual(['{"a":1}'])
+  })
+})
+
+describe('managed MCP server', () => {
+  const script = { command: '/app/Farol', args: ['/app/mcp.js'], env: { ELECTRON_RUN_AS_NODE: '1' } }
+
+  it('marks the entry as managed and names its task', () => {
+    expect(managedMcpEntry(script, 't1')).toEqual({
+      ...script,
+      env: { ELECTRON_RUN_AS_NODE: '1', FAROL_MANAGED: '1', FAROL_TASK_ID: 't1' }
+    })
+    expect(script.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
+  })
+
+  it('uses its own key so the project farol entry cannot shadow it', () => {
+    expect(Object.keys(JSON.parse(claudeMcpConfig(script)).mcpServers)).toEqual(['farol-chat'])
+  })
+
+  it('recognises the delegate call as Claude and Codex name it', () => {
+    expect(isDelegateToolName('mcp__farol-chat__delegate')).toBe(true)
+    expect(isDelegateToolName('farol-chat.delegate')).toBe(true)
+    expect(isDelegateToolName('mcp__farol__run_pipeline')).toBe(false)
+  })
+
+  it('offers delegate to the chat’s own agent and approve only where Claude asks', () => {
+    expect(managedToolsFor({ subagent: false, claudeAsks: false })).toEqual(['delegate'])
+    expect(managedToolsFor({ subagent: false, claudeAsks: true })).toEqual(['delegate', 'approve'])
+    expect(managedToolsFor({ subagent: true, claudeAsks: true })).toEqual(['approve'])
+    expect(managedToolsFor({ subagent: true, claudeAsks: false })).toEqual([])
+  })
+
+  it('serves the tools the entry names, all of them when it names none', () => {
+    expect(managedMcpEntry({ command: 'x', args: [] }, 't1', undefined, ['delegate']).env?.FAROL_TOOLS).toBe('delegate')
+    expect(servedTools({ FAROL_TOOLS: 'delegate' })).toEqual(['delegate'])
+    expect(servedTools({ FAROL_TOOLS: '' })).toEqual([])
+    expect(servedTools({})).toEqual(['delegate', 'approve'])
+  })
+
+  it('recognises the delegate call as ACP CLIs name it', () => {
+    expect(isDelegateToolName('farol-chat_delegate')).toBe(true)
+  })
+
+  it('offers pipeline tools only outside managed Chat', () => {
+    expect(servesPipelineTools({})).toBe(true)
+    expect(servesPipelineTools({ FAROL_MANAGED: '1' })).toBe(false)
   })
 })

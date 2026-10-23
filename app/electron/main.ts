@@ -42,7 +42,17 @@ import { openRouterAgent } from './openrouter-agent'
 import { AppUpdater } from './update'
 import { providerUsage } from './usage'
 import { clearSpendKey, readSpend, saveSpendKey, spendKeyStatus } from './spend'
-import { mergeMcpConfig, MCP_CONFIG_REL_PATHS, type McpServerEntry } from '../shared/mcp-config'
+import {
+  MANAGED_MCP_TOOLS,
+  managedMcpEntry,
+  TOKEN_ENV,
+  mergeMcpConfig,
+  MCP_CONFIG_REL_PATHS,
+  type McpServerEntry
+} from '../shared/mcp-config'
+import { codexHookCommand } from '../shared/codex-hook'
+import type { ProjectSession } from '../shared/session'
+import { pruneTrees } from './delegate-snapshot'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
 import { isAiProvider } from '../shared/ai'
 import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
@@ -55,6 +65,7 @@ import { closedProjects } from '../shared/session'
 import { owningWorktree } from '../shared/worktree'
 import { scopedRuntimeId } from '../shared/runtime'
 import net from 'net'
+import { randomBytes } from 'crypto'
 import os from 'os'
 
 let win: BrowserWindow | null = null
@@ -78,7 +89,20 @@ const todos = createTodoStore(
   (event) => send('todos:changed', event)
 )
 const prompts = createCustomPromptStore(() => app.getPath('userData'), pipelineStoreRootFor)
-const agents = new AgentController(runner, (event) => send('agent:event', event), undefined, todos, prompts, loadPipelines)
+const agents = new AgentController(
+  runner,
+  (event) => send('agent:event', event),
+  undefined,
+  todos,
+  prompts,
+  loadPipelines,
+  MANAGED_MCP_TOOLS.length
+    ? {
+        mcp: (taskId, delegateId, tools) => managedMcpEntry(managedScript('mcp.js'), taskId, delegateId, tools),
+        codexHook: (taskId, delegateId) => codexHookCommand(managedMcpEntry(managedScript('codex-hook.js'), taskId, delegateId))
+      }
+    : undefined
+)
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
 )
@@ -427,7 +451,10 @@ async function runHookPipelines(
   return { id: req.id, ok: true, op: 'hook', text: parts.join('\n\n'), failed }
 }
 
-async function handleBridge(req: BridgeRequest, projectPath: string): Promise<BridgeReply> {
+async function handleBridge(
+  req: Exclude<BridgeRequest, { op: 'delegate' | 'approve' }>,
+  projectPath: string
+): Promise<BridgeReply> {
   if (!(await cwdAllowedForProject(projectPath, req.cwd))) {
     return {
       id: req.id,
@@ -469,8 +496,15 @@ async function handleBridge(req: BridgeRequest, projectPath: string): Promise<Br
 
 const bridges = new Map<string, net.Server>()
 
-function startBridge(projectPath: string): void {
-  const file = socketPath(projectPath)
+/**
+ * Serve NDJSON bridge requests on `file`. `signal` aborts when the asking
+ * socket closes, so a caller that goes away (an agent killed mid-call) does
+ * not leave its work running.
+ */
+function listenBridge(
+  file: string,
+  handle: (req: BridgeRequest, signal: AbortSignal) => Promise<BridgeReply>
+): net.Server {
   bridges.get(file)?.close()
   bridges.delete(file)
   try {
@@ -481,6 +515,8 @@ function startBridge(projectPath: string): void {
   const server = net.createServer((socket) => {
     let buffer = ''
     const BRIDGE_BUFFER_LIMIT = 256 * 1024
+    const gone = new AbortController()
+    socket.on('close', () => gone.abort())
     socket.on('data', (chunk) => {
       buffer += chunk.toString()
       if (buffer.length > BRIDGE_BUFFER_LIMIT) {
@@ -496,7 +532,7 @@ function startBridge(projectPath: string): void {
         } catch {
           continue
         }
-        void handleBridge(req, projectPath)
+        void handle(req, gone.signal)
           .then((reply) => socket.write(JSON.stringify(reply) + '\n'))
           .catch((err) =>
             socket.write(
@@ -518,18 +554,83 @@ function startBridge(projectPath: string): void {
   })
   server.listen(file)
   bridges.set(file, server)
+  return server
+}
+
+/**
+ * Drop subagent snapshots for chats that are gone: neither saved in the
+ * project's session nor held by the app. Best effort; a project that is not a
+ * git checkout has none.
+ */
+async function pruneDelegateSnapshots(projectPath: string, session: ProjectSession | null): Promise<void> {
+  const saved = (session?.tabs ?? []).flatMap((tab) =>
+    tab.panes.flatMap((pane) => (pane.kind === 'agent' ? [pane.taskId] : []))
+  )
+  await pruneTrees(projectPath, [...saved, ...agents.taskIds()]).catch(() => undefined)
+}
+
+function startBridge(projectPath: string): void {
+  listenBridge(socketPath(projectPath), async (req) =>
+    req.op === 'delegate' || req.op === 'approve'
+      ? { id: req.id, ok: false, message: `${req.op} is only available in managed Chat.` }
+      : handleBridge(req, projectPath)
+  )
+}
+
+/**
+ * Managed Chat's own socket, one for the whole app: its requests name a task,
+ * not a project, and the controller already knows each task's checkout.
+ */
+const managedSocket = path.join(os.tmpdir(), `farol-chat-${process.pid}.sock`)
+const managedToken = randomBytes(24).toString('hex')
+
+function startManagedBridge(): void {
+  listenBridge(managedSocket, async (req, signal) => {
+    if (req.op !== 'delegate' && req.op !== 'approve') {
+      return { id: req.id, ok: false, message: 'Only managed Chat tools are served here.' }
+    }
+    if (req.token !== managedToken) return { id: req.id, ok: false, message: 'Not authorized.' }
+    if (req.op === 'approve') {
+      const answer = await agents.requestApproval(
+        req.taskId,
+        { toolName: req.toolName, input: req.input, ...(req.delegateId ? { delegateId: req.delegateId } : {}) },
+        signal
+      )
+      return { id: req.id, ok: true, op: 'approve', ...answer }
+    }
+    const result = await agents.delegate(
+      req.taskId,
+      { provider: req.provider, model: req.model, task: req.task, context: req.context },
+      signal
+    )
+    return result.ok
+      ? { id: req.id, ok: true, op: 'delegate', text: result.text, failed: result.failed }
+      : { id: req.id, ok: false, message: result.message }
+  })
 }
 
 function socketPath(projectPath: string): string {
   return socketPathFor(projectPath, os.tmpdir(), path.sep)
 }
 
-function mcpEntry(projectPath: string): McpServerEntry {
+/** One of Farol's own scripts, run as plain Node through the app's own Electron. */
+function mcpScript(file = 'mcp.js'): McpServerEntry {
   return {
     command: process.execPath,
-    args: [path.join(app.getAppPath(), 'out', 'main', 'mcp.js')],
-    env: { ELECTRON_RUN_AS_NODE: '1', [BRIDGE_ENV]: socketPath(projectPath) }
+    args: [path.join(app.getAppPath(), 'out', 'main', file)],
+    env: { ELECTRON_RUN_AS_NODE: '1' }
   }
+}
+
+/** A script managed Chat starts, pointed at the managed socket. */
+function managedScript(file: string): McpServerEntry {
+  const script = mcpScript(file)
+  return { ...script, env: { ...script.env, [BRIDGE_ENV]: managedSocket, [TOKEN_ENV]: managedToken } }
+}
+
+function mcpEntry(projectPath: string): McpServerEntry {
+  const script = mcpScript()
+  return { ...script, env: { ...script.env, [BRIDGE_ENV]: socketPath(projectPath) } }
 }
 
 /**
@@ -649,9 +750,11 @@ function registerSessionIpc(): void {
       )
     }
   )
-  ipcMain.handle('session:load', (_e, projectPath: string) =>
-    loadProjectSession(projectPath, projectPath)
-  )
+  ipcMain.handle('session:load', async (_e, projectPath: string) => {
+    const session = await loadProjectSession(projectPath, projectPath)
+    void pruneDelegateSnapshots(projectPath, session)
+    return session
+  })
   ipcMain.handle('session:save', (_e, projectPath: string, session: unknown, last: boolean) => {
     if (typeof projectPath !== 'string') return
     return saveProjectSession(
@@ -842,6 +945,15 @@ function registerTaskIpc(): void {
   )
   ipcMain.handle('agent:cancel', (_e, taskId: string) => agents.cancel(taskId))
   ipcMain.handle('agent:dispose', (_e, taskId: string) => agents.dispose(taskId))
+  ipcMain.handle('agent:respondApproval', (_e, taskId: string, requestId: string, decision: unknown) =>
+    decision === 'once' || decision === 'chat' || decision === 'deny'
+      ? agents.respondApproval(taskId, requestId, decision)
+      : { ok: false, message: 'Unknown decision.' }
+  )
+  ipcMain.handle('agent:setAutoApprove', (_e, taskId: string, on: unknown) => agents.setAutoApprove(taskId, on !== false))
+  ipcMain.handle('agent:undoDelegate', (_e, taskId: string, delegateId: string, restore?: boolean) =>
+    agents.undoDelegate(taskId, delegateId, restore === true)
+  )
   ipcMain.handle(
     'agent:answer',
     (_e, taskId: string, requestId: string, answers: string[][] | null) =>
@@ -940,6 +1052,7 @@ app.whenReady().then(() => {
   configureAgentFailureLogs(userData)
   applyBrandIcon()
   registerIpc()
+  startManagedBridge()
   // Mirrors the OpenRouter CLI choice before anything spawns an agent.
   void loadSettings()
   buildMenu()

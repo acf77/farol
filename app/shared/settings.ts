@@ -102,6 +102,8 @@ export interface AppSettings {
   commitMessage: { agent: AiProvider; model?: string }
   /** Hand a failure straight to the agent instead of waiting to be asked. */
   autoFix: boolean
+  /** New chats run tools without asking; each chat can change it for itself. */
+  autoApprove: boolean
   /**
    * Which model each chat mode opens with, and which to try when one fails.
    * An empty chain means the mode just uses `agent` / `models[agent]`.
@@ -130,6 +132,7 @@ export function defaultSettings(): AppSettings {
     models: {},
     commitMessage: { agent: 'claude' },
     autoFix: true,
+    autoApprove: true,
     modeDefaults: { plan: [], build: [] },
     pipelineFallbacks: []
   }
@@ -391,6 +394,7 @@ export function sanitizeSettings(raw: unknown): AppSettings {
     models,
     commitMessage: sanitizeCommitMessage(s.commitMessage, agent, models),
     autoFix: typeof s.autoFix === 'boolean' ? s.autoFix : d.autoFix,
+    autoApprove: typeof s.autoApprove === 'boolean' ? s.autoApprove : d.autoApprove,
     modeDefaults: sanitizeModeDefaults(s.modeDefaults),
     pipelineFallbacks: sanitizeModeChain(s.pipelineFallbacks),
     ...(openrouter ? { openrouter } : {}),

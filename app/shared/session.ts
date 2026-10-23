@@ -30,6 +30,8 @@ export interface SavedAgentPane {
   mode?: AgentMode
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
+  /** Saved only when the chat turned auto-approve off. */
+  autoApprove?: false
   messages: {
     role: 'user' | 'assistant' | 'system'
     text: string
@@ -154,6 +156,7 @@ function sanitizePane(raw: unknown): SavedPane | null {
     provider: normalizeAi(pane.provider),
     ...(pane.mode === 'plan' ? { mode: 'plan' as const } : {}),
     ...(model ? { model } : {}),
+    ...(pane.autoApprove === false ? { autoApprove: false as const } : {}),
     messages,
     ...(context ? { context } : {})
   }

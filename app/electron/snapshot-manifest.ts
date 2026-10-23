@@ -63,7 +63,7 @@ export async function buildManifest(cwd: string, plan: SnapshotPlan): Promise<Sn
   const sources: { rel: string; abs: string }[] = plan.files.map((rel) => ({ rel, abs: path.join(cwd, rel) }))
   if (plan.pipelinesRoot) sources.push({ rel: PIPELINES_FILE, abs: path.join(plan.pipelinesRoot, PIPELINES_FILE) })
 
-  const slots: (ManifestEntry | null)[] = new Array(sources.length).fill(null)
+  const slots: (ManifestEntry | null)[] = Array.from({ length: sources.length }, () => null)
   let next = 0
   const worker = async (): Promise<void> => {
     for (let i = next++; i < sources.length; i = next++) {

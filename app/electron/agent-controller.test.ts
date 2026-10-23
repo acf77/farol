@@ -410,7 +410,7 @@ describe('AgentController', () => {
     expect(execute.mock.calls[0][1]).toContain('Validate [id: validate]')
     expect(execute.mock.calls[0][1]).toContain('Lint [id: lint]')
     expect(execute.mock.calls[0][1]).toContain('npm run lint')
-    expect(execute.mock.calls[0][1]).toContain('Do not call the Farol MCP tools')
+    expect(execute.mock.calls[0][1]).toContain('Never call the Farol MCP pipeline tools (list_pipelines, run_pipeline)')
     expect(execute.mock.calls[0][1]).toContain('Never run the catalog\'s shell commands yourself')
     expect(execute.mock.calls[0][1]).toContain('```mermaid')
     expect(execute.mock.calls[0][1]).toContain('After changing files in Build mode')
