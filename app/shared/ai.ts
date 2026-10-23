@@ -2,6 +2,7 @@
 
 import { FAILURE_REPORT_REL } from './failure'
 import { openCodeModel } from './openrouter'
+import { claudeMcpConfig, codexMcpOverrides, PIPELINE_MCP_TOOLS, type McpServerEntry } from './mcp-config'
 
 export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'omp', 'openrouter'] as const
 export type AiProvider = (typeof AI_PROVIDERS)[number]
@@ -325,7 +326,8 @@ function managedCodexCommand(
   passed: string | undefined,
   plan: boolean,
   webSearch?: boolean,
-  resume?: string
+  resume?: string,
+  mcp?: McpServerEntry
 ): AiCommand {
   const sandbox = plan ? 'read-only' : 'workspace-write'
   if (resume) {
@@ -342,6 +344,7 @@ function managedCodexCommand(
           '-c',
           `sandbox_mode="${sandbox}"`,
           ...(webSearch ? ['-c', 'web_search=live'] : []),
+          ...(mcp ? codexMcpOverrides(mcp) : []),
           resume,
           prompt
         ],
@@ -368,6 +371,7 @@ function managedCodexCommand(
         '--sandbox',
         sandbox,
         ...(webSearch ? ['-c', 'web_search=live'] : []),
+        ...(mcp ? codexMcpOverrides(mcp) : []),
         prompt
       ],
       passed
@@ -457,26 +461,30 @@ function managedClaudeCommand(
   passed: string | undefined,
   plan: boolean,
   tools: string | undefined,
-  resume?: string
+  resume?: string,
+  mcp?: McpServerEntry
 ): AiCommand {
   return {
     bins: ['claude'],
     // `--verbose` is what makes stream-json emit each turn as it happens;
     // without it the CLI still waits and prints one final event.
-    // `--strict-mcp-config` with no `--mcp-config` loads zero MCP servers.
-    // Claude Code otherwise picks up project `.mcp.json` (Farol's
-    // list_pipelines / run_pipeline) and calls those instead of emitting
-    // FAROL_PIPELINES — so the managed harness never runs validation, and
+    // The user's MCP servers load as usual, but the project `farol` server's
+    // pipeline tools are disallowed: called instead of emitting
+    // FAROL_PIPELINES, the managed harness would never run validation, and
     // MCP runs use origin `agent`, which does not hand failures back.
+    // `--mcp-config` and `--disallowedTools` take several values, so a
+    // single-valued flag must follow them before the prompt.
     args: withModel(
       [
         '-p',
         '--output-format',
         'stream-json',
         '--verbose',
+        ...(mcp ? ['--mcp-config', claudeMcpConfig(mcp)] : []),
+        '--disallowedTools',
+        PIPELINE_MCP_TOOLS.join(','),
         '--permission-mode',
         plan ? 'plan' : 'bypassPermissions',
-        '--strict-mcp-config',
         ...toolsArgv(tools),
         ...resumeArgv('--resume', resume),
         prompt
@@ -519,6 +527,8 @@ export function managedAiCommand(
     webSearch?: boolean
     via?: OpenRouterAgent
     resume?: string
+    /** Farol's managed server for this task; Claude and Codex load it for the run. */
+    mcp?: McpServerEntry
   }
 ): AiCommand {
   const cli = cliFor(provider, opts?.via)
@@ -529,7 +539,7 @@ export function managedAiCommand(
   const tools = opts?.tools?.length ? opts.tools.join(',') : undefined
   switch (cli) {
     case 'codex':
-      return managedCodexCommand(prompt, passed, plan, opts?.webSearch, resume)
+      return managedCodexCommand(prompt, passed, plan, opts?.webSearch, resume, opts?.mcp)
     case 'cursor':
       return managedCursorCommand(prompt, passed, plan, resume)
     case 'opencode':
@@ -539,7 +549,7 @@ export function managedAiCommand(
     case 'pi':
       return managedPiCommand(prompt, passed, plan, tools)
     case 'claude':
-      return managedClaudeCommand(prompt, passed, plan, tools, resume)
+      return managedClaudeCommand(prompt, passed, plan, tools, resume, opts?.mcp)
   }
 }
 

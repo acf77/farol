@@ -19,6 +19,7 @@ import {
   normalizeMode,
   normalizeModel
 } from '../shared/ai'
+import type { McpServerEntry } from '../shared/mcp-config'
 import { AgentStreamParser } from '../shared/agent-stream'
 import { claudeCatalogWindow } from '../shared/agent-models'
 import {
@@ -402,7 +403,9 @@ export class AgentController {
     private executor?: AgentExecutor,
     private todoStore?: TodoStore,
     private promptStore?: Pick<CustomPromptStore, 'activeBlock'>,
-    private loadPipelines?: (cwd: string) => Promise<Pipeline[]>
+    private loadPipelines?: (cwd: string) => Promise<Pipeline[]>,
+    /** Farol's managed MCP server for a task, loaded by the providers that can take one per run. */
+    private managedMcp?: (taskId: string) => McpServerEntry
   ) {}
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
@@ -1513,7 +1516,7 @@ export class AgentController {
       plan
         ? `Do not run validation pipelines in Plan mode.`
         : `Never run the catalog's shell commands yourself (lint, typecheck, tests, build, git push, or any other step cmd listed below). Always select pipelines via ${PIPELINES_MARKER} and let Farol execute them — including after a repair turn.`,
-      `Do not call the Farol MCP tools in this managed Chat session. They are not available here — they require approval in some providers, and the managed harness executes your selected pipelines directly.`,
+      `Never call the Farol MCP pipeline tools (list_pipelines, run_pipeline) in this managed Chat session; select pipelines with ${PIPELINES_MARKER} and the harness runs them. Other MCP tools available to you may be used.`,
       `When you propose or complete a change, include a Mermaid diagram in a \`\`\`mermaid fenced block so Chat can render it. Prefer flowchart TD or sequenceDiagram with 4–12 well-defined steps — detailed but not crowded. In Plan mode, diagram the intended approach. After changing files in Build mode, diagram what changed and why. Keep node labels short; put extra detail in the surrounding prose. Skip a diagram for questions-only or status-only replies.`,
       plan
         ? `End every response with exactly one final line: ${QUESTIONS_MARKER} [...] when you need a decision, ${FINISHED_PLAN} when the plan is complete, or ${PIPELINES_MARKER} [] for an ordinary response.`
@@ -1565,7 +1568,8 @@ export class AgentController {
       mode: task.request.mode,
       ...(opts?.tools?.length ? { tools: opts.tools } : {}),
       ...(opts?.webSearch ? { webSearch: true } : {}),
-      ...(opts?.session?.resume ? { resume: opts.session.resume } : {})
+      ...(opts?.session?.resume ? { resume: opts.session.resume } : {}),
+      ...(this.managedMcp ? { mcp: this.managedMcp(task.request.id) } : {})
     })
     const env = aiEnv(task.request.provider, via)
     const bin = resolveBinFrom(spec.bins)

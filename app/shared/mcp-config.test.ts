@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { mergeMcpConfig, MCP_CONFIG_REL_PATHS } from './mcp-config'
+import {
+  claudeMcpConfig,
+  managedMcpEntry,
+  mergeMcpConfig,
+  MCP_CONFIG_REL_PATHS,
+  servesPipelineTools
+} from './mcp-config'
 import { socketPathFor, takeLines } from './bridge'
 import { resolvePipeline } from './graph'
 import type { Pipeline } from './types'
@@ -140,5 +146,26 @@ describe('takeLines', () => {
 
   it('ignores blank frames', () => {
     expect(takeLines('\n\n{"a":1}\n').lines).toEqual(['{"a":1}'])
+  })
+})
+
+describe('managed MCP server', () => {
+  const script = { command: '/app/Farol', args: ['/app/mcp.js'], env: { ELECTRON_RUN_AS_NODE: '1' } }
+
+  it('marks the entry as managed and names its task', () => {
+    expect(managedMcpEntry(script, 't1')).toEqual({
+      ...script,
+      env: { ELECTRON_RUN_AS_NODE: '1', FAROL_MANAGED: '1', FAROL_TASK_ID: 't1' }
+    })
+    expect(script.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
+  })
+
+  it('uses its own key so the project farol entry cannot shadow it', () => {
+    expect(Object.keys(JSON.parse(claudeMcpConfig(script)).mcpServers)).toEqual(['farol-chat'])
+  })
+
+  it('offers pipeline tools only outside managed Chat', () => {
+    expect(servesPipelineTools({})).toBe(true)
+    expect(servesPipelineTools({ FAROL_MANAGED: '1' })).toBe(false)
   })
 })

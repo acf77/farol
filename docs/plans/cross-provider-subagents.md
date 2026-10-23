@@ -45,6 +45,13 @@ Replace "no MCP" with "user's MCP + a managed-only Farol server".
 
 Done when: a user's own MCP server is callable from managed Claude/Codex, and `FAROL_PIPELINES` still drives validation (regression test for the original reason).
 
+**Status: landed.** Notes from the implementation:
+
+- Claude's `--mcp-config` takes an inline JSON string, so no temp file is written.
+- `--mcp-config` and `--disallowedTools` both take several values; they sit before `--permission-mode` so they can't swallow the prompt.
+- The managed server is **not started yet**: `MANAGED_MCP_TOOLS` is empty, and a server with no tools fails the client's tool listing and would show as broken. Phase 2 adds `delegate` to that list, which switches the server on for Claude and Codex.
+- The managed env has no bridge socket yet. Phase 2 picks it: one app-wide socket keyed by task id is simpler than mapping a task's cwd back to its project (worktrees live outside the project directory).
+
 ## Phase 2 — Synchronous `delegate` (shared checkout, can edit, undoable) · ~1.5 weeks
 
 **Tool contract** (`mcp.ts`, managed only):

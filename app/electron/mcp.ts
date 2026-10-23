@@ -10,12 +10,17 @@
  *
  * Runs asked for here are stamped `origin: 'agent'`, which stops the app
  * handing the failure back to an agent and looping.
+ *
+ * Managed Chat starts this same script as `farol-chat` (see
+ * `shared/mcp-config.ts`). There the pipeline tools are left out, because the
+ * harness runs the pipelines the agent selects.
  */
 
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { errorMessage } from '../shared/jev'
+import { servesPipelineTools } from '../shared/mcp-config'
 import { requestBridge } from './bridge-client'
 
 const APP_DOWN =
@@ -27,7 +32,11 @@ const fail = (s: string) => ({ isError: true, ...text(s) })
 async function main(): Promise<void> {
   const cwd = process.cwd()
   const server = new McpServer({ name: 'farol', version: '1.0.0' })
+  if (servesPipelineTools(process.env)) registerPipelineTools(server, cwd)
+  await server.connect(new StdioServerTransport())
+}
 
+function registerPipelineTools(server: McpServer, cwd: string): void {
   server.registerTool(
     'list_pipelines',
     {
@@ -69,8 +78,6 @@ async function main(): Promise<void> {
       return reply.failed ? fail(reply.text) : text(reply.text)
     }
   )
-
-  await server.connect(new StdioServerTransport())
 }
 
 main().catch((err) => {

@@ -42,7 +42,13 @@ import { openRouterAgent } from './openrouter-agent'
 import { AppUpdater } from './update'
 import { providerUsage } from './usage'
 import { clearSpendKey, readSpend, saveSpendKey, spendKeyStatus } from './spend'
-import { mergeMcpConfig, MCP_CONFIG_REL_PATHS, type McpServerEntry } from '../shared/mcp-config'
+import {
+  MANAGED_MCP_TOOLS,
+  managedMcpEntry,
+  mergeMcpConfig,
+  MCP_CONFIG_REL_PATHS,
+  type McpServerEntry
+} from '../shared/mcp-config'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
 import { isAiProvider } from '../shared/ai'
 import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
@@ -78,7 +84,15 @@ const todos = createTodoStore(
   (event) => send('todos:changed', event)
 )
 const prompts = createCustomPromptStore(() => app.getPath('userData'), pipelineStoreRootFor)
-const agents = new AgentController(runner, (event) => send('agent:event', event), undefined, todos, prompts, loadPipelines)
+const agents = new AgentController(
+  runner,
+  (event) => send('agent:event', event),
+  undefined,
+  todos,
+  prompts,
+  loadPipelines,
+  MANAGED_MCP_TOOLS.length ? (taskId) => managedMcpEntry(mcpScript(), taskId) : undefined
+)
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
 )
@@ -524,12 +538,18 @@ function socketPath(projectPath: string): string {
   return socketPathFor(projectPath, os.tmpdir(), path.sep)
 }
 
-function mcpEntry(projectPath: string): McpServerEntry {
+/** Farol's MCP server script, run as plain Node through the app's own Electron. */
+function mcpScript(): McpServerEntry {
   return {
     command: process.execPath,
     args: [path.join(app.getAppPath(), 'out', 'main', 'mcp.js')],
-    env: { ELECTRON_RUN_AS_NODE: '1', [BRIDGE_ENV]: socketPath(projectPath) }
+    env: { ELECTRON_RUN_AS_NODE: '1' }
   }
+}
+
+function mcpEntry(projectPath: string): McpServerEntry {
+  const script = mcpScript()
+  return { ...script, env: { ...script.env, [BRIDGE_ENV]: socketPath(projectPath) } }
 }
 
 /**

@@ -209,9 +209,10 @@ describe('managedAiCommand', () => {
       '--output-format',
       'stream-json',
       '--verbose',
+      '--disallowedTools',
+      'mcp__farol__list_pipelines,mcp__farol__run_pipeline',
       '--permission-mode',
       'bypassPermissions',
-      '--strict-mcp-config',
       'fix this'
     ])
     expect(managedAiCommand('codex', 'fix this').args).toEqual([
@@ -253,6 +254,51 @@ describe('managedAiCommand', () => {
       '--auto-approve',
       'fix this'
     ])
+  })
+
+  it('loads the user\'s MCP servers in managed Claude but keeps Farol\'s pipeline tools off', () => {
+    const args = managedAiCommand('claude', 'fix this').args
+    expect(args).not.toContain('--strict-mcp-config')
+    expect(args).not.toContain('--mcp-config')
+    expect(args[args.indexOf('--disallowedTools') + 1]).toBe(
+      'mcp__farol__list_pipelines,mcp__farol__run_pipeline'
+    )
+    expect(managedAiCommand('claude', 'plan', undefined, { mode: 'plan' }).args).toContain('--disallowedTools')
+  })
+
+  it('adds the managed farol-chat server to Claude and Codex runs', () => {
+    const mcp = { command: '/app/Farol', args: ['/app/mcp.js'], env: { FAROL_MANAGED: '1', FAROL_TASK_ID: 't1' } }
+    const claude = managedAiCommand('claude', 'fix this', undefined, { mcp }).args
+    const config = claude[claude.indexOf('--mcp-config') + 1]
+    expect(JSON.parse(config)).toEqual({ mcpServers: { 'farol-chat': mcp } })
+    // Both flags take several values; a single-valued flag must end them before the prompt.
+    expect(claude.indexOf('--permission-mode')).toBeGreaterThan(claude.indexOf('--disallowedTools'))
+    expect(claude.indexOf('--disallowedTools')).toBeGreaterThan(claude.indexOf('--mcp-config'))
+    expect(claude.at(-1)).toBe('fix this')
+
+    expect(managedAiCommand('codex', 'fix this', undefined, { mcp }).args).toEqual([
+      'exec',
+      '--json',
+      '-c',
+      'approval_policy=never',
+      '--sandbox',
+      'workspace-write',
+      '-c',
+      'mcp_servers.farol-chat.command="/app/Farol"',
+      '-c',
+      'mcp_servers.farol-chat.args=["/app/mcp.js"]',
+      '-c',
+      'mcp_servers.farol-chat.env={ "FAROL_MANAGED" = "1", "FAROL_TASK_ID" = "t1" }',
+      'fix this'
+    ])
+    const resumed = managedAiCommand('codex', 'next', undefined, { mcp, resume: 't9' }).args
+    expect(resumed).toContain('mcp_servers.farol-chat.command="/app/Farol"')
+    expect(resumed.slice(-2)).toEqual(['t9', 'next'])
+
+    // Providers without a per-run MCP flag are unchanged.
+    expect(managedAiCommand('cursor', 'fix this', undefined, { mcp }).args).toEqual(
+      managedAiCommand('cursor', 'fix this').args
+    )
   })
 
   it('passes a native --tools allowlist for Claude and OMP when supplied', () => {
@@ -407,9 +453,10 @@ describe('managedAiCommand', () => {
       '--output-format',
       'stream-json',
       '--verbose',
+      '--disallowedTools',
+      'mcp__farol__list_pipelines,mcp__farol__run_pipeline',
       '--permission-mode',
       'bypassPermissions',
-      '--strict-mcp-config',
       '--model',
       'opus',
       'fix this'
