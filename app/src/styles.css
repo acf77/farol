@@ -253,8 +253,9 @@ button:disabled {
     transition-duration: var(--bf-hold-ms, 2.5s) !important;
   }
 }
+/* Darker than the pressed primary (#BDD927), or the sweep vanishes into it. */
 .bf-hold-btn.is-primary .bf-hold-fill {
-  background: #bdd927;
+  background: #9bb21a;
 }
 .bf-hold-label {
   position: relative;
