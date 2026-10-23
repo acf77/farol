@@ -3,6 +3,8 @@ import {
   claudeMcpConfig,
   isDelegateToolName,
   managedMcpEntry,
+  managedToolsFor,
+  servedTools,
   mergeMcpConfig,
   MCP_CONFIG_REL_PATHS,
   servesPipelineTools
@@ -169,6 +171,24 @@ describe('managed MCP server', () => {
     expect(isDelegateToolName('mcp__farol-chat__delegate')).toBe(true)
     expect(isDelegateToolName('farol-chat.delegate')).toBe(true)
     expect(isDelegateToolName('mcp__farol__run_pipeline')).toBe(false)
+  })
+
+  it('offers delegate to the chat’s own agent and approve only where Claude asks', () => {
+    expect(managedToolsFor({ subagent: false, claudeAsks: false })).toEqual(['delegate'])
+    expect(managedToolsFor({ subagent: false, claudeAsks: true })).toEqual(['delegate', 'approve'])
+    expect(managedToolsFor({ subagent: true, claudeAsks: true })).toEqual(['approve'])
+    expect(managedToolsFor({ subagent: true, claudeAsks: false })).toEqual([])
+  })
+
+  it('serves the tools the entry names, all of them when it names none', () => {
+    expect(managedMcpEntry({ command: 'x', args: [] }, 't1', undefined, ['delegate']).env?.FAROL_TOOLS).toBe('delegate')
+    expect(servedTools({ FAROL_TOOLS: 'delegate' })).toEqual(['delegate'])
+    expect(servedTools({ FAROL_TOOLS: '' })).toEqual([])
+    expect(servedTools({})).toEqual(['delegate', 'approve'])
+  })
+
+  it('recognises the delegate call as ACP CLIs name it', () => {
+    expect(isDelegateToolName('farol-chat_delegate')).toBe(true)
   })
 
   it('offers pipeline tools only outside managed Chat', () => {

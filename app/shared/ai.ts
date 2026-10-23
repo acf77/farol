@@ -2,6 +2,7 @@
 
 import { codexHookArgs } from './codex-hook'
 import { FAILURE_REPORT_REL } from './failure'
+import { opencodeRunConfig } from './opencode-config'
 import { openCodeModel } from './openrouter'
 import {
   APPROVE_TOOL,
@@ -106,14 +107,17 @@ export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
   openrouter: []
 }
 
+/** CLIs Farol runs over ACP in managed Chat (see `shared/acp.ts`). */
+export const ACP_CLIS: readonly AiCli[] = ['opencode']
+
 /**
  * Whether the CLI can stop a headless run to ask the developer about a tool
  * call: Claude through `--permission-prompt-tool`, Codex through a
- * `PreToolUse` hook. Every other CLI runs with all tools approved, so
- * auto-approve is always on for it.
+ * `PreToolUse` hook, ACP CLIs through `session/request_permission`. Every
+ * other CLI runs with all tools approved, so auto-approve is always on for it.
  */
-export function canAskApproval(provider: AiProvider): boolean {
-  return provider === 'claude' || provider === 'codex'
+export function canAskApproval(provider: AiProvider, via: OpenRouterAgent = 'opencode'): boolean {
+  return provider === 'claude' || provider === 'codex' || ACP_CLIS.includes(cliFor(provider, via))
 }
 
 export function isAiProvider(value: unknown): value is AiProvider {
@@ -255,6 +259,8 @@ export interface AiCommand {
    * `shared/agent-stream.ts`. Absent means stdout is plain text to show as-is.
    */
   stream?: 'ndjson'
+  /** OpenCode settings for this run only, merged into `OPENCODE_CONFIG_CONTENT` (see `opencode-config.ts`). */
+  opencodeConfig?: Record<string, unknown>
 }
 
 /** Older OpenCode builds reject `--format json` with an unknown-option error. */
@@ -432,10 +438,11 @@ function managedOpencodeCommand(
   jsonFormat: boolean,
   resume?: string
 ): AiCommand {
-  // OpenCode's built-in `plan` agent is read-only; `--dangerously-skip-permissions`
-  // only bypasses tool-approval prompts, it does not grant plan the write tools
-  // it already lacks, so the two flags are safe to combine.
+  // OpenCode's `plan` agent lacks the write tools, which
+  // `--dangerously-skip-permissions` does not grant back; but it runs `bash`
+  // freely, so Plan also denies shell through the run's config.
   const planArgv = [...(plan ? ['--agent', 'plan'] : []), ...resumeArgv('--session', resume)]
+  const config = opencodeRunConfig(plan ? 'plan' : 'build', false)
   return {
     bins: ['opencode'],
     args: withModel(
@@ -445,7 +452,8 @@ function managedOpencodeCommand(
       passed
     ),
     hint: 'Install OpenCode (https://opencode.ai) to use managed Chat. Farol needs a build that accepts `opencode run --format json`.',
-    ...(jsonFormat ? { stream: 'ndjson' as const } : {})
+    ...(jsonFormat ? { stream: 'ndjson' as const } : {}),
+    ...(config ? { opencodeConfig: config } : {})
   }
 }
 

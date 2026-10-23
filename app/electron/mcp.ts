@@ -22,7 +22,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { errorMessage } from '../shared/jev'
 import { AI_PROVIDERS } from '../shared/ai'
-import { DELEGATE_ENV, servesPipelineTools, TASK_ENV, TOKEN_ENV } from '../shared/mcp-config'
+import { DELEGATE_ENV, servedTools, servesPipelineTools, TASK_ENV, TOKEN_ENV } from '../shared/mcp-config'
 import { requestBridge } from './bridge-client'
 
 const APP_DOWN =
@@ -87,9 +87,10 @@ function registerManagedTools(server: McpServer): void {
   const taskId = process.env[TASK_ENV] ?? ''
   const token = process.env[TOKEN_ENV] ?? ''
   const delegateId = process.env[DELEGATE_ENV] || undefined
-  registerApprove(server, taskId, token, delegateId)
-  // A subagent's server only asks for approval; subagents cannot delegate further.
-  if (delegateId) return
+  const tools = servedTools(process.env)
+  if (tools.includes('approve')) registerApprove(server, taskId, token, delegateId)
+  // Subagents cannot delegate further.
+  if (delegateId || !tools.includes('delegate')) return
   server.registerTool(
     'delegate',
     {

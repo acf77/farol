@@ -59,6 +59,8 @@ export const TASK_ENV = 'FAROL_TASK_ID'
 export const TOKEN_ENV = 'FAROL_CHAT_TOKEN'
 /** Set when the server belongs to a subagent: it may ask for approval but not delegate. */
 export const DELEGATE_ENV = 'FAROL_DELEGATE_ID'
+/** The managed tools this server offers, comma-separated. */
+export const TOOLS_ENV = 'FAROL_TOOLS'
 
 /**
  * The project `farol` server's tools, as managed Claude names them. Chat must
@@ -73,7 +75,24 @@ export const PIPELINE_MCP_TOOLS = [`mcp__${MCP_SERVER_KEY}__list_pipelines`, `mc
  * start the server at all: a server with no tools fails the client's tool
  * listing and shows up as a broken server.
  */
-export const MANAGED_MCP_TOOLS: readonly string[] = ['delegate', 'approve']
+export const MANAGED_MCP_TOOLS = ['delegate', 'approve'] as const
+export type ManagedTool = (typeof MANAGED_MCP_TOOLS)[number]
+
+/**
+ * The tools one run's server offers: `delegate` for the chat's own agent
+ * (never a subagent's), and `approve` only where Claude asks through it — no
+ * other CLI needs it, and a model that sees it might call it.
+ */
+export function managedToolsFor(run: { subagent: boolean; claudeAsks: boolean }): ManagedTool[] {
+  return [...(run.subagent ? [] : (['delegate'] as const)), ...(run.claudeAsks ? (['approve'] as const) : [])]
+}
+
+/** The tools `env` names; absent means all of them, as before `FAROL_TOOLS` existed. */
+export function servedTools(env: Record<string, string | undefined>): ManagedTool[] {
+  const listed = env[TOOLS_ENV]
+  if (listed === undefined) return [...MANAGED_MCP_TOOLS]
+  return MANAGED_MCP_TOOLS.filter((tool) => listed.split(',').includes(tool))
+}
 
 /**
  * The managed tool Claude's `--permission-prompt-tool` points at: it asks the
@@ -83,9 +102,13 @@ export const APPROVE_TOOL = `mcp__${MANAGED_MCP_SERVER_KEY}__approve`
 /** Farol's own delegate tool, which never needs the developer's approval. */
 export const DELEGATE_TOOL = `mcp__${MANAGED_MCP_SERVER_KEY}__delegate`
 
-/** How each provider's stream names the managed `delegate` call (Claude, Codex). */
+/** How each provider names the managed `delegate` call: Claude, Codex, and ACP CLIs (OpenCode, OMP). */
 export function isDelegateToolName(name: string): boolean {
-  return name === DELEGATE_TOOL || name === `${MANAGED_MCP_SERVER_KEY}.delegate`
+  return (
+    name === DELEGATE_TOOL ||
+    name === `${MANAGED_MCP_SERVER_KEY}.delegate` ||
+    name === `${MANAGED_MCP_SERVER_KEY}_delegate`
+  )
 }
 
 /**
@@ -101,10 +124,21 @@ export function servesPipelineTools(env: Record<string, string | undefined>): bo
 }
 
 /** `base` (the app's `mcp.js` entry, pointed at the managed socket) started for one managed Chat task. */
-export function managedMcpEntry(base: McpServerEntry, taskId: string, delegateId?: string): McpServerEntry {
+export function managedMcpEntry(
+  base: McpServerEntry,
+  taskId: string,
+  delegateId?: string,
+  tools?: readonly ManagedTool[]
+): McpServerEntry {
   return {
     ...base,
-    env: { ...base.env, [MANAGED_ENV]: '1', [TASK_ENV]: taskId, ...(delegateId ? { [DELEGATE_ENV]: delegateId } : {}) }
+    env: {
+      ...base.env,
+      [MANAGED_ENV]: '1',
+      [TASK_ENV]: taskId,
+      ...(delegateId ? { [DELEGATE_ENV]: delegateId } : {}),
+      ...(tools ? { [TOOLS_ENV]: tools.join(',') } : {})
+    }
   }
 }
 

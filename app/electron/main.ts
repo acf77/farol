@@ -96,7 +96,7 @@ const agents = new AgentController(
   loadPipelines,
   MANAGED_MCP_TOOLS.length
     ? {
-        mcp: (taskId, delegateId) => managedMcpEntry(managedScript('mcp.js'), taskId, delegateId),
+        mcp: (taskId, delegateId, tools) => managedMcpEntry(managedScript('mcp.js'), taskId, delegateId, tools),
         codexHook: (taskId, delegateId) => codexHookCommand(managedMcpEntry(managedScript('codex-hook.js'), taskId, delegateId))
       }
     : undefined

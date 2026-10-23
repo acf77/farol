@@ -323,6 +323,17 @@ describe('managedAiCommand', () => {
     expect(canAskApproval('claude')).toBe(true)
     expect(canAskApproval('codex')).toBe(true)
     expect(canAskApproval('cursor')).toBe(false)
+    expect(canAskApproval('opencode')).toBe(true)
+    expect(canAskApproval('openrouter', 'opencode')).toBe(true)
+    expect(canAskApproval('openrouter', 'pi')).toBe(false)
+    expect(canAskApproval('omp')).toBe(false)
+  })
+
+  it('keeps OpenCode Plan read-only by denying shell for the run', () => {
+    expect(managedAiCommand('opencode', 'x', undefined, { mode: 'plan' }).opencodeConfig).toEqual({
+      agent: { plan: { permission: { bash: 'deny' } } }
+    })
+    expect(managedAiCommand('opencode', 'x').opencodeConfig).toBeUndefined()
   })
 
   it('gates Codex with its PreToolUse hook in Build only, on fresh and resumed runs', () => {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentMode, AgentSkill, AiProvider, AppSettings, ProviderUsage } from '@shared/types'
-import { AI_LABELS, aiSelectionLabel, canAskApproval } from '@shared/ai'
+import { AI_LABELS, aiSelectionLabel, canAskApproval, normalizeOpenRouterAgent, type OpenRouterAgent } from '@shared/ai'
 import {
   convertSkillDraft,
   filterSkills,
@@ -471,16 +471,19 @@ export function ChatModeSwitch({
 export function AutoApproveChip({
   on,
   provider,
+  via,
   mode,
   onChange
 }: {
   on: boolean
   provider: AiProvider
+  /** The CLI OpenRouter runs through, which decides whether it can ask. */
+  via?: OpenRouterAgent
   mode: AgentMode
   onChange: (on: boolean) => void
 }) {
   if (mode === 'plan') return null
-  const canAsk = canAskApproval(provider)
+  const canAsk = canAskApproval(provider, via)
   const active = on || !canAsk
   const title = !canAsk
     ? `${AI_LABELS[provider]}: Cannot ask for approval`
@@ -526,6 +529,7 @@ function ComposerToolbar({
   canSend,
   autoApprove,
   onAutoApproveChange,
+  openRouterVia,
   onOpenAgentMenu,
   onModeChange,
   onAttach,
@@ -544,6 +548,7 @@ function ComposerToolbar({
   canSend: boolean
   autoApprove: boolean
   onAutoApproveChange: (on: boolean) => void
+  openRouterVia: OpenRouterAgent
   onOpenAgentMenu: () => void
   onModeChange: (mode: AgentMode) => void
   onAttach: () => void
@@ -565,7 +570,7 @@ function ComposerToolbar({
   return (
     <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '8px 10px 10px 12px' }}>
       <ChatModeSwitch mode={mode} locked={modeLocked} onChange={onModeChange} />
-      <AutoApproveChip on={autoApprove} provider={provider} mode={mode} onChange={onAutoApproveChange} />
+      <AutoApproveChip on={autoApprove} provider={provider} via={openRouterVia} mode={mode} onChange={onAutoApproveChange} />
       <button
         type="button"
         className="bf-focus bf-composer-btn"
@@ -1012,6 +1017,7 @@ export function ComposerBox({
           canSend={canSend}
           autoApprove={autoApprove}
           onAutoApproveChange={onAutoApproveChange}
+          openRouterVia={normalizeOpenRouterAgent(settings?.openrouter?.agent)}
           onModeChange={onModeChange}
           onOpenAgentMenu={openAgentMenu}
           onAttach={() => fileInputRef.current?.click()}

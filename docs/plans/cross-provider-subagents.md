@@ -180,7 +180,7 @@ Done when: in a Claude chat with auto-approve off, a Bash call shows a card, All
 
 1. **Codex: `PreToolUse` hook gate** (small, about 1–2 days). **Status: landed.** A `codex-hook.js` entry (like `git-hook.js`) asks over the managed bridge using the existing `approve` op. It is passed with `-c hooks.PreToolUse` and `--dangerously-bypass-hook-trust` only while the chat is set to Ask first. Fail-safe: if a shell or write tool completes in an Ask-first Codex run with no approval request before it, Farol stops the run and reports that asking is not working.
 2. **Pi: Farol extension** (small to medium). `-e` loads a Farol extension that gates `tool_call` through the bridge and registers `delegate`. Also fix the install hint.
-3. **OpenCode and OMP: ACP client** (medium to large). A new run path that speaks ACP instead of `run --format json` / `--mode json`. It gives both CLIs per-session MCP (so `delegate`) and approvals.
+3. **OpenCode and OMP: ACP client** (medium to large). **Status: OpenCode landed; OMP not yet.** A new run path that speaks ACP instead of `run --format json` / `--mode json`. It gives both CLIs per-session MCP (so `delegate`) and approvals.
 4. **Cursor:** verify when a machine with the CLI is available.
 
 Chosen: 1 and 3 (OpenCode first; it is used more than Pi).
@@ -192,6 +192,16 @@ Chosen: 1 and 3 (OpenCode first; it is used more than Pi).
 - Codex's `--dangerously-bypass-hook-trust` warning (`error` items) is dropped from the transcript.
 - Fail-safe: each approved write or shell request lets exactly one such call through. A call nobody approved stops the run ("Codex ran … without asking"), and a subagent's run fails the same way. A blocked call emits no item, so a deny never trips it.
 - End to end with the real `codex exec` 0.164, Farol's argv and the built hook: the approved edit was written and the denied command never ran.
+
+**OpenCode over ACP, notes from the implementation**
+- Managed OpenCode (and OpenRouter through OpenCode) now runs `opencode acp` (`electron/acp-run.ts`, mapping in `shared/acp.ts`). If the CLI does not answer `initialize`, Farol falls back to `opencode run --format json` for that run.
+- Per run: Farol's managed server (`delegate` only) in `session/new.mcpServers`; mode and model through `session/set_config_option`; `session/resume` to continue (a failed resume reports "session not found", so the controller retries once with the whole history); the prompt result's `usage.inputTokens` feeds the context meter.
+- Approvals: Ask first sets `edit`, `bash` and `webfetch` to `ask` in `OPENCODE_CONFIG_CONTENT`, and each `session/request_permission` goes to the developer. Farol answers allow-once or reject-once, never "always": "allow for this chat" is kept by Farol. Auto-approve answers yes. Plan answers no.
+- **Plan was not read-only before this change.** OpenCode's `plan` agent runs `bash` freely, verified with both `opencode run --agent plan` (Farol's command until now) and ACP. Plan now denies shell through the run config on both paths. `ask` would not hold, because `--dangerously-skip-permissions` approves asks. The `task` tool from Plan cannot reach a writing subagent.
+- After a reject, OpenCode ends the turn rather than letting the model try something else.
+- The managed server now offers only what a run needs (`FAROL_TOOLS`): `delegate` for the chat's own agent, and `approve` only where Claude asks through it.
+- End to end with the real `opencode acp` 1.19.4, a stand-in model and Farol's `runAcp`: Ask first denied → not written; allowed → written; Plan → shell not even offered; auto → written without asking; the model saw `farol-chat_delegate` and no other Farol tool.
+- Still open: OpenCode MCP tool-call timeouts for long `delegate` runs (no per-run setting found); OMP over ACP (needs its Plan mode and tool allowlist checked against a model before it can replace `--mode json`). Separately, OpenCode pipeline AI steps (`aiCommand`) can still write; that is queued as its own task.
 
 ## Deferred
 

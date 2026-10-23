@@ -11,6 +11,7 @@ import type {
   PipelineRunResult
 } from '../shared/types'
 import {
+  ACP_CLIS,
   aiSelectionLabel,
   canAskApproval,
   cliFor,
@@ -21,7 +22,18 @@ import {
   normalizeMode,
   normalizeModel
 } from '../shared/ai'
-import { isDelegateToolName, MANAGED_TOOL_TIMEOUT_SEC, type McpServerEntry } from '../shared/mcp-config'
+import {
+  isDelegateToolName,
+  MANAGED_MCP_SERVER_KEY,
+  MANAGED_TOOL_TIMEOUT_SEC,
+  managedToolsFor,
+  type ManagedTool,
+  type McpServerEntry
+} from '../shared/mcp-config'
+import { OPENCODE_CONFIG_ENV, opencodeConfigContent, opencodeRunConfig } from '../shared/opencode-config'
+import { acpApprovalAsk, acpMcpServer } from '../shared/acp'
+import { openCodeModel } from '../shared/openrouter'
+import { runAcp } from './acp-run'
 import { captureTree, pinTree, releaseTrees, restoreTree, treeDiffStat, undoChange } from './delegate-snapshot'
 import { AgentStreamParser } from '../shared/agent-stream'
 import { claudeCatalogWindow } from '../shared/agent-models'
@@ -462,8 +474,8 @@ async function treeChanges(
 
 /** How a run reaches Farol's managed tools; `delegateId` names a subagent's run. */
 export interface ManagedTools {
-  /** The managed MCP server (Claude, Codex). */
-  mcp(taskId: string, delegateId?: string): McpServerEntry
+  /** The managed MCP server offering `tools` (Claude, Codex, ACP CLIs). */
+  mcp(taskId: string, delegateId: string | undefined, tools: readonly ManagedTool[]): McpServerEntry
   /** Codex's Ask-first `PreToolUse` hook command (see `shared/codex-hook.ts`). */
   codexHook?(taskId: string, delegateId?: string): string
 }
@@ -863,9 +875,11 @@ export class AgentController {
    * where there is something to approve, with the managed server to ask through).
    */
   private autoApproves(task: Task, provider: AiProvider): boolean {
-    // Claude asks through the managed server, Codex through its hook.
-    const route = provider === 'codex' ? !!this.managed?.codexHook : !!this.managed
-    return !(task.request.autoApprove === false && canAskApproval(provider) && task.request.mode !== 'plan' && route)
+    // Claude asks through the managed server, Codex through its hook, ACP CLIs over ACP itself.
+    const via = openRouterAgent()
+    const route =
+      provider === 'codex' ? !!this.managed?.codexHook : ACP_CLIS.includes(cliFor(provider, via)) || !!this.managed
+    return !(task.request.autoApprove === false && canAskApproval(provider, via) && task.request.mode !== 'plan' && route)
   }
 
   /** Open (or clear) the Ask-first gate for a run that is about to start. */
@@ -2040,6 +2054,66 @@ export class AgentController {
     return `Farol pipeline activity for this chat:\n${lines.join('\n')}`
   }
 
+  /**
+   * A run over ACP (OpenCode): Farol's managed server rides in the session,
+   * and permission requests go to the developer, or are answered by
+   * auto-approve. Plan answers every request with no: its run config already
+   * denies shell, and nothing in Plan should need permission.
+   */
+  private async runAcpAgent(
+    task: Task,
+    prompt: string,
+    sink: AgentSink,
+    opts: Parameters<AgentController['runAgent']>[4]
+  ): Promise<number> {
+    const via = openRouterAgent()
+    const child = opts?.child
+    const provider = child?.provider ?? task.request.provider
+    const model = child ? child.model : task.request.model
+    const cli = cliFor(provider, via)
+    const bin = resolveBinFrom([cli])
+    if (!bin) {
+      sink.text(`farol: ${managedAiCommand(provider, prompt, model, { via }).hint}\n`)
+      return 127
+    }
+    const plan = task.request.mode === 'plan'
+    const askFirst = !this.autoApproves(task, provider)
+    const env = aiEnv(provider, via)
+    const config = opencodeRunConfig(plan ? 'plan' : 'build', askFirst)
+    if (config) env[OPENCODE_CONFIG_ENV] = opencodeConfigContent(env[OPENCODE_CONFIG_ENV], config)
+    // Subagents get no managed server, so they cannot delegate in turn; ACP asks for approval itself.
+    const mcp = this.managed && !child ? this.managed.mcp(task.request.id, undefined, ['delegate']) : undefined
+    if (mcp) env.MCP_TOOL_TIMEOUT = String(MANAGED_TOOL_TIMEOUT_SEC * 1000)
+    const result = await runAcp({
+      bin,
+      args: ['acp'],
+      cwd: task.request.cwd,
+      env,
+      prompt,
+      mode: plan ? 'plan' : 'build',
+      ...(model ? { model: provider === 'openrouter' ? openCodeModel(model) : model } : {}),
+      ...(opts?.session?.resume ? { resume: opts.session.resume } : {}),
+      mcpServers: mcp ? [acpMcpServer(MANAGED_MCP_SERVER_KEY, mcp)] : [],
+      permission: async (call) => {
+        if (plan) return false
+        if (!askFirst) return true
+        const answer = await this.requestApproval(task.request.id, {
+          ...acpApprovalAsk(call),
+          ...(child ? { delegateId: child.delegateId } : {})
+        })
+        return answer.allow
+      },
+      onText: (chunk) => sink.text(chunk),
+      onTool: (event) => sink.tool(event),
+      onNoise: (chunk) => sink.noise(chunk),
+      onSession: (id) => opts?.session?.onSession(id),
+      onUsage: (tokens) => opts?.session?.onUsage?.({ tokens }),
+      onProcess: (proc) => this.setProcess(task, !!child, proc)
+    })
+    if (result.unsupported && !task.cancelled) return this.runAgent(task, prompt, sink, false, { ...opts, noAcp: true })
+    return result.code
+  }
+
   private setProcess(task: Task, child: boolean, proc: ChildProcess | null): void {
     if (child) task.child = proc
     else task.process = proc
@@ -2056,6 +2130,8 @@ export class AgentController {
       session?: AgentSessionIo
       /** Run a subagent with this provider/model instead of the task's own agent. */
       child?: { provider: AiProvider; model?: string; delegateId: string }
+      /** The CLI turned out not to speak ACP; use its JSON mode. */
+      noAcp?: boolean
     }
   ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
@@ -2063,15 +2139,13 @@ export class AgentController {
     const child = opts?.child
     const provider = child?.provider ?? task.request.provider
     const model = child ? child.model : task.request.model
+    if (!plain && !opts?.noAcp && ACP_CLIS.includes(cliFor(provider, via))) {
+      return this.runAcpAgent(task, prompt, sink, opts)
+    }
     const askApproval = !this.autoApproves(task, provider)
-    // A subagent's server can only ask for approval, so it gets one only to ask.
-    const mcp = !this.managed
-      ? undefined
-      : !child
-        ? this.managed.mcp(task.request.id)
-        : askApproval
-          ? this.managed.mcp(task.request.id, child.delegateId)
-          : undefined
+    const tools = managedToolsFor({ subagent: !!child, claudeAsks: askApproval && provider === 'claude' })
+    // A server with no tools shows up as broken, so a run with nothing to offer gets none.
+    const mcp = this.managed && tools.length ? this.managed.mcp(task.request.id, child?.delegateId, tools) : undefined
     const codexHook = askApproval ? this.managed?.codexHook?.(task.request.id, child?.delegateId) : undefined
     const isChild = !!child
     const spec = managedAiCommand(provider, prompt, model, {
@@ -2083,6 +2157,7 @@ export class AgentController {
       ...(codexHook ? { codexHook } : {})
     })
     const env = aiEnv(provider, via)
+    if (spec.opencodeConfig) env[OPENCODE_CONFIG_ENV] = opencodeConfigContent(env[OPENCODE_CONFIG_ENV], spec.opencodeConfig)
     // Claude's limit on one MCP call; a `delegate` waits as long as its subagent runs.
     if (mcp) env.MCP_TOOL_TIMEOUT = String(MANAGED_TOOL_TIMEOUT_SEC * 1000)
     const bin = resolveBinFrom(spec.bins)
