@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
-import type { Pipeline, PipelineNode, StepState } from '@shared/types'
+import type { GitStatus, Pipeline, PipelineNode, StepState } from '@shared/types'
 import { topoSort } from '@shared/graph'
 import { C, MONO, ELLIPSIS } from '../theme'
 import { sidePanelShellStyle, useCollapseRail } from './side-panel'
 import type { DetailLog, RunState } from '../types'
+import FilesChanged from './FilesChanged'
 import { BranchIcon, ChevronLeft, ChevronRight, ChevronUp, Spinner } from './icons'
 
 interface Props {
@@ -13,6 +14,10 @@ interface Props {
   /** Runs for the branch currently checked out, keyed by pipeline id. */
   runs: Record<string, RunState>
   logs: DetailLog[]
+  /** Working-tree status for the Files changed section. */
+  gitStatus: GitStatus | null
+  /** Open a changed file in the Code pane. */
+  onOpenFile: (path: string) => void
   selected: Pipeline | null
   onSelect: (id: string) => void
   onNew: () => void
@@ -58,6 +63,11 @@ function nodesOf(pipeline: Pipeline): PipelineNode[] {
 }
 
 function subLine(pipeline: Pipeline, run: RunState | undefined): { text: string; color: string } {
+  const line = runLine(pipeline, run)
+  return pipeline.mandatory ? { ...line, text: `Required · ${line.text}` } : line
+}
+
+function runLine(pipeline: Pipeline, run: RunState | undefined): { text: string; color: string } {
   const nodes = nodesOf(pipeline)
   const status = statusOf(run)
   if (!run || status === 'idle') return { text: 'Not run on this branch', color: C.faint }
@@ -71,7 +81,7 @@ function subLine(pipeline: Pipeline, run: RunState | undefined): { text: string;
   return { text: `Cancelled at ${done}/${nodes.length} · ${ago(run.startedAt)}`, color: C.faint }
 }
 
-/** The run/stop control: lime check when passed, red cross when failed, ring otherwise. */
+/** The run/stop control: plain check when passed, red ringed cross when failed, ring otherwise. */
 function StatusButton({ name, status, onRun, onStop }: { name: string; status: PipelineStatus; onRun: () => void; onStop: () => void }) {
   const running = status === 'running'
   return (
@@ -88,13 +98,11 @@ function StatusButton({ name, status, onRun, onStop }: { name: string; status: P
       style={{ width: 22, height: 22, flex: 'none', display: 'grid', placeItems: 'center', border: 0, borderRadius: '50%', background: 'transparent', cursor: 'pointer', padding: 0 }}
     >
       {status === 'pass' && (
-        <span style={{ width: 18, height: 18, borderRadius: '50%', background: C.accent, display: 'grid', placeItems: 'center' }}>
-          <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke={C.accentInk} strokeWidth="2" aria-hidden><path d="M2.5 6.2 5 8.5l4.5-5" /></svg>
-        </span>
+        <svg width="14" height="14" viewBox="0 0 12 12" fill="none" stroke={C.textSoft} strokeWidth="1.6" aria-hidden><path d="M2.5 6.2 5 8.5l4.5-5" /></svg>
       )}
       {status === 'fail' && (
-        <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'oklch(0.69 0.2 25 / 0.16)', display: 'grid', placeItems: 'center' }}>
-          <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke={FAIL_TEXT} strokeWidth="1.8" aria-hidden><path d="M2 2l6 6M8 2 2 8" /></svg>
+        <span style={{ width: 16, height: 16, boxSizing: 'border-box', borderRadius: '50%', border: `1.5px solid ${FAIL_TEXT}`, display: 'grid', placeItems: 'center' }}>
+          <svg width="7" height="7" viewBox="0 0 10 10" fill="none" stroke={FAIL_TEXT} strokeWidth="1.8" aria-hidden><path d="M2 2l6 6M8 2 2 8" /></svg>
         </span>
       )}
       {(status === 'idle' || status === 'cancelled') && (
@@ -220,17 +228,9 @@ function PipelineCard({
   const running = status === 'running'
   const nodes = useMemo(() => nodesOf(pipeline), [pipeline])
   const sub = subLine(pipeline, run)
-  const segWidth = nodes.length > 3 ? 6 : 10
 
   return (
-    <div
-      onContextMenu={onContextMenu}
-      style={{
-        borderRadius: 10,
-        background: isExp ? 'oklch(0.24 0.005 95)' : 'transparent',
-        border: `1px solid ${isExp ? C.hair : 'transparent'}`
-      }}
-    >
+    <div onContextMenu={onContextMenu} style={{ borderRadius: 10 }}>
       <div
         role="button"
         tabIndex={0}
@@ -252,32 +252,8 @@ function PipelineCard({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
             <span title={pipeline.name} style={{ fontSize: 13, fontWeight: 500, ...ELLIPSIS }}>{pipeline.name}</span>
-            {pipeline.mandatory && (
-              <span
-                title="Chat runs this after every change"
-                style={{ flex: 'none', fontSize: 10, fontWeight: 500, padding: '1px 6px', borderRadius: 20, background: 'oklch(1 0 0 / 0.06)', color: C.textMuted }}
-              >
-                Required
-              </span>
-            )}
           </div>
           <div style={{ fontSize: 11.5, marginTop: 2, color: sub.color, ...ELLIPSIS }}>{sub.text}</div>
-        </div>
-        <div style={{ display: 'flex', gap: 3, flex: 'none' }}>
-          {nodes.map((n) => {
-            const state = run?.stepResults[n.id]
-            return (
-              <span
-                key={n.id}
-                style={{
-                  width: segWidth,
-                  height: 4,
-                  borderRadius: 2,
-                  background: state === 'running' ? 'oklch(0.91 0.19 115 / 0.45)' : dotColor(state === 'skip' ? 'pending' : state)
-                }}
-              />
-            )
-          })}
         </div>
       </div>
 
@@ -455,6 +431,8 @@ export default function Sidebar({
   branch,
   runs,
   logs,
+  gitStatus,
+  onOpenFile,
   selected,
   onSelect,
   onNew,
@@ -557,6 +535,7 @@ export default function Sidebar({
               No pipelines yet. Use + to create one.
             </div>
           )}
+          <FilesChanged status={gitStatus} onOpen={onOpenFile} />
         </div>
 
         {selected && logs.length > 0 && (

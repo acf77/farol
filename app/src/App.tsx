@@ -2490,6 +2490,11 @@ export function ProjectWorkspace({
           branch={runBranch}
           runs={branchRuns}
           logs={detailLogs}
+          gitStatus={gitPanel.status}
+          onOpenFile={(path) => {
+            workspace.show('code')
+            void code.openFile(path)
+          }}
           selected={selected}
           onSelect={(id) => {
             setSelId(id)

@@ -155,51 +155,43 @@ export function PipelineMsgCard({
   onOpenPipeline: (tabId: string) => void
 }) {
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 11,
-        padding: '11px 14px',
-        borderRadius: 10,
-        background: 'oklch(0.21 0.005 95)',
-        border: `1px solid ${C.hair}`
-      }}
-    >
-      <span
-        aria-hidden
-        style={{
-          width: 18,
-          height: 18,
-          boxSizing: 'border-box',
-          flex: 'none',
-          borderRadius: '50%',
-          display: 'grid',
-          placeItems: 'center',
-          background: pc.status === 'passed' ? C.accent : 'transparent',
-          border: pc.status === 'passed' || pc.status === 'running' ? 'none' : `1.5px solid ${pc.status === 'failed' ? C.red : C.faint}`
-        }}
-      >
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, padding: '6px 0', fontSize: 13 }}>
+      <span aria-hidden style={{ width: 16, flex: 'none', alignSelf: 'center', display: 'grid', placeItems: 'center' }}>
         {pc.status === 'running' ? (
-          <Spinner size={18} />
+          <Spinner size={14} />
         ) : pc.status === 'passed' ? (
-          <CheckIcon size={9} color={C.accentInk} strokeWidth={2.4} />
-        ) : null}
+          <CheckIcon size={14} color={C.textMuted} strokeWidth={2} />
+        ) : (
+          <span
+            style={{
+              width: 14,
+              height: 14,
+              boxSizing: 'border-box',
+              borderRadius: '50%',
+              display: 'grid',
+              placeItems: 'center',
+              border: `1.5px solid ${pc.status === 'failed' ? C.red : C.faint}`,
+              color: C.red,
+              fontSize: 9,
+              lineHeight: 1
+            }}
+          >
+            {pc.status === 'failed' ? '✕' : null}
+          </span>
+        )}
       </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 500 }}>{pc.pipelineName}</div>
-        <div style={{ marginTop: 2, fontFamily: MONO, fontSize: 11, lineHeight: 1.5, color: C.faint, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text' }}>
-          {text}
-        </div>
-      </div>
+      <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', userSelect: 'text' }}>
+        <span style={{ fontWeight: 500, color: C.text }}>{pc.pipelineName}</span>
+        <span style={{ marginLeft: 10, color: C.faint, whiteSpace: 'pre-wrap' }}>{text}</span>
+      </span>
       <button
         type="button"
         className="bf-focus bf-icon-btn"
         onClick={() => onOpenPipeline(pc.tabId)}
         title="Jump to this run's terminal tab"
-        style={{ flex: 'none', fontSize: 11.5, color: C.textMuted, padding: '4px 8px', borderRadius: 6, border: 'none', background: 'transparent', fontFamily: 'inherit', cursor: 'pointer' }}
+        style={{ flex: 'none', fontSize: 12.5, color: C.textMuted, padding: '2px 6px', borderRadius: 6, border: 'none', background: 'transparent', fontFamily: 'inherit', cursor: 'pointer' }}
       >
-        Open in terminal
+        Logs
       </button>
     </div>
   )
