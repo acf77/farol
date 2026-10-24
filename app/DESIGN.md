@@ -157,6 +157,8 @@ components:
 
 ## 1. Overview
 
+> How Farol should feel is set by [`DESIGN.md`](../DESIGN.md) at the repo root: calm, warm, roomy, and restrained, like the landing page. This file holds the tokens and component specs. Where the two disagree, the root file wins; update this one to match.
+
 **Creative North Star: "The Control Surface"**
 
 Farol is an aircraft panel, not a webpage. Every indicator earns its space, every reading is unambiguous, and the whole surface is legible under pressure at a glance. The instrument is dense because density is correct here: an operator who has to hunt for the state of a run has been failed by the panel. Small type, tight gaps, and exact alignment are the vocabulary. What makes it a control surface rather than clutter is that no element is present for decoration, and every value is deliberate.
