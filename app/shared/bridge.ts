@@ -42,6 +42,36 @@ export type BridgeAsk =
   | { op: 'list'; cwd: string }
   | { op: 'run'; cwd: string; pipeline: string }
   | { op: 'hook'; cwd: string; event: GitHookEvent }
+  | DelegateAsk
+  | ApproveAsk
+
+/**
+ * Managed Chat's `delegate` tool, sent to the app-wide managed socket rather
+ * than a project's. `token` is the secret the app put in the managed server's
+ * env, so another local process cannot drive a Chat by guessing its task id.
+ */
+export interface DelegateAsk {
+  op: 'delegate'
+  token: string
+  taskId: string
+  provider: string
+  model?: string
+  task: string
+  context?: string
+}
+
+/**
+ * Claude's permission prompt for one tool call, sent from the managed
+ * server's `approve` tool. `delegateId` is set when a subagent asks.
+ */
+export interface ApproveAsk {
+  op: 'approve'
+  token: string
+  taskId: string
+  delegateId?: string
+  toolName: string
+  input: unknown
+}
 
 export type BridgeRequest = BridgeAsk & { id: number }
 
@@ -49,6 +79,8 @@ export type BridgeReply =
   | { id: number; ok: true; op: 'list'; pipelines: { id: string; name: string; steps: string[] }[] }
   | { id: number; ok: true; op: 'run'; text: string; failed: boolean }
   | { id: number; ok: true; op: 'hook'; text: string; failed: boolean }
+  | { id: number; ok: true; op: 'delegate'; text: string; failed: boolean }
+  | { id: number; ok: true; op: 'approve'; allow: boolean; message?: string }
   | { id: number; ok: false; message: string }
 
 /** Newline-delimited JSON: split a stream buffer into whole messages. */

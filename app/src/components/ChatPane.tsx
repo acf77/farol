@@ -7,7 +7,7 @@ import { C, PANE } from '../theme'
 import { MessageErrorBoundary } from '../ErrorBoundary'
 import { Button } from './controls'
 import { Spinner } from './icons'
-import { ChatBanner } from './chat/cards'
+import { ChatBanner, type UndoResult } from './chat/cards'
 import { ComposerBox } from './chat/Composer'
 import { Turn } from './chat/Turn'
 import ScrollToLatest from './ScrollToLatest'
@@ -32,6 +32,13 @@ interface Props {
   onProviderChange: (provider: AiProvider, model?: string) => void
   onModeChange: (mode: AgentMode) => void
   onExecutePlan: (index: number) => void
+  /** Whether this chat runs tools without asking. */
+  autoApprove: boolean
+  onAutoApproveChange: (on: boolean) => void
+  /** Answer a tool approval request. */
+  onApprove: (requestId: string, decision: 'once' | 'chat' | 'deny') => void
+  /** Undo a subagent run's changes, or with `restore` put the checkout back to before it. */
+  onUndoDelegate?: (delegateId: string, restore: boolean) => Promise<UndoResult>
   onOpenPipeline: (tabId: string) => void
   onNewChat: () => void
   clearChatConfirm?: boolean
@@ -368,6 +375,10 @@ export default function ChatPane({
   onProviderChange,
   onModeChange,
   onExecutePlan,
+  autoApprove,
+  onAutoApproveChange,
+  onApprove,
+  onUndoDelegate,
   onOpenPipeline,
   onNewChat,
   clearChatConfirm,
@@ -454,10 +465,10 @@ export default function ChatPane({
                   <Turn m={m} i={i} messages={messages} isBusy={isBusy} provider={provider} model={model}
                     onOpenPipeline={onOpenPipeline} onNewChat={onNewChat} onAnswer={onAnswer}
                     canExecutePlan={!!m.plan?.finished && !m.plan.consumed && !isBusy}
-                    onExecutePlan={onExecutePlan} />
+                    onExecutePlan={onExecutePlan} onUndoDelegate={onUndoDelegate} onApprove={onApprove} />
                 </MessageErrorBoundary>
               ))}
-              {isBusy && status !== 'asking' && !messages[messages.length - 1]?.tool && <WorkingRow />}
+              {isBusy && status !== 'asking' && !messages[messages.length - 1]?.tool && !messages[messages.length - 1]?.delegate && !messages.some((m) => m.approval && !m.approval.decision) && <WorkingRow />}
             </div>
           )}
         </div>
@@ -494,6 +505,8 @@ export default function ChatPane({
         onCancel={onCancel}
         onProviderChange={onProviderChange}
         onModeChange={onModeChange}
+        autoApprove={autoApprove}
+        onAutoApproveChange={onAutoApproveChange}
         sendTextRef={sendTextRef}
         showFade={showFade}
         placeholder={isEmpty ? 'What are we breaking today?' : 'Reply to the agent…'}

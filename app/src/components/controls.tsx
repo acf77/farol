@@ -390,11 +390,14 @@ function MenuShell({
   pos,
   label,
   onClose,
+  footer,
   children
 }: {
   pos: MenuPos
   label: string
   onClose: () => void
+  /** Pinned under the list, e.g. usage for the agent being picked. */
+  footer?: React.ReactNode
   children: React.ReactNode
 }) {
   const place: React.CSSProperties =
@@ -439,6 +442,7 @@ function MenuShell({
         }}
       >
         {children}
+        {footer}
       </div>
     </>
   )
@@ -587,6 +591,7 @@ export function CliModelMenu({
   pos,
   settings,
   locked,
+  footer,
   onPick,
   onClose
 }: {
@@ -595,6 +600,7 @@ export function CliModelMenu({
   pos: MenuPos
   settings?: AppSettings
   locked?: boolean
+  footer?: React.ReactNode
   onPick: (provider: AiProvider, model: string | undefined) => void
   onClose: () => void
 }) {
@@ -608,7 +614,7 @@ export function CliModelMenu({
     page === 'cli' ? [] : providerModels(page, page === current ? selectedModel : undefined, settings)
 
   return (
-    <MenuShell pos={pos} label={page === 'cli' ? 'Provider' : `${AI_LABELS[page]} model`} onClose={onClose}>
+    <MenuShell pos={pos} label={page === 'cli' ? 'Provider' : `${AI_LABELS[page]} model`} onClose={onClose} footer={footer}>
       {page === 'cli'
         ? providers.map((p) => (
             <button

@@ -85,6 +85,23 @@ A proposed implementation plan that the agent explicitly marks as complete and r
 The existing read-only enforcement a provider already uses for pipeline reviews. Prompt-only instructions are not a **Review gate**.
 _Avoid_: sandbox (as the product name for this rule), ask mode (except as Cursor’s review mechanism)
 
+### Subagents and approvals
+
+**Subagent**:
+Another provider's or model's CLI that the Chat's agent hands one piece of work to with **Delegate**, in the same checkout, while it waits.
+_Avoid_: child agent, worker, sub-agent (as the product term)
+
+**Delegate**:
+The managed Chat tool an agent calls to run a **Subagent** and get back its summary and the files it changed.
+
+**Auto-approve**:
+A Chat's choice to let the agent's tools run without asking. On by default for new chats (Settings); each chat can change it for itself.
+_Avoid_: YOLO mode, bypass (as the product name)
+
+**Approval request**:
+A tool call the agent is paused on until the developer allows it once, allows that tool for the rest of the Chat, or denies it.
+_Avoid_: permission prompt (except as Claude's own mechanism)
+
 ### Agent Git actions
 
 **Git action**:
@@ -211,7 +228,7 @@ _Avoid_: a sign-in form in Settings, showing the service address, retrying a run
 - **Plan mode** is available only for providers that have a **Review gate**. Today that is every provider — Codex, Cursor, OMP, Claude, OpenCode, and OpenRouter, which rides OpenCode's or pi's CLI (chosen in Settings) and so inherits that CLI's **Review gate**. Instructions to avoid changes alone are not a **Review gate**.
 - When the current provider has no **Review gate**, the **Plan | Build** switch stays visible with both labels. The Plan side is disabled and cannot be selected; the Build side stays selected. Farol does not hide the switch, remove the Plan label, or leave Plan clickable.
 - That unavailable Plan side carries a tooltip that names the current provider and uses the exact reason “Cannot enforce read-only”. Farol does not use a generic phrase that omits the provider, a mention of **Review gate**, or a longer explanation, and it does not add a banner, toast, status line, or other Chat copy for that explanation.
-- Farol Plan uses that same **Review gate**, enforced with each provider's own read-only mode: Codex's `--sandbox read-only`, Cursor's `--mode=plan`, OMP's read-only tool allowlist, Claude's `--permission-mode plan`, and OpenCode's `--agent plan`. OpenRouter runs through the OpenCode or pi CLI, so it uses that CLI's gate — `--agent plan`, or pi's read-only tool allowlist (`read,grep,find,ls`).
+- Farol Plan uses that same **Review gate**, enforced with each provider's own read-only mode: Codex's `--sandbox read-only`, Cursor's `--mode=plan`, OMP's read-only tool allowlist, Claude's `--permission-mode plan`, and OpenCode's `plan` agent with shell denied for the run (the `plan` agent alone still runs shell commands). OpenRouter runs through the OpenCode or pi CLI, so it uses that CLI's gate — OpenCode's, or pi's read-only tool allowlist (`read,grep,find,ls`).
 - Selecting a provider that has no **Review gate** while **Plan mode** is selected switches the Chat to **Build mode**; **Plan mode** cannot remain selected for that provider. This does not consume **Execute plan**.
 - That forced switch still happens if the agent is working. Locking the mode selector stops the developer from picking a mode, not Farol from leaving **Plan mode** when the new provider has no **Review gate**.
 - After Farol switches the Chat to **Build mode** because the provider has no **Review gate**, later selecting a provider that has one leaves the Chat in **Build mode**; **Plan mode** is not restored automatically.
@@ -231,6 +248,18 @@ _Avoid_: a sign-in form in Settings, showing the service address, retrying a run
 - Reopening a Chat or restarting Farol restores the Execute button for its latest unexecuted **Finished plan**, provided no follow-up message has invalidated it.
 - Selecting **Execute plan** consumes that plan's Execute button permanently, even if implementation fails or is canceled; the Chat stays in **Build mode** until the developer selects **Plan mode** again.
 - Selecting **Build mode** manually does not consume the latest **Finished plan**'s Execute button; **Execute plan** remains available until a follow-up is sent or **Execute plan** is selected, and it starts implementation even if the Chat is already in **Build mode**.
+
+### Subagents and approvals
+
+- Only the Chat's own agent can **Delegate**; a **Subagent** cannot delegate further, run Farol pipelines, or ask the developer questions.
+- One **Subagent** runs at a time, and the agent waits on it, so nothing else edits the checkout while it runs.
+- A **Subagent** can be undone from its card while the Chat is idle; when later edits overlap, Farol changes nothing and offers to restore the checkout to before it ran instead.
+- **Auto-approve** is shown in the composer whenever it applies: a chip beside **Plan | Build** reads “Auto-approve” when on and “Ask first” when off. It is hidden in **Plan mode**, which has nothing to approve.
+- Claude, Codex and OpenCode (including OpenRouter through OpenCode) can raise an **Approval request**. For every other provider the chip stays on and disabled, with a tooltip naming the provider and the reason “Cannot ask for approval”.
+- A Codex run set to ask first is stopped if a write or shell call runs that the developer did not approve, so a Codex that cannot ask never quietly runs tools.
+- Changing **Auto-approve** applies from the next turn; a running turn keeps the mode it started with. The change appears as one line in the Chat.
+- Tool cards for writes and shell commands that ran under **Auto-approve** carry an “auto” marker.
+- An **Approval request** that nobody can answer any more (the turn was stopped or the agent went away) is denied and marked “No longer waiting”.
 
 ### Agent Git actions
 
@@ -565,7 +594,8 @@ _Avoid_: a sign-in form in Settings, showing the service address, retrying a run
 - Resolved: A non-empty `FAROL_PIPELINES` list in Plan mode does not start validation; Plan mode never runs pipelines.
 - Resolved: That reply is accepted and shown; Farol ignores the listed IDs instead of rejecting the turn or asking the agent to retry.
 - Resolved: Enforcing read-only access for **Plan mode** means a **Review gate** — the same enforcement pipeline reviews already use — not a prompt. Providers without a **Review gate** cannot use **Plan mode**.
-- Resolved: Farol Plan drives each provider's own native read-only mode: Codex's `--sandbox read-only`, Cursor's `--mode=plan`, OMP's read-only tool allowlist, Claude's `--permission-mode plan`, and OpenCode's `--agent plan`.
+- Resolved: Farol Plan drives each provider's own native read-only mode: Codex's `--sandbox read-only`, Cursor's `--mode=plan`, OMP's read-only tool allowlist, Claude's `--permission-mode plan`, and OpenCode's `plan` agent.
+- Resolved: OpenCode's `plan` agent is not read-only on its own: it refuses `write` and `edit` but runs `bash`. Farol denies shell in OpenCode Plan through the run's config (`OPENCODE_CONFIG_CONTENT`); an `ask` rule would not hold, because Farol's runs approve asks.
 - Resolved: A forced switch to **Build mode** because the new provider has no **Review gate** still applies while the agent is working; the mode-selector lock does not defer it.
 - Resolved: When the current provider has no **Review gate**, Farol disables the Plan side of the **Plan | Build** switch. The switch stays visible with both labels; Plan is not hidden and is not left clickable.
 - Resolved: That explanation lives in a tooltip on the disabled Plan side, not in a banner, toast, status line, or other Chat surface.

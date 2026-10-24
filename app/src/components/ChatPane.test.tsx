@@ -27,7 +27,7 @@ describe('ChatPane context meter and fresh start', () => {
 
   it('shows nothing without a reading from the CLI', () => {
     const html = renderChatPane({ pane: makeAgentPane({ messages }), onFreshStart: vi.fn() })
-    expect(html).not.toContain('ctx ')
+    expect(html).not.toContain('Context ')
     expect(html).not.toContain('Fresh start')
   })
 
@@ -36,7 +36,8 @@ describe('ChatPane context meter and fresh start', () => {
       pane: makeAgentPane({ messages, usage: { tokens: 60_000, window: 200_000 } }),
       onFreshStart: vi.fn()
     })
-    expect(html).toContain('ctx 30%')
+    expect(html).toContain('aria-label="Context 30%"')
+    expect(html).not.toContain('consider a fresh start')
     expect(html).not.toContain('Fresh start')
   })
 
@@ -45,7 +46,8 @@ describe('ChatPane context meter and fresh start', () => {
       pane: makeAgentPane({ messages, usage: { tokens: 150_000, window: 200_000 } }),
       onFreshStart: vi.fn()
     })
-    expect(html).toContain('ctx 75% !')
+    expect(html).toContain('aria-label="Context 75%"')
+    expect(html).toContain('consider a fresh start')
     expect(html).toContain('Context is large (150k of 200k tokens).')
     expect(html).toContain('Fresh start')
   })

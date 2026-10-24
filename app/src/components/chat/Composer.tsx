@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentMode, AgentSkill, AiProvider, AppSettings, ProviderUsage } from '@shared/types'
-import { aiSelectionLabel } from '@shared/ai'
+import { AI_LABELS, aiModelLabel, aiSelectionLabel, canAskApproval, normalizeOpenRouterAgent, type OpenRouterAgent } from '@shared/ai'
 import {
   convertSkillDraft,
   filterSkills,
@@ -12,12 +12,14 @@ import {
 import {
   contextIsHigh,
   contextLongLabel,
+  contextRatio,
   contextShortLabel,
   type ContextUsage
 } from '@shared/agent-context'
 import { C, MONO, ELLIPSIS } from '../../theme'
 import { CLI_MODEL_MENU_WIDTH, CliModelMenu } from '../controls'
 import UsageBar from '../UsageBar'
+import { ProviderMark } from './ProviderMark'
 import TodoList from '../TodoList'
 import {
   AttachmentIcon,
@@ -32,23 +34,74 @@ interface PendingAttachment {
   type: string
 }
 
-function ContextMeter({ usage }: { usage?: ContextUsage }) {
+const RING_RADIUS = 6
+const RING_LENGTH = 2 * Math.PI * RING_RADIUS
+
+/** How full the agent's context is, as a ring. The reading is in the tooltip and the agent menu. */
+function ContextRing({ usage }: { usage?: ContextUsage }) {
   if (!usage) return null
   const high = contextIsHigh(usage)
+  const ratio = contextRatio(usage)
+  const filled = ratio === undefined ? 0 : Math.min(1, ratio) * RING_LENGTH
+  const tone = high ? C.yellow : C.textMuted
   return (
     <span
       role="status"
+      aria-label={`Context ${contextShortLabel(usage)}`}
       title={`Context: ${contextLongLabel(usage)} at the agent's latest step${high ? ' — consider a fresh start' : ''}`}
+      style={{ flex: 'none', width: 28, height: 28, display: 'grid', placeItems: 'center' }}
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+        <circle cx="8" cy="8" r={RING_RADIUS} stroke="oklch(1 0 0 / 0.12)" strokeWidth="2" />
+        {filled > 0 && (
+          <circle
+            cx="8"
+            cy="8"
+            r={RING_RADIUS}
+            stroke={tone}
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeDasharray={`${filled} ${RING_LENGTH}`}
+            transform="rotate(-90 8 8)"
+          />
+        )}
+      </svg>
+    </span>
+  )
+}
+
+/** Usage and context for the agent being picked, kept out of the toolbar. */
+function AgentMenuFooter({
+  usage,
+  provider,
+  contextUsage,
+  onRefreshUsage
+}: {
+  usage: ProviderUsage[]
+  provider: AiProvider
+  contextUsage?: ContextUsage
+  onRefreshUsage: () => void
+}) {
+  return (
+    <div
       style={{
-        fontFamily: MONO,
-        fontSize: 11,
-        color: high ? C.yellow : C.faint,
-        whiteSpace: 'nowrap'
+        flex: 'none',
+        margin: '4px -4px -4px',
+        padding: '10px 14px 12px',
+        borderTop: `1px solid ${C.hair}`,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8
       }}
     >
-      ctx {contextShortLabel(usage)}
-      {high ? ' !' : ''}
-    </span>
+      <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', color: C.faint }}>USAGE</span>
+      <UsageBar usage={usage} provider={provider} onRefresh={onRefreshUsage} />
+      {contextUsage && (
+        <span style={{ fontSize: 11, color: contextIsHigh(contextUsage) ? C.yellow : C.textMuted }}>
+          Context {contextShortLabel(contextUsage)} · {contextLongLabel(contextUsage)}
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -463,17 +516,77 @@ export function ChatModeSwitch({
   )
 }
 
+/**
+ * Whether tools run without asking, always in view while it is on. Only
+ * Claude can stop to ask, so for other CLIs the chip stays on and disabled.
+ * Plan is read-only already, so there is nothing to approve and no chip.
+ */
+export function AutoApproveChip({
+  on,
+  provider,
+  via,
+  mode,
+  onChange
+}: {
+  on: boolean
+  provider: AiProvider
+  /** The CLI OpenRouter runs through, which decides whether it can ask. */
+  via?: OpenRouterAgent
+  mode: AgentMode
+  onChange: (on: boolean) => void
+}) {
+  if (mode === 'plan') return null
+  const canAsk = canAskApproval(provider, via)
+  const active = on || !canAsk
+  const title = !canAsk
+    ? `${AI_LABELS[provider]}: Cannot ask for approval`
+    : active
+      ? `Tools run without asking. Turn off to have ${AI_LABELS[provider]} ask in Chat first (from the next turn).`
+      : `${AI_LABELS[provider]} asks in Chat before running tools. Turn on to run them without asking (from the next turn).`
+  return (
+    <button
+      type="button"
+      className="bf-focus bf-composer-btn"
+      disabled={!canAsk}
+      aria-pressed={active}
+      title={title}
+      onClick={() => onChange(!on)}
+      aria-label={active ? 'Auto-approve' : 'Ask first'}
+      style={{
+        flex: 'none',
+        width: 28,
+        height: 28,
+        display: 'grid',
+        placeItems: 'center',
+        border: 'none',
+        borderRadius: 7,
+        padding: 0,
+        background: active ? 'oklch(0.75 0.12 75 / 0.14)' : 'transparent',
+        color: active ? 'oklch(0.85 0.1 80)' : C.faint,
+        cursor: canAsk ? 'pointer' : 'default',
+        opacity: canAsk ? 1 : 0.7
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M8 1.8 13 3.6v4.1c0 3-2 5.2-5 6.5-3-1.3-5-3.5-5-6.5V3.6L8 1.8Z" />
+        {active ? <path d="M8 5.3v3.1M8 10.6v.1" /> : <path d="M5.8 8l1.6 1.6L10.4 6.6" />}
+      </svg>
+    </button>
+  )
+}
+
 function ComposerToolbar({
   agentBtnRef,
   provider,
   model,
-  usage,
   contextUsage,
-  onRefreshUsage,
   mode,
   isBusy,
   modeLocked,
   canSend,
+  autoApprove,
+  onAutoApproveChange,
+  openRouterVia,
   onOpenAgentMenu,
   onModeChange,
   onAttach,
@@ -483,13 +596,14 @@ function ComposerToolbar({
   agentBtnRef: React.RefObject<HTMLButtonElement>
   provider: AiProvider
   model?: string
-  usage: ProviderUsage[]
   contextUsage?: ContextUsage
-  onRefreshUsage: () => void
   mode: AgentMode
   isBusy: boolean
   modeLocked: boolean
   canSend: boolean
+  autoApprove: boolean
+  onAutoApproveChange: (on: boolean) => void
+  openRouterVia: OpenRouterAgent
   onOpenAgentMenu: () => void
   onModeChange: (mode: AgentMode) => void
   onAttach: () => void
@@ -509,8 +623,9 @@ function ComposerToolbar({
     padding: 0
   }
   return (
-    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '8px 10px 10px 12px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 46, padding: '0 10px 0 12px' }}>
       <ChatModeSwitch mode={mode} locked={modeLocked} onChange={onModeChange} />
+      <AutoApproveChip on={autoApprove} provider={provider} via={openRouterVia} mode={mode} onChange={onAutoApproveChange} />
       <button
         type="button"
         className="bf-focus bf-composer-btn"
@@ -522,8 +637,7 @@ function ComposerToolbar({
         <ClipIcon size={13} />
       </button>
       <span style={{ flex: '1 1 0', minWidth: 0 }} />
-      <UsageBar usage={usage} provider={provider} onRefresh={onRefreshUsage} />
-      <ContextMeter usage={contextUsage} />
+      <ContextRing usage={contextUsage} />
       <button
         ref={agentBtnRef}
         type="button"
@@ -535,7 +649,8 @@ function ComposerToolbar({
           minWidth: 0,
           display: 'flex',
           alignItems: 'center',
-          gap: 6,
+          gap: 7,
+          height: 28,
           border: 'none',
           borderRadius: 7,
           background: 'transparent',
@@ -543,10 +658,11 @@ function ComposerToolbar({
           fontFamily: 'inherit',
           fontSize: 12,
           cursor: 'pointer',
-          padding: '5px 9px'
+          padding: '0 8px 0 9px'
         }}
       >
-        <span style={{ minWidth: 0, ...ELLIPSIS }}>{aiSelectionLabel(provider, model)}</span>
+        <ProviderMark provider={provider} size={14} />
+        <span style={{ minWidth: 0, ...ELLIPSIS }}>{aiModelLabel(provider, model) ?? 'Default'}</span>
         <ChevronsUpDown size={9} color={C.faint} style={{ flex: 'none' }} />
       </button>
       <SendButton isBusy={isBusy} canSend={canSend} onCancel={onCancel} onSend={onSend} />
@@ -613,6 +729,8 @@ export function ComposerBox({
   onCancel,
   onProviderChange,
   onModeChange,
+  autoApprove,
+  onAutoApproveChange,
   sendTextRef,
   showFade,
   hasRequired,
@@ -635,6 +753,8 @@ export function ComposerBox({
   onCancel: () => void
   onProviderChange: (provider: AiProvider, model?: string) => void
   onModeChange: (mode: AgentMode) => void
+  autoApprove: boolean
+  onAutoApproveChange: (on: boolean) => void
   /** Lets the parent fire the same send path suggestions used before (incl. history). */
   sendTextRef: React.MutableRefObject<(clean: string) => void>
   showFade: boolean
@@ -850,12 +970,6 @@ export function ComposerBox({
       }}
     >
       <div className={showFade ? 'bf-chat-fade is-on' : 'bf-chat-fade'} aria-hidden="true" />
-      <TodoList
-        key={projectPath}
-        projectPath={projectPath}
-        onRun={sendText}
-        canRun={!isBusy && (availableCount > 0 || mode === 'plan')}
-      />
       <div
         ref={composerBoxRef}
         onDragOver={(e) => {
@@ -884,6 +998,12 @@ export function ComposerBox({
             if (e.currentTarget.files) addFiles(e.currentTarget.files)
             e.currentTarget.value = ''
           }}
+        />
+        <TodoList
+          key={projectPath}
+          projectPath={projectPath}
+          onRun={sendText}
+          canRun={!isBusy && (availableCount > 0 || mode === 'plan')}
         />
         <div style={{ padding: attachments.length || attachmentError || skillWarnText || savingAttachments > 0 ? '12px 16px 0' : 0 }}>
         {attachments.length > 0 && (
@@ -944,13 +1064,14 @@ export function ComposerBox({
           agentBtnRef={agentBtnRef}
           provider={provider}
           model={model}
-          usage={usage}
           contextUsage={contextUsage}
-          onRefreshUsage={onRefreshUsage}
           mode={mode}
           isBusy={isBusy}
           modeLocked={modeLocked}
           canSend={canSend}
+          autoApprove={autoApprove}
+          onAutoApproveChange={onAutoApproveChange}
+          openRouterVia={normalizeOpenRouterAgent(settings?.openrouter?.agent)}
           onModeChange={onModeChange}
           onOpenAgentMenu={openAgentMenu}
           onAttach={() => fileInputRef.current?.click()}
@@ -999,6 +1120,7 @@ export function ComposerBox({
           provider={provider}
           model={model}
           settings={settings}
+          footer={<AgentMenuFooter usage={usage} provider={provider} contextUsage={contextUsage} onRefreshUsage={onRefreshUsage} />}
           pos={{ ...agentMenuPos, width: CLI_MODEL_MENU_WIDTH }}
           onPick={(p, m) => {
             onProviderChange(p, m)

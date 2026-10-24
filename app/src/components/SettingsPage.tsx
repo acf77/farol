@@ -1133,6 +1133,16 @@ export default function SettingsPage({
                         onChange={(autoFix) => onSettings({ ...settings, autoFix })}
                       />
                     </Setting>
+                    <Setting
+                      title="Auto-approve tools in new chats"
+                      hint="Tools run without asking. Off: Claude asks in Chat before editing files or running commands. Each chat can change this for itself."
+                    >
+                      <Switch
+                        label="Auto-approve tools in new chats"
+                        checked={settings.autoApprove}
+                        onChange={(autoApprove) => onSettings({ ...settings, autoApprove })}
+                      />
+                    </Setting>
                   </Card>
                 </Group>
                 {import.meta.env.DEV && (

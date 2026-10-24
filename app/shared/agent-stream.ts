@@ -4,6 +4,7 @@ import {
   questionsFromToolInput,
   type AgentQuestion
 } from './questions'
+import { isCodexHookTrustWarning } from './codex-hook'
 
 /**
  * Turning a coding CLI's realtime NDJSON stream into chat events.
@@ -666,6 +667,8 @@ export class AgentStreamParser {
     // Transport chatter (e.g. "Reconnecting…") is not a user-facing failure;
     // real auth/quota/turn failures still land as raw transcript text.
     if (/\breconnecting\b/i.test(message)) return []
+    // Codex warns about the hook-trust flag Farol passes for Ask first; that is Farol's own choice.
+    if (isCodexHookTrustWarning(message)) return []
     return [{ kind: 'raw', text: `${message}\n` }]
   }
 }

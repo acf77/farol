@@ -336,12 +336,20 @@ export type AgentTaskStatus =
 /** Statuses that mean the agent is still in flight. */
 export const AGENT_LIVE: ReadonlySet<string> = new Set(['working', 'validating', 'repairing'])
 
+/** How the developer answered an approval request; `expired` when nobody can answer any more. */
+export type ApprovalDecision = 'once' | 'chat' | 'deny' | 'expired'
+
 export interface AgentTaskRequest {
   id: string
   prompt: string
   provider: AiProvider
   /** Build can change files; Plan is enforced read-only by a Review gate. */
   mode?: AgentMode
+  /**
+   * Run tools without asking. Absent means on. Off only changes providers that
+   * can ask for approval headlessly (Claude); the rest always auto-approve.
+   */
+  autoApprove?: boolean
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
   /** Rungs to try, in order, if `provider`/`model` fails for provider-side reasons. */
@@ -380,10 +388,14 @@ export type AgentTaskEvent =
       durationMs?: number
       runId?: string
     }
-  /** Plain-text stdout, appended to the assistant turn in progress. */
-  | { kind: 'output'; taskId: string; chunk: string }
+  /**
+   * Plain-text stdout, appended to the assistant turn in progress.
+   * `output`, `assistant` and `tool` carry `delegateId` when a subagent said
+   * or did it; they belong under that `delegate` card, not the main transcript.
+   */
+  | { kind: 'output'; taskId: string; chunk: string; delegateId?: string }
   /** One complete assistant turn from a streaming provider. */
-  | { kind: 'assistant'; taskId: string; text: string }
+  | { kind: 'assistant'; taskId: string; text: string; delegateId?: string }
   /** A tool the agent invoked; `toolId` repeats when the call finishes. */
   | {
       kind: 'tool'
@@ -392,6 +404,44 @@ export type AgentTaskEvent =
       name: string
       detail?: string
       state: 'running' | 'done' | 'error'
+      delegateId?: string
+      /** A write or shell call that ran without asking, because auto-approve was on. */
+      auto?: boolean
+    }
+  /**
+   * The agent (or a subagent, `delegateId`) asks to run a tool; repeats with
+   * `decision` once the developer answers or the request lapses.
+   */
+  | {
+      kind: 'approval'
+      taskId: string
+      requestId: string
+      provider: AiProvider
+      delegateId?: string
+      toolName: string
+      detail?: string
+      decision?: ApprovalDecision
+    }
+  /**
+   * A subagent run the agent asked for with `delegate`; repeats when it ends.
+   * `parentToolId` is the agent's own `delegate` tool call, when its stream named one.
+   */
+  | {
+      kind: 'delegate'
+      taskId: string
+      delegateId: string
+      parentToolId?: string
+      provider: AiProvider
+      model?: string
+      task: string
+      state: 'running' | 'done' | 'error'
+      /** `git diff --stat` of what the subagent changed; empty when nothing. */
+      diffStat?: string
+      message?: string
+      /** Its changes can be undone from the card. */
+      undoable?: boolean
+      /** Set once the developer undid the run, or restored the checkout to before it. */
+      undone?: 'undo' | 'restore'
     }
   | { kind: 'user'; taskId: string; text: string }
   /** The task moved down its fallback chain after a provider-side failure. */
@@ -658,6 +708,20 @@ export interface FarolApi {
     cancel(taskId: string): Promise<void>
     /** Cancel and drop the task so cleared chats cannot retain prompt history. */
     dispose(taskId: string): Promise<void>
+    /**
+     * Undo one subagent run's changes. Fails with `restoreFiles` when later
+     * edits overlap; calling again with `restore` puts the checkout back to
+     * before the run, discarding that many files' changes.
+     */
+    /** Answer a pending approval request. */
+    respondApproval(taskId: string, requestId: string, decision: 'once' | 'chat' | 'deny'): Promise<{ ok: boolean; message?: string }>
+    /** Turn auto-approve on or off for the chat's next turn. */
+    setAutoApprove(taskId: string, on: boolean): Promise<{ ok: boolean; message?: string }>
+    undoDelegate(
+      taskId: string,
+      delegateId: string,
+      restore?: boolean
+    ): Promise<{ ok: true } | { ok: false; message: string; restoreFiles?: number }>
     /** Reply to an `asking` turn. `answers: null` dismisses the questions. */
     answer(
       taskId: string,
