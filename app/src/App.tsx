@@ -2559,7 +2559,7 @@ export function ProjectWorkspace({
             zIndex: 80,
             display: 'flex',
             flexDirection: 'column',
-            background: C.terminal
+            background: C.app
           }}
         >
           <PipelineCanvas
@@ -2743,7 +2743,7 @@ export default function App() {
           display: 'flex',
           flexDirection: 'column',
           boxSizing: 'border-box',
-          background: C.terminal,
+          background: C.app,
           color: C.text,
           fontFamily: UI
         }}

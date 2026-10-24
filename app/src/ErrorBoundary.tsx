@@ -65,7 +65,7 @@ function fallbackUi(
         gap: 16,
         padding: 32,
         boxSizing: 'border-box',
-        background: C.terminal,
+        background: C.app,
         color: C.text,
         fontFamily: UI,
         fontSize: 13,

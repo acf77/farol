@@ -456,7 +456,7 @@ button:disabled {
 
 /*
  * Transcript fade into the composer. Same pitch as the chat pane
- * (`C.terminal`). Solid at the input, clear further up.
+ * (`C.app`). Solid at the input, clear further up.
  */
 :root {
   --bf-chat-fade-height: 120px;

@@ -125,7 +125,7 @@ export default function TerminalPane({
   )
 
   return (
-    <div style={{ ...PANE, flex: 1, minHeight: 0, background: C.terminal }}>
+    <div style={{ ...PANE, flex: 1, minHeight: 0, background: C.app }}>
       <div
         style={{
           flex: 'none',
@@ -209,7 +209,7 @@ export default function TerminalPane({
                   minWidth: 0,
                   flex: 'none',
                   maxWidth: 200,
-                  background: on ? C.terminal : 'transparent',
+                  background: on ? C.app : 'transparent',
                   color: on ? C.text : C.textMuted,
                   outline: 'none'
                 }}
@@ -324,7 +324,7 @@ export default function TerminalPane({
         </span>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: C.terminal }}>
+      <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: C.app }}>
         {tabs.map((t) => {
           const shown = t.id === activeId
           return (
@@ -339,7 +339,7 @@ export default function TerminalPane({
                 transform: shown ? 'none' : 'translateX(-120%)',
                 pointerEvents: shown ? 'auto' : 'none',
                 zIndex: shown ? 1 : 0,
-                background: C.terminal
+                background: C.app
               }}
             >
               <PaneGrid

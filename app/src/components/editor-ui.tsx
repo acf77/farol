@@ -13,7 +13,7 @@ export const fieldBox: CSSProperties = {
   boxSizing: 'border-box',
   padding: '8px 10px',
   borderRadius: 7,
-  background: C.terminal,
+  background: C.app,
   border: `1px solid ${C.border}`,
   color: C.text,
   fontSize: 13,
@@ -55,7 +55,7 @@ export function Seg<T extends string>({
     ;(event.currentTarget.children[options.indexOf(next)] as HTMLElement).focus()
   }
   return (
-    <div role="radiogroup" aria-label={label} onKeyDown={onKeyDown} style={{ display: 'flex', padding: 2, borderRadius: 8, background: C.terminal }}>
+    <div role="radiogroup" aria-label={label} onKeyDown={onKeyDown} style={{ display: 'flex', padding: 2, borderRadius: 8, background: C.app }}>
       {options.map((o) => {
         const on = o.value === value
         const accent = ai && o.value === 'ai' ? C.purpleSoft : C.text
@@ -78,8 +78,7 @@ export function Seg<T extends string>({
               fontWeight: 500,
               cursor: 'pointer',
               background: on ? 'oklch(0.31 0.006 95)' : 'transparent',
-              color: on ? accent : C.textMuted,
-              boxShadow: on ? '0 1px 2px rgba(0,0,0,.25)' : 'none'
+              color: on ? accent : C.textMuted
             }}
           >
             {o.label}
@@ -112,7 +111,7 @@ export function SettingsGroup({ title, children }: { title: string; children: Re
       {title ? (
         <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.06em', color: C.faint, marginBottom: 6 }}>{title}</span>
       ) : null}
-      <div style={{ borderRadius: 9, background: C.terminal, border: '1px solid oklch(1 0 0 / 0.06)' }}>{children}</div>
+      <div style={{ borderRadius: 9, background: C.app, border: '1px solid oklch(1 0 0 / 0.06)' }}>{children}</div>
     </div>
   )
 }

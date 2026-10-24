@@ -3,13 +3,8 @@
 export const C = {
   /** App shell and chat canvas (Pipelines Sidebar design). */
   app: 'oklch(0.17 0.006 95)',
-  /** Flat side rails and panels. */
-  rail: 'oklch(0.2 0.005 95)',
-  /** Sunken wells: logs, code. */
-  well: 'oklch(0.15 0.004 95)',
   /** Hairline between flat panes. */
   hair: 'oklch(1 0 0 / 0.07)',
-  terminal: 'oklch(0.18 0.004 95)',
   sidebar: 'oklch(0.23 0.005 95)',
   panel: 'oklch(0.28 0.006 95)',
 

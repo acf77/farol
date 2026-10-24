@@ -174,7 +174,7 @@ export default function ProjectRail({
           inset: `${CHROME_ROW}px auto 0 0`,
           width: PANEL_WIDTH,
           zIndex: 50,
-          boxShadow: '12px 0 32px rgba(0,0,0,.45)'
+          boxShadow: '0 12px 32px rgba(0,0,0,0.5)'
         }
       : pinned
         ? { position: 'relative' as const, flex: 1, minHeight: 0 }

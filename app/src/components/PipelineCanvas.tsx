@@ -350,7 +350,7 @@ export default function PipelineCanvas({
             position: 'relative',
             overflow: 'hidden',
             cursor: space.current ? 'grab' : 'default',
-            backgroundColor: C.terminal,
+            backgroundColor: C.app,
             backgroundImage: `radial-gradient(${DOT} 1px, transparent 1px)`,
             backgroundSize: `${22 * cam.z}px ${22 * cam.z}px`,
             backgroundPosition: `${cam.x}px ${cam.y}px`,
@@ -551,7 +551,7 @@ export default function PipelineCanvas({
                     marginTop: 12,
                     padding: '8px 10px',
                     borderRadius: 7,
-                    background: C.terminal,
+                    background: C.app,
                     fontFamily: MONO,
                     fontSize: 11.5,
                     lineHeight: '14px',
@@ -761,8 +761,7 @@ function Switch({ on }: { on: boolean }) {
           height: 14,
           borderRadius: '50%',
           background: on ? C.accentInk : C.text,
-          transition: 'left .15s',
-          boxShadow: '0 1px 2px rgba(0,0,0,.3)'
+          transition: 'left .15s'
         }}
       />
     </div>
@@ -1066,7 +1065,7 @@ function Inspector({
             alignItems: 'center',
             padding: '0 10px',
             borderRadius: 7,
-            background: C.terminal,
+            background: C.app,
             border: `1px solid ${asClash ? C.red : C.border}`,
             fontFamily: MONO,
             fontSize: 12

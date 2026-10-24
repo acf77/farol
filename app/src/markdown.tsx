@@ -94,7 +94,7 @@ function codeBlock(body: string, lang: string | undefined, key: string): ReactNo
       style={{
         margin: '4px 0',
         padding: '12px 14px',
-        background: C.terminal,
+        background: C.app,
         border: `1px solid ${C.border}`,
         borderRadius: 8,
         overflowX: 'auto',

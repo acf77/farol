@@ -119,7 +119,7 @@ export function ToolCard({ tool, tight }: { tool: NonNullable<AgentMessage['tool
         padding: '6px 12px',
         marginTop: tight ? -16 : 0,
         borderRadius: 8,
-        background: C.rail,
+        background: C.sidebar,
         border: '1px solid oklch(1 0 0 / 0.05)',
         minWidth: 0
       }}
@@ -381,7 +381,7 @@ export function QuestionCard({
                     boxSizing: 'border-box',
                     border: `1px solid ${C.border}`,
                     borderRadius: 8,
-                    background: C.terminal,
+                    background: C.app,
                     color: C.text,
                     fontSize: 12,
                     padding: '7px 10px',

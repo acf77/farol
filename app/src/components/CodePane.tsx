@@ -51,7 +51,7 @@ const farolTheme = EditorView.theme(
   {
     '&': {
       height: '100%',
-      backgroundColor: C.terminal,
+      backgroundColor: C.app,
       color: C.text,
       fontFamily: MONO,
       fontSize: '12px'
@@ -59,7 +59,7 @@ const farolTheme = EditorView.theme(
     '.cm-scroller': { overflow: 'auto', fontFamily: 'inherit' },
     '.cm-content': { caretColor: C.text },
     '.cm-gutters': {
-      backgroundColor: C.terminal,
+      backgroundColor: C.app,
       color: C.faint,
       borderRight: '1px solid #3E3E3A'
     },

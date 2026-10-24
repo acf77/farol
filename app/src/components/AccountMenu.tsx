@@ -115,7 +115,7 @@ export default function AccountMenu({ liquid }: { liquid?: boolean }) {
               height: 8,
               borderRadius: '50%',
               background: C.red,
-              border: `1.5px solid ${C.terminal}`
+              border: `1.5px solid ${C.app}`
             }}
           />
         )}
@@ -137,7 +137,7 @@ export default function AccountMenu({ liquid }: { liquid?: boolean }) {
               background: liquid ? C.panel : C.sidebar,
               border: `1px solid ${C.border}`,
               borderRadius: 12,
-              boxShadow: '0 18px 44px rgba(0,0,0,0.55)',
+              boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
               padding: 12,
               fontSize: 12,
               color: C.text

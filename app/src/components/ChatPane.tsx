@@ -163,7 +163,7 @@ function ClearChatOverlay({
           borderRadius: 12,
           background: C.sidebar,
           border: `1px solid ${C.red}`,
-          boxShadow: '0 20px 48px rgba(0,0,0,0.5)',
+          boxShadow: '0 18px 48px rgba(0,0,0,0.55)',
           animation: 'bfOverlayCardIn 140ms ease-out'
         }}
       >

@@ -102,7 +102,7 @@ function SplitMenu({
           background: 'oklch(0.26 0.006 95)',
           border: `1px solid ${C.border}`,
           borderRadius: 10,
-          boxShadow: '0 12px 32px rgba(0,0,0,.45)',
+          boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
           padding: 4
         }}
       >
@@ -248,8 +248,7 @@ export default function Toolbar({
                   fontWeight: 500,
                   cursor: 'pointer',
                   background: on ? 'oklch(0.31 0.006 95)' : 'transparent',
-                  color: on ? C.text : C.textMuted,
-                  boxShadow: on ? '0 1px 2px rgba(0,0,0,.25)' : 'none'
+                  color: on ? C.text : C.textMuted
                 }}
               >
                 {v.key === 'split' && <SplitGlyph size={12} />}

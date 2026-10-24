@@ -579,7 +579,7 @@ function StrategyMenu({ value, base, onChange }: { value: MergeStrategy | ''; ba
         <ChevronsUpDown size={9} color={C.faint} />
       </button>
       {open && (
-        <div role="menu" style={{ position: 'absolute', bottom: 38, left: 0, zIndex: 20, width: 200, padding: 4, borderRadius: 8, background: C.panel, border: `1px solid ${C.border}`, boxShadow: '0 12px 32px rgba(0,0,0,.45)' }}>
+        <div role="menu" style={{ position: 'absolute', bottom: 38, left: 0, zIndex: 20, width: 200, padding: 4, borderRadius: 8, background: C.panel, border: `1px solid ${C.border}`, boxShadow: '0 12px 32px rgba(0,0,0,0.5)' }}>
           {(Object.keys(STRATEGY_COPY) as MergeStrategy[]).map((key) => (
             <button
               key={key}
@@ -727,7 +727,7 @@ function PullRequestTab({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <Field label="Merge into">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div title={branch} style={{ flex: 1, minWidth: 0, ...ELLIPSIS, padding: '8px 10px', borderRadius: 7, background: C.terminal, border: `1px solid ${SOFT_BORDER}`, fontFamily: MONO, fontSize: 12, color: C.textMuted }}>
+          <div title={branch} style={{ flex: 1, minWidth: 0, ...ELLIPSIS, padding: '8px 10px', borderRadius: 7, background: C.app, border: `1px solid ${SOFT_BORDER}`, fontFamily: MONO, fontSize: 12, color: C.textMuted }}>
             {branch}
           </div>
           <span style={{ flex: 'none', color: C.fainter }}>→</span>
@@ -737,13 +737,13 @@ function PullRequestTab({
               groups={[{ label: 'Base branch', branches: baseOptions }]}
               disabled={!!attached}
               onChange={onBase}
-              style={{ width: '100%', height: 34, borderRadius: 7, fontFamily: MONO, fontSize: 12, background: C.terminal, border: `1px solid ${C.border}` }}
+              style={{ width: '100%', height: 34, borderRadius: 7, fontFamily: MONO, fontSize: 12, background: C.app, border: `1px solid ${C.border}` }}
             />
           </div>
         </div>
       </Field>
 
-      <div style={{ borderRadius: 9, background: C.terminal, border: `1px solid ${SOFT_BORDER}`, overflow: 'hidden' }}>
+      <div style={{ borderRadius: 9, background: C.app, border: `1px solid ${SOFT_BORDER}`, overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
           <span style={{ width: 7, height: 7, flex: 'none', borderRadius: '50%', background: hasConflict ? C.red : mergeItems.some((item) => item.tone === 'ok') ? C.green : C.faint }} />
           <span style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: 1.4, color: C.textRow }}>
@@ -774,7 +774,7 @@ function PullRequestTab({
       </div>
 
       {attached && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: 14, borderRadius: 12, background: C.terminal, border: `1px solid ${CARD_BORDER}` }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: 14, borderRadius: 12, background: C.app, border: `1px solid ${CARD_BORDER}` }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ padding: '2px 8px', borderRadius: 20, background: 'oklch(0.78 0.09 160 / 0.14)', color: C.green, fontSize: 11, fontWeight: 500 }}>
@@ -829,7 +829,7 @@ function PullRequestTab({
       )}
 
       {!attached && merged && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: 14, borderRadius: 12, background: C.terminal, border: `1px solid ${CARD_BORDER}` }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: 14, borderRadius: 12, background: C.app, border: `1px solid ${CARD_BORDER}` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ padding: '2px 8px', borderRadius: 20, background: 'oklch(0.78 0.09 160 / 0.14)', color: C.green, fontSize: 11, fontWeight: 500 }}>Merged</span>
             <span style={{ fontFamily: MONO, fontSize: 11.5, color: C.faint }}>#{merged.number}</span>

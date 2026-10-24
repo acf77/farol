@@ -64,7 +64,7 @@ export function sidePanelShellStyle(
     alignSelf: 'stretch',
     display: 'flex',
     flexDirection: 'column',
-    background: C.rail,
+    background: C.sidebar,
     color: C.text,
     overflow: 'hidden',
     ...(opts?.edge === 'left' ? { borderLeft: `1px solid ${C.hair}` } : { borderRight: `1px solid ${C.hair}` }),

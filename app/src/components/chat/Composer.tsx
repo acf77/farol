@@ -88,7 +88,7 @@ function AttachmentStrip({
               padding: '10px',
               borderRadius: 8,
               border: `1px solid ${C.border}`,
-              background: C.terminal,
+              background: C.app,
               color: C.textMuted
             }}
           >
@@ -168,7 +168,7 @@ function ComposerPickerMenu({
         background: C.sidebar,
         border: `1px solid ${C.border}`,
         borderRadius: 8,
-        boxShadow: '0 14px 36px rgba(0,0,0,0.5)',
+        boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
         padding: 4
       }}
     >
@@ -343,7 +343,7 @@ function composerSurfaceStyle(dragOver: boolean): React.CSSProperties {
     border: dragOver ? `1px solid ${C.accent}` : '1px solid oklch(1 0 0 / 0.08)',
     borderRadius: 14,
     position: 'relative',
-    boxShadow: dragOver ? '0 0 0 1px rgba(214, 242, 58,.2)' : '0 8px 24px rgba(0,0,0,.25)'
+    boxShadow: dragOver ? '0 0 0 1px rgba(214, 242, 58,.2)' : 'none'
   }
 }
 

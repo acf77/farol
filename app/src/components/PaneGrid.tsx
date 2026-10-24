@@ -35,7 +35,7 @@ export default function PaneGrid({
     <div
       ref={areaRef}
       onContextMenu={onContextMenu}
-      style={{ flex: 1, minHeight: 0, height: '100%', position: 'relative', background: C.terminal }}
+      style={{ flex: 1, minHeight: 0, height: '100%', position: 'relative', background: C.app }}
     >
       {layout.panes.map((rect) => {
         const pane = tab.panes[rect.id]

@@ -117,7 +117,7 @@ export default function CommandPalette({ open, items, onClose }: Props) {
           background: C.sidebar,
           border: `1px solid ${C.border}`,
           borderRadius: 12,
-          boxShadow: '0 24px 60px rgba(0,0,0,0.55)',
+          boxShadow: '0 18px 48px rgba(0,0,0,0.55)',
           overflow: 'hidden'
         }}
       >

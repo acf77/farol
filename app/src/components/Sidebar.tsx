@@ -351,7 +351,7 @@ function OutputPane({
       {open && (
         <div
           role="log"
-          style={{ flex: 1, minHeight: 0, overflow: 'auto', margin: '0 8px 8px', padding: '10px 12px', borderRadius: 8, background: C.well, display: 'flex', flexDirection: 'column', gap: 5, fontFamily: MONO, fontSize: 11, lineHeight: 1.5 }}
+          style={{ flex: 1, minHeight: 0, overflow: 'auto', margin: '0 8px 8px', padding: '10px 12px', borderRadius: 8, background: C.app, display: 'flex', flexDirection: 'column', gap: 5, fontFamily: MONO, fontSize: 11, lineHeight: 1.5 }}
         >
           {logs.slice(-8).map((l, i) => (
             <div key={i} style={{ display: 'flex', gap: 12 }}>

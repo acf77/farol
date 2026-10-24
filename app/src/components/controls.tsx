@@ -476,7 +476,7 @@ function MenuFilter({
         padding: '0 8px',
         borderRadius: 6,
         border: `1px solid ${C.border}`,
-        background: C.terminal,
+        background: C.app,
         color: C.text,
         fontSize: 12,
         flex: 'none'

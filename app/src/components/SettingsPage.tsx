@@ -87,7 +87,7 @@ const field: React.CSSProperties = {
   padding: '0 10px',
   borderRadius: 7,
   border: `1px solid ${C.border}`,
-  background: C.terminal,
+  background: C.app,
   color: C.text,
   fontSize: 12
 }

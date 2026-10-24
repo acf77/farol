@@ -19,7 +19,7 @@ const STATUS_LABELS = {
 }
 
 const fieldStyle: React.CSSProperties = {
-  background: C.terminal,
+  background: C.app,
   color: C.text,
   border: `1px solid ${C.border}`,
   borderRadius: 6,
