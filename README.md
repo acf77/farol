@@ -106,4 +106,8 @@ See [`app/README.md`](app/README.md) for packaging, tests, and how the app is pu
 | [`CONTEXT.md`](CONTEXT.md) | The product&rsquo;s vocabulary |
 | [`DESIGN.md`](DESIGN.md) | How Farol should look, feel, and read |
 
-Questions, bugs, or ideas: [open an issue](https://github.com/acf77/farol/issues).
+Questions, bugs, or ideas: [open an issue](https://github.com/acf77/farol/issues). Want to help? Read [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE)
