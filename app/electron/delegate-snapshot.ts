@@ -1,7 +1,9 @@
 /**
  * Snapshots of a checkout taken around a subagent run, so its changes can be
  * shown on their own and undone without touching the developer's branch,
- * index or stash list.
+ * index or stash list. Chat also snapshots around each agent turn, to see
+ * whether it changed files however it wrote them, and pipeline git steps diff
+ * against one.
  *
  * A snapshot is a git tree of the working copy — tracked and untracked files,
  * `.gitignore` respected — written through a throwaway index file. Starting
@@ -45,6 +47,17 @@ export async function captureTree(cwd: string): Promise<string | undefined> {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
+}
+
+/** Where `HEAD`'s branch left `base`: the commit a branch diff starts from. Rejects when `base` is unknown. */
+export async function mergeBase(cwd: string, base: string): Promise<string> {
+  return (await git(cwd, ['merge-base', base, 'HEAD'])).trim()
+}
+
+/** The paths that differ between two snapshots, relative to the checkout root. */
+export async function changedPaths(cwd: string, before: string, after: string): Promise<string[]> {
+  if (before === after) return []
+  return (await git(cwd, ['diff', '--name-only', '--no-renames', '-z', before, after])).split('\0').filter(Boolean)
 }
 
 /** `git diff --stat` between two snapshots; empty when nothing changed. */

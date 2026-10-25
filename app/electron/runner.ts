@@ -30,8 +30,9 @@ import {
   validateRunnable
 } from '../shared/graph'
 import { isSecretPath } from '../shared/git-status'
-import { gitArgs, gitArtifactPath, gitNamesArgs } from '../shared/git-step'
+import { gitArgs, gitArtifactPath, gitDeltaPath, gitNamesArgs, isDiffOp, type GitRange } from '../shared/git-step'
 import { listGitFiles, runGitToArtifact } from './git-artifact'
+import { captureTree, mergeBase } from './delegate-snapshot'
 import { aiEnv, resolveBinFrom } from './bin'
 import { openRouterAgent } from './openrouter-agent'
 import { defaultShell, pipelineEnv, PtySession } from './session'
@@ -54,6 +55,8 @@ import { backoffDelayMs } from './backoff'
  * the checkout; AI steps always run here, where the agent CLIs are signed in.
  * `git` steps run here with fixed arguments. Each result is the step's `${as}` value and a file
  * under `.farol/git/`; a remote run does them first and adds those files to the snapshot.
+ * A diff step compares the merge-base with a snapshot of the working copy, and `${as}_delta`
+ * holds what changed since the pipeline last ran on this checkout.
  */
 
 /** Live per-step stdout kept for named vars, failure reports, and settled results. */
@@ -160,6 +163,28 @@ interface Active {
   cancelled: boolean
 }
 
+/** Snapshots for git steps: the working copy as a tree, and where the branch left a base. */
+export interface RunTrees {
+  /** The working copy as a tree id, or undefined outside a git checkout. */
+  capture(cwd: string): Promise<string | undefined>
+  mergeBase(cwd: string, base: string): Promise<string>
+}
+
+const checkoutTrees: RunTrees = {
+  capture: (cwd) => captureTree(cwd).catch(() => undefined),
+  mergeBase
+}
+
+/** `${name_delta}` for each ancestor diff step that succeeded; a named output of the same name wins. */
+function gitDeltaVars(graph: RunGraph, id: string): Record<string, string> {
+  const ancestorIds = new Set(ancestors(graph.nodes, id))
+  return Object.fromEntries(
+    graph.nodes
+      .filter((n) => n.op === 'diff' && n.as && ancestorIds.has(n.id) && graph.stepResults.get(n.id)?.ok)
+      .map((n) => [`${n.as}_delta`, graph.deltas[n.id] ?? ''])
+  )
+}
+
 /** `${name_file}` for each ancestor git step that succeeded; a named output of the same name wins. */
 function gitFileVars(graph: RunGraph, id: string): Record<string, string> {
   const ancestorIds = new Set(ancestors(graph.nodes, id))
@@ -180,6 +205,10 @@ interface RunGraph {
   outputs: Record<string, string>
   /** Full result text of each finished git step; `outputs` keeps only the tail. */
   artifacts: Record<string, string>
+  /** Each diff step's changes since the pipeline's previous run here (`${as}_delta`). */
+  deltas: Record<string, string>
+  /** The working copy as a tree, taken once when the first diff step needs it. */
+  tree?: Promise<string | undefined>
   done: Set<string>
   skipped: Set<string>
   started: Set<string>
@@ -188,6 +217,8 @@ interface RunGraph {
   failedNodeId?: string
   failedCode: number
 }
+
+const treeKey = (cwd: string, pipelineId: string): string => `${cwd}\0${pipelineId}`
 
 function defaultStepResult(nodeId: string): PipelineStepResult {
   return { nodeId, ok: false, code: 0, skipped: true, output: '' }
@@ -208,10 +239,13 @@ export class PipelineRunner {
   private active = new Map<string, Active>()
   private waiters = new Map<string, ((result: PipelineRunResult) => void)[]>()
   private finished = new Map<string, PipelineRunResult>()
+  /** The working-copy tree each pipeline's last finished run diffed, per checkout. */
+  private lastTrees = new Map<string, string>()
 
   constructor(
     private emit: (e: RunEvent) => void,
-    private openRemote: OpenRemote = openRemoteWorkspace
+    private openRemote: OpenRemote = openRemoteWorkspace,
+    private trees: RunTrees = checkoutTrees
   ) {}
 
   async run(
@@ -384,6 +418,7 @@ export class PipelineRunner {
       byId: new Map(nodes.map((n) => [n.id, n])),
       outputs: {},
       artifacts: {},
+      deltas: {},
       done: new Set(),
       skipped: new Set(),
       started: new Set(),
@@ -651,7 +686,7 @@ export class PipelineRunner {
       index,
       nodeId: node.id
     })
-    const vars = { ...gitFileVars(graph, node.id), ...ancestorVars(graph.nodes, node.id, { ...graph.outputs, ...graph.artifacts }, graph.stepResults) }
+    const vars = { ...gitFileVars(graph, node.id), ...gitDeltaVars(graph, node.id), ...ancestorVars(graph.nodes, node.id, { ...graph.outputs, ...graph.artifacts }, graph.stepResults) }
     const onChunk = (chunk: string): void => this.emitOut(state, graph, node.id, chunk)
     const startedAt = Date.now()
     const code =
@@ -767,6 +802,7 @@ export class PipelineRunner {
       reportPath
     }
     this.emit(endEvent)
+    if (!state.cancelled) void this.rememberTree(cwd, graph)
     this.settle({
       runId,
       pipelineId: graph.pipelineId,
@@ -797,14 +833,11 @@ export class PipelineRunner {
   ): Promise<number> {
     if (state.cancelled) return 130
     try {
-      const rel = gitArtifactPath(node, graph.pipelineId)
       const { signal } = state.abort
-      // A diff of a likely-secret file (.env, keys) would reach the sandbox in the file and in `${as}`.
-      const hidden =
-        graph.remote && node.op === 'diff' ? (await listGitFiles(cwd, gitNamesArgs(node), signal)).filter(isSecretPath) : []
-      const { preview, truncated } = await runGitToArtifact(cwd, gitArgs(node, hidden), rel, signal)
-      const shown = truncated ? `${preview}\n[cut here; the full text is in ${rel}]` : preview
+      const range = await this.diffRange(node, cwd, graph)
+      const shown = await this.gitToArtifact(node, cwd, graph, range, gitArtifactPath(node, graph.pipelineId), signal)
       graph.artifacts[node.id] = shown
+      if (node.op === 'diff' && node.as && range) graph.deltas[node.id] = await this.gitDelta(node, cwd, graph, range, signal)
       onChunk(shown.replace(/\r?\n/g, '\r\n'))
       return 0
     } catch (error) {
@@ -813,6 +846,51 @@ export class PipelineRunner {
       onChunk(`farol: ${(stderr || errorMessage(error)).trim().replace(/\r?\n/g, '\r\n')}\r\n`)
       return typeof code === 'number' ? code : 1
     }
+  }
+
+  /**
+   * What a diff op compares: where the branch left `base` (HEAD without one) and the working copy
+   * as a tree, taken once per run. Undefined outside a checkout, where git diffs the working copy.
+   */
+  private async diffRange(node: PipelineNode, cwd: string, graph: RunGraph): Promise<GitRange | undefined> {
+    if (!isDiffOp(node.op)) return undefined
+    graph.tree ??= this.trees.capture(cwd)
+    const to = await graph.tree
+    if (!to) return undefined
+    return { from: node.base ? await this.trees.mergeBase(cwd, node.base) : 'HEAD', to }
+  }
+
+  /**
+   * Run a git step's command into `rel` and return the text to show. A diff that can hold untracked
+   * files (a snapshot) or leaves this machine (remote) leaves out likely-secret files (.env, keys).
+   */
+  private async gitToArtifact(
+    node: PipelineNode,
+    cwd: string,
+    graph: RunGraph,
+    range: GitRange | undefined,
+    rel: string,
+    signal: AbortSignal
+  ): Promise<string> {
+    const hidden =
+      node.op === 'diff' && (graph.remote || range)
+        ? (await listGitFiles(cwd, gitNamesArgs(node, range), signal)).filter(isSecretPath)
+        : []
+    const { preview, truncated } = await runGitToArtifact(cwd, gitArgs(node, hidden, range), rel, signal)
+    return truncated ? `${preview}\n[cut here; the full text is in ${rel}]` : preview
+  }
+
+  /** What changed since this pipeline last ran on this checkout; empty on its first run. */
+  private async gitDelta(node: PipelineNode, cwd: string, graph: RunGraph, range: GitRange, signal: AbortSignal): Promise<string> {
+    const previous = this.lastTrees.get(treeKey(cwd, graph.pipelineId))
+    if (!previous) return ''
+    return this.gitToArtifact(node, cwd, graph, { from: previous, to: range.to }, gitDeltaPath(node, graph.pipelineId), signal)
+  }
+
+  /** Keep the tree this run diffed, so the next run's `${as}_delta` starts from it. */
+  private async rememberTree(cwd: string, graph: RunGraph): Promise<void> {
+    const tree = await graph.tree
+    if (tree) this.lastTrees.set(treeKey(cwd, graph.pipelineId), tree)
   }
 
   private async runStep(
