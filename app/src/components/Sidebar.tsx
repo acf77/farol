@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react'
 import type { GitStatus, Pipeline, PipelineNode, StepState } from '@shared/types'
 import { topoSort } from '@shared/graph'
 import { C, MONO, ELLIPSIS } from '../theme'
-import { sidePanelShellStyle, useCollapseRail } from './side-panel'
+import { SideCard, sidePanelShellStyle, useCollapseRail } from './side-panel'
 import type { DetailLog, RunState } from '../types'
 import FilesChanged from './FilesChanged'
+import TurnPanel from './chat/TurnPanel'
 import { BranchIcon, ChevronLeft, ChevronRight, ChevronUp, Spinner } from './icons'
 
 interface Props {
@@ -30,6 +31,8 @@ interface Props {
   onOpenTerminal: () => void
   collapsed: boolean
   onSetCollapsed: (collapsed: boolean) => void
+  /** The open chat, for its turn checkpoints; null when there is none. */
+  turns: { taskId: string; cwd: string; busy: boolean } | null
 }
 
 const PIPELINE_PANEL_WIDTH = 320
@@ -319,7 +322,7 @@ function OutputPane({
 }) {
   const [open, setOpen] = useState(true)
   return (
-    <div style={{ flex: open ? '0 0 210px' : 'none', display: 'flex', flexDirection: 'column', borderTop: `1px solid ${C.hair}` }}>
+    <SideCard label="Output">
       <div
         role="button"
         tabIndex={0}
@@ -351,7 +354,7 @@ function OutputPane({
       {open && (
         <div
           role="log"
-          style={{ flex: 1, minHeight: 0, overflow: 'auto', margin: '0 8px 8px', padding: '10px 12px', borderRadius: 8, background: C.app, display: 'flex', flexDirection: 'column', gap: 5, fontFamily: MONO, fontSize: 11, lineHeight: 1.5 }}
+          style={{ maxHeight: 210, overflow: 'auto', margin: '0 8px 8px', padding: '10px 12px', borderRadius: 8, background: C.app, display: 'flex', flexDirection: 'column', gap: 5, fontFamily: MONO, fontSize: 11, lineHeight: 1.5 }}
         >
           {logs.slice(-8).map((l, i) => (
             <div key={i} style={{ display: 'flex', gap: 12 }}>
@@ -361,7 +364,7 @@ function OutputPane({
           ))}
         </div>
       )}
-    </div>
+    </SideCard>
   )
 }
 
@@ -443,7 +446,8 @@ export default function Sidebar({
   onFix,
   onOpenTerminal,
   collapsed,
-  onSetCollapsed
+  onSetCollapsed,
+  turns
 }: Props) {
   const [expanded, setExpanded] = useState<string | null>(selected?.id ?? null)
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
@@ -466,9 +470,10 @@ export default function Sidebar({
   }
 
   return (
-    <div className="bf-side-panel" style={shellStyle} onTransitionEnd={onWidthTransitionEnd}>
-      <div style={{ width: PIPELINE_PANEL_WIDTH, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ flex: 'none', display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 10px 12px 16px', borderBottom: `1px solid ${SOFT}`, marginBottom: 8 }}>
+    <div className="bf-side-panel" style={{ ...shellStyle, background: C.app, borderLeft: 'none' }} onTransitionEnd={onWidthTransitionEnd}>
+      <div style={{ width: PIPELINE_PANEL_WIDTH, boxSizing: 'border-box', flex: 1, minHeight: 0, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <SideCard label="Pipelines" max={460}>
+        <div style={{ position: 'sticky', top: 0, zIndex: 1, background: C.sidebar, display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 10px 12px 16px', borderBottom: `1px solid ${SOFT}`, marginBottom: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>Pipelines</span>
             <button
@@ -511,7 +516,7 @@ export default function Sidebar({
           </div>
         </div>
 
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '2px 8px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ padding: '2px 8px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
           {pipelines.map((p) => (
             <PipelineCard
               key={p.id}
@@ -535,12 +540,16 @@ export default function Sidebar({
               No pipelines yet. Use + to create one.
             </div>
           )}
-          <FilesChanged status={gitStatus} onOpen={onOpenFile} />
         </div>
+        </SideCard>
+
+        <FilesChanged status={gitStatus} onOpen={onOpenFile} />
 
         {selected && logs.length > 0 && (
           <OutputPane name={selected.name} logs={logs} onOpenTerminal={onOpenTerminal} />
         )}
+
+        {turns && <TurnPanel taskId={turns.taskId} cwd={turns.cwd} busy={turns.busy} />}
       </div>
 
       {menu && (

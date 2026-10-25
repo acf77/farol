@@ -5,6 +5,29 @@ export const SIDE_RAIL_WIDTH = 44
 export const SIDE_PANEL_WIDTH = 280
 /** Toolbar row. Sidebars start below this, never inside it. */
 export const CHROME_ROW = 48
+/** One floating square in the right column: as tall as its content up to `max`, then it scrolls. */
+export function SideCard({ label, max = 360, children }: { label: string; max?: number; children: React.ReactNode }) {
+  return (
+    <section
+      aria-label={label}
+      style={{
+        flex: 'none',
+        minWidth: 0,
+        maxHeight: max,
+        display: 'flex',
+        flexDirection: 'column',
+        background: C.sidebar,
+        border: `1px solid ${C.hair}`,
+        borderRadius: 12,
+        boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
+        overflow: 'hidden'
+      }}
+    >
+      <div style={{ minHeight: 0, overflow: 'auto' }}>{children}</div>
+    </section>
+  )
+}
+
 export function RailLabel({
   children,
   color,

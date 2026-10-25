@@ -10,7 +10,6 @@ import { Spinner } from './icons'
 import { ChatBanner, type UndoResult } from './chat/cards'
 import { ComposerBox } from './chat/Composer'
 import { Turn } from './chat/Turn'
-import TurnPanel from './chat/TurnPanel'
 import ScrollToLatest from './ScrollToLatest'
 
 interface Props {
@@ -419,7 +418,6 @@ export default function ChatPane({
   // Dismissed for this reason until the reading changes band or the chat changes.
   const freshKey = `${pane?.taskId ?? ''}:${freshReason?.key ?? ''}`
   const [dismissedFresh, setDismissedFresh] = useState<string | null>(null)
-  const [showTurns, setShowTurns] = useState(false)
 
   // Follow the stream only while the reader is already at the bottom, so
   // scrolling up to read something does not get yanked back by the next event.
@@ -480,15 +478,6 @@ export default function ChatPane({
           stickRef.current = true
           node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' })
         }} />
-        {pane && !showTurns && !isEmpty && (
-          <Button variant="ghost" onClick={() => setShowTurns(true)} aria-label="Show turn checkpoints"
-            style={{ position: 'absolute', top: 8, right: 12 }}>
-            Turns
-          </Button>
-        )}
-        {pane && showTurns && (
-          <TurnPanel taskId={pane.taskId} cwd={pane.cwd} busy={isBusy} onClose={() => setShowTurns(false)} />
-        )}
       </div>
 
       {freshReason && onFreshStart && dismissedFresh !== freshKey && (

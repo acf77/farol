@@ -2560,6 +2560,7 @@ export function ProjectWorkspace({
           onOpenTerminal={openRunLogs}
           collapsed={pipesCollapsed}
           onSetCollapsed={setPipesCollapsed}
+          turns={chatPane ? { taskId: chatPane.taskId, cwd: chatPane.cwd, busy: AGENT_LIVE.has(chatPane.status) } : null}
         />
       </div>
 

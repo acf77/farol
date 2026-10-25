@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { GitStatus, GitStatusFile } from '@shared/types'
 import { C, MONO, ELLIPSIS } from '../theme'
 import { EditIcon } from './icons'
+import { SideCard } from './side-panel'
 
 const VISIBLE = 5
 
@@ -47,7 +48,8 @@ export default function FilesChanged({ status, onOpen }: { status: GitStatus | n
   const removed = files.reduce((sum, f) => sum + (f.removed ?? 0), 0)
   const shown = all ? files : files.slice(0, VISIBLE)
   return (
-    <section aria-label="Files changed" style={{ borderTop: `1px solid ${C.hair}`, marginTop: 8, padding: '14px 8px 12px 16px' }}>
+    <SideCard label="Files changed">
+    <div style={{ padding: '14px 8px 12px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.06em', color: C.faint }}>FILES CHANGED</span>
         <span style={{ padding: '1px 7px', borderRadius: 20, background: 'oklch(1 0 0 / 0.08)', fontSize: 11, fontWeight: 500, color: C.textSoft }}>
@@ -70,6 +72,7 @@ export default function FilesChanged({ status, onOpen }: { status: GitStatus | n
           {all ? 'Show less' : `Show ${files.length - VISIBLE} more`}
         </button>
       )}
-    </section>
+    </div>
+    </SideCard>
   )
 }

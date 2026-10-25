@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { RevertOutcome, TurnFile, TurnInfo } from '@shared/types'
 import { C, ELLIPSIS, MONO } from '../../theme'
 import { Button } from '../controls'
+import { SideCard } from '../side-panel'
 
 const api = window.farol
 const PREVIEW_FILES = 12
@@ -69,12 +70,7 @@ function RevertConfirm({ turn, preview, busy, working, onCancel, onConfirm }: {
 }
 
 /** The chat's per-turn checkpoints: what each turn changed, and a way back to before any of them. */
-export default function TurnPanel({ taskId, cwd, busy, onClose }: {
-  taskId: string
-  cwd: string
-  busy: boolean
-  onClose: () => void
-}) {
+export default function TurnPanel({ taskId, cwd, busy }: { taskId: string; cwd: string; busy: boolean }) {
   const [turns, setTurns] = useState<TurnInfo[]>([])
   const [open, setOpen] = useState<number | null>(null)
   const [confirm, setConfirm] = useState<{ turn: number; preview: Preview } | null>(null)
@@ -108,11 +104,12 @@ export default function TurnPanel({ taskId, cwd, busy, onClose }: {
       })
   }
 
+  if (!turns.length && !confirm && !result) return null
   return (
-    <aside aria-label="Turn checkpoints" style={{ width: 300, flex: 'none', borderLeft: `1px solid ${C.hair}`, display: 'flex', flexDirection: 'column', minHeight: 0, background: C.app }}>
-      <div style={{ display: 'flex', alignItems: 'center', padding: '12px 12px 8px', gap: 8 }}>
-        <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: C.text }}>Turns</span>
-        <Button variant="ghost" onClick={onClose} aria-label="Close turns">Close</Button>
+    <SideCard label="Turn checkpoints">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 12px 6px 16px' }}>
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.06em', color: C.faint }}>TURNS</span>
+        <span style={{ padding: '1px 7px', borderRadius: 20, background: 'oklch(1 0 0 / 0.08)', fontSize: 11, fontWeight: 500, color: C.textSoft }}>{turns.length}</span>
       </div>
       {result && (
         <div role="status" style={{ margin: '0 12px 8px', fontSize: 12, color: result.ok ? C.green : C.red }}>
@@ -123,12 +120,7 @@ export default function TurnPanel({ taskId, cwd, busy, onClose }: {
         <RevertConfirm turn={confirm.turn} preview={confirm.preview} busy={busy} working={working}
           onCancel={() => setConfirm(null)} onConfirm={() => revert(confirm.turn)} />
       )}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-        {turns.length === 0 && (
-          <div style={{ padding: '8px 12px', fontSize: 12, color: C.faint }}>
-            No checkpoints yet. Each Build message saves one when it starts and one when it ends.
-          </div>
-        )}
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
         {[...turns].reverse().map((turn) => (
           <div key={turn.turn} style={{ padding: '8px 12px', borderTop: `1px solid ${C.hair}`, display: 'flex', flexDirection: 'column', gap: 4 }}>
             <button type="button" className="bf-focus" aria-expanded={open === turn.turn}
@@ -160,6 +152,6 @@ export default function TurnPanel({ taskId, cwd, busy, onClose }: {
           </div>
         ))}
       </div>
-    </aside>
+    </SideCard>
   )
 }
