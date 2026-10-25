@@ -48,8 +48,17 @@
       {
         "id": "n4",
         "name": "Diff",
-        "type": "shell",
-        "cmd": "git diff -- '*.js' '*.ts' '*.tsx' '*.mjs' '*.cjs' main --stat --patch --no-ext-diff --unified=2",
+        "type": "git",
+        "cmd": "",
+        "op": "diff",
+        "base": "main",
+        "paths": [
+          "*.js",
+          "*.ts",
+          "*.tsx",
+          "*.mjs",
+          "*.cjs"
+        ],
         "after": [],
         "gate": true,
         "x": 188,
@@ -91,8 +100,17 @@
       {
         "id": "n3",
         "name": "Git diff",
-        "type": "shell",
-        "cmd": "git diff -- '*.js' '*.ts' '*.tsx' '*.mjs' '*.cjs' main --stat --patch --no-ext-diff --unified=2",
+        "type": "git",
+        "cmd": "",
+        "op": "diff",
+        "base": "main",
+        "paths": [
+          "*.js",
+          "*.ts",
+          "*.tsx",
+          "*.mjs",
+          "*.cjs"
+        ],
         "after": [],
         "gate": true,
         "x": 528,

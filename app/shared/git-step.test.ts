@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gitArgs, gitArtifactPath, gitNamesArgs, gitStepError } from './git-step'
+import { gitArgs, gitArtifactPath, gitDeltaPath, gitNamesArgs, gitStepError, isDiffOp } from './git-step'
 
 describe('gitStepError', () => {
   it('accepts a plain step', () => {
@@ -51,6 +51,25 @@ describe('gitArgs', () => {
     ])
   })
 
+  it('compares the two trees of a range for the diff ops only', () => {
+    const base = ['--no-color', '--no-ext-diff', '--no-textconv']
+    const range = { from: 'abc123', to: 'def456' }
+    expect(gitArgs({ op: 'diff', base: 'main', paths: ['*.go'] }, [], range)).toEqual(['diff', ...base, '--no-renames', 'abc123', 'def456', '--', '*.go'])
+    expect(gitArgs({ op: 'diff-stat', base: 'main' }, [], range)).toEqual(['diff', ...base, '--stat', 'abc123', 'def456', '--'])
+    expect(gitArgs({ op: 'changed-files' }, [], range)).toEqual(['diff', ...base, '--name-only', 'abc123', 'def456', '--'])
+    expect(gitArgs({ op: 'log', base: 'main' }, [], range)).toEqual(['log', '--no-color', '--oneline', '-n', '50', 'main..HEAD', '--'])
+    expect(gitArgs({ op: 'status' }, [], range)).toEqual(['status', '--short', '--branch', '--'])
+    expect(gitNamesArgs({ op: 'diff', paths: ['*.go'] }, range)).toEqual([
+      'diff', ...base, '--no-renames', '--name-only', '-z', 'abc123', 'def456', '--', '*.go'
+    ])
+  })
+
+  it('knows which ops print a diff', () => {
+    expect(['diff', 'diff-stat', 'changed-files', 'log', 'status', undefined].map((op) => isDiffOp(op as never))).toEqual([
+      true, true, true, false, false, false
+    ])
+  })
+
   it('ignores empty paths from a half-typed list', () => {
     expect(gitArgs({ op: 'status', paths: ['', 'src', ''] })).toEqual(['status', '--short', '--branch', '--', 'src'])
   })
@@ -62,5 +81,11 @@ describe('gitArtifactPath', () => {
     expect(gitArtifactPath({ id: 'n1', op: 'log' }, 'p1')).toBe('.farol/git/p1/n1.txt')
     expect(gitArtifactPath({ id: '../x/y', op: 'status' }, 'a/b')).toBe('.farol/git/a_2f_b/_2e__2e__2f_x_2f_y.txt')
     expect(gitArtifactPath({ id: 'n', op: 'log' }, 'a_b')).not.toBe(gitArtifactPath({ id: 'n', op: 'log' }, 'a/b'))
+  })
+
+  it('keeps a diff step\'s changes since the last run beside its result', () => {
+    expect(gitDeltaPath({ id: 'n1', op: 'diff', as: 'diff' }, 'p1')).toBe('.farol/git/p1/diff.delta.patch')
+    // A step named `diff.delta` escapes its dot, so it cannot take the delta's file.
+    expect(gitArtifactPath({ id: 'n2', op: 'diff', as: 'diff.delta' }, 'p1')).not.toBe(gitDeltaPath({ id: 'n1', op: 'diff', as: 'diff' }, 'p1'))
   })
 })
