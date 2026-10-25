@@ -664,6 +664,8 @@ function applyAgentEvent(
   }
   if (event.kind === 'context') return { ...pane, context: event.context }
   if (event.kind === 'usage') return { ...pane, usage: event.usage ?? undefined }
+  // The turn panel listens for this itself.
+  if (event.kind === 'turns') return pane
   if (event.kind === 'pipeline') {
     // Runner start/end owns the card. Only start-failed pipelines (error:) never emit a RunEvent.
     if (!event.runId?.startsWith('error:')) return pane

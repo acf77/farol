@@ -53,6 +53,7 @@ import {
 import { codexHookCommand } from '../shared/codex-hook'
 import type { ProjectSession } from '../shared/session'
 import { pruneTrees } from './delegate-snapshot'
+import { pruneCheckpoints } from './checkpoints'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
 import { isAiProvider } from '../shared/ai'
 import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
@@ -566,7 +567,9 @@ async function pruneDelegateSnapshots(projectPath: string, session: ProjectSessi
   const saved = (session?.tabs ?? []).flatMap((tab) =>
     tab.panes.flatMap((pane) => (pane.kind === 'agent' ? [pane.taskId] : []))
   )
-  await pruneTrees(projectPath, [...saved, ...agents.taskIds()]).catch(() => undefined)
+  const keep = [...saved, ...agents.taskIds()]
+  await pruneTrees(projectPath, keep).catch(() => undefined)
+  await pruneCheckpoints(projectPath, keep).catch(() => undefined)
 }
 
 function startBridge(projectPath: string): void {
@@ -958,6 +961,24 @@ function registerTaskIpc(): void {
     'agent:answer',
     (_e, taskId: string, requestId: string, answers: string[][] | null) =>
       agents.answer(taskId, requestId, answers)
+  )
+  registerTurnIpc()
+}
+
+/** Per-turn checkpoints: list, preview a revert, revert. Input comes from the renderer, so it is checked. */
+function registerTurnIpc(): void {
+  const turnArgs = (taskId: unknown, turn: unknown, cwd: unknown) =>
+    typeof taskId === 'string' && Number.isInteger(turn) && (turn as number) > 0 && (cwd === undefined || typeof cwd === 'string')
+  ipcMain.handle('agent:turns', (_e, taskId: unknown, cwd?: unknown) =>
+    typeof taskId === 'string' && (cwd === undefined || typeof cwd === 'string') ? agents.turns(taskId, cwd) : []
+  )
+  ipcMain.handle('agent:revertPreview', (_e, taskId: unknown, turn: unknown, cwd?: unknown) =>
+    turnArgs(taskId, turn, cwd) ? agents.revertPreview(taskId as string, turn as number, cwd as string | undefined) : { message: 'Invalid request.' }
+  )
+  ipcMain.handle('agent:revertTurn', (_e, taskId: unknown, turn: unknown, cwd?: unknown) =>
+    turnArgs(taskId, turn, cwd)
+      ? agents.revertTurn(taskId as string, turn as number, cwd as string | undefined)
+      : { ok: false, message: 'Invalid request.' }
   )
 }
 

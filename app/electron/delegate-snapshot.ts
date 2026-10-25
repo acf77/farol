@@ -16,7 +16,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
-function git(cwd: string, args: string[], env?: Record<string, string>): Promise<string> {
+export function git(cwd: string, args: string[], env?: Record<string, string>): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
@@ -27,8 +27,32 @@ function git(cwd: string, args: string[], env?: Record<string, string>): Promise
   })
 }
 
-/** The working copy of `cwd`'s checkout as a tree id, or undefined outside a git checkout. */
-export async function captureTree(cwd: string): Promise<string | undefined> {
+export interface Capture {
+  tree: string
+  /** Changed or untracked files over the size limit, left out of `tree`. */
+  skipped: string[]
+}
+
+/** Modified and untracked files larger than `maxBytes`, as paths relative to `root`. */
+async function oversized(root: string, maxBytes: number): Promise<string[]> {
+  const listed = await git(root, ['ls-files', '-z', '--modified', '--others', '--exclude-standard'])
+  const big: string[] = []
+  for (const file of new Set(listed.split('\0').filter(Boolean))) {
+    try {
+      if (fs.statSync(path.join(root, file)).size > maxBytes) big.push(file)
+    } catch {
+      /* deleted since listing */
+    }
+  }
+  return big
+}
+
+/**
+ * The working copy as a tree, with an optional size limit on what is added.
+ * Undefined outside a git checkout. Starting the throwaway index from a copy
+ * of the real one means `git add -A` only rehashes files that changed.
+ */
+export async function captureLimited(cwd: string, maxBytes?: number): Promise<Capture | undefined> {
   let root: string
   let realIndex: string
   try {
@@ -37,16 +61,26 @@ export async function captureTree(cwd: string): Promise<string | undefined> {
   } catch {
     return undefined
   }
+  const skipped = maxBytes === undefined ? [] : await oversized(root, maxBytes)
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'farol-snap-'))
   const index = path.join(dir, 'index')
   try {
     if (fs.existsSync(realIndex)) fs.copyFileSync(realIndex, index)
     const env = { GIT_INDEX_FILE: index }
-    await git(root, ['add', '-A', '--', '.'], env)
-    return (await git(root, ['write-tree'], env)).trim()
+    if (skipped.length) {
+      const specs = path.join(dir, 'pathspecs')
+      fs.writeFileSync(specs, ['.', ...skipped.map((file) => `:(exclude,literal)${file}`)].join('\0'))
+      await git(root, ['add', '-A', '--pathspec-from-file', specs, '--pathspec-file-nul'], env)
+    } else await git(root, ['add', '-A', '--', '.'], env)
+    return { tree: (await git(root, ['write-tree'], env)).trim(), skipped }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
+}
+
+/** The working copy of `cwd`'s checkout as a tree id, or undefined outside a git checkout. */
+export async function captureTree(cwd: string): Promise<string | undefined> {
+  return (await captureLimited(cwd))?.tree
 }
 
 /** Where `HEAD`'s branch left `base`: the commit a branch diff starts from. Rejects when `base` is unknown. */
@@ -87,7 +121,7 @@ export async function releaseTrees(cwd: string, taskId: string): Promise<void> {
 }
 
 /** Apply the change from `from` to `to` onto the working copy only; never the index. */
-async function applyChange(cwd: string, from: string, to: string, check: boolean): Promise<void> {
+export async function applyChange(cwd: string, from: string, to: string, check: boolean): Promise<void> {
   const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trim()
   const patch = await git(root, ['diff', '--binary', '--no-color', '--no-ext-diff', from, to])
   if (!patch) return

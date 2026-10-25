@@ -362,12 +362,44 @@ export interface AgentTaskRequest {
   checkout: string
   branch: string
   maxAttempts?: number
+  /** Turn checkpoints kept per chat; older ones are pruned. Defaults to 100. */
+  checkpointLimit?: number
   /**
    * The chat so far, rebuilt from a restored pane when the main process no
    * longer holds the task (after a restart). Ignored for a task it still has.
    */
   context?: AgentContext
 }
+
+/** One file a turn changed; `added`/`removed` are null for binary files. */
+export interface TurnFile {
+  path: string
+  added: number | null
+  removed: number | null
+}
+
+/** A per-turn checkpoint of a chat's working copy, as the turn panel lists it. */
+export interface TurnInfo {
+  turn: number
+  /** Epoch ms when the turn began. */
+  at: number
+  prompt: string
+  /** `revert` turns are the safety checkpoint a revert takes first. */
+  kind: 'turn' | 'revert'
+  /** False while the turn runs, or when the app quit before it ended. */
+  done: boolean
+  /** The working copy differs between the start and the end of the turn. */
+  changed: boolean
+  /** Capped; `fileCount` is the true number. */
+  files: TurnFile[]
+  fileCount: number
+  /** Files over the size limit, left out of the checkpoint. */
+  skipped: string[]
+}
+
+export type RevertOutcome =
+  | { ok: true; fileCount: number }
+  | { ok: false; message: string }
 
 export type AgentTaskEvent =
   | {
@@ -444,6 +476,8 @@ export type AgentTaskEvent =
       undone?: 'undo' | 'restore'
     }
   | { kind: 'user'; taskId: string; text: string }
+  /** The chat's turn checkpoints changed; the turn panel should list them again. */
+  | { kind: 'turns'; taskId: string }
   /** The task moved down its fallback chain after a provider-side failure. */
   | {
       kind: 'provider'
@@ -722,6 +756,12 @@ export interface FarolApi {
       delegateId: string,
       restore?: boolean
     ): Promise<{ ok: true } | { ok: false; message: string; restoreFiles?: number }>
+    /** The chat's turn checkpoints, oldest first. `cwd` is used when the main process no longer holds the task. */
+    turns(taskId: string, cwd?: string): Promise<TurnInfo[]>
+    /** Files that reverting to before `turn` would change, as of now. */
+    revertPreview(taskId: string, turn: number, cwd?: string): Promise<{ files: TurnFile[]; fileCount: number } | { message: string }>
+    /** Put the working copy back to before `turn`, after a safety checkpoint. Files only; refused while the agent works. */
+    revertTurn(taskId: string, turn: number, cwd?: string): Promise<RevertOutcome>
     /** Reply to an `asking` turn. `answers: null` dismisses the questions. */
     answer(
       taskId: string,

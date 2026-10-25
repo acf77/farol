@@ -8,7 +8,9 @@ import type {
   ApprovalDecision,
   ModelChoice,
   Pipeline,
-  PipelineRunResult
+  PipelineRunResult,
+  RevertOutcome,
+  TurnInfo
 } from '../shared/types'
 import {
   ACP_CLIS,
@@ -34,7 +36,17 @@ import { applyOpencodeConfig, opencodeRunConfig } from '../shared/opencode-confi
 import { acpApprovalAsk, acpMcpServer } from '../shared/acp'
 import { openCodeModel } from '../shared/openrouter'
 import { runAcp } from './acp-run'
-import { captureTree, changedPaths, pinTree, releaseTrees, restoreTree, treeDiffStat, undoChange } from './delegate-snapshot'
+import { captureLimited, captureTree, changedPaths, pinTree, releaseTrees, restoreTree, treeDiffStat, undoChange, type Capture } from './delegate-snapshot'
+import {
+  CHECKPOINT_MAX_FILE_BYTES,
+  listTurns,
+  previewRevert,
+  releaseCheckpoints,
+  revertToTurn,
+  startTurn,
+  turnPreview,
+  type TurnRecord
+} from './checkpoints'
 import { AgentStreamParser } from '../shared/agent-stream'
 import { claudeCatalogWindow } from '../shared/agent-models'
 import {
@@ -173,6 +185,8 @@ interface Task {
   activeScan?: CycleScan
   /** Subagent runs that changed files, kept so Undo can reverse exactly them. */
   delegateRuns: Map<string, DelegateRun>
+  /** The tree at the start of the turn, handed to its first attempt so it is not captured twice. */
+  turnBefore?: string
   /** What the agent should hear first on the next turn (e.g. an Undo). */
   notes: string[]
   /** The subagent running now, so its approval requests name it. */
@@ -582,6 +596,8 @@ function noteWrite(scan: { filesChanged: boolean; changedTargets: string[] }, de
 
 export class AgentController {
   private tasks = new Map<string, Task>()
+  /** Chats whose files a revert is restoring; the agent must not start meanwhile. */
+  private reverting = new Set<string>()
 
   constructor(
     private runner: ValidationRunner,
@@ -600,6 +616,7 @@ export class AgentController {
     if (!clean) return { ok: false, message: 'Enter a task for the agent.' }
     const existing = this.tasks.get(request.id)
     if (existing) {
+      if (this.reverting.has(request.id)) return { ok: false, message: 'Wait for the revert to finish.' }
       if (existing.running) return { ok: false, message: 'An agent task with this id is already running.' }
       existing.request = {
         ...existing.request,
@@ -682,6 +699,7 @@ export class AgentController {
     const clean = text.trim()
     if (!task) return { ok: false, message: 'This agent task is no longer available.' }
     if (!clean) return { ok: false, message: 'Enter a message.' }
+    if (this.reverting.has(taskId)) return { ok: false, message: 'Wait for the revert to finish.' }
     this.applyMessageOverrides(task, provider, model, mode, pipelines, fallbacks)
     if (cwd) task.request.cwd = cwd
     if (checkout) task.request.checkout = checkout
@@ -1217,6 +1235,49 @@ export class AgentController {
     return code === 0 ? parseHandoffMarker(said) : undefined
   }
 
+  /** Where a chat's checkpoints live: its checkout, or `cwd` once a restart has dropped the task. */
+  private checkpointCwd(taskId: string, cwd?: string): string | undefined {
+    return this.tasks.get(taskId)?.request.cwd ?? cwd
+  }
+
+  turns(taskId: string, cwd?: string): Promise<TurnInfo[]> {
+    const dir = this.checkpointCwd(taskId, cwd)
+    return dir ? listTurns(dir, taskId).catch(() => []) : Promise.resolve([])
+  }
+
+  revertPreview(taskId: string, turn: number, cwd?: string): ReturnType<typeof previewRevert> {
+    const dir = this.checkpointCwd(taskId, cwd)
+    return dir ? previewRevert(dir, taskId, turn).catch((error) => ({ message: errorMessage(error) })) : Promise.resolve({ message: 'This chat has no checkout.' })
+  }
+
+  /**
+   * Put the files back to before a turn. Files only: the agent's own memory
+   * still holds the later turns, so its next turn is told what changed.
+   * Refused while it works, since it would write over the restored files.
+   */
+  async revertTurn(taskId: string, turn: number, cwd?: string): Promise<RevertOutcome> {
+    const task = this.tasks.get(taskId)
+    const dir = this.checkpointCwd(taskId, cwd)
+    if (!dir) return { ok: false, message: 'This chat has no checkout.' }
+    if (task?.running) return { ok: false, message: 'Stop the agent, or wait for it to finish, before reverting.' }
+    if (this.reverting.has(taskId)) return { ok: false, message: 'A revert is already running.' }
+    this.reverting.add(taskId)
+    try {
+      const outcome = await revertToTurn(dir, taskId, turn, task?.request.checkpointLimit)
+      if (outcome.ok) {
+        task?.notes.push(
+          `Note from Farol: the developer reverted the files to how they were before turn ${turn}. ${outcome.fileCount} file(s) changed back. Your memory of the later turns is still there, but their file changes are gone: read files again before you edit them.`
+        )
+      }
+      this.emit({ kind: 'turns', taskId })
+      return outcome
+    } catch (error) {
+      return { ok: false, message: errorMessage(error) }
+    } finally {
+      this.reverting.delete(taskId)
+    }
+  }
+
   /**
    * Cancel and release the task. Cleared/closed chats must not leave prompt
    * history and pipeline catalogs resident for the rest of the session.
@@ -1230,6 +1291,7 @@ export class AgentController {
       task.delegateRuns.clear()
       void releaseTrees(task.request.cwd, taskId).catch(() => undefined)
     }
+    void releaseCheckpoints(task.request.cwd, taskId)
     this.cancel(taskId)
     if (!task.running) this.tasks.delete(taskId)
   }
@@ -1956,7 +2018,8 @@ export class AgentController {
     const sink = this.cycleSink(task, scan)
     task.activeScan = scan
     const epoch = task.askEpoch
-    const before = await this.turnTree(task)
+    const before = task.turnBefore ?? (await this.turnCapture(task))?.tree
+    task.turnBefore = undefined
     const { provider, model } = task.request
     const session: AgentSessionIo = {
       ...(resume ? { resume } : {}),
@@ -1976,10 +2039,10 @@ export class AgentController {
     return await this.cycleAfterRun(task, attempt, scan, code, opening)
   }
 
-  /** The working copy as a tree at the start of a Build turn; undefined in Plan mode or outside git. */
-  private async turnTree(task: Task): Promise<string | undefined> {
+  /** The working copy at the start or end of a Build turn; undefined in Plan mode or outside git. */
+  private async turnCapture(task: Task): Promise<Capture | undefined> {
     if (task.request.mode === 'plan') return undefined
-    return captureTree(task.request.cwd).catch(() => undefined)
+    return captureLimited(task.request.cwd, CHECKPOINT_MAX_FILE_BYTES).catch(() => undefined)
   }
 
   /**
@@ -1989,7 +2052,7 @@ export class AgentController {
   private async noteTreeChange(task: Task, scan: CycleScan, before: string | undefined): Promise<void> {
     if (!before) return
     const cwd = task.request.cwd
-    const after = await captureTree(cwd).catch(() => undefined)
+    const after = (await this.turnCapture(task))?.tree
     if (!after || !turnChangedFiles(false, before, after)) return
     scan.filesChanged = true
     task.mandatoryOutstanding = true
@@ -2016,7 +2079,30 @@ export class AgentController {
     this.releaseIfDisposed(task)
   }
 
+  /** One user message: checkpoint the files before it runs and after it ends, around the attempts. */
   private async cycle(task: Task, first: Opening): Promise<void> {
+    const before = await this.turnCapture(task)
+    task.turnBefore = before?.tree
+    const record = before ? startTurn(task.request.cwd, task.request.id, before, turnPreview(first.text)) : undefined
+    void record?.started.then(() => this.emit({ kind: 'turns', taskId: task.request.id }))
+    try {
+      await this.runAttempts(task, first)
+    } finally {
+      task.turnBefore = undefined
+      if (record) void this.endTurn(task, record)
+    }
+  }
+
+  /** Off the agent's path: the end snapshot and the writes happen after the chat has moved on. */
+  private async endTurn(task: Task, record: TurnRecord): Promise<void> {
+    const after = await this.turnCapture(task)
+    // A cleared chat has released its checkpoints; writing now would bring them back.
+    if (task.disposeWhenIdle) return
+    await record.finish(after, task.request.checkpointLimit)
+    this.emit({ kind: 'turns', taskId: task.request.id })
+  }
+
+  private async runAttempts(task: Task, first: Opening): Promise<void> {
     const maxAttempts = Math.max(1, Math.min(20, task.request.maxAttempts ?? DEFAULT_MAX_ATTEMPTS))
     let opening = first
     let attempt = 0

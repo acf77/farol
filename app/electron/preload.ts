@@ -114,6 +114,9 @@ const api: FarolApi = {
       ipcRenderer.invoke('agent:respondApproval', taskId, requestId, decision),
     setAutoApprove: (taskId, on) => ipcRenderer.invoke('agent:setAutoApprove', taskId, on),
     undoDelegate: (taskId, delegateId, restore) => ipcRenderer.invoke('agent:undoDelegate', taskId, delegateId, restore),
+    turns: (taskId, cwd) => ipcRenderer.invoke('agent:turns', taskId, cwd),
+    revertPreview: (taskId, turn, cwd) => ipcRenderer.invoke('agent:revertPreview', taskId, turn, cwd),
+    revertTurn: (taskId, turn, cwd) => ipcRenderer.invoke('agent:revertTurn', taskId, turn, cwd),
     answer: (taskId, requestId, answers) =>
       ipcRenderer.invoke('agent:answer', taskId, requestId, answers),
     freshStart: (taskId) => ipcRenderer.invoke('agent:freshStart', taskId),
