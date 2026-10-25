@@ -3,7 +3,8 @@ import type { Pipeline } from './types'
 import {
   isWriteToolName,
   mandatoryOptOutError,
-  mergeWithMandatory
+  mergeWithMandatory,
+  turnChangedFiles
 } from './mandatory'
 
 const lint: Pipeline = {
@@ -58,5 +59,22 @@ describe('isWriteToolName', () => {
     expect(isWriteToolName('CreateGoal')).toBe(false)
     expect(isWriteToolName('UpdateGoal')).toBe(false)
     expect(isWriteToolName('Read')).toBe(false)
+  })
+})
+
+describe('turnChangedFiles', () => {
+  it('trusts differing snapshots, however the files were written', () => {
+    expect(turnChangedFiles(false, 'tree-a', 'tree-b')).toBe(true)
+    expect(turnChangedFiles(false, 'tree-a', 'tree-a')).toBe(false)
+  })
+
+  it('falls back to write tools without a pair of snapshots', () => {
+    expect(turnChangedFiles(true)).toBe(true)
+    expect(turnChangedFiles(false)).toBe(false)
+    expect(turnChangedFiles(false, 'tree-a', undefined)).toBe(false)
+  })
+
+  it('never drops a change a write tool reported', () => {
+    expect(turnChangedFiles(true, 'tree-a', 'tree-a')).toBe(true)
   })
 })

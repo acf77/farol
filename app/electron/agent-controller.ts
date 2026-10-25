@@ -34,7 +34,7 @@ import { applyOpencodeConfig, opencodeRunConfig } from '../shared/opencode-confi
 import { acpApprovalAsk, acpMcpServer } from '../shared/acp'
 import { openCodeModel } from '../shared/openrouter'
 import { runAcp } from './acp-run'
-import { captureTree, pinTree, releaseTrees, restoreTree, treeDiffStat, undoChange } from './delegate-snapshot'
+import { captureTree, changedPaths, pinTree, releaseTrees, restoreTree, treeDiffStat, undoChange } from './delegate-snapshot'
 import { AgentStreamParser } from '../shared/agent-stream'
 import { claudeCatalogWindow } from '../shared/agent-models'
 import {
@@ -88,7 +88,8 @@ import {
   isWriteToolName,
   mandatoryOptOutError,
   mandatoryPipelines,
-  mergeWithMandatory
+  mergeWithMandatory,
+  turnChangedFiles
 } from '../shared/mandatory'
 import { errorMessage, pipelineSelectionState } from '../shared/jev'
 import {
@@ -1955,6 +1956,7 @@ export class AgentController {
     const sink = this.cycleSink(task, scan)
     task.activeScan = scan
     const epoch = task.askEpoch
+    const before = await this.turnTree(task)
     const { provider, model } = task.request
     const session: AgentSessionIo = {
       ...(resume ? { resume } : {}),
@@ -1970,7 +1972,30 @@ export class AgentController {
         })
     this.observeTools(task, policy, scan.toolNames, attempt)
     if (task.askEpoch !== epoch) return { kind: 'done' }
+    await this.noteTreeChange(task, scan, before)
     return await this.cycleAfterRun(task, attempt, scan, code, opening)
+  }
+
+  /** The working copy as a tree at the start of a Build turn; undefined in Plan mode or outside git. */
+  private async turnTree(task: Task): Promise<string | undefined> {
+    if (task.request.mode === 'plan') return undefined
+    return captureTree(task.request.cwd).catch(() => undefined)
+  }
+
+  /**
+   * A turn that changed the working copy, however it wrote — an edit tool, `sed -i`, a formatter —
+   * changed files: mandatory pipelines must run, and Jev sees the changed paths.
+   */
+  private async noteTreeChange(task: Task, scan: CycleScan, before: string | undefined): Promise<void> {
+    if (!before) return
+    const cwd = task.request.cwd
+    const after = await captureTree(cwd).catch(() => undefined)
+    if (!after || !turnChangedFiles(false, before, after)) return
+    scan.filesChanged = true
+    task.mandatoryOutstanding = true
+    for (const target of await changedPaths(cwd, before, after).catch(() => [])) {
+      if (!scan.changedTargets.includes(target)) scan.changedTargets.push(target)
+    }
   }
 
   private handleCycleError(task: Task, attempt: number, error: unknown): void {

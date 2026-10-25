@@ -31,6 +31,16 @@ export function isWriteToolName(name: string): boolean {
   )
 }
 
+/**
+ * Whether an agent turn changed project files. Snapshots of the working copy taken before and
+ * after the turn catch every way of writing — an edit tool, `sed -i`, a formatter, a script — so a
+ * differing pair means yes. Without a pair (outside git) only write tools count. A write tool
+ * still counts when the trees match, so a snapshot can only ever add a mandatory run.
+ */
+export function turnChangedFiles(wroteWithTool: boolean, before?: string, after?: string): boolean {
+  return wroteWithTool || (before !== undefined && after !== undefined && before !== after)
+}
+
 /** Empty FAROL_PIPELINES is invalid when mandatory pipelines still need to run. */
 export function mandatoryOptOutError(
   available: Pipeline[],
