@@ -1143,6 +1143,38 @@ export default function SettingsPage({
                         onChange={(autoApprove) => onSettings({ ...settings, autoApprove })}
                       />
                     </Setting>
+                    <Setting
+                      title="Agent memory colors"
+                      hint="A worktree's agent memory shows yellow from the first limit and red from the second (GB)."
+                    >
+                      <span style={{ display: 'flex', gap: 8 }}>
+                        {(['memoryWarnGb', 'memoryAlertGb'] as const).map((key) => (
+                          <input
+                            key={key}
+                            type="number"
+                            min={0.5}
+                            step={0.5}
+                            aria-label={key === 'memoryWarnGb' ? 'Yellow from (GB)' : 'Red from (GB)'}
+                            value={settings[key]}
+                            onChange={(e) => {
+                              const gb = Number(e.target.value)
+                              if (gb > 0) onSettings({ ...settings, [key]: gb })
+                            }}
+                            style={{ ...field, width: 72 }}
+                          />
+                        ))}
+                      </span>
+                    </Setting>
+                    <Setting
+                      title="Clean up leftovers automatically"
+                      hint="When a chat is done or its worktree is gone, stop the dev servers and other processes it left running."
+                    >
+                      <Switch
+                        label="Clean up leftovers automatically"
+                        checked={settings.autoCleanLeftovers}
+                        onChange={(autoCleanLeftovers) => onSettings({ ...settings, autoCleanLeftovers })}
+                      />
+                    </Setting>
                   </Card>
                 </Group>
                 {import.meta.env.DEV && (

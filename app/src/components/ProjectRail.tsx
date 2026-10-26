@@ -7,6 +7,8 @@ import {
   SIDE_RAIL_WIDTH,
   sidePanelShellStyle
 } from './side-panel'
+import { usageByRow } from '@shared/proc'
+import { AgentsFooter, MemoryChip, MemoryPopover, useProcSnapshot } from './AgentMemory'
 import {
   BranchIcon,
   ChevronLeft,
@@ -163,6 +165,15 @@ export default function ProjectRail({
   const [groupCollapsed, setGroupCollapsed] = useState<Record<string, boolean>>({})
   const [pinned, setPinned] = useState(false)
   const [hover, setHover] = useState(false)
+  const memory = useProcSnapshot()
+  const [memoryView, setMemoryView] = useState<{ path: string; anchor: HTMLElement } | null>(null)
+  const memoryByPath = useMemo(
+    () => (memory ? usageByRow(memory, projects.map((p) => p.path)) : null),
+    [memory, projects]
+  )
+  const memoryOpen = memoryView
+    ? (memoryByPath?.get(memoryView.path) ?? memory?.worktrees.find((w) => w.worktree === memoryView.path))
+    : undefined
   const peek = pinned && (hover || !!gitOpen)
   const slim = (collapsed || pinned) && !peek
   const shellStyle = {
@@ -463,6 +474,7 @@ export default function ProjectRail({
                     const active = project.path === activePath
                     const busy = agentBusy(project.path)
                     const unread = agentUnread(project.path)
+                    const rowMemory = memoryByPath?.get(project.path)
                     return (
                       <div
                         key={project.path}
@@ -500,6 +512,13 @@ export default function ProjectRail({
                             {activityMeta(project.path, busy, unread)}
                           </span>
                         </span>
+                        {memory && rowMemory && (
+                          <MemoryChip
+                            usage={rowMemory}
+                            snapshot={memory}
+                            onOpen={(anchor) => setMemoryView({ path: project.path, anchor })}
+                          />
+                        )}
                         <button
                           type="button"
                           className="bf-focus bf-icon-btn bf-reveal"
@@ -534,6 +553,10 @@ export default function ProjectRail({
           })}
         </div>
 
+        {memory && memory.totalFootprint > 0 && (
+          <AgentsFooter snapshot={memory} onOpen={(path, anchor) => setMemoryView({ path, anchor })} />
+        )}
+
         {showGit && onGitToggle && (
           <div style={{ flex: 'none', display: 'flex', gap: 6, padding: 10, borderTop: `1px solid ${SOFT}`, ...noDrag }}>
             {gitButton('row')}
@@ -541,6 +564,9 @@ export default function ProjectRail({
           </div>
         )}
       </div>
+      {memory && memoryView && memoryOpen && (
+        <MemoryPopover usage={memoryOpen} snapshot={memory} anchor={memoryView.anchor} onClose={() => setMemoryView(null)} />
+      )}
     </aside>
   )
 }

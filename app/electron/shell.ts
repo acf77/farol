@@ -6,6 +6,7 @@ import type { ShellActivity, ShellCwd, ShellData, ShellExit } from '../shared/ty
 import { interactiveAiEnv, resolveBin } from './bin'
 import { openRouterAgent } from './openrouter-agent'
 import { defaultShell, shellEnv } from './session'
+import type { ProcRegistry } from './proc-sessions'
 
 /**
  * Shell panes are interactive PTYs forwarded verbatim to xterm.js. A normal
@@ -45,7 +46,9 @@ export class ShellManager {
     private onData: (e: ShellData) => void,
     private onExit: (e: ShellExit) => void,
     private onCwd: (e: ShellCwd) => void,
-    private onActivity: (e: ShellActivity) => void
+    private onActivity: (e: ShellActivity) => void,
+    /** Agent panes report here, so the memory they use is counted. */
+    private procs?: ProcRegistry
   ) {}
 
   private setActive(paneId: string, session: Session, active: boolean): void {
@@ -116,6 +119,7 @@ export class ShellManager {
 
     const session: Session = { proc, cwd, active: false, activityChecks: 0 }
     this.sessions.set(paneId, session)
+    if (agent) this.procs?.register(`pty:${paneId}:${proc.pid}`, cwd, proc.pid)
 
     // A login shell prints its prompt asynchronously; typing into it before
     // that lands gets eaten, so let it settle before flushing queued commands.
@@ -151,6 +155,7 @@ export class ShellManager {
     })
 
     proc.onExit(({ exitCode }) => {
+      this.procs?.finish(`pty:${paneId}:${proc.pid}`)
       this.sessions.delete(paneId)
       this.stopActivityWatch(session)
       this.setActive(paneId, session, false)
@@ -199,6 +204,7 @@ export class ShellManager {
     const session = this.sessions.get(paneId)
     if (!session) return
     this.sessions.delete(paneId)
+    this.procs?.finish(`pty:${paneId}:${session.proc.pid}`)
     this.stopActivityWatch(session)
     this.setActive(paneId, session, false)
     try {

@@ -6,18 +6,19 @@
   "description": "A terminal workspace with runnable shell + AI pipelines.",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "(npm run build:procsnap || true) && electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "build:procsnap": "mkdir -p build && clang -O2 -arch arm64 -arch x86_64 native/procsnap.c -o build/procsnap",
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-rebuild -f -w node-pty",
     "test": "vitest run",
-    "dist": "electron-vite build && electron-builder --mac dmg zip && node scripts/publish-local.mjs",
+    "dist": "npm run build:procsnap && electron-vite build && electron-builder --mac dmg zip && node scripts/publish-local.mjs",
     "dist:alpha": "electron-vite build && electron-builder --mac dmg zip -c.appId=com.farol.app.alpha \"-c.productName=Farol Alpha\" -c.directories.output=dist-alpha \"-c.dmg.title=Farol Alpha ${version}\"",
     "service:build": "esbuild service/main.ts --bundle --platform=node --target=node22 --format=cjs --outfile=service/dist/farol-service.cjs",
     "install:app": "npm run dist && node scripts/install-app.mjs",
-    "release": "electron-vite build && electron-builder --mac dmg zip --publish always '-c.mac.artifactName=Farol-mac-${arch}.${ext}'"
+    "release": "npm run build:procsnap && electron-vite build && electron-builder --mac dmg zip --publish always '-c.mac.artifactName=Farol-mac-${arch}.${ext}'"
   },
   "build": {
     "appId": "com.farol.app",
@@ -33,6 +34,10 @@
       {
         "from": "build/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "build/procsnap",
+        "to": "procsnap"
       }
     ],
     "asarUnpack": [

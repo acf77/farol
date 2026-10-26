@@ -68,6 +68,11 @@ import { scopedRuntimeId } from '../shared/runtime'
 import net from 'net'
 import { randomBytes } from 'crypto'
 import os from 'os'
+import { ProcRegistry } from './proc-sessions'
+import { listPorts, ProcSampler } from './proc-sampler'
+import { ProcCleanup } from './proc-cleanup'
+import type { ProcSnapshot } from '../shared/proc'
+import { sanitizeSettings } from '../shared/settings'
 
 let win: BrowserWindow | null = null
 
@@ -75,11 +80,35 @@ function send(channel: string, payload: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
 }
 
+let memoryLimits = { warnGb: 2, alertGb: 4 }
+const rememberMemoryLimits = (s: AppSettings): void => {
+  memoryLimits = { warnGb: s.memoryWarnGb, alertGb: s.memoryAlertGb }
+}
+const withLimits = (snapshot: ProcSnapshot): ProcSnapshot => ({ ...snapshot, ...memoryLimits })
+
+const procCleanup = new ProcCleanup({
+  sample: () => procSampler.sample(),
+  sessions: () => procs.list(),
+  autoCleanEnabled: async () => (await loadSettings()).autoCleanLeftovers,
+  uid: process.getuid?.() ?? -1
+})
+const procs = new ProcRegistry((session) => procCleanup.schedule(session))
+const procSampler = new ProcSampler({
+  registry: procs,
+  helperPath: path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, '../../build'), 'procsnap'),
+  isVisible: () => !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized(),
+  onSnapshot: (snapshot) => send('proc:snapshot', withLimits(snapshot)),
+  worktreeExists: (dir) => fs.existsSync(dir),
+  onWorktreeGone: (sessionId) => procCleanup.runAuto(sessionId),
+  uid: process.getuid?.() ?? -1
+})
+
 const shells = new ShellManager(
   (e: ShellData) => send('shell:data', e),
   (e: ShellExit) => send('shell:exit', e),
   (e: ShellCwd) => send('shell:cwd', e),
-  (e: ShellActivity) => send('shell:activity', e)
+  (e: ShellActivity) => send('shell:activity', e),
+  procs
 )
 const runner = new PipelineRunner((e: RunEvent) => {
   send('run:event', e)
@@ -102,7 +131,8 @@ const agents = new AgentController(
         mcp: (taskId, delegateId, tools) => managedMcpEntry(managedScript('mcp.js'), taskId, delegateId, tools),
         codexHook: (taskId, delegateId) => codexHookCommand(managedMcpEntry(managedScript('codex-hook.js'), taskId, delegateId))
       }
-    : undefined
+    : undefined,
+  procs
 )
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
@@ -997,9 +1027,26 @@ function projectPathOrNull(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
 }
 
+/** Memory of agent sessions. The renderer names a session; the pids come from Farol's own snapshot. */
+function registerProcIpc(): void {
+  ipcMain.handle('proc:snapshot', () => withLimits(procSampler.latest))
+  ipcMain.handle('proc:ports', async (_e, sessionId: unknown) => {
+    const usage = procSampler.latest.worktrees.flatMap((w) => w.sessions).find((s) => s.sessionId === sessionId)
+    return usage ? Object.fromEntries(await listPorts(usage.procs.map((p) => p.pid), procSampler.signal)) : {}
+  })
+  ipcMain.handle('proc:kill', (_e, sessionId: unknown, pid: unknown) =>
+    typeof sessionId === 'string' && (pid === undefined || Number.isInteger(pid))
+      ? procCleanup.kill(sessionId, pid as number | undefined)
+      : { ok: false, message: 'Bad request.', terminated: 0, killed: 0 }
+  )
+}
+
 function registerAppIpc(): void {
   ipcMain.handle('settings:load', loadSettings)
-  ipcMain.handle('settings:save', (_e, settings: AppSettings) => saveSettings(settings))
+  ipcMain.handle('settings:save', (_e, settings: AppSettings) => {
+    rememberMemoryLimits(sanitizeSettings(settings))
+    return saveSettings(settings)
+  })
   ipcMain.handle('prompts:load', (_e, projectPath: unknown) => prompts.load(projectPathOrNull(projectPath)))
   ipcMain.handle('prompts:saveGlobal', (_e, projectPath: unknown, value: unknown) =>
     prompts.saveGlobal(projectPathOrNull(projectPath), value)
@@ -1044,6 +1091,7 @@ function registerIpc(): void {
   registerTaskIpc()
   registerRemoteIpc()
   registerAppIpc()
+  registerProcIpc()
   registerKeyIpc()
 }
 
@@ -1075,9 +1123,10 @@ app.whenReady().then(() => {
   registerIpc()
   startManagedBridge()
   // Mirrors the OpenRouter CLI choice before anything spawns an agent.
-  void loadSettings()
+  void loadSettings().then(rememberMemoryLimits)
   buildMenu()
   createWindow()
+  procSampler.start()
   if (app.isPackaged) {
     setTimeout(() => void updater.check(), 2500)
     setInterval(() => void updater.check(), 6 * 60 * 60 * 1000)
@@ -1105,9 +1154,11 @@ app.on('before-quit', (event) => {
   if (quitInProgress) return
   quitInProgress = true
   void (async () => {
+    procCleanup.stop()
     agents.cancelAll()
     shells.disposeAll()
     runner.cancelAll()
+    procSampler.stop()
     head.stop()
     pipelineFiles.stop()
     for (const server of bridges.values()) server.close()

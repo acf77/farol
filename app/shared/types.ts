@@ -21,6 +21,7 @@ import type { ProviderUsage } from './usage'
 import type { SpendKeyStatus, SpendProvider, SpendReport } from './spend'
 import type { Todo } from './todos'
 import type { CustomPrompt, CustomPromptSet } from './custom-prompts'
+import type { ProcSnapshot } from './proc'
 
 export type { AgentQuestion, AgentSkill, ProviderUsage }
 
@@ -845,6 +846,15 @@ export interface FarolApi {
     check(): Promise<UpdateStatus>
     install(): void
     onStatus(cb: (s: UpdateStatus) => void): () => void
+  }
+  /** Memory and CPU of what each agent session started, and cleaning it up. */
+  proc: {
+    snapshot(): Promise<ProcSnapshot>
+    /** Listening TCP ports by pid, for one session. Read when a details view opens. */
+    ports(sessionId: string): Promise<Record<number, number[]>>
+    /** Stop a session's leftovers, or one of its processes: SIGTERM, then SIGKILL after 3 s. */
+    kill(sessionId: string, pid?: number): Promise<{ ok: boolean; message?: string; terminated: number; killed: number }>
+    onSnapshot(cb: (snapshot: ProcSnapshot) => void): () => void
   }
   ui: {
     onSettings(cb: () => void): () => void
