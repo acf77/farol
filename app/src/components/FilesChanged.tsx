@@ -48,17 +48,13 @@ export default function FilesChanged({ status, onOpen }: { status: GitStatus | n
   const removed = files.reduce((sum, f) => sum + (f.removed ?? 0), 0)
   const shown = all ? files : files.slice(0, VISIBLE)
   return (
-    <SideCard label="Files changed">
-    <div style={{ padding: '14px 8px 12px 16px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.06em', color: C.faint }}>FILES CHANGED</span>
-        <span style={{ padding: '1px 7px', borderRadius: 20, background: 'oklch(1 0 0 / 0.08)', fontSize: 11, fontWeight: 500, color: C.textSoft }}>
-          {files.length}
-        </span>
-        <span style={{ flex: 1 }} />
-        <span style={{ fontFamily: MONO, fontSize: 11, color: C.textMuted }}>+{added}</span>
-        <span style={{ fontFamily: MONO, fontSize: 11, color: C.textMuted }}>−{removed}</span>
-      </div>
+    <SideCard
+      label="Files changed"
+      title="FILES CHANGED"
+      count={files.length}
+      aside={<span style={{ fontFamily: MONO, fontSize: 11, color: C.textMuted }}>+{added} −{removed}</span>}
+    >
+    <div style={{ padding: '0 8px 12px 16px' }}>
       {shown.map((file) => (
         <FileRow key={file.path} file={file} onOpen={onOpen} />
       ))}
