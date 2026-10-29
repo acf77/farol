@@ -256,6 +256,8 @@ type CycleScan = ControlLineState & {
   resumed: boolean
   assistant: string
   output: string
+  /** Diagnostics from the CLI (stderr, banners) only — never the agent's own words. */
+  noise: string
   blocked: string | null
   /** The stop came from the CLI itself (quota, auth, context), not the agent. */
   blockedByProvider: boolean
@@ -1396,7 +1398,7 @@ export class AgentController {
   private cycleSink(task: Task, scan: CycleScan): AgentSink {
     const check = (): void => {
       const agentStop = blockedMarker(scan.assistant)
-      const reason = agentStop ?? providerFailure(scan.output)
+      const reason = agentStop ?? providerFailure(scan.noise)
       if (!scan.blocked && reason) {
         scan.blocked = reason
         scan.blockedByProvider = !agentStop
@@ -1459,6 +1461,7 @@ export class AgentController {
       },
       noise: (chunk) => {
         scan.output = (scan.output + chunk).slice(-SCAN_WINDOW)
+        scan.noise = (scan.noise + chunk).slice(-SCAN_WINDOW)
         check()
       }
     }
@@ -1947,6 +1950,13 @@ export class AgentController {
     this.applyHandoff(task, scan.control)
     const asked = this.questionsAfterRun(task, attempt, scan)
     if (asked) return asked
+    // Agent prose can quote a provider banner (a plan about retries, say), so the
+    // full output counts only once the run has failed.
+    const exitReason = code !== 0 && !scan.blocked ? providerFailure(scan.output) : null
+    if (exitReason) {
+      scan.blocked = exitReason
+      scan.blockedByProvider = true
+    }
     if (this.abandonResume(task, scan, code)) return { kind: 'retry', opening, rewindAttempt: true }
     if (scan.blocked) {
       // Same model first (up to SAME_MODEL_RETRIES), then the next rung down
@@ -2003,6 +2013,7 @@ export class AgentController {
       fenced: false,
       control: '',
       output: '',
+      noise: '',
       blocked: null,
       blockedByProvider: false,
       shellInvocations: [],
