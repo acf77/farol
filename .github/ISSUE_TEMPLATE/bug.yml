@@ -1,0 +1,50 @@
+name: Report a bug
+description: Something broke or behaved in a way it shouldn't.
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a project with …
+        2. Ask the agent to …
+        3. The pipeline …
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where in Farol?
+      options:
+        - Install or first launch
+        - Agent setup
+        - Chat
+        - Pipelines and checks
+        - Source Control
+        - Updates
+        - Something else
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and model
+      placeholder: Claude Code, Sonnet 4.5
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste any error text, or drag in a screenshot.
+  - type: input
+    id: environment
+    attributes:
+      label: Farol and macOS version
+      description: Filled in when you use Help › Report a Bug in the app. Otherwise see Farol › About Farol.
+      placeholder: Farol 0.5.3 · macOS 15.1.0 · arm64
+    validations:
+      required: true
