@@ -34,7 +34,9 @@ jobs:
       - name: Check whether this version is already released
         id: version
         run: |
-          tag="v$(node -p "require('./package.json').version")"
+          version="$(node -p "require('./package.json').version")"
+          tag="v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
             echo "$tag already exists — nothing to release"
@@ -59,17 +61,23 @@ jobs:
           git tag "${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
-      - name: Build and publish release
+      - name: Build
         if: steps.version.outputs.release == 'true'
         run: npm run release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Releases are immutable once published, so electron-builder uploads into a
-      # draft and it is only published after every asset is attached.
+      # electron-builder uploads in parallel and can split the files over several
+      # draft releases, so it only builds; gh publishes one release with every file.
+      # The app finds updates through latest-mac.yml and installs the zip.
       - name: Publish the release
         if: steps.version.outputs.release == 'true'
-        run: gh release edit "${{ steps.version.outputs.tag }}" --draft=false --latest
+        run: |
+          for file in latest-mac.yml Farol-mac-arm64.zip Farol-mac-arm64.dmg; do
+            [ -f "dist/$file" ] || { echo "::error::Build output missing: $file"; exit 1; }
+          done
+          gh release create "${{ steps.version.outputs.tag }}" \
+            dist/latest-mac.yml dist/Farol-mac-arm64.zip dist/Farol-mac-arm64.dmg \
+            dist/Farol-mac-arm64.zip.blockmap dist/Farol-mac-arm64.dmg.blockmap \
+            --title "${{ steps.version.outputs.version }}" --verify-tag --latest --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

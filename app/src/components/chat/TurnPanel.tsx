@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import type { RevertOutcome, TurnFile, TurnInfo } from '@shared/types'
 import { C, ELLIPSIS, MONO } from '../../theme'
 import { Button } from '../controls'
-import { SideCard } from '../side-panel'
+import { CardTitle, SideCard } from '../side-panel'
 
 const api = window.farol
 const PREVIEW_FILES = 12
+const VISIBLE = 5
 
 type Preview = { files: TurnFile[]; fileCount: number } | { message: string }
 
@@ -13,9 +14,14 @@ type Preview = { files: TurnFile[]; fileCount: number } | { message: string }
 export function turnStat(turn: TurnInfo): string {
   if (!turn.done) return 'running or interrupted'
   if (!turn.changed) return 'no file changes'
+  return `${turnTotals(turn)} · ${turn.fileCount} file${turn.fileCount === 1 ? '' : 's'}`
+}
+
+/** `+a −r` for a finished turn with changes; blank otherwise. */
+function turnTotals(turn: TurnInfo): string {
+  if (!turn.done || !turn.changed) return ''
   const sum = (key: 'added' | 'removed'): number => turn.files.reduce((total, file) => total + (file[key] ?? 0), 0)
-  const count = `${turn.fileCount} file${turn.fileCount === 1 ? '' : 's'}`
-  return `+${sum('added')} −${sum('removed')} · ${count}`
+  return `+${sum('added')} −${sum('removed')}`
 }
 
 function FileRow({ file }: { file: TurnFile }) {
@@ -73,6 +79,7 @@ function RevertConfirm({ turn, preview, busy, working, onCancel, onConfirm }: {
 export default function TurnPanel({ taskId, cwd, busy }: { taskId: string; cwd: string; busy: boolean }) {
   const [turns, setTurns] = useState<TurnInfo[]>([])
   const [open, setOpen] = useState<number | null>(null)
+  const [all, setAll] = useState(false)
   const [confirm, setConfirm] = useState<{ turn: number; preview: Preview } | null>(null)
   const [working, setWorking] = useState(false)
   const [result, setResult] = useState<RevertOutcome | null>(null)
@@ -105,11 +112,11 @@ export default function TurnPanel({ taskId, cwd, busy }: { taskId: string; cwd: 
   }
 
   if (!turns.length && !confirm && !result) return null
+  const shown = (all ? turns : turns.slice(-VISIBLE)).slice().reverse()
   return (
     <SideCard label="Turn checkpoints">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 12px 6px 16px' }}>
-        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.06em', color: C.faint }}>TURNS</span>
-        <span style={{ padding: '1px 7px', borderRadius: 20, background: 'oklch(1 0 0 / 0.08)', fontSize: 11, fontWeight: 500, color: C.textSoft }}>{turns.length}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px 4px 16px' }}>
+        <CardTitle title="TURNS" count={turns.length} />
       </div>
       {result && (
         <div role="status" style={{ margin: '0 12px 8px', fontSize: 12, color: result.ok ? C.green : C.red }}>
@@ -120,21 +127,20 @@ export default function TurnPanel({ taskId, cwd, busy }: { taskId: string; cwd: 
         <RevertConfirm turn={confirm.turn} preview={confirm.preview} busy={busy} working={working}
           onCancel={() => setConfirm(null)} onConfirm={() => revert(confirm.turn)} />
       )}
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {[...turns].reverse().map((turn) => (
-          <div key={turn.turn} style={{ padding: '8px 12px', borderTop: `1px solid ${C.hair}`, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <button type="button" className="bf-focus" aria-expanded={open === turn.turn}
+      <div style={{ display: 'flex', flexDirection: 'column', padding: '0 8px 12px 16px' }}>
+        {shown.map((turn) => (
+          <div key={turn.turn} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <button type="button" className="bf-focus bf-row" aria-expanded={open === turn.turn}
+              title={`${turn.prompt}\n${turnStat(turn)}`}
               onClick={() => setOpen(open === turn.turn ? null : turn.turn)}
-              style={{ all: 'unset', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <span style={{ ...ELLIPSIS, fontSize: 12, color: C.text }} title={turn.prompt}>
-                {turn.kind === 'revert' ? `Safety checkpoint · ${turn.prompt}` : `${turn.turn}. ${turn.prompt || 'Message'}`}
+              style={{ display: 'flex', alignItems: 'baseline', gap: 8, width: '100%', padding: '6px 0', border: 0, background: 'transparent', fontFamily: 'inherit', fontSize: 13, textAlign: 'left', cursor: 'pointer' }}>
+              <span style={{ flex: 1, minWidth: 0, color: C.textSoft, ...ELLIPSIS }}>
+                {turn.kind === 'revert' ? `Safety · ${turn.prompt}` : `${turn.turn}. ${turn.prompt || 'Message'}`}
               </span>
-              <span style={{ fontSize: 11, color: C.faint }}>
-                {new Date(turn.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {turnStat(turn)}
-              </span>
+              <span style={{ flex: 'none', fontSize: 11, fontFamily: MONO, color: C.faint }}>{turnTotals(turn)}</span>
             </button>
             {open === turn.turn && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingBottom: 6 }}>
                 {turn.files.slice(0, PREVIEW_FILES * 4).map((file) => <FileRow key={file.path} file={file} />)}
                 {turn.fileCount > PREVIEW_FILES * 4 && <div style={{ fontSize: 11, color: C.faint }}>and {turn.fileCount - PREVIEW_FILES * 4} more</div>}
                 {turn.skipped.length > 0 && (
@@ -151,6 +157,12 @@ export default function TurnPanel({ taskId, cwd, busy }: { taskId: string; cwd: 
             )}
           </div>
         ))}
+        {turns.length > VISIBLE && (
+          <button type="button" className="bf-focus bf-icon-btn" onClick={() => setAll((v) => !v)}
+            style={{ marginTop: 4, padding: '3px 0', border: 0, background: 'transparent', fontFamily: 'inherit', fontSize: 12.5, color: C.faint, cursor: 'pointer', textAlign: 'left' }}>
+            {all ? 'Show less' : `Show ${turns.length - VISIBLE} more`}
+          </button>
+        )}
       </div>
     </SideCard>
   )

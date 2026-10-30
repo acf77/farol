@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import type { GitStatus, Pipeline, PipelineNode, StepState } from '@shared/types'
 import { topoSort } from '@shared/graph'
 import { C, MONO, ELLIPSIS } from '../theme'
-import { SideCard, sidePanelShellStyle, useCollapseRail } from './side-panel'
+import { SIDE_RAIL_WIDTH, SideCard, sideCardStyle, sidePanelShellStyle, useCollapseRail } from './side-panel'
 import type { DetailLog, RunState } from '../types'
 import FilesChanged from './FilesChanged'
 import TurnPanel from './chat/TurnPanel'
@@ -132,7 +132,8 @@ function CollapsedRail({
   setExpanded: (id: string) => void
 }) {
   return (
-    <div className="bf-side-panel" style={{ ...shellStyle, alignItems: 'center', gap: 14, padding: '12px 0' }}>
+    <div className="bf-side-panel" style={{ ...shellStyle, background: C.app, borderLeft: 'none', padding: 8 }}>
+    <div style={{ ...sideCardStyle, flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: '12px 0' }}>
       <button
         type="button"
         className="bf-focus bf-icon-btn"
@@ -173,6 +174,7 @@ function CollapsedRail({
           </button>
         )
       })}
+    </div>
     </div>
   )
 }
@@ -320,7 +322,7 @@ function OutputPane({
   logs: DetailLog[]
   onOpenTerminal: () => void
 }) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   return (
     <SideCard label="Output">
       <div
@@ -452,7 +454,7 @@ export default function Sidebar({
   const [expanded, setExpanded] = useState<string | null>(selected?.id ?? null)
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const { showRail, onWidthTransitionEnd } = useCollapseRail(collapsed)
-  const shellStyle = sidePanelShellStyle(collapsed, { panelWidth: PIPELINE_PANEL_WIDTH, edge: 'left' })
+  const shellStyle = sidePanelShellStyle(collapsed, { panelWidth: PIPELINE_PANEL_WIDTH, railWidth: SIDE_RAIL_WIDTH + 16, edge: 'left' })
   const required = pipelines.filter((p) => p.mandatory && p.nodes.length)
   const canRunRequired = required.some((p) => runs[p.id]?.status !== 'running')
 

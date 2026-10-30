@@ -6,7 +6,7 @@
  */
 export function providerFailure(output: string): string | null {
   const match =
-    /(?:authentication failed|not authenticated|rate[ _-]limit(?:ed|[ _-]?error|\s+(?:exceeded|reached))?|429(?:\s|$)|(?:usage|session) limit|quota exceeded|insufficient (?:credits|quota)|maximum context length|context length exceeded)/i.exec(
+    /(?:authentication failed|not authenticated|rate[ _-]limit(?:ed|[ _-]?error|\s+(?:exceeded|reached))?|(?:status|http|error|code)[\s:=]*429\b|(?:usage|session) limit|quota exceeded|insufficient (?:credits|quota)|maximum context length|context length exceeded)/i.exec(
       output
     )
   return match ? match[0] : null

@@ -780,6 +780,25 @@ describe('AgentController', () => {
     await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2))
   })
 
+  it('does not stop a run whose own text quotes a provider banner', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn()
+    const execute = vi
+      .fn()
+      .mockImplementation(async (_req: AgentTaskRequest, _prompt: string, output: (chunk: string) => void) => {
+        output('Plan: back off on rate limit errors and 429 responses.\nFAROL_PIPELINES: []\n')
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute)
+
+    controller.start(request)
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
+    )
+
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
   it('switches provider when the same task continues after a usage limit', async () => {
     const events: AgentTaskEvent[] = []
     const run = vi.fn()
