@@ -64,7 +64,7 @@ Pipelines are saved in `.farol/pipelines.json`, so you can commit them and the w
 
 ## Quick start
 
-1. **Install Farol.** [Download the Mac build](https://github.com/acf77/farol/releases/latest/download/Farol-mac-arm64.dmg), open the `.dmg`, and drag Farol into Applications. The build isn&rsquo;t notarized, so the first time, right-click it and choose **Open** (or use **Open Anyway** in System Settings › Privacy & Security).
+1. **Install Farol.** [Download the Mac build](https://github.com/acf77/farol/releases/latest/download/Farol-mac-arm64.dmg), open the `.dmg`, and drag Farol into Applications. The build isn&rsquo;t notarized yet, so macOS blocks it the first time. Try to open it once, then go to System Settings › Privacy & Security and select **Open Anyway**. On macOS 14 and earlier, right-clicking the app and choosing **Open** also works.
 2. **Install an agent CLI** and sign in once:
 
    | Agent | Install |
@@ -106,7 +106,7 @@ See [`app/README.md`](app/README.md) for packaging, tests, and how the app is pu
 | [`CONTEXT.md`](CONTEXT.md) | The product&rsquo;s vocabulary |
 | [`DESIGN.md`](DESIGN.md) | How Farol should look, feel, and read |
 
-Questions, bugs, or ideas: [open an issue](https://github.com/acf77/farol/issues). Want to help? Read [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Questions, bugs, or ideas: use **Help › Send Feedback** in the app, or [open an issue](https://github.com/acf77/farol/issues/new/choose). Want to help? Read [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 

@@ -29,6 +29,7 @@ import {
 } from './openrouter'
 import { refreshAgentCatalogs } from './agent-models'
 import { errorMessage } from '../shared/jev'
+import { REPO_URL, feedbackIssueUrl, isFeedbackTemplate, type FeedbackTemplate } from '../shared/feedback'
 import { checkJev, clearJev, saveJevKey } from './jev'
 import { clearProviderKey, saveProviderKey } from './provider-keys'
 import { onPaymentRequired } from './billing-links'
@@ -262,9 +263,29 @@ function buildMenu(): void {
           { type: 'separator' },
           { role: 'togglefullscreen' }
         ]
+      },
+      {
+        role: 'help',
+        submenu: [
+          { label: 'Send Feedback…', click: () => openFeedback('feedback.yml') },
+          { label: 'Report a Bug…', click: () => openFeedback('bug.yml') },
+          { label: 'Suggest an Idea…', click: () => openFeedback('idea.yml') },
+          { type: 'separator' },
+          { label: 'Farol on GitHub', click: () => void electronShell.openExternal(REPO_URL) }
+        ]
       }
     ])
   )
+}
+
+/** Opens a GitHub issue form in the browser with this build's version and macOS version filled in. */
+function openFeedback(template: FeedbackTemplate): void {
+  const url = feedbackIssueUrl(template, {
+    appVersion: app.getVersion(),
+    osVersion: process.getSystemVersion(),
+    arch: process.arch
+  })
+  void electronShell.openExternal(url)
 }
 
 async function openProjectDialog() {
@@ -990,6 +1011,9 @@ function registerRemoteIpc(): void {
   ipcMain.handle('remote:signOut', () => signOutRemote())
   ipcMain.handle('remote:billing', () => remoteBilling())
   ipcMain.handle('remote:openBilling', (_e, kind: unknown) => openBilling(kind))
+  ipcMain.handle('feedback:open', (_e, template: unknown) => {
+    if (isFeedbackTemplate(template)) openFeedback(template)
+  })
   onPaymentRequired((e) => send('remote:paymentRequired', e))
 }
 
