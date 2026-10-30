@@ -261,7 +261,10 @@ export function attribute(procs: ProcInfo[], sessions: ProcSession[], uid: numbe
   )
 }
 
-const EVAL_FLAGS = new Set(['-e', '-p', '-c', '--eval', '--print'])
+/** Inline code flags, also joined forms like `--eval=…` and `-e'…'`. */
+const EVAL_FLAG = /^(--(eval|print)(=|$)|-[a-zA-Z]*[epc])/
+/** A script argument: a path or a source file. */
+const SCRIPT_ARG = /\/|\.(c|m)?[jt]sx?$/
 const RUNTIMES = new Set(['node', 'bun', 'deno', 'python', 'python3', 'ruby', 'npm', 'npx', 'pnpm', 'yarn', 'tsx'])
 
 /** What to call a process: `node …/.bin/vite` is `vite`. */
@@ -270,10 +273,11 @@ export function procLabel(p: Pick<ProcInfo, 'name' | 'args'>): string {
   if (!RUNTIMES.has(name) || !p.args) return name
   // `node -e <code>` has no script name to show.
   const tokens = p.args.split(/\s+/).slice(1)
-  const script = tokens.find((token) => token && !token.startsWith('-'))
-  if (tokens.some((token) => EVAL_FLAGS.has(token))) return name
-  const base = script?.split('/').pop()?.replace(/\.(c|m)?(js|ts)x?$/, '')
-  return base || name
+  if (tokens.some((token) => EVAL_FLAG.test(token))) return name
+  // Only the first argument is safely a script; after an option, a path may be that option's secret value.
+  const script = tokens[0]
+  if (!script || script.startsWith('-') || !SCRIPT_ARG.test(script)) return name
+  return script.split('/').pop()?.replace(/\.(c|m)?(js|ts)x?$/, '') || name
 }
 
 export function formatBytes(bytes: number): string {

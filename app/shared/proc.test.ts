@@ -194,6 +194,10 @@ describe('summaries', () => {
   it('labels a runtime by its script', () => {
     expect(procLabel({ name: 'node', args: '/usr/bin/node /app/node_modules/.bin/vite --port 5173' })).toBe('vite')
     expect(procLabel({ name: 'node', args: 'node -e //x' })).toBe('node')
+    expect(procLabel({ name: 'node', args: "node --eval=console.log( 'SECRET123' )" })).toBe('node')
+    expect(procLabel({ name: 'node', args: 'node --token SECRET123 server.js' })).toBe('node')
+    expect(procLabel({ name: 'node', args: 'node --token tenant/SECRET123 server.js' })).toBe('node')
+    expect(procLabel({ name: 'node', args: 'node --token=tenant/SECRET123 server.js' })).toBe('node')
     expect(procLabel({ name: 'Google Chrome Helper' })).toBe('Google Chrome Helper')
   })
 
