@@ -33,13 +33,17 @@ function machine(
 const without = (table: ProcInfo[], pid: number): ProcInfo[] => table.filter((p) => p.pid !== pid)
 const exitOnAnySignal = (pid: number, _signal: string, table: ProcInfo[]): ProcInfo[] => without(table, pid)
 
+/** The sampler saw these in the agent's group while it ran, so they are proven. */
+const seenPids = (...pids: number[]): Set<string> => new Set(pids.map((pid) => procKey(proc(pid, 1))))
+
 const doneSession: ProcSession = {
   id: 'a',
   worktree: '/w/a',
   cwdRoot: '/w/a',
   rootPid: 100,
   startedAt: T,
-  state: 'done'
+  state: 'done',
+  seen: seenPids(101, 102)
 }
 const workingSession: ProcSession = { ...doneSession, state: 'working' }
 
@@ -70,7 +74,7 @@ describe('killSessionProcs', () => {
     await killSessionProcs('a', 300, explicit.deps)
     expect(explicit.signals).toEqual([[300, 'SIGTERM']])
 
-    const seen = { ...doneSession, seen: new Set([procKey(proc(300, 1))]) }
+    const seen = { ...doneSession, seen: seenPids(101, 102, 300) }
     const proven = machine(leftovers(), [seen], exitOnAnySignal)
     await killSessionProcs('a', undefined, proven.deps)
     expect(proven.signals.map(([pid]) => pid).sort()).toEqual([101, 102, 300])

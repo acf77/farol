@@ -1145,7 +1145,7 @@ export default function SettingsPage({
                     </Setting>
                     <Setting
                       title="Agent memory colors"
-                      hint="A worktree's agent memory shows yellow from the first limit and red from the second (GB)."
+                      hint="The memory squares are all lit at the second limit (GB). In the details, the total turns yellow at the first limit and red at the second."
                     >
                       <span style={{ display: 'flex', gap: 8 }}>
                         {(['memoryWarnGb', 'memoryAlertGb'] as const).map((key) => (

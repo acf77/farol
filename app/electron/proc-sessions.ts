@@ -22,13 +22,13 @@ export class ProcRegistry {
     this.sessions.set(id, { id, worktree, cwdRoot, rootPid, startedAt: Date.now(), state: 'working' })
   }
 
-  /** Remember what was seen in each agent's tree or group, so a later orphan can be tied back to it. */
+  /** Remember what was proven in each agent's tree or group, so a later orphan can be tied back to it. */
   noteSeen(usages: SessionUsage[]): void {
     for (const usage of usages) {
       const session = this.sessions.get(usage.sessionId)
       if (!session) continue
       const seen = session.seen ?? (session.seen = new Set())
-      for (const p of usage.procs) if (p.via !== 'cwd') seen.add(procKey(p))
+      for (const p of usage.procs) if (p.via !== 'cwd' && p.owned) seen.add(procKey(p))
     }
   }
 

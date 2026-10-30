@@ -668,3 +668,99 @@ button:disabled {
   background: oklch(1 0 0 / 0.05) !important;
   color: oklch(0.94 0.006 95) !important;
 }
+
+/* Agent memory meter: a soft wave through the lit squares while the agent is busy. */
+@keyframes bfmem {
+  0%, 100% { opacity: 1; filter: brightness(1); }
+  50% { opacity: 0.3; filter: brightness(0.8); }
+}
+.bf-mem-seg {
+  transition: background 240ms ease;
+}
+.bf-mem-busy {
+  animation: bfmem 1.2s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 110ms);
+}
+
+/* Chip: the size shows quietly and brightens on hover. */
+.bf-mem-chip {
+  transition: background 120ms ease;
+}
+.bf-mem-chip:hover,
+.bf-mem-chip:focus-visible {
+  background: oklch(1 0 0 / 0.06) !important;
+}
+.bf-mem-size {
+  color: oklch(0.56 0.006 95);
+  transition: color 120ms ease;
+}
+.bf-mem-chip:hover .bf-mem-size,
+.bf-mem-chip:focus-visible .bf-mem-size {
+  color: oklch(0.8 0.006 95);
+}
+
+/* Usage bar: fill up to the alert level, tick at the warn level. */
+.bf-mem-bar {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: oklch(1 0 0 / 0.08);
+}
+.bf-mem-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+  transition: width 320ms ease, background 240ms ease;
+}
+.bf-mem-bar-tick {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: oklch(1 0 0 / 0.35);
+}
+
+/* Popover. */
+@keyframes bfpop {
+  from { opacity: 0; transform: translateY(3px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.bf-mem-pop {
+  animation: bfpop 120ms ease-out;
+}
+.bf-mem-row:hover {
+  background: oklch(1 0 0 / 0.04);
+}
+.bf-mem-share {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 5px;
+  background: oklch(1 0 0 / 0.05);
+  pointer-events: none;
+}
+.bf-mem-port {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: oklch(1 0 0 / 0.07);
+  color: oklch(0.7 0.006 95);
+  font-size: 10.5px;
+}
+.bf-mem-stop {
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.bf-mem-row:hover .bf-mem-stop,
+.bf-mem-stop:focus-visible {
+  opacity: 1;
+}
+.bf-mem-stop:hover:not(:disabled) {
+  color: oklch(0.69 0.2 25) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bf-mem-busy,
+  .bf-mem-pop { animation: none; }
+  .bf-mem-seg,
+  .bf-mem-bar-fill { transition: none; }
+}

@@ -5,6 +5,9 @@ import type { Sample } from './proc-sampler'
 /** After a session is done, how long its processes may keep running before auto clean-up looks at them. */
 export const AUTO_CLEAN_DELAY_MS = 10_000
 
+/** A failure whose message is safe to show the user. */
+class PublicError extends Error {}
+
 export interface CleanupOptions {
   sample: () => Promise<Sample>
   sessions: () => ProcSession[]
@@ -32,7 +35,7 @@ export class ProcCleanup {
         const { procs, failed } = await opts.sample()
         this.assertRunning()
         // An empty list from a failed read must not look like "everything exited".
-        if (failed) throw new Error('Could not read the process list.')
+        if (failed) throw new PublicError('Could not read the process list.')
         return procs
       },
       sessions: opts.sessions,
@@ -51,7 +54,7 @@ export class ProcCleanup {
   }
 
   private assertRunning(): void {
-    if (this.shutdown.signal.aborted) throw new Error('Farol is quitting.')
+    if (this.shutdown.signal.aborted) throw new PublicError('Farol is quitting.')
   }
 
   private sleep(ms: number): Promise<void> {
@@ -59,7 +62,7 @@ export class ProcCleanup {
     return new Promise((resolve, reject) => {
       const stop = (): void => {
         clearTimeout(timer)
-        reject(new Error('Farol is quitting.'))
+        reject(new PublicError('Farol is quitting.'))
       }
       const timer = setTimeout(() => {
         signal.removeEventListener('abort', stop)
@@ -96,7 +99,10 @@ export class ProcCleanup {
     try {
       return await killSessionProcs(sessionId, pid, this.deps)
     } catch (error) {
-      return { ok: false, message: error instanceof Error ? error.message : 'Could not stop it.', terminated: 0, killed: 0 }
+      // Only errors written for the user reach the renderer; anything else is logged here.
+      if (!(error instanceof PublicError)) console.error('farol: process clean-up failed', error)
+      const message = error instanceof PublicError ? error.message : 'Could not stop it.'
+      return { ok: false, message, terminated: 0, killed: 0 }
     }
   }
 

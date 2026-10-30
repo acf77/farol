@@ -119,5 +119,9 @@
     "vite": "^5.4.11",
     "vitest": "^4.1.10",
     "@types/bun": "latest"
-  }
+  },
+  "trustedDependencies": [
+    "electron",
+    "esbuild"
+  ]
 }

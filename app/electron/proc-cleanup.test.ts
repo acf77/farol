@@ -73,4 +73,20 @@ describe('ProcCleanup', () => {
     expect(kill).not.toHaveBeenCalled()
     kill.mockRestore()
   })
+
+  it('hides the text of an unexpected failure from the renderer', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const cleanup = new ProcCleanup({
+      sample: async () => {
+        throw new Error('EACCES: /Users/someone/private')
+      },
+      sessions: () => [session],
+      autoCleanEnabled: async () => true,
+      uid: 1
+    })
+    const result = await cleanup.kill('a')
+    expect(result).toMatchObject({ ok: false, message: 'Could not stop it.' })
+    expect(log).toHaveBeenCalled()
+    log.mockRestore()
+  })
 })

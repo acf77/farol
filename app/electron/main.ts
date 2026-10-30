@@ -71,7 +71,7 @@ import os from 'os'
 import { ProcRegistry } from './proc-sessions'
 import { listPorts, ProcSampler } from './proc-sampler'
 import { ProcCleanup } from './proc-cleanup'
-import type { ProcSnapshot } from '../shared/proc'
+import { redact, type ProcSnapshot } from '../shared/proc'
 import { sanitizeSettings } from '../shared/settings'
 
 let win: BrowserWindow | null = null
@@ -84,7 +84,7 @@ let memoryLimits = { warnGb: 2, alertGb: 4 }
 const rememberMemoryLimits = (s: AppSettings): void => {
   memoryLimits = { warnGb: s.memoryWarnGb, alertGb: s.memoryAlertGb }
 }
-const withLimits = (snapshot: ProcSnapshot): ProcSnapshot => ({ ...snapshot, ...memoryLimits })
+const withLimits = (snapshot: ProcSnapshot): ProcSnapshot => ({ ...redact(snapshot), ...memoryLimits })
 
 const procCleanup = new ProcCleanup({
   sample: () => procSampler.sample(),

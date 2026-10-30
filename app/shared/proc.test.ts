@@ -4,7 +4,9 @@ import {
   formatBytes,
   leftoverSummary,
   procKey,
+  redact,
   memoryLevel,
+  meterSegments,
   procLabel,
   snapshotOf,
   usageByRow,
@@ -88,6 +90,33 @@ describe('attribute', () => {
     expect(pids(usages.find((u) => u.sessionId === 's2')!.procs)).toEqual([300])
   })
 
+  it('follows the workers of an orphan, with the same proof as the orphan', () => {
+    const orphan = proc(300, 1, { cwd: '/w/a' })
+    const worker = proc(301, 300) // its own group, so neither the tree nor the group of the agent
+    const procs = [root(100), orphan, worker, proc(302, 301)]
+    const [folderOnly] = attribute(procs, [session('a', 100, '/w/a')], UID)
+    expect(pids(folderOnly.procs)).toEqual([100, 300, 301, 302])
+    expect(folderOnly.procs.filter((p) => p.via === 'cwd').every((p) => !p.owned)).toBe(true)
+
+    const seen = new Set([procKey(orphan)])
+    const [proven] = attribute(procs, [session('a', 100, '/w/a', { seen })], UID)
+    expect(proven.procs.filter((p) => p.via === 'cwd').every((p) => p.owned)).toBe(true)
+  })
+
+  it('keeps a process it saw before, even after it left the folder, and its workers', () => {
+    const wanderer = proc(300, 1, { cwd: '/somewhere/else' })
+    const seen = new Set([procKey(wanderer)])
+    const procs = [root(100), wanderer, proc(301, 300)]
+    const [usage] = attribute(procs, [session('a', 100, '/w/a', { seen })], UID)
+    expect(pids(usage.procs)).toEqual([100, 300, 301])
+    expect(usage.procs.filter((p) => p.pid !== 100).every((p) => p.via === 'seen' && p.owned)).toBe(true)
+
+    // The same pid with another start time is a different process.
+    const reused = proc(300, 1, { cwd: '/somewhere/else', startMs: T + 3_600_000 })
+    const [other] = attribute([root(100), reused], [session('a', 100, '/w/a', { seen })], UID)
+    expect(pids(other.procs)).toEqual([100])
+  })
+
   it('leaves alone an orphan that is older than the session', () => {
     const [usage] = attribute(
       [proc(300, 1, { cwd: '/w/a', startMs: T - 60_000 })],
@@ -132,6 +161,20 @@ describe('attribute', () => {
     expect(usage.procs.every((p) => p.via === 'group')).toBe(true)
   })
 
+  it('trusts a member of the root group only if it was seen there before', () => {
+    const procs = [proc(101, 1, { pgid: 100 })]
+    const [unseen] = attribute(procs, [session('a', 100, '/w/a', { state: 'done' })], UID)
+    expect(unseen.procs[0]).toMatchObject({ via: 'group', owned: false })
+    const seen = new Set([procKey(procs[0])])
+    const [proven] = attribute(procs, [session('a', 100, '/w/a', { state: 'done', seen })], UID)
+    expect(proven.procs[0]).toMatchObject({ owned: true })
+  })
+
+  it('trusts a member of the root group while the root is alive', () => {
+    const [usage] = attribute([root(100), proc(101, 1, { pgid: 100 })], [session('a', 100, '/w/a')], UID)
+    expect(usage.procs.find((p) => p.pid === 101)).toMatchObject({ via: 'group', owned: true })
+  })
+
   it('ignores processes of other users', () => {
     const [usage] = attribute([root(100), proc(101, 100, { uid: 0 })], [session('a', 100, '/w/a')], UID)
     expect(pids(usage.procs)).toEqual([100])
@@ -173,6 +216,30 @@ describe('summaries', () => {
     expect(memoryLevel(1 * 1024 ** 3, 2, 4)).toBe('ok')
     expect(memoryLevel(2 * 1024 ** 3, 2, 4)).toBe('warn')
     expect(memoryLevel(5 * 1024 ** 3, 2, 4)).toBe('alert')
+  })
+
+  it('keeps command lines and folders out of what the renderer gets', () => {
+    const secret = 'node /x/node_modules/.bin/vite --token SECRET123'
+    const usages = attribute(
+      [root(100, { args: 'agent --key SECRET456', cwd: '/w/a' }), proc(101, 100, { args: secret, cwd: '/w/a/web' })],
+      [session('a', 100, '/w/a', { state: 'done' })],
+      UID
+    )
+    const snapshot = snapshotOf(usages, T, false)
+    const sent = JSON.stringify(redact(snapshot))
+    expect(sent).not.toContain('SECRET')
+    expect(sent).not.toContain('"cwd"')
+    // The labels and the badge text survive, and the main process keeps what it needs.
+    const [row] = usageByRow(redact(snapshot), ['/w/a']).values()
+    expect(row.leftoverSummary).toContain('vite')
+    expect(JSON.stringify(snapshot)).toContain('SECRET123')
+  })
+
+  it('lights meter segments up to the red limit', () => {
+    expect(meterSegments(0, 4)).toBe(0)
+    expect(meterSegments(10 * MB, 4)).toBe(1)
+    expect(meterSegments(2 * 1024 ** 3, 4)).toBe(4)
+    expect(meterSegments(9 * 1024 ** 3, 4)).toBe(8)
   })
 
   it('folds sessions into the row that contains their worktree', () => {

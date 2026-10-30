@@ -45,7 +45,23 @@ beforeAll(() => {
   execFileSync('clang', ['-O2', path.join(__dirname, '../native/procsnap.c'), '-o', helper])
 })
 
+/** The test server leaves the agent's group on purpose, so find it by its marker and stop it. */
+function killMarked(): void {
+  if (!mac) return
+  for (const line of execFileSync('ps', ['-axo', 'pid=,command=']).toString().split('\n')) {
+    const pid = Number(line.trim().split(/\s+/)[0])
+    if (line.includes('FAROL_IT_') && pid !== process.pid) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+}
+
 afterAll(() => {
+  killMarked()
   for (const child of spawned) {
     try {
       if (child.pid) process.kill(-child.pid, 'SIGKILL')
@@ -80,6 +96,8 @@ describe.skipIf(!mac)('agent session processes on macOS', () => {
     const found = await until(async () => {
       const { procs } = await sampler.sample()
       const [usage] = attribute(procs, registry.list(), UID)
+      // What the sampler does on each tick: remember what the agent started.
+      registry.noteSeen([usage])
       const ids = ['FAROL_IT_CHILD', 'FAROL_IT_GRAND', 'FAROL_IT_SERVER'].map((m) => find(usage.procs, m))
       // The server counts once its spawner has exited and launchd has adopted it.
       const adopted = usage.procs.find((p) => p.pid === ids[2])?.via === 'cwd'

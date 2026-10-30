@@ -39,12 +39,14 @@ export interface ProcSession {
   seen?: Set<string>
 }
 
-export type ProcVia = 'tree' | 'group' | 'cwd'
+export type ProcVia = 'tree' | 'group' | 'seen' | 'cwd'
 
 export interface AttributedProc extends ProcInfo {
   sessionId: string
   via: ProcVia
   isRoot: boolean
+  /** A short name for the screen, e.g. `vite`. The command line itself never leaves the main process. */
+  label: string
   /**
    * Proven to be the agent's: in its tree or group, or seen there before.
    * A match by working directory alone is not proof, so bulk clean-up skips it.
@@ -133,18 +135,18 @@ function liveRoots(ordered: ProcSession[], byPid: Map<number, ProcInfo>): Map<st
 }
 
 /** The first claim wins, so the tree is settled before the weaker matches. */
-function claim(c: Claims, p: ProcInfo, session: ProcSession, via: ProcVia): void {
+function claim(c: Claims, p: ProcInfo, session: ProcSession, via: ProcVia, inherited?: boolean): void {
   if (c.owner.has(p.pid)) return
-  const owned = via !== 'cwd' || !!session.seen?.has(procKey(p))
-  c.owner.set(p.pid, { ...p, sessionId: session.id, via, isRoot: p.pid === session.rootPid, owned })
+  const owned = inherited ?? (via !== 'cwd' || !!session.seen?.has(procKey(p)))
+  c.owner.set(p.pid, { ...p, label: procLabel(p), sessionId: session.id, via, isRoot: p.pid === session.rootPid, owned })
 }
 
-function claimDescendants(c: Claims, root: ProcInfo, session: ProcSession): void {
+function claimDescendants(c: Claims, root: ProcInfo, session: ProcSession, via: ProcVia = 'tree', inherited?: boolean): void {
   const stack = [root.pid]
   for (let pid = stack.pop(); pid !== undefined; pid = stack.pop()) {
     for (const child of c.children.get(pid) ?? []) {
       if (c.owner.has(child.pid)) continue
-      claim(c, child, session, 'tree')
+      claim(c, child, session, via, inherited)
       stack.push(child.pid)
     }
   }
@@ -170,7 +172,26 @@ function claimGroups(c: Claims): void {
   for (const session of c.ordered) {
     if (c.byPid.has(session.rootPid) && !c.roots.has(session.id)) continue
     for (const p of c.mine) {
-      if (p.pgid === session.rootPid && p.startMs >= session.startedAt - ROOT_START_WINDOW_MS) claim(c, p, session, 'group')
+      if (p.pgid === session.rootPid && p.startMs >= session.startedAt - ROOT_START_WINDOW_MS) {
+        // While the agent is verified alive its group is ours. Once it is gone, only a process seen there before
+        // is proven: a group id can be reused.
+        claim(c, p, session, 'group', c.roots.has(session.id) || !!session.seen?.has(procKey(p)))
+      }
+    }
+  }
+}
+
+/**
+ * 3. Processes seen in the agent's tree or group before, wherever they went since
+ * (a new folder, adoption by launchd). The pid and the start time must both match.
+ */
+function claimSeen(c: Claims): void {
+  for (const session of c.ordered) {
+    if (!session.seen?.size) continue
+    for (const p of c.mine) {
+      if (!session.seen.has(procKey(p))) continue
+      claim(c, p, session, 'seen')
+      claimDescendants(c, p, session, 'seen', true)
     }
   }
 }
@@ -186,12 +207,20 @@ function orphanOwner(cwd: string, startMs: number, ordered: ProcSession[]): Proc
   return inside.find((s) => s.cwdRoot.length === depth)
 }
 
-/** 3. Orphans: reparented to launchd, working directory inside a worktree. */
+/** 4. Orphans: reparented to launchd, working directory inside a worktree. */
 function claimOrphans(c: Claims): void {
   for (const p of c.mine) {
     if (c.owner.has(p.pid) || p.ppid !== 1 || !p.cwd) continue
     const session = orphanOwner(p.cwd, p.startMs, c.ordered)
     if (session) claim(c, p, session, 'cwd')
+  }
+}
+
+/** Workers of an adopted orphan belong with it, and are as proven as it is. */
+function claimOrphanDescendants(c: Claims): void {
+  for (const orphan of [...c.owner.values()].filter((p) => p.via === 'cwd')) {
+    const session = c.ordered.find((s) => s.id === orphan.sessionId)
+    if (session) claimDescendants(c, orphan, session, 'cwd', orphan.owned)
   }
 }
 
@@ -221,7 +250,9 @@ export function attribute(procs: ProcInfo[], sessions: ProcSession[], uid: numbe
   const c: Claims = { mine, byPid, children: childIndex(mine), owner: new Map(), ordered, roots: liveRoots(ordered, byPid) }
   claimTrees(c)
   claimGroups(c)
+  claimSeen(c)
   claimOrphans(c)
+  claimOrphanDescendants(c)
   return sessions.map((session) =>
     usageOf(
       session,
@@ -254,7 +285,7 @@ export function formatBytes(bytes: number): string {
 export function leftoverSummary(leftovers: AttributedProc[]): string {
   if (!leftovers.length) return ''
   const counts = new Map<string, number>()
-  for (const p of leftovers) counts.set(procLabel(p), (counts.get(procLabel(p)) ?? 0) + 1)
+  for (const p of leftovers) counts.set(p.label, (counts.get(p.label) ?? 0) + 1)
   const parts = [...counts].sort((a, b) => b[1] - a[1]).map(([name, n]) => (n > 1 ? `${n} ${name}` : name))
   const shown = parts.length > 3 ? [...parts.slice(0, 3), `${parts.length - 3} more`] : parts
   const total = leftovers.reduce((sum, p) => sum + p.footprint, 0)
@@ -278,6 +309,26 @@ export function snapshotOf(usages: SessionUsage[], at: number, approximate: bool
     }
   })
   return { at, approximate, totalFootprint: worktrees.reduce((sum, w) => sum + w.footprint, 0), worktrees }
+}
+
+/** Lit segments of a small meter: full at the red limit, at least one for any use. */
+export function meterSegments(bytes: number, alertGb: number, count = 8): number {
+  if (bytes <= 0) return 0
+  return Math.max(1, Math.min(count, Math.ceil((bytes / (alertGb * 1024 ** 3)) * count)))
+}
+
+function redactProc(p: AttributedProc): AttributedProc {
+  const safe = { ...p }
+  delete safe.args
+  delete safe.cwd
+  return safe
+}
+
+/** What the renderer may see: labels and numbers, but no command lines (they can hold secrets) and no folders. */
+export function redact(snapshot: ProcSnapshot): ProcSnapshot {
+  const sessions = (list: SessionUsage[]): SessionUsage[] =>
+    list.map((s) => ({ ...s, procs: s.procs.map(redactProc), leftovers: s.leftovers.map(redactProc) }))
+  return { ...snapshot, worktrees: snapshot.worktrees.map((w) => ({ ...w, sessions: sessions(w.sessions) })) }
 }
 
 export type MemoryLevel = 'ok' | 'warn' | 'alert'
