@@ -13,6 +13,8 @@
 <p align="center">
   <a href="https://github.com/acf77/farol/releases/latest/download/Farol-mac-arm64.dmg"><strong>Download for Mac</strong></a>
   &nbsp;·&nbsp;
+  <a href="https://farol.build">Website</a>
+  &nbsp;·&nbsp;
   <a href="https://github.com/acf77/farol/releases">Releases</a>
   &nbsp;·&nbsp;
   <a href="#quick-start">Quick start</a>
