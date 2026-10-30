@@ -29,7 +29,7 @@ import {
 } from './openrouter'
 import { refreshAgentCatalogs } from './agent-models'
 import { errorMessage } from '../shared/jev'
-import { REPO_URL, feedbackIssueUrl, type FeedbackTemplate } from '../shared/feedback'
+import { REPO_URL, feedbackIssueUrl, isFeedbackTemplate, type FeedbackTemplate } from '../shared/feedback'
 import { checkJev, clearJev, saveJevKey } from './jev'
 import { clearProviderKey, saveProviderKey } from './provider-keys'
 import { onPaymentRequired } from './billing-links'
@@ -1011,6 +1011,9 @@ function registerRemoteIpc(): void {
   ipcMain.handle('remote:signOut', () => signOutRemote())
   ipcMain.handle('remote:billing', () => remoteBilling())
   ipcMain.handle('remote:openBilling', (_e, kind: unknown) => openBilling(kind))
+  ipcMain.handle('feedback:open', (_e, template: unknown) => {
+    if (isFeedbackTemplate(template)) openFeedback(template)
+  })
   onPaymentRequired((e) => send('remote:paymentRequired', e))
 }
 

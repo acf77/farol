@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { environmentLine, feedbackIssueUrl } from './feedback'
+import { environmentLine, feedbackIssueUrl, isFeedbackTemplate } from './feedback'
 
 const env = { appVersion: '0.5.3', osVersion: '15.1.0', arch: 'arm64' }
 
@@ -13,6 +13,13 @@ describe('feedback links', () => {
     expect(url.origin + url.pathname).toBe('https://github.com/acf77/farol/issues/new')
     expect(url.searchParams.get('template')).toBe('bug.yml')
     expect(url.searchParams.get('environment')).toBe('Farol 0.5.3 · macOS 15.1.0 · arm64')
+  })
+
+  it('only accepts the known issue forms from the renderer', () => {
+    expect(isFeedbackTemplate('feedback.yml')).toBe(true)
+    expect(isFeedbackTemplate('bug.yml')).toBe(true)
+    expect(isFeedbackTemplate('../../settings')).toBe(false)
+    expect(isFeedbackTemplate(undefined)).toBe(false)
   })
 
   it('encodes characters that would otherwise break the query', () => {

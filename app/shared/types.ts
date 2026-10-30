@@ -3,6 +3,7 @@
 import type { AgentMode, AiProvider, ProviderKey } from './ai'
 import type { AgentContext, ContextUsage, SavedAgentContext } from './agent-context'
 import type { AgentQuestion } from './questions'
+import type { FeedbackTemplate } from './feedback'
 import type { ProjectSession } from './session'
 import type { AgentSkill } from './skills'
 import type { WorktreeRequest } from './worktree'
@@ -848,6 +849,10 @@ export interface FarolApi {
   }
   ui: {
     onSettings(cb: () => void): () => void
+  }
+  feedback: {
+    /** Opens a GitHub issue form in the browser with this build's version filled in. */
+    open(template: FeedbackTemplate): Promise<void>
   }
 }
 

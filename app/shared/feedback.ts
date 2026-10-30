@@ -3,6 +3,13 @@ export const REPO_URL = 'https://github.com/acf77/farol'
 /** Issue form templates in `.github/ISSUE_TEMPLATE/`. */
 export type FeedbackTemplate = 'feedback.yml' | 'bug.yml' | 'idea.yml'
 
+const TEMPLATES: readonly string[] = ['feedback.yml', 'bug.yml', 'idea.yml'] satisfies FeedbackTemplate[]
+
+/** Guards the IPC boundary: the renderer can only open one of the known forms. */
+export function isFeedbackTemplate(value: unknown): value is FeedbackTemplate {
+  return typeof value === 'string' && TEMPLATES.includes(value)
+}
+
 export interface FeedbackEnv {
   appVersion: string
   osVersion: string
