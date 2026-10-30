@@ -23,6 +23,9 @@ concurrency:
 jobs:
   mac:
     runs-on: macos-latest
+    env:
+      # Secrets can't be read in `if:`; this tells later steps whether the build is signed.
+      SIGNED: ${{ secrets.MAC_CERT_P12_BASE64 != '' }}
     defaults:
       run:
         working-directory: app
@@ -61,9 +64,28 @@ jobs:
           git tag "${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
+      # Signs with the Developer ID certificate and notarizes when these secrets
+      # exist; without them the build is ad-hoc signed as before.
+      #   MAC_CERT_P12_BASE64  base64 of the "Developer ID Application" .p12
+      #   MAC_CERT_PASSWORD    the password set when exporting that .p12
+      #   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID  for notarytool
       - name: Build
         if: steps.version.outputs.release == 'true'
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run release
+
+      - name: Check the signature
+        if: steps.version.outputs.release == 'true' && env.SIGNED == 'true'
+        run: |
+          app="$(find dist -maxdepth 2 -name 'Farol.app' -print -quit)"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$app"
 
       # electron-builder uploads in parallel and can split the files over several
       # draft releases, so it only builds; gh publishes one release with every file.
