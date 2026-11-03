@@ -278,6 +278,9 @@ export class ProcSampler {
     try {
       this.latest = await this.measure()
       this.opts.onSnapshot(this.latest)
+    } catch (err) {
+      // Keep the last snapshot; a bad sample must not become an unhandled rejection.
+      console.warn('[proc-sampler] sample failed:', err instanceof Error ? err.name : 'unknown')
     } finally {
       if (!this.stopped) {
         this.timer = setTimeout(() => void this.tick(), this.opts.isVisible() ? VISIBLE_MS : HIDDEN_MS)
