@@ -13,6 +13,7 @@ import type {
   ShellExit,
   UpdateStatus
 } from '../shared/types'
+import type { ProcSnapshot } from '../shared/proc'
 
 /** Subscribe to a main-process channel; returns an unsubscribe function. */
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -174,6 +175,12 @@ const api: FarolApi = {
     check: () => ipcRenderer.invoke('update:check'),
     install: () => ipcRenderer.send('update:install'),
     onStatus: (cb) => on<UpdateStatus>('update:status', cb)
+  },
+  proc: {
+    snapshot: () => ipcRenderer.invoke('proc:snapshot'),
+    ports: (sessionId) => ipcRenderer.invoke('proc:ports', sessionId),
+    kill: (sessionId, pid) => ipcRenderer.invoke('proc:kill', sessionId, pid),
+    onSnapshot: (cb) => on<ProcSnapshot>('proc:snapshot', cb)
   },
   ui: {
     onSettings: (cb) => on('ui:settings', () => cb())

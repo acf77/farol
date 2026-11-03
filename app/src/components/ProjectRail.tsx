@@ -7,6 +7,8 @@ import {
   SIDE_RAIL_WIDTH,
   sidePanelShellStyle
 } from './side-panel'
+import { usageByRow, type WorktreeUsage } from '@shared/proc'
+import { AgentsFooter, MemoryChip, MemoryPopover, useMemoryHover, useProcSnapshot } from './AgentMemory'
 import {
   BranchIcon,
   ChevronLeft,
@@ -29,6 +31,16 @@ const FADE_IN_DELAY_MS = 90
 function inertWhen(on: boolean): Record<string, string> {
   return on ? { inert: '' } : {}
 }
+/** A row with no agent sessions still shows its (empty) meter. */
+const idleUsage = (worktree: string): WorktreeUsage => ({
+  worktree,
+  footprint: 0,
+  cpu: 0,
+  leftoverCount: 0,
+  leftoverFootprint: 0,
+  leftoverSummary: '',
+  sessions: []
+})
 const SOFT = 'oklch(1 0 0 / 0.06)'
 const noDrag = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
 
@@ -163,6 +175,15 @@ export default function ProjectRail({
   const [groupCollapsed, setGroupCollapsed] = useState<Record<string, boolean>>({})
   const [pinned, setPinned] = useState(false)
   const [hover, setHover] = useState(false)
+  const memory = useProcSnapshot()
+  const memoryHover = useMemoryHover()
+  const memoryByPath = useMemo(
+    () => (memory ? usageByRow(memory, projects.map((p) => p.path)) : null),
+    [memory, projects]
+  )
+  const memoryOpen = memoryHover.view
+    ? (memoryByPath?.get(memoryHover.view.path) ?? memory?.worktrees.find((w) => w.worktree === memoryHover.view?.path))
+    : undefined
   const peek = pinned && (hover || !!gitOpen)
   const slim = (collapsed || pinned) && !peek
   const shellStyle = {
@@ -463,6 +484,7 @@ export default function ProjectRail({
                     const active = project.path === activePath
                     const busy = agentBusy(project.path)
                     const unread = agentUnread(project.path)
+                    const rowMemory = memoryByPath?.get(project.path)
                     return (
                       <div
                         key={project.path}
@@ -493,39 +515,51 @@ export default function ProjectRail({
                       >
                         <ActivityMark activity={activityOf(busy, unread)} size={7} />
                         <span style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ display: 'block', fontFamily: MONO, fontSize: 12, fontWeight: active ? 600 : 400, color: active ? C.text : C.textRow, ...ELLIPSIS }}>
-                            {branch}
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span style={{ flex: 1, minWidth: 0, fontFamily: MONO, fontSize: 12, fontWeight: active ? 600 : 400, color: active ? C.text : C.textRow, ...ELLIPSIS }}>
+                              {branch}
+                            </span>
+                            <button
+                              type="button"
+                              className="bf-focus bf-icon-btn bf-reveal"
+                              title="Clear this branch's chat (does not create a second chat)"
+                              aria-label="Clear this branch's chat"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                onNewChat(project.path)
+                              }}
+                              style={iconButton(18)}
+                            >
+                              <ClearChatIcon size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              className="bf-focus bf-icon-btn bf-reveal"
+                              title="Close project"
+                              aria-label="Close project"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                onClose(project.path)
+                              }}
+                              style={{ ...iconButton(18), fontSize: 13, lineHeight: 1 }}
+                            >
+                              ×
+                            </button>
                           </span>
-                          <span style={{ display: 'block', marginTop: 1, fontSize: 11, color: 'oklch(0.5 0.006 95)', ...ELLIPSIS }}>
-                            {activityMeta(project.path, busy, unread)}
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 1 }}>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: 'oklch(0.5 0.006 95)', ...ELLIPSIS }}>
+                              {activityMeta(project.path, busy, unread)}
+                            </span>
+                            {memory && (
+                              <MemoryChip
+                                usage={rowMemory ?? idleUsage(project.path)}
+                                snapshot={memory}
+                                onOpen={(anchor) => memoryHover.open(project.path, anchor)}
+                                onLeave={memoryHover.leave}
+                              />
+                            )}
                           </span>
                         </span>
-                        <button
-                          type="button"
-                          className="bf-focus bf-icon-btn bf-reveal"
-                          title="Clear this branch's chat (does not create a second chat)"
-                          aria-label="Clear this branch's chat"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onNewChat(project.path)
-                          }}
-                          style={iconButton(18)}
-                        >
-                          <ClearChatIcon size={12} />
-                        </button>
-                        <button
-                          type="button"
-                          className="bf-focus bf-icon-btn bf-reveal"
-                          title="Close project"
-                          aria-label="Close project"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onClose(project.path)
-                          }}
-                          style={{ ...iconButton(18), fontSize: 13, lineHeight: 1 }}
-                        >
-                          ×
-                        </button>
                       </div>
                     )
                   })}
@@ -534,6 +568,10 @@ export default function ProjectRail({
           })}
         </div>
 
+        {memory && memory.totalFootprint > 0 && (
+          <AgentsFooter snapshot={memory} onOpen={memoryHover.open} onLeave={memoryHover.leave} />
+        )}
+
         {showGit && onGitToggle && (
           <div style={{ flex: 'none', display: 'flex', gap: 6, padding: 10, borderTop: `1px solid ${SOFT}`, ...noDrag }}>
             {gitButton('row')}
@@ -541,6 +579,16 @@ export default function ProjectRail({
           </div>
         )}
       </div>
+      {memory && memoryHover.view && memoryOpen && (
+        <MemoryPopover
+          usage={memoryOpen}
+          snapshot={memory}
+          anchor={memoryHover.view.anchor}
+          onClose={memoryHover.close}
+          onEnter={memoryHover.cancel}
+          onLeave={memoryHover.leave}
+        />
+      )}
     </aside>
   )
 }
