@@ -7,12 +7,13 @@ import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import type { ReadableStream } from 'stream/web'
 import { app, dialog } from 'electron'
+import { REPO_URL } from '../shared/feedback'
 import { errorMessage } from '../shared/jev'
 import type { UpdateStatus } from '../shared/types'
 import { parseUpdateFeed, versionAhead } from '../shared/update-feed'
 
 /** The Release workflow publishes here; `latest-mac.yml` names the zip and its SHA-512. */
-const RELEASES_URL = 'https://github.com/acf77/farol/releases'
+const RELEASES_URL = `${REPO_URL}/releases`
 const FEED_TIMEOUT_MS = 15_000
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000
 

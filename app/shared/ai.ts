@@ -239,6 +239,46 @@ export function providerModels(
     : modelsFor(provider, current, settings?.catalogs?.[provider])
 }
 
+/** How hard the agent thinks. Omitted means the CLI's own default. */
+export const AGENT_EFFORTS = ['low', 'medium', 'high', 'max'] as const
+export type AgentEffort = (typeof AGENT_EFFORTS)[number]
+
+export const AGENT_EFFORT_LABELS: Record<AgentEffort, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  max: 'Max'
+}
+
+export function normalizeEffort(value: unknown): AgentEffort | undefined {
+  return (AGENT_EFFORTS as readonly unknown[]).includes(value) ? (value as AgentEffort) : undefined
+}
+
+/**
+ * Flags checked with `claude --help` (`--effort`), `codex exec -c` (`model_reasoning_effort`)
+ * and `omp --help` (`--thinking`). The other CLIs have no flag Farol can rely on.
+ */
+export function effortSupported(provider: AiProvider, via?: OpenRouterAgent): boolean {
+  const cli = cliFor(provider, via)
+  return cli === 'claude' || cli === 'codex' || cli === 'omp'
+}
+
+/** argv fragment that sets the effort, or empty when there is none or the CLI has no such flag. */
+export function effortArgv(cli: AiCli, effort: AgentEffort | undefined): string[] {
+  if (!effort) return []
+  switch (cli) {
+    case 'claude':
+      return ['--effort', effort]
+    case 'codex':
+      // Codex's top level is `xhigh`.
+      return ['-c', `model_reasoning_effort="${effort === 'max' ? 'xhigh' : effort}"`]
+    case 'omp':
+      return ['--thinking', effort]
+    default:
+      return []
+  }
+}
+
 /** Insert `--model <id>` before the trailing prompt. */
 export function withModel(args: string[], model?: string): string[] {
   const id = normalizeModel(model)
@@ -355,9 +395,11 @@ function managedCodexCommand(
   webSearch?: boolean,
   resume?: string,
   mcp?: McpServerEntry,
-  hook?: string
+  hook?: string,
+  effort?: AgentEffort
 ): AiCommand {
   const sandbox = plan ? 'read-only' : 'workspace-write'
+  const effortFlags = effortArgv('codex', effort)
   // Ask first: a PreToolUse hook gates every call; Plan's read-only sandbox needs none.
   const gate = hook && !plan ? codexHookArgs(hook) : []
   if (resume) {
@@ -374,6 +416,7 @@ function managedCodexCommand(
           '-c',
           `sandbox_mode="${sandbox}"`,
           ...(webSearch ? ['-c', 'web_search=live'] : []),
+          ...effortFlags,
           ...(mcp ? codexMcpOverrides(mcp) : []),
           ...gate,
           resume,
@@ -402,6 +445,7 @@ function managedCodexCommand(
         '--sandbox',
         sandbox,
         ...(webSearch ? ['-c', 'web_search=live'] : []),
+        ...effortFlags,
         ...(mcp ? codexMcpOverrides(mcp) : []),
         ...gate,
         prompt
@@ -460,7 +504,13 @@ function managedOpencodeCommand(
   }
 }
 
-function managedOmpCommand(prompt: string, passed: string | undefined, plan: boolean, tools: string | undefined): AiCommand {
+function managedOmpCommand(
+  prompt: string,
+  passed: string | undefined,
+  plan: boolean,
+  tools: string | undefined,
+  effort?: AgentEffort
+): AiCommand {
   return {
     bins: ['omp'],
     // `--mode json` is already non-interactive, so `-p` is redundant; it also
@@ -468,7 +518,14 @@ function managedOmpCommand(prompt: string, passed: string | undefined, plan: boo
     // Plan mode defaults to inspection-only when Jev did not supply a list;
     // Build with an explicit allowlist uses that; otherwise omp keeps all tools.
     args: withModel(
-      ['--mode', 'json', '--auto-approve', ...toolsArgv(tools ?? (plan ? OMP_READONLY_TOOLS : undefined)), prompt],
+      [
+        '--mode',
+        'json',
+        '--auto-approve',
+        ...effortArgv('omp', effort),
+        ...toolsArgv(tools ?? (plan ? OMP_READONLY_TOOLS : undefined)),
+        prompt
+      ],
       passed
     ),
     hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to use managed Chat.',
@@ -497,7 +554,8 @@ function managedClaudeCommand(
   tools: string | undefined,
   resume?: string,
   mcp?: McpServerEntry,
-  askApproval?: boolean
+  askApproval?: boolean,
+  effort?: AgentEffort
 ): AiCommand {
   // Asking goes through the managed server, so it needs one; Plan keeps its own read-only mode.
   const ask = !!(askApproval && mcp && !plan)
@@ -517,6 +575,7 @@ function managedClaudeCommand(
         '--output-format',
         'stream-json',
         '--verbose',
+        ...effortArgv('claude', effort),
         ...(mcp ? ['--mcp-config', claudeMcpConfig(mcp)] : []),
         '--disallowedTools',
         PIPELINE_MCP_TOOLS.join(','),
@@ -571,9 +630,11 @@ export function managedAiCommand(
     askApproval?: boolean
     /** Codex's Ask-first hook command (see `shared/codex-hook.ts`); Build only. */
     codexHook?: string
+    /** Thinking level for Claude, Codex and OMP; other CLIs ignore it. */
+    effort?: AgentEffort
   }
 ): AiCommand {
-  const { via, resume: resumeId, mode, tools: toolList, webSearch, mcp, askApproval, codexHook } = opts ?? {}
+  const { via, resume: resumeId, mode, tools: toolList, webSearch, mcp, askApproval, codexHook, effort } = opts ?? {}
   const cli = cliFor(provider, via)
   const resume = resumeId?.trim() || undefined
   const passed = provider === 'openrouter' ? openCodeModel(model) : model
@@ -582,17 +643,17 @@ export function managedAiCommand(
   const tools = toolList?.length ? toolList.join(',') : undefined
   switch (cli) {
     case 'codex':
-      return managedCodexCommand(prompt, passed, plan, webSearch, resume, mcp, codexHook)
+      return managedCodexCommand(prompt, passed, plan, webSearch, resume, mcp, codexHook, effort)
     case 'cursor':
       return managedCursorCommand(prompt, passed, plan, resume)
     case 'opencode':
       return managedOpencodeCommand(prompt, passed, plan, jsonFormat, resume)
     case 'omp':
-      return managedOmpCommand(prompt, passed, plan, tools)
+      return managedOmpCommand(prompt, passed, plan, tools, effort)
     case 'pi':
       return managedPiCommand(prompt, passed, plan, tools)
     case 'claude':
-      return managedClaudeCommand(prompt, passed, plan, tools, resume, mcp, askApproval)
+      return managedClaudeCommand(prompt, passed, plan, tools, resume, mcp, askApproval, effort)
   }
 }
 

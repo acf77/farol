@@ -6,12 +6,14 @@ import {
   aiSelectionLabel,
   canAskApproval,
   cliFor,
+  effortSupported,
   interactiveAiCommand,
   isAiProvider,
   isUnknownJsonFormatError,
   managedAiCommand,
   modelsFor,
   normalizeAi,
+  normalizeEffort,
   normalizeModel,
   normalizeOpenRouterAgent,
   pickerProviders,
@@ -329,6 +331,29 @@ describe('managedAiCommand', () => {
     expect(canAskApproval('openrouter', 'opencode')).toBe(true)
     expect(canAskApproval('openrouter', 'pi')).toBe(false)
     expect(canAskApproval('omp')).toBe(false)
+  })
+
+  it('passes the thinking effort to the CLIs that have a flag for it', () => {
+    const claude = managedAiCommand('claude', 'x', undefined, { effort: 'high' }).args
+    expect(claude.slice(claude.indexOf('--effort'), claude.indexOf('--effort') + 2)).toEqual(['--effort', 'high'])
+    expect(managedAiCommand('claude', 'x').args).not.toContain('--effort')
+
+    const codex = managedAiCommand('codex', 'x', undefined, { effort: 'max' }).args
+    expect(codex).toContain('model_reasoning_effort="xhigh"')
+    const resumed = managedAiCommand('codex', 'x', undefined, { effort: 'low', resume: 't9' }).args
+    expect(resumed).toContain('model_reasoning_effort="low"')
+    expect(resumed.slice(-2)).toEqual(['t9', 'x'])
+
+    const omp = managedAiCommand('omp', 'x', undefined, { effort: 'medium' }).args
+    expect(omp.slice(omp.indexOf('--thinking'), omp.indexOf('--thinking') + 2)).toEqual(['--thinking', 'medium'])
+
+    expect(managedAiCommand('cursor', 'x', undefined, { effort: 'high' }).args).toEqual(
+      managedAiCommand('cursor', 'x').args
+    )
+    expect(effortSupported('claude')).toBe(true)
+    expect(effortSupported('openrouter', 'opencode')).toBe(false)
+    expect(normalizeEffort('ultra')).toBeUndefined()
+    expect(normalizeEffort('max')).toBe('max')
   })
 
   it('keeps OpenCode Plan read-only by denying shell for the run', () => {

@@ -1,9 +1,10 @@
 {
   "name": "farol",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "private": true,
   "author": "Farol",
   "description": "A terminal workspace with runnable shell + AI pipelines.",
+  "repository": { "type": "git", "url": "https://github.com/acf77/farol" },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "(npm run build:procsnap || true) && electron-vite dev",

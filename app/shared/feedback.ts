@@ -1,4 +1,7 @@
-export const REPO_URL = 'https://github.com/acf77/farol'
+import pkg from '../package.json'
+
+/** The project's home, read from `repository` in package.json rather than written again here. */
+export const REPO_URL: string = pkg.repository.url
 
 /** Issue form templates in `.github/ISSUE_TEMPLATE/`. */
 export type FeedbackTemplate = 'feedback.yml' | 'bug.yml' | 'idea.yml'

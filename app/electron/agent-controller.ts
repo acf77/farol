@@ -22,7 +22,9 @@ import {
   managedAiCommand,
   normalizeAi,
   normalizeMode,
-  normalizeModel
+  normalizeEffort,
+  normalizeModel,
+  type AgentEffort
 } from '../shared/ai'
 import {
   isDelegateToolName,
@@ -698,7 +700,8 @@ export class AgentController {
     mode?: AgentTaskRequest['mode'],
     fallbacks?: ModelChoice[],
     cwd?: string,
-    checkout?: string
+    checkout?: string,
+    effort?: AgentEffort
   ): { ok: boolean; message?: string } {
     const task = this.tasks.get(taskId)
     const clean = text.trim()
@@ -706,6 +709,7 @@ export class AgentController {
     if (!clean) return { ok: false, message: 'Enter a message.' }
     if (this.reverting.has(taskId)) return { ok: false, message: 'Wait for the revert to finish.' }
     this.applyMessageOverrides(task, provider, model, mode, pipelines, fallbacks)
+    task.request.effort = effort
     if (cwd) task.request.cwd = cwd
     if (checkout) task.request.checkout = checkout
     this.emit({ kind: 'user', taskId, text: clean })
@@ -2318,6 +2322,7 @@ export class AgentController {
       jsonFormat: !plain,
       via,
       mode: task.request.mode,
+      ...(child ? {} : { effort: normalizeEffort(task.request.effort) }),
       ...commandExtras(opts, { mcp, askApproval, codexHook })
     })
     const env = aiEnv(provider, via)

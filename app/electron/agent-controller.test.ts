@@ -2057,3 +2057,29 @@ describe('AgentController context usage and fresh start', () => {
     await expect(controller.freshStart('gone')).resolves.toMatchObject({ ok: false, missing: true })
   })
 })
+
+describe('AgentController effort', () => {
+  async function completed(controller: AgentController, events: AgentTaskEvent[], count: number) {
+    await vi.waitFor(() =>
+      expect(events.filter((e) => e.kind === 'status' && e.status === 'completed')).toHaveLength(count)
+    )
+  }
+
+  it('takes the effort of each message, and drops it when a message sends none', async () => {
+    const events: AgentTaskEvent[] = []
+    const execute = selecting()
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute)
+
+    controller.start({ ...request, effort: 'high' })
+    await completed(controller, events, 1)
+    expect(execute.mock.calls[0][0].effort).toBe('high')
+
+    expect(controller.message(request.id, 'again', undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'low')).toEqual({ ok: true })
+    await completed(controller, events, 2)
+    expect(execute.mock.calls[1][0].effort).toBe('low')
+
+    expect(controller.message(request.id, 'once more')).toEqual({ ok: true })
+    await completed(controller, events, 3)
+    expect(execute.mock.calls[2][0].effort).toBeUndefined()
+  })
+})

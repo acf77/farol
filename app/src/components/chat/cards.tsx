@@ -379,8 +379,9 @@ export function PipelineMsgCard({
         <Button
           variant="secondary"
           onClick={() => {
-            void window.farol.feedback.open('feedback.yml')
-            nudge.finish()
+            void window.farol.feedback.open('feedback.yml').then((opened) => {
+              if (opened) nudge.finish()
+            })
           }}
         >
           Tell us how it went

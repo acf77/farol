@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AGENT_LIVE, type AgentMode, type AiProvider, type AppSettings, type Pipeline, type ProviderUsage } from '@shared/types'
+import { AGENT_LIVE, type AgentEffort, type AgentMode, type AiProvider, type AppSettings, type Pipeline, type ProviderUsage } from '@shared/types'
 import { normalizeAi, normalizeModel } from '@shared/ai'
 import { contextIsHigh, contextLongLabel, isContextOverflow, type ContextUsage } from '@shared/agent-context'
 import type { AgentMessage, AgentPane } from '../types'
@@ -27,10 +27,16 @@ interface Props {
   /** `answers: null` dismisses the chooser. */
   onAnswer: (requestId: string, answers: string[][] | null) => void
   onCancel: () => void
+  /** Stop the running turn and send this queued message instead. */
+  onSendPendingNow?: (id: string) => void
+  onRemovePending?: (id: string) => void
   /** Continue in a new CLI session seeded with the agent's handoff note. */
   onFreshStart?: () => void
   onProviderChange: (provider: AiProvider, model?: string) => void
   onModeChange: (mode: AgentMode) => void
+  /** Thinking level of this chat; undefined is the CLI default. */
+  effort?: AgentEffort
+  onEffortChange?: (effort: AgentEffort | undefined) => void
   onExecutePlan: (index: number) => void
   /** Whether this chat runs tools without asking. */
   autoApprove: boolean
@@ -371,9 +377,13 @@ export default function ChatPane({
   onMessage,
   onAnswer,
   onCancel,
+  onSendPendingNow,
+  onRemovePending,
   onFreshStart,
   onProviderChange,
   onModeChange,
+  effort,
+  onEffortChange,
   onExecutePlan,
   autoApprove,
   onAutoApproveChange,
@@ -503,8 +513,13 @@ export default function ChatPane({
         textareaRef={textareaRef}
         onMessage={onMessage}
         onCancel={onCancel}
+        pending={pane?.pending}
+        onSendPendingNow={onSendPendingNow}
+        onRemovePending={onRemovePending}
         onProviderChange={onProviderChange}
         onModeChange={onModeChange}
+        effort={effort}
+        onEffortChange={onEffortChange}
         autoApprove={autoApprove}
         onAutoApproveChange={onAutoApproveChange}
         sendTextRef={sendTextRef}

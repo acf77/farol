@@ -56,7 +56,7 @@ import type { ProjectSession } from '../shared/session'
 import { pruneTrees } from './delegate-snapshot'
 import { pruneCheckpoints } from './checkpoints'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
-import { isAiProvider } from '../shared/ai'
+import { isAiProvider, normalizeEffort } from '../shared/ai'
 import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
 import { appendTail, plainText } from '../shared/terminal'
 import { AgentController } from './agent-controller'
@@ -200,7 +200,7 @@ function createWindow(): void {
 
   // Keep navigation inside the app; send real http(s) links to the system browser.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void electronShell.openExternal(url)
+    if (/^https?:\/\//i.test(url)) void openInBrowser(url)
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (event) => {
@@ -301,7 +301,7 @@ function buildMenu(): void {
           { label: 'Report a Bug…', click: () => openFeedback('bug.yml') },
           { label: 'Suggest an Idea…', click: () => openFeedback('idea.yml') },
           { type: 'separator' },
-          { label: 'Farol on GitHub', click: () => void electronShell.openExternal(REPO_URL) }
+          { label: 'Farol on GitHub', click: () => void openInBrowser(REPO_URL) }
         ]
       }
     ])
@@ -309,13 +309,24 @@ function buildMenu(): void {
 }
 
 /** Opens a GitHub issue form in the browser with this build's version and macOS version filled in. */
-function openFeedback(template: FeedbackTemplate): void {
-  const url = feedbackIssueUrl(template, {
-    appVersion: app.getVersion(),
-    osVersion: process.getSystemVersion(),
-    arch: process.arch
-  })
-  void electronShell.openExternal(url)
+async function openFeedback(template: FeedbackTemplate): Promise<boolean> {
+  return openInBrowser(
+    feedbackIssueUrl(template, {
+      appVersion: app.getVersion(),
+      osVersion: process.getSystemVersion(),
+      arch: process.arch
+    })
+  )
+}
+
+/** Opens `url` in the system browser; false when the system could not, so callers do not act as if it opened. */
+async function openInBrowser(url: string): Promise<boolean> {
+  try {
+    await electronShell.openExternal(url)
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function openProjectDialog() {
@@ -989,8 +1000,9 @@ function registerTaskIpc(): void {
       mode?: AgentTaskRequest['mode'],
       fallbacks?: AgentTaskRequest['fallbacks'],
       cwd?: string,
-      checkout?: string
-    ) => agents.message(taskId, text, provider, pipelines, model, mode, fallbacks, cwd, checkout)
+      checkout?: string,
+      effort?: unknown
+    ) => agents.message(taskId, text, provider, pipelines, model, mode, fallbacks, cwd, checkout, normalizeEffort(effort))
   )
   ipcMain.handle(
     'agent:setProvider',
@@ -1041,9 +1053,9 @@ function registerRemoteIpc(): void {
   ipcMain.handle('remote:signOut', () => signOutRemote())
   ipcMain.handle('remote:billing', () => remoteBilling())
   ipcMain.handle('remote:openBilling', (_e, kind: unknown) => openBilling(kind))
-  ipcMain.handle('feedback:open', (_e, template: unknown) => {
-    if (isFeedbackTemplate(template)) openFeedback(template)
-  })
+  ipcMain.handle('feedback:open', (_e, template: unknown) =>
+    isFeedbackTemplate(template) ? openFeedback(template) : false
+  )
   onPaymentRequired((e) => send('remote:paymentRequired', e))
 }
 

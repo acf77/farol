@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentMode, AgentSkill, AiProvider, AppSettings, ProviderUsage } from '@shared/types'
-import { AI_LABELS, aiModelLabel, aiSelectionLabel, canAskApproval, normalizeOpenRouterAgent, type OpenRouterAgent } from '@shared/ai'
+import type { AgentEffort, AgentMode, AgentSkill, AiProvider, AppSettings, ProviderUsage } from '@shared/types'
+import { AGENT_EFFORTS, AGENT_EFFORT_LABELS, AI_LABELS, aiModelLabel, aiSelectionLabel, canAskApproval, effortSupported, normalizeOpenRouterAgent, type OpenRouterAgent } from '@shared/ai'
 import {
   convertSkillDraft,
   filterSkills,
@@ -21,6 +21,8 @@ import { CLI_MODEL_MENU_WIDTH, CliModelMenu } from '../controls'
 import UsageBar from '../UsageBar'
 import { ProviderMark } from './ProviderMark'
 import TodoList from '../TodoList'
+import { PendingMessages } from './PendingMessages'
+import type { PendingMessage } from '../../types'
 import {
   AttachmentIcon,
   ChevronsUpDown,
@@ -575,6 +577,50 @@ export function AutoApproveChip({
   )
 }
 
+/**
+ * Thinking level for the next message: a click moves Default → Low → Medium → High → Max → Default.
+ * Hidden for CLIs with no effort flag.
+ */
+export function EffortChip({
+  effort,
+  provider,
+  via,
+  onChange
+}: {
+  effort?: AgentEffort
+  provider: AiProvider
+  via?: OpenRouterAgent
+  onChange?: (effort: AgentEffort | undefined) => void
+}) {
+  if (!onChange || !effortSupported(provider, via)) return null
+  const order: (AgentEffort | undefined)[] = [undefined, ...AGENT_EFFORTS]
+  const next = order[(order.indexOf(effort) + 1) % order.length]
+  const label = effort ? AGENT_EFFORT_LABELS[effort] : 'Effort'
+  return (
+    <button
+      type="button"
+      className="bf-focus bf-composer-btn"
+      onClick={() => onChange(next)}
+      title={`Thinking effort: ${effort ? AGENT_EFFORT_LABELS[effort] : 'CLI default'}. Click for ${next ? AGENT_EFFORT_LABELS[next] : 'the CLI default'} (from the next message).`}
+      aria-label={`Effort: ${effort ? AGENT_EFFORT_LABELS[effort] : 'default'}`}
+      style={{
+        flex: 'none',
+        height: 28,
+        padding: '0 8px',
+        border: 'none',
+        borderRadius: 7,
+        background: effort ? C.panel : 'transparent',
+        color: effort ? C.textRow : C.faint,
+        fontFamily: 'inherit',
+        fontSize: 12,
+        cursor: 'pointer'
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
 function ComposerToolbar({
   agentBtnRef,
   provider,
@@ -587,6 +633,8 @@ function ComposerToolbar({
   autoApprove,
   onAutoApproveChange,
   openRouterVia,
+  effort,
+  onEffortChange,
   onOpenAgentMenu,
   onModeChange,
   onAttach,
@@ -604,6 +652,8 @@ function ComposerToolbar({
   autoApprove: boolean
   onAutoApproveChange: (on: boolean) => void
   openRouterVia: OpenRouterAgent
+  effort?: AgentEffort
+  onEffortChange?: (effort: AgentEffort | undefined) => void
   onOpenAgentMenu: () => void
   onModeChange: (mode: AgentMode) => void
   onAttach: () => void
@@ -638,6 +688,7 @@ function ComposerToolbar({
       </button>
       <span style={{ flex: '1 1 0', minWidth: 0 }} />
       <ContextRing usage={contextUsage} />
+      <EffortChip effort={effort} provider={provider} via={openRouterVia} onChange={onEffortChange} />
       <button
         ref={agentBtnRef}
         type="button"
@@ -681,34 +732,51 @@ function SendButton({
   onCancel: () => void
   onSend: () => void
 }) {
+  const round: React.CSSProperties = {
+    width: 30,
+    height: 30,
+    flex: 'none',
+    marginLeft: 2,
+    borderRadius: '50%',
+    border: 'none',
+    display: 'grid',
+    placeItems: 'center'
+  }
   return (
-    <button
-      type="button"
-      className="bf-focus"
-      onClick={() => (isBusy ? onCancel() : onSend())}
-      disabled={!isBusy && !canSend}
-      title={isBusy ? 'Stop' : 'Send'}
-      aria-label={isBusy ? 'Stop the agent' : 'Send message'}
-      style={{
-        width: 30,
-        height: 30,
-        flex: 'none',
-        marginLeft: 2,
-        borderRadius: '50%',
-        border: 'none',
-        background: isBusy ? 'oklch(0.31 0.006 95)' : canSend ? C.accent : C.panel,
-        color: !isBusy && canSend ? C.accentInk : C.textMuted,
-        display: 'grid',
-        placeItems: 'center',
-        cursor: isBusy || canSend ? 'pointer' : 'default'
-      }}
-    >
-      {isBusy ? (
-        <span style={{ width: 9, height: 9, borderRadius: 2, background: C.text }} />
-      ) : (
-        <SendIcon size={13} />
+    <>
+      {isBusy && canSend && (
+        <button
+          type="button"
+          className="bf-focus"
+          onClick={onSend}
+          title="Queue — sent when the agent finishes"
+          aria-label="Queue message"
+          style={{ ...round, background: C.accent, color: C.accentInk, cursor: 'pointer' }}
+        >
+          <SendIcon size={13} />
+        </button>
       )}
-    </button>
+      <button
+        type="button"
+        className="bf-focus"
+        onClick={() => (isBusy ? onCancel() : onSend())}
+        disabled={!isBusy && !canSend}
+        title={isBusy ? 'Stop' : 'Send'}
+        aria-label={isBusy ? 'Stop the agent' : 'Send message'}
+        style={{
+          ...round,
+          background: isBusy ? 'oklch(0.31 0.006 95)' : canSend ? C.accent : C.panel,
+          color: !isBusy && canSend ? C.accentInk : C.textMuted,
+          cursor: isBusy || canSend ? 'pointer' : 'default'
+        }}
+      >
+        {isBusy ? (
+          <span style={{ width: 9, height: 9, borderRadius: 2, background: C.text }} />
+        ) : (
+          <SendIcon size={13} />
+        )}
+      </button>
+    </>
   )
 }
 
@@ -727,8 +795,13 @@ export function ComposerBox({
   textareaRef,
   onMessage,
   onCancel,
+  pending,
+  onSendPendingNow,
+  onRemovePending,
   onProviderChange,
   onModeChange,
+  effort,
+  onEffortChange,
   autoApprove,
   onAutoApproveChange,
   sendTextRef,
@@ -751,8 +824,13 @@ export function ComposerBox({
   textareaRef: React.RefObject<HTMLTextAreaElement>
   onMessage: (text: string, provider: AiProvider, model: string | undefined, mode: AgentMode) => void
   onCancel: () => void
+  pending?: PendingMessage[]
+  onSendPendingNow?: (id: string) => void
+  onRemovePending?: (id: string) => void
   onProviderChange: (provider: AiProvider, model?: string) => void
   onModeChange: (mode: AgentMode) => void
+  effort?: AgentEffort
+  onEffortChange?: (effort: AgentEffort | undefined) => void
   autoApprove: boolean
   onAutoApproveChange: (on: boolean) => void
   /** Lets the parent fire the same send path suggestions used before (incl. history). */
@@ -1005,6 +1083,9 @@ export function ComposerBox({
           onRun={sendText}
           canRun={!isBusy && (availableCount > 0 || mode === 'plan')}
         />
+        {pending && (
+          <PendingMessages pending={pending} onSendNow={onSendPendingNow} onRemove={onRemovePending} />
+        )}
         <div style={{ padding: attachments.length || attachmentError || skillWarnText || savingAttachments > 0 ? '12px 16px 0' : 0 }}>
         {attachments.length > 0 && (
           <AttachmentStrip attachments={attachments} onRemove={removeAttachment} />
@@ -1072,6 +1153,8 @@ export function ComposerBox({
           autoApprove={autoApprove}
           onAutoApproveChange={onAutoApproveChange}
           openRouterVia={normalizeOpenRouterAgent(settings?.openrouter?.agent)}
+          effort={effort}
+          onEffortChange={onEffortChange}
           onModeChange={onModeChange}
           onOpenAgentMenu={openAgentMenu}
           onAttach={() => fileInputRef.current?.click()}

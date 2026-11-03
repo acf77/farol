@@ -1,6 +1,6 @@
 /** Types shared between the main process, the preload bridge, and the renderer. */
 
-import type { AgentMode, AiProvider, ProviderKey } from './ai'
+import type { AgentEffort, AgentMode, AiProvider, ProviderKey } from './ai'
 import type { AgentContext, ContextUsage, SavedAgentContext } from './agent-context'
 import type { AgentQuestion } from './questions'
 import type { FeedbackTemplate } from './feedback'
@@ -28,6 +28,7 @@ export type { AgentQuestion, AgentSkill, ProviderUsage }
 
 export type { AiModel } from './ai'
 export type {
+  AgentEffort,
   AgentMode,
   AiProvider,
   AppSettings,
@@ -354,6 +355,8 @@ export interface AgentTaskRequest {
   autoApprove?: boolean
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
+  /** Thinking level; omitted uses the CLI's own default. Claude, Codex and OMP only. */
+  effort?: AgentEffort
   /** Rungs to try, in order, if `provider`/`model` fails for provider-side reasons. */
   fallbacks?: ModelChoice[]
   /** Snapshot of every pipeline the agent may select for validation. */
@@ -733,7 +736,8 @@ export interface FarolApi {
       mode?: AgentMode,
       fallbacks?: ModelChoice[],
       cwd?: string,
-      checkout?: string
+      checkout?: string,
+      effort?: AgentEffort
     ): Promise<{ ok: boolean; message?: string }>
     setProvider(
       taskId: string,
@@ -861,8 +865,8 @@ export interface FarolApi {
     onSettings(cb: () => void): () => void
   }
   feedback: {
-    /** Opens a GitHub issue form in the browser with this build's version filled in. */
-    open(template: FeedbackTemplate): Promise<void>
+    /** Opens a GitHub issue form in the browser with this build's version filled in; false if the browser did not open. */
+    open(template: FeedbackTemplate): Promise<boolean>
   }
 }
 
