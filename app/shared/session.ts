@@ -2,8 +2,8 @@
 
 import { trimSlashes } from './project-groups'
 import type { AppSettings } from './settings'
-import type { AgentMode, AiProvider } from './ai'
-import { normalizeAi, normalizeModel } from './ai'
+import type { AgentEffort, AgentMode, AiProvider } from './ai'
+import { normalizeAi, normalizeEffort, normalizeModel } from './ai'
 import { sanitizePlan } from './questions'
 import { sanitizeSavedAgentContext, type SavedAgentContext } from './agent-context'
 
@@ -30,6 +30,8 @@ export interface SavedAgentPane {
   mode?: AgentMode
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
+  /** Thinking level. Omitted uses the CLI's own default. */
+  effort?: AgentEffort
   /** Saved only when the chat turned auto-approve off. */
   autoApprove?: false
   messages: {
@@ -134,6 +136,18 @@ function sanitizeAgentMessages(raw: unknown): SavedAgentPane['messages'] {
   })
 }
 
+/** The optional fields of a saved agent pane: only what differs from the defaults. */
+function agentOptions(pane: Record<string, unknown>) {
+  const model = normalizeModel(pane.model)
+  const effort = normalizeEffort(pane.effort)
+  return {
+    ...(pane.mode === 'plan' ? { mode: 'plan' as const } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+    ...(pane.autoApprove === false ? { autoApprove: false as const } : {})
+  }
+}
+
 function sanitizePane(raw: unknown): SavedPane | null {
   if (!raw || typeof raw !== 'object') return null
   const pane = raw as Record<string, unknown>
@@ -145,7 +159,6 @@ function sanitizePane(raw: unknown): SavedPane | null {
   }
   if (pane.kind !== 'agent' || typeof pane.taskId !== 'string') return base
   const messages = Array.isArray(pane.messages) ? sanitizeAgentMessages(pane.messages) : []
-  const model = normalizeModel(pane.model)
   const context = sanitizeSavedAgentContext(pane.context)
   return {
     ...base,
@@ -154,9 +167,7 @@ function sanitizePane(raw: unknown): SavedPane | null {
     status: typeof pane.status === 'string' ? pane.status : 'needs-attention',
     attempt: typeof pane.attempt === 'number' && Number.isFinite(pane.attempt) ? pane.attempt : 0,
     provider: normalizeAi(pane.provider),
-    ...(pane.mode === 'plan' ? { mode: 'plan' as const } : {}),
-    ...(model ? { model } : {}),
-    ...(pane.autoApprove === false ? { autoApprove: false as const } : {}),
+    ...agentOptions(pane),
     messages,
     ...(context ? { context } : {})
   }

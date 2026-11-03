@@ -104,8 +104,8 @@ const api: FarolApi = {
   },
   agent: {
     start: (request) => ipcRenderer.invoke('agent:start', request),
-    message: (taskId, text, provider, pipelines, model, mode, fallbacks, cwd, checkout) =>
-      ipcRenderer.invoke('agent:message', taskId, text, provider, pipelines, model, mode, fallbacks, cwd, checkout),
+    message: (taskId, text, provider, pipelines, model, mode, fallbacks, cwd, checkout, effort) =>
+      ipcRenderer.invoke('agent:message', taskId, text, provider, pipelines, model, mode, fallbacks, cwd, checkout, effort),
     setProvider: (taskId, provider, model, mode) =>
       ipcRenderer.invoke('agent:setProvider', taskId, provider, model, mode),
     cancel: (taskId) => ipcRenderer.invoke('agent:cancel', taskId),

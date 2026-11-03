@@ -55,7 +55,7 @@ import type { ProjectSession } from '../shared/session'
 import { pruneTrees } from './delegate-snapshot'
 import { pruneCheckpoints } from './checkpoints'
 import { BRIDGE_ENV, socketPathFor, takeLines, type BridgeReply, type BridgeRequest } from '../shared/bridge'
-import { isAiProvider } from '../shared/ai'
+import { isAiProvider, normalizeEffort } from '../shared/ai'
 import { resolvePipeline, topoSort, validateRunnable } from '../shared/graph'
 import { appendTail, plainText } from '../shared/terminal'
 import { AgentController } from './agent-controller'
@@ -938,8 +938,9 @@ function registerTaskIpc(): void {
       mode?: AgentTaskRequest['mode'],
       fallbacks?: AgentTaskRequest['fallbacks'],
       cwd?: string,
-      checkout?: string
-    ) => agents.message(taskId, text, provider, pipelines, model, mode, fallbacks, cwd, checkout)
+      checkout?: string,
+      effort?: unknown
+    ) => agents.message(taskId, text, provider, pipelines, model, mode, fallbacks, cwd, checkout, normalizeEffort(effort))
   )
   ipcMain.handle(
     'agent:setProvider',

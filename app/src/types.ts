@@ -1,4 +1,5 @@
 import type {
+  AgentEffort,
   AgentMode,
   AgentQuestion,
   AgentTaskStatus,
@@ -110,6 +111,14 @@ export interface AgentMessage {
   plan?: { finished: true; consumed?: true }
 }
 
+export interface PendingMessage {
+  id: string
+  text: string
+  provider: AiProvider
+  model?: string
+  mode: AgentMode
+}
+
 export interface AgentPane extends BasePane {
   kind: 'agent'
   taskId: string
@@ -119,9 +128,13 @@ export interface AgentPane extends BasePane {
   mode: AgentMode
   /** Model id for `provider`. Omitted uses the CLI's own default. */
   model?: string
+  /** Thinking level. Omitted uses the CLI's own default. */
+  effort?: AgentEffort
   /** Run tools without asking. Absent follows the Settings default. */
   autoApprove?: boolean
   messages: AgentMessage[]
+  /** Messages typed while the agent worked; sent when it finishes or on "Send now". Not saved. */
+  pending?: PendingMessage[]
   /** The agent's handoff note and CLI session, so the chat continues after a restart. */
   context?: SavedAgentContext
   /** How full the agent's context was at its latest model call. Not saved. */

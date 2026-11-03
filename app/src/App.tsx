@@ -11,6 +11,7 @@ import {
 import { createPortal } from 'react-dom'
 import {
   AGENT_LIVE,
+  type AgentEffort,
   type AgentMode,
   type AgentTaskEvent,
   type AiProvider,
@@ -45,6 +46,7 @@ import { scopedRuntimeId, unscopedRuntimeId } from '@shared/runtime'
 import { parallelAsClashIds, remoteFields, sanitizeAs, topoSort } from '@shared/graph'
 import { clearIndent, emptyTerm, ensureNewline, setIndent, trimTo, write, writeLine } from './ansi'
 import { agentPaneFor, chatOwnerFor, chatTabFor, trimAgentMessages } from './chat-context'
+import { pendingDispatches } from './pending-chat'
 import { fmtDuration, pipelineActivityText, projectRunChat, upsertMessage } from './pipeline-chat'
 import { applyDelegateActivity, applyDelegateEvent, isDelegateActivity } from './delegate-chat'
 import { applyApprovalEvent, autoApproveNotice } from './approval-chat'
@@ -59,6 +61,7 @@ import type {
   DetailLog,
   EditorState,
   Pane,
+  PendingMessage,
   RunPane,
   RunState,
   RunsByBranch,
@@ -308,6 +311,7 @@ function tabsFromSession(sess: ProjectSession): Tab[] {
               provider: p.provider,
               mode: normalizeMode(p.mode),
               ...(p.model ? { model: p.model } : {}),
+              ...(p.effort ? { effort: p.effort } : {}),
               ...(p.autoApprove === false ? { autoApprove: false } : {}),
               ...(p.context ? { context: p.context } : {}),
               messages: trimAgentMessages(
@@ -394,6 +398,7 @@ function toSession(tabs: Tab[], activeTab: string, selId: string | null): Projec
                 provider: p.provider,
                 mode: p.mode,
                 ...(p.model ? { model: p.model } : {}),
+                ...(p.effort ? { effort: p.effort } : {}),
                 ...(p.context ? { context: p.context } : {}),
                 // A restored transcript is for reading, not for replaying a
                 // whole run's output — the workspace file is rewritten often.
@@ -1679,7 +1684,8 @@ export function ProjectWorkspace({
       ownerOverride?: Tab,
       cwdOverride?: string,
       modelOverride?: string | null,
-      modeOverride?: AgentMode
+      modeOverride?: AgentMode,
+      immediate = false
     ) => {
       setChatClearedNotice(false)
       const context = ensureChat(ownerOverride)
@@ -1691,6 +1697,14 @@ export function ProjectWorkspace({
       const model = modelOverride === null ? undefined : (modelOverride ?? pane.model)
       const requestedMode = modeOverride ?? pane.mode
       const mode = normalizeMode(requestedMode)
+      if (!immediate && AGENT_LIVE.has(pane.status)) {
+        // The agent is working: hold the message until it finishes or "Send now".
+        const queued: PendingMessage = { id: crypto.randomUUID(), text: clean, provider, ...(model ? { model } : {}), mode }
+        patchPane(pane.id, (current) =>
+          current.kind === 'agent' ? { ...current, pending: [...(current.pending ?? []), queued] } : current
+        )
+        return
+      }
       const fallbacks = modeFallbacks(settingsRef.current, mode, provider, model)
 
       const failStart = (message?: string): void => {
@@ -1732,6 +1746,7 @@ export function ProjectWorkspace({
         prompt: clean,
         provider,
         ...(model ? { model } : {}),
+        ...(pane.effort ? { effort: pane.effort } : {}),
         mode,
         autoApprove: pane.autoApprove ?? settingsRef.current.autoApprove,
         ...(fallbacks.length ? { fallbacks } : {}),
@@ -1746,7 +1761,7 @@ export function ProjectWorkspace({
           // Prefer start when the task is gone (e.g. after a restart).
           // Pass current pipelines so mid-chat edits (AI provider, steps) stick.
           void api.agent
-            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks, cwd, checkout)
+            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks, cwd, checkout, pane.effort)
             .then((result) => {
               if (result.ok) return
               runAgent('start')
@@ -1757,7 +1772,7 @@ export function ProjectWorkspace({
           if (result.ok) return
           // Still winding down after Stop — queue with the selected provider.
           void api.agent
-            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks, cwd, checkout)
+            .message(pane.taskId, clean, provider, availablePipelines, model, mode, fallbacks, cwd, checkout, pane.effort)
             .then((queued) => {
               if (queued.ok) return
               failStart(result.message || queued.message)
@@ -1871,6 +1886,15 @@ export function ProjectWorkspace({
     [chatPane, ensureChat, patchPane]
   )
 
+  const setAgentEffort = useCallback(
+    (effort: AgentEffort | undefined) => {
+      const pane = chatPane ?? ensureChat()?.pane
+      if (!pane) return
+      patchPane(pane.id, (current) => (current.kind === 'agent' ? { ...current, effort } : current))
+    },
+    [chatPane, ensureChat, patchPane]
+  )
+
   const setAgentAutoApprove = useCallback(
     (on: boolean) => {
       const pane = chatPane ?? ensureChat()?.pane
@@ -1919,6 +1943,47 @@ export function ProjectWorkspace({
   const cancelAgent = useCallback(() => {
     if (chatPane) void api.agent.cancel(chatPane.taskId)
   }, [chatPane])
+
+  const removePending = useCallback(
+    (id: string) => {
+      if (!chatPane) return
+      patchPane(chatPane.id, (current) =>
+        current.kind === 'agent' ? { ...current, pending: current.pending?.filter((p) => p.id !== id) } : current
+      )
+    },
+    [chatPane, patchPane]
+  )
+
+  /** Stop the running turn and send this queued message in its place. */
+  const sendPendingNow = useCallback(
+    (id: string) => {
+      const item = chatPane?.pending?.find((p) => p.id === id)
+      if (!item) return
+      removePending(id)
+      sendAgentMessage(item.text, item.provider, undefined, undefined, item.model ?? null, item.mode, true)
+      cancelAgent()
+    },
+    [chatPane, removePending, sendAgentMessage, cancelAgent]
+  )
+
+  // A finished run sends the first queued message, in every chat, shown or not.
+  const prevStatuses = useRef(new Map<string, string>())
+  useEffect(() => {
+    const panes = tabs.flatMap((tab) => {
+      const pane = agentPaneFor(tab)
+      return pane ? [{ tab, pane }] : []
+    })
+    const due = pendingDispatches(prevStatuses.current, panes.map((p) => p.pane), AGENT_LIVE)
+    prevStatuses.current = new Map(panes.map(({ pane }) => [pane.id, pane.status]))
+    for (const { paneId, message } of due) {
+      const owner = termTabs.find((t) => t.id === panes.find((p) => p.pane.id === paneId)?.tab.ownerTabId)
+      if (!owner) continue
+      patchPane(paneId, (current) =>
+        current.kind === 'agent' ? { ...current, pending: current.pending?.filter((p) => p.id !== message.id) } : current
+      )
+      sendAgentMessage(message.text, message.provider, owner, undefined, message.model ?? null, message.mode)
+    }
+  }, [tabs, termTabs, patchPane, sendAgentMessage])
 
   /** Continue this chat in a new CLI session, seeded with the agent's handoff note. */
   const freshStartChat = useCallback(() => {
@@ -2450,9 +2515,13 @@ export function ProjectWorkspace({
                       if (chatPane) void api.agent.answer(chatPane.taskId, requestId, answers)
                     }}
                     onCancel={cancelAgent}
+                    onSendPendingNow={sendPendingNow}
+                    onRemovePending={removePending}
                     onFreshStart={freshStartChat}
                     onProviderChange={setAgentProvider}
                     onModeChange={setAgentMode}
+                    effort={chatPane?.effort}
+                    onEffortChange={setAgentEffort}
                     onExecutePlan={executePlan}
                     autoApprove={chatPane?.autoApprove ?? settings.autoApprove}
                     onAutoApproveChange={setAgentAutoApprove}
