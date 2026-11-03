@@ -1,0 +1,51 @@
+name: Share feedback
+description: Tell us how your first runs went, what worked, and where you got stuck.
+title: "Feedback: "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying Farol. Short answers are fine; anything helps.
+  - type: dropdown
+    id: furthest
+    attributes:
+      label: How far did you get?
+      options:
+        - Couldn't open the app
+        - Opened it, but couldn't set up an agent
+        - Gave the agent a task, but no pipeline ran
+        - A pipeline ran, but never went green
+        - Got a green pipeline
+        - I use it for real work now
+    validations:
+      required: true
+  - type: textarea
+    id: stuck
+    attributes:
+      label: Where did you get stuck, or what surprised you?
+      placeholder: The step, what you expected, and what happened instead.
+  - type: textarea
+    id: missing
+    attributes:
+      label: What would make you use Farol every day?
+      placeholder: A check you'd add, an agent you'd want, something that felt slow…
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent do you mostly use?
+      multiple: true
+      options:
+        - Claude Code
+        - Codex
+        - Cursor
+        - OpenCode
+        - OMP
+        - OpenRouter models
+        - Other
+  - type: input
+    id: environment
+    attributes:
+      label: Farol and macOS version
+      description: Filled in when you use Help › Send Feedback in the app. Otherwise see Farol › About Farol.
+      placeholder: Farol 0.5.3 · macOS 15.1.0 · arm64

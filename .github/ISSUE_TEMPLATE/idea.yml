@@ -1,0 +1,22 @@
+name: Suggest an idea
+description: A feature, a check, an agent, or a change you'd like to see.
+title: "Idea: "
+labels: ["idea"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The problem matters more than the solution. What gets in your way today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+  - type: input
+    id: environment
+    attributes:
+      label: Farol and macOS version
+      description: Filled in when you use Help › Suggest an Idea in the app.
+      placeholder: Farol 0.5.3 · macOS 15.1.0 · arm64

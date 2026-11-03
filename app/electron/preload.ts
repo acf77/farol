@@ -177,6 +177,9 @@ const api: FarolApi = {
   },
   ui: {
     onSettings: (cb) => on('ui:settings', () => cb())
+  },
+  feedback: {
+    open: (template) => ipcRenderer.invoke('feedback:open', template)
   }
 }
 

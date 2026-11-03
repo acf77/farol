@@ -4,6 +4,7 @@ import { AI_LABELS, aiModelLabel, aiSelectionLabel } from '@shared/ai'
 import type { AgentMessage } from '../../types'
 import { C, MONO, ELLIPSIS } from '../../theme'
 import { stripControlMarkers } from '../../markdown'
+import { FEEDBACK_NUDGE_KEY, createNudgeSlot, nudgeDone } from '../../feedback-nudge'
 import { Button } from '../controls'
 import { ProviderMark } from './ProviderMark'
 import { TraceCollapsible, TraceLine } from './trace'
@@ -324,7 +325,8 @@ export function PipelineMsgCard({
   text: string
   onOpenPipeline: (tabId: string) => void
 }) {
-  return (
+  const nudge = useFeedbackNudge(pc.runId ?? pc.tabId, pc.status === 'passed')
+  const row = (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, padding: '6px 0', fontSize: 13 }}>
       <span aria-hidden style={{ width: 16, flex: 'none', alignSelf: 'center', display: 'grid', placeItems: 'center' }}>
         {pc.status === 'running' ? (
@@ -365,6 +367,46 @@ export function PipelineMsgCard({
       </button>
     </div>
   )
+  if (!nudge.show) return row
+  return (
+    <div>
+      {row}
+      <div
+        role="status"
+        style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, margin: '2px 0 6px 28px', fontSize: 12.5, color: C.textMuted }}
+      >
+        <span style={{ marginRight: 4 }}>Green. Did Farol do what you expected?</span>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            void window.farol.feedback.open('feedback.yml')
+            nudge.finish()
+          }}
+        >
+          Tell us how it went
+        </Button>
+        <Button variant="ghost" onClick={nudge.finish}>
+          Not now
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+const nudgeSlot = createNudgeSlot()
+
+/** Asks once, on the first green pipeline, how it went; never again after an answer or "Not now". */
+function useFeedbackNudge(cardKey: string, passed: boolean): { show: boolean; finish: () => void } {
+  const [done, setDone] = useState(() => nudgeDone(globalThis.localStorage))
+  const finish = () => {
+    try {
+      localStorage.setItem(FEEDBACK_NUDGE_KEY, '1')
+    } catch {
+      // Storage unavailable: it just won't ask again until the next launch.
+    }
+    setDone(true)
+  }
+  return { show: !done && nudgeSlot.claim(cardKey, passed), finish }
 }
 
 export function AssistantFooter({
