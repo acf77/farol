@@ -855,8 +855,8 @@ export interface FarolApi {
     onSettings(cb: () => void): () => void
   }
   feedback: {
-    /** Opens a GitHub issue form in the browser with this build's version filled in. */
-    open(template: FeedbackTemplate): Promise<void>
+    /** Opens a GitHub issue form in the browser with this build's version filled in; false if the browser did not open. */
+    open(template: FeedbackTemplate): Promise<boolean>
   }
 }
 
