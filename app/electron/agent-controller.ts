@@ -126,6 +126,7 @@ import { killPidTree } from './kill'
 import { logAgentFailure } from './agent-failure-log'
 import { logJev } from './jev-log'
 import { selectPipelines, selectTools } from './jev'
+import type { ProcRegistry } from './proc-sessions'
 
 interface ValidationRunner {
   run(
@@ -642,7 +643,9 @@ export class AgentController {
     private promptStore?: Pick<CustomPromptStore, 'activeBlock'>,
     private loadPipelines?: (cwd: string) => Promise<Pipeline[]>,
     /** Farol's managed tools for a task, for the providers that can take them per run. */
-    private managed?: ManagedTools
+    private managed?: ManagedTools,
+    /** Each agent run reports here, so the memory it and its children use is counted. */
+    private procs?: ProcRegistry
   ) {}
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
@@ -2382,8 +2385,11 @@ export class AgentController {
   }
 
   private setProcess(task: Task, child: boolean, proc: ChildProcess | null): void {
+    const prev = child ? task.child : task.process
     if (child) task.child = proc
     else task.process = proc
+    if (proc?.pid) this.procs?.register(`${task.request.id}:${proc.pid}`, task.request.checkout, proc.pid)
+    else if (prev?.pid) this.procs?.finish(`${task.request.id}:${prev.pid}`)
   }
 
   /** The CLI command and environment for a managed run: tools, Farol's server, approvals and mode. */
@@ -2479,6 +2485,8 @@ export class AgentController {
           cwd: task.request.cwd,
           env,
           windowsHide: true,
+          // Its own process group, so Stop and Kill leftovers reach every child.
+          detached: process.platform !== 'win32',
           stdio: ['ignore', 'pipe', 'pipe']
         })
       } catch (error) {

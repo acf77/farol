@@ -31,4 +31,19 @@ describe('killPidTree', () => {
     })
     expect(alive(pid!)).toBe(false)
   })
+
+  it('reaches the children of a detached agent, as Stop does for chat agents', async () => {
+    // A detached process leads its own group; its background child stays in that group.
+    const agent = spawn('sh', ['-c', 'sleep 30 & echo $!; wait'], { stdio: ['ignore', 'pipe', 'ignore'], detached: true })
+    const childPid = await new Promise<number>((resolve) => {
+      agent.stdout!.once('data', (chunk: Buffer) => resolve(Number(chunk.toString().trim())))
+    })
+    expect(alive(childPid)).toBe(true)
+    const exited = new Promise<void>((resolve) => agent.once('exit', () => resolve()))
+    killPidTree(agent.pid!)
+    await exited
+    const end = Date.now() + 3000
+    while (alive(childPid) && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(alive(childPid)).toBe(false)
+  })
 })

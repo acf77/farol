@@ -124,6 +124,12 @@ export interface AppSettings {
   onboarded?: true
   /** CLIs switched on during onboarding. Absent means no choice was made. */
   enabledAgents?: AiProvider[]
+  /** A worktree's agent memory shows yellow from here (GB). */
+  memoryWarnGb: number
+  /** ...and red from here (GB). */
+  memoryAlertGb: number
+  /** Stop what an agent left behind once its session is done or its worktree is gone. */
+  autoCleanLeftovers: boolean
 }
 
 export function defaultSettings(): AppSettings {
@@ -134,7 +140,10 @@ export function defaultSettings(): AppSettings {
     autoFix: true,
     autoApprove: true,
     modeDefaults: { plan: [], build: [] },
-    pipelineFallbacks: []
+    pipelineFallbacks: [],
+    memoryWarnGb: 2,
+    memoryAlertGb: 4,
+    autoCleanLeftovers: false
   }
 }
 
@@ -374,6 +383,10 @@ function sanitizeCommitMessage(
   return { agent: commitAgent, ...(commitModel ? { model: commitModel } : {}) }
 }
 
+function gbField(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
+}
+
 export function sanitizeSettings(raw: unknown): AppSettings {
   const d = defaultSettings()
   if (!raw || typeof raw !== 'object') return d
@@ -397,6 +410,9 @@ export function sanitizeSettings(raw: unknown): AppSettings {
     autoApprove: typeof s.autoApprove === 'boolean' ? s.autoApprove : d.autoApprove,
     modeDefaults: sanitizeModeDefaults(s.modeDefaults),
     pipelineFallbacks: sanitizeModeChain(s.pipelineFallbacks),
+    memoryWarnGb: gbField(s.memoryWarnGb, d.memoryWarnGb),
+    memoryAlertGb: gbField(s.memoryAlertGb, d.memoryAlertGb),
+    autoCleanLeftovers: s.autoCleanLeftovers === true,
     ...(openrouter ? { openrouter } : {}),
     ...(catalogs ? { catalogs } : {}),
     ...(keysOff.length ? { providerKeysOff: keysOff } : {}),

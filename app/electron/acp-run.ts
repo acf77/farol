@@ -99,7 +99,14 @@ export function runAcp(opts: AcpRunOptions): Promise<AcpRunResult> {
   return new Promise((resolve) => {
     let proc: ChildProcess
     try {
-      proc = spawn(opts.bin, opts.args, { cwd: opts.cwd, env: opts.env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+      proc = spawn(opts.bin, opts.args, {
+        cwd: opts.cwd,
+        env: opts.env,
+        windowsHide: true,
+        // Its own process group, so Stop and Kill leftovers reach every child.
+        detached: process.platform !== 'win32',
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
     } catch (error) {
       opts.onNoise(`farol: ${error instanceof Error ? error.message : String(error)}\n`)
       resolve({ code: 127 })

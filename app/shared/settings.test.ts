@@ -29,7 +29,10 @@ describe('sanitizeSettings', () => {
       autoFix: false,
       autoApprove: true,
       modeDefaults: { plan: [], build: [] },
-      pipelineFallbacks: []
+      pipelineFallbacks: [],
+      memoryWarnGb: 2,
+      memoryAlertGb: 4,
+      autoCleanLeftovers: false
     })
   })
 
@@ -52,8 +55,19 @@ describe('sanitizeSettings', () => {
       autoFix: true,
       autoApprove: true,
       modeDefaults: { plan: [], build: [] },
-      pipelineFallbacks: []
+      pipelineFallbacks: [],
+      memoryWarnGb: 2,
+      memoryAlertGb: 4,
+      autoCleanLeftovers: false
     })
+  })
+
+  it('keeps memory thresholds and the clean-up switch, and drops junk', () => {
+    const s = sanitizeSettings({ memoryWarnGb: 1.5, memoryAlertGb: -3, autoCleanLeftovers: true })
+    expect(s.memoryWarnGb).toBe(1.5)
+    expect(s.memoryAlertGb).toBe(4)
+    expect(s.autoCleanLeftovers).toBe(true)
+    expect(sanitizeSettings({ autoCleanLeftovers: 'yes' }).autoCleanLeftovers).toBe(false)
   })
 
   it('keeps a saved auto-approve default and turns junk into on', () => {
@@ -88,6 +102,9 @@ describe('sanitizeSettings', () => {
       autoApprove: true,
       modeDefaults: { plan: [], build: [] },
       pipelineFallbacks: [],
+      memoryWarnGb: 2,
+      memoryAlertGb: 4,
+      autoCleanLeftovers: false,
       openrouter: {
         autoPinned: true,
         pinned: ['openai/gpt-4o'],
