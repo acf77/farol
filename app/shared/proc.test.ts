@@ -175,6 +175,23 @@ describe('attribute', () => {
     expect(usage.procs.find((p) => p.pid === 101)).toMatchObject({ via: 'group', owned: true })
   })
 
+  it('counts a test browser the agent launched, in its own group, and keeps it after the driver exits', () => {
+    // agent → playwright driver → chromium (detached: its own group) → renderer and GPU helpers
+    const browser = (pid: number, ppid: number, pgid = 300) => proc(pid, ppid, { pgid, name: 'Chromium', footprint: 200 * MB })
+    const live = [root(100), proc(200, 100, { pgid: 100 }), browser(300, 200, 300), browser(301, 300), browser(302, 300)]
+    const [running] = attribute(live, [session('a', 100, '/w/a')], UID)
+    expect(pids(running.procs)).toEqual([100, 200, 300, 301, 302])
+    expect(running.footprint).toBe(2 * 10 * MB + 3 * 200 * MB)
+
+    // The driver dies; launchd adopts chromium. It was seen in the tree, so it is still the agent's.
+    const seen = new Set(running.procs.map(procKey))
+    const after = [root(100), browser(300, 1), browser(301, 300), browser(302, 300)]
+    const [orphaned] = attribute(after, [session('a', 100, '/w/a', { state: 'done', seen })], UID)
+    expect(pids(orphaned.leftovers)).toEqual([300, 301, 302])
+    expect(orphaned.leftovers.every((p) => p.owned)).toBe(true)
+    expect(orphaned.leftoverFootprint).toBe(3 * 200 * MB)
+  })
+
   it('ignores processes of other users', () => {
     const [usage] = attribute([root(100), proc(101, 100, { uid: 0 })], [session('a', 100, '/w/a')], UID)
     expect(pids(usage.procs)).toEqual([100])
