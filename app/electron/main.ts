@@ -62,7 +62,7 @@ import { appendTail, plainText } from '../shared/terminal'
 import { AgentController } from './agent-controller'
 import { createTodoStore } from './todos'
 import { createCustomPromptStore } from './custom-prompts'
-import { parseTodos } from '../shared/todos'
+import { mergeTodos, parseTodos } from '../shared/todos'
 import { closedProjects } from '../shared/session'
 import { owningWorktree } from '../shared/worktree'
 import { scopedRuntimeId } from '../shared/runtime'
@@ -817,7 +817,7 @@ function registerSessionIpc(): void {
     const { paths } = await loadOpenProjects()
     const checkouts = await Promise.all(paths.map(checkoutOf))
     if (!checkouts.includes(key)) throw new Error('Not an open checkout')
-    await todos.save(key, next, previous)
+    await todos.save(key, mergeTodos(previous, next, undefined, Date.now()), previous)
   })
   ipcMain.handle('pipelines:load', async (_e, projectPath: string) => {
     void pipelineFiles.watch(projectPath)

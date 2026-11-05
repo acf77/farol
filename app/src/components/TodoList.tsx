@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { ago } from '@shared/ago'
 import { errorMessage } from '@shared/jev'
 import {
   TODO_PRIORITIES,
@@ -115,6 +116,13 @@ function TodoEditor({
   )
 }
 
+/** Which chat added an item and how long ago it last changed. */
+function sourceNote(todo: Todo, chatId: string | undefined): string {
+  const who = todo.source ? (todo.source.chatId === chatId ? 'This chat' : todo.source.title) : ''
+  const when = todo.changedAt === undefined ? '' : ago(todo.changedAt)
+  return [who, when].filter(Boolean).join(' · ')
+}
+
 function headerLabel(todos: Todo[] | null, error: string | null): string {
   if (todos) {
     if (!todos.length) return 'No todos'
@@ -131,6 +139,7 @@ export function TodoDockView({
   editing,
   saving,
   canRun,
+  chatId,
   onToggle,
   onDismiss,
   onRetry,
@@ -147,6 +156,8 @@ export function TodoDockView({
   editing: number | null
   saving: boolean
   canRun: boolean
+  /** The open chat, so its own items read "This chat". */
+  chatId?: string
   onToggle: () => void
   onDismiss: () => void
   onRetry: () => void
@@ -211,6 +222,7 @@ export function TodoDockView({
             <ol className="bf-todo-dock-list" style={{ margin: 0, padding: 0, listStyle: 'none' }}>
               {todos.map((todo, index) => {
                 const done = todo.status === 'completed' || todo.status === 'cancelled'
+                const note = sourceNote(todo, chatId)
                 return (
                   <li key={index} className="bf-todo-row" data-status={todo.status}>
                     <span aria-hidden="true" className="bf-todo-status">
@@ -224,6 +236,9 @@ export function TodoDockView({
                         {todo.content}
                       </div>
                       <span className="bf-sr-only">{STATUS_LABELS[todo.status]}</span>
+                      {note && (
+                        <div style={{ marginTop: 2, fontSize: 11, color: C.textMuted, overflowWrap: 'anywhere' }}>{note}</div>
+                      )}
                     </div>
                     <div className="bf-todo-actions">
                       <Button
@@ -280,10 +295,13 @@ export function TodoDockView({
 
 export default function TodoList({
   projectPath,
+  chatId,
   onRun,
   canRun
 }: {
   projectPath: string
+  /** The open chat, so its own items read "This chat". */
+  chatId?: string
   /** Send a todo's content to the agent as a chat message. */
   onRun: (content: string) => void
   /** Whether the agent can take a new message right now (not busy, has an available model). */
@@ -356,6 +374,7 @@ export default function TodoList({
       editing={editing}
       saving={saving}
       canRun={canRun}
+      chatId={chatId}
       onToggle={() => setOpen(!open)}
       onDismiss={dismiss}
       onRetry={() => setReload((value) => value + 1)}

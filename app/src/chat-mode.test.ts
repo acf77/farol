@@ -154,4 +154,40 @@ describe('Execute plan handoff', () => {
       )
     ).not.toContain('Execute plan')
   })
+
+  it('keeps Execute plan when the finished plan message holds only control lines', () => {
+    expect(
+      renderChat(
+        makeAgentPane({
+          id: 'agent-pane',
+          cwd: '/repo',
+          taskId: 'agent:sh1',
+          attempt: 0,
+          provider: 'codex',
+          mode: 'plan',
+          messages: [{ role: 'assistant', text: 'FAROL_PLAN: finished', plan: { finished: true } }]
+        })
+      )
+    ).toContain('Execute plan')
+  })
+})
+
+describe('replies with only control lines', () => {
+  it('are not shown, and the footer stays on the last real answer', () => {
+    const html = renderChat(
+      makeAgentPane({
+        id: 'agent-pane',
+        cwd: '/repo',
+        taskId: 'agent:sh1',
+        attempt: 0,
+        provider: 'codex',
+        messages: [
+          { role: 'assistant', text: 'Real answer.' },
+          { role: 'assistant', text: 'FAROL_TODOS: []\nFAROL_PIPELINES: []' }
+        ]
+      })
+    )
+    expect(html).toContain('Real answer.')
+    expect(html.match(/Copy message/g)).toHaveLength(1)
+  })
 })

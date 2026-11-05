@@ -1,9 +1,16 @@
 import type { AiProvider } from '@shared/types'
 import type { AgentMessage } from '../../types'
 import { C } from '../../theme'
-import { MarkdownBody } from '../../markdown'
+import { MarkdownBody, stripControlMarkers } from '../../markdown'
 import { Button } from '../controls'
 import { ApprovalCard, AssistantFooter, DelegateCard, PipelineMsgCard, QuestionCard, ToolCard, type UndoResult } from './cards'
+
+/**
+ * An assistant message that says nothing once Farol's control lines are gone, such as a todo line sent
+ * just before a tool call. A finished plan stays, because Execute plan hangs under it.
+ */
+const quiet = (x: AgentMessage): boolean =>
+  x.role === 'assistant' && !x.pipeline && !x.plan && !stripControlMarkers(x.text).trim()
 
 function fmtClock(epoch: number): string {
   const d = new Date(epoch)
@@ -83,8 +90,10 @@ export function Turn({
   }
 
   const pc = m.pipeline
-  // The footer closes an answer: the last plain reply, once nothing newer has been said.
-  const plain = (x: AgentMessage): boolean => x.role === 'assistant' && !x.tool && !x.question && !x.pipeline
+  if (quiet(m)) return null
+  // The footer closes an answer: the last plain reply that says something, once nothing newer has been said.
+  const plain = (x: AgentMessage): boolean =>
+    x.role === 'assistant' && !x.tool && !x.question && !x.pipeline && !quiet(x)
   const showFooter = plain(m) && !isBusy && !messages.slice(i + 1).some((x) => x.role === 'user' || plain(x))
 
   return (

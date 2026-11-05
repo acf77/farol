@@ -69,6 +69,24 @@ describe('TodoDockView', () => {
     expect(html).toContain('Pending')
   })
 
+  it('notes which chat added an item and how long ago it last changed', () => {
+    const todos: Todo[] = [
+      {
+        content: 'Mine',
+        status: 'in_progress',
+        priority: 'high',
+        source: { chatId: 'agent:1', title: 'Fix login' },
+        changedAt: Date.now() - 2 * 3_600_000
+      },
+      { content: 'Theirs', status: 'pending', priority: 'low', source: { chatId: 'agent:2', title: 'Add dark mode' } },
+      { content: 'Added by hand', status: 'pending', priority: 'low' }
+    ]
+    const html = renderDock({ open: true, todos, chatId: 'agent:1' })
+    expect(html).toContain('This chat · 2h ago')
+    expect(html).toContain('Add dark mode')
+    expect(html).not.toContain('Fix login')
+  })
+
   it('keeps empty, loading, and unavailable headers reachable', () => {
     expect(renderDock({ todos: [] })).toContain('No todos')
     expect(renderDock({ todos: null })).toContain('Loading…')

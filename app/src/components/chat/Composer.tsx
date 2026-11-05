@@ -782,6 +782,7 @@ function SendButton({
 
 export function ComposerBox({
   projectPath,
+  chatId,
   availableCount,
   isBusy,
   modeLocked,
@@ -811,6 +812,8 @@ export function ComposerBox({
   starters
 }: {
   projectPath: string
+  /** The open chat, so the todo dock can tell its own items from other chats'. */
+  chatId?: string
   availableCount: number
   isBusy: boolean
   modeLocked: boolean
@@ -1080,6 +1083,7 @@ export function ComposerBox({
         <TodoList
           key={projectPath}
           projectPath={projectPath}
+          chatId={chatId}
           onRun={sendText}
           canRun={!isBusy && (availableCount > 0 || mode === 'plan')}
         />

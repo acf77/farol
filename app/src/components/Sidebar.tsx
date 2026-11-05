@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { GitStatus, Pipeline, PipelineNode, StepState } from '@shared/types'
 import { topoSort } from '@shared/graph'
+import { ago } from '@shared/ago'
 import { C, MONO, ELLIPSIS } from '../theme'
 import { SIDE_RAIL_WIDTH, SideCard, sideCardStyle, sidePanelShellStyle, useCollapseRail } from './side-panel'
 import type { DetailLog, RunState } from '../types'
@@ -51,14 +52,6 @@ function dotColor(status: PipelineStatus | StepState | undefined): string {
   if (status === 'fail') return C.red
   if (status === 'cancelled') return C.faint
   return C.border
-}
-
-function ago(at: number): string {
-  const s = Math.max(0, Math.round((Date.now() - at) / 1000))
-  if (s < 60) return 'just now'
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  return `${Math.floor(s / 86400)}d ago`
 }
 
 function nodesOf(pipeline: Pipeline): PipelineNode[] {

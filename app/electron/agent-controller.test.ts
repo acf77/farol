@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentTaskEvent, AgentTaskRequest, PipelineRunResult } from '../shared/types'
 import { failureReport } from '../shared/failure'
-import { TODOS_MARKER, type TodoStore } from '../shared/todos'
+import { TODOS_MARKER, sanitizeTodos, type TodoStore } from '../shared/todos'
 
 const { selectPipelines, selectTools } = vi.hoisted(() => ({
   selectPipelines: vi.fn().mockResolvedValue(null),
@@ -69,6 +69,30 @@ function selecting(...ids: string[]) {
   )
 }
 
+const isCompleted = (event: AgentTaskEvent): boolean =>
+  event.kind === 'status' && event.status === 'completed'
+
+/** A todo as the controller saves it: the agent's fields plus the chat and time Farol adds. */
+const stamped = (content: string, status: string, priority: string) => ({
+  content,
+  status,
+  priority,
+  source: { chatId: request.id, title: expect.any(String) },
+  changedAt: expect.any(Number)
+})
+
+/** A todo store that keeps what it is given, like the real one but in memory. */
+function memoryTodos(initial: unknown[] = []): TodoStore {
+  let list = sanitizeTodos(initial)
+  return {
+    load: vi.fn(async () => list),
+    save: vi.fn(async (_checkout: string, todos: unknown) => {
+      list = sanitizeTodos(todos)
+    }),
+    forget: vi.fn()
+  }
+}
+
 const lintMandatory = {
   ...request.pipelines[0],
   id: 'lint',
@@ -93,7 +117,7 @@ const releaseBuild = {
 }
 
 describe('AgentController', () => {
-  it('stores the checkout todo list and shows the update as a tool card', async () => {
+  it('stores the checkout todo list with its chat and shows the update as one tool card', async () => {
     const events: AgentTaskEvent[] = []
     const run = vi.fn()
     const store: TodoStore = {
@@ -102,20 +126,208 @@ describe('AgentController', () => {
       forget: vi.fn()
     }
     const execute = vi.fn().mockImplementation(async (_request, _prompt, output: (chunk: string) => void) => {
-      output(`${TODOS_MARKER} [{"content":"Ship it","status":"in_progress","priority":"high"}]\nFAROL_PIPELINES: []\n`)
+      output(`${TODOS_MARKER} [{"content":"Ship it","status":"completed","priority":"high"}]\nFAROL_PIPELINES: []\n`)
       return 0
     })
     const controller = new AgentController({ run }, (event) => events.push(event), execute, store)
 
     controller.start({ ...request, provider: 'codex', cwd: '/tmp/project/sub' })
-    await vi.waitFor(() =>
-      expect(events.some((event) => event.kind === 'status' && event.status === 'completed')).toBe(true)
-    )
+    await vi.waitFor(() => expect(events.some(isCompleted)).toBe(true))
 
-    expect(store.save).toHaveBeenCalledWith(request.checkout, [
-      { content: 'Ship it', status: 'in_progress', priority: 'high' }
-    ], [])
-    expect(events.some((event) => event.kind === 'tool' && event.name === 'todo')).toBe(true)
+    expect(store.save).toHaveBeenCalledWith(request.checkout, [stamped('Ship it', 'completed', 'high')], [])
+    expect(events.filter((event) => event.kind === 'tool' && event.name === 'todo')).toHaveLength(1)
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
+  it('saves a todo line as soon as it is complete, before the turn ends', async () => {
+    const events: AgentTaskEvent[] = []
+    const store = memoryTodos()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const execute = vi.fn<AgentExecutor>().mockImplementation(async (_request, _prompt, output) => {
+      output(`${TODOS_MARKER} [{"content":"Start","status":"in_progress","priority":"high"}]\n`)
+      await gate
+      output(`${TODOS_MARKER} [{"content":"Start","status":"completed","priority":"high"}]\nFAROL_PIPELINES: []\n`)
+      return 0
+    })
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute, store)
+
+    controller.start(request)
+    await vi.waitFor(() => expect(store.save).toHaveBeenCalledTimes(1))
+    expect(store.save).toHaveBeenCalledWith(request.checkout, [stamped('Start', 'in_progress', 'high')], [])
+    expect(events.some((event) => event.kind === 'tool' && event.name === 'todo')).toBe(false)
+    expect(events.some(isCompleted)).toBe(false)
+
+    release()
+    await vi.waitFor(() => expect(events.some(isCompleted)).toBe(true))
+    expect(store.save).toHaveBeenCalledTimes(2)
+    expect(events.filter((event) => event.kind === 'tool' && event.name === 'todo')).toHaveLength(1)
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
+  it('asks once more when the last todo line came before later work', async () => {
+    const events: AgentTaskEvent[] = []
+    const store = memoryTodos()
+    const execute = vi
+      .fn<AgentExecutor>()
+      .mockImplementationOnce(async (_request, _prompt, output, tool) => {
+        output(`${TODOS_MARKER} [{"content":"Fix it","status":"pending","priority":"high"}]\n`)
+        tool?.({ toolId: 'read-1', name: 'Read', state: 'done' })
+        output('FAROL_PIPELINES: []\n')
+        return 0
+      })
+      .mockImplementationOnce(async (_request, _prompt, output) => {
+        output(`${TODOS_MARKER} [{"content":"Fix it","status":"completed","priority":"high"}]\nFAROL_PIPELINES: []\n`)
+        return 0
+      })
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute, store)
+
+    controller.start(request)
+    await vi.waitFor(() => expect(events.some(isCompleted)).toBe(true))
+
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute.mock.calls[1][1]).toContain('Check the todo list one last time')
+    expect(
+      events.some((event) => event.kind === 'tool' && event.name === 'todo' && event.detail === 'Checking the list')
+    ).toBe(true)
+    expect(
+      events.some((event) => event.kind === 'status' && event.message === 'Agent checking the todo list')
+    ).toBe(true)
+  })
+
+  it('runs the closing todo turn after validation and keeps the completion message', async () => {
+    const events: AgentTaskEvent[] = []
+    const run = vi.fn().mockResolvedValue(result(true))
+    const store = memoryTodos()
+    const execute = vi
+      .fn<AgentExecutor>()
+      .mockImplementationOnce(async (_request, _prompt, output) => {
+        output(`${TODOS_MARKER} [{"content":"Fix it","status":"in_progress","priority":"high"}]\nFAROL_PIPELINES: ["validate"]\n`)
+        return 0
+      })
+      .mockImplementationOnce(async (_request, _prompt, output) => {
+        output(`${TODOS_MARKER} [{"content":"Fix it","status":"completed","priority":"high"}]\nFAROL_PIPELINES: []\n`)
+        return 0
+      })
+    const controller = new AgentController({ run }, (event) => events.push(event), execute, store)
+
+    controller.start(request)
+    await vi.waitFor(() => expect(events.some(isCompleted)).toBe(true))
+
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute.mock.calls[1][1]).toContain('Fix it ⟨this chat')
+    const messages = events.flatMap((event) => (event.kind === 'status' ? [event.message] : []))
+    expect(messages.filter((message) => /Running|checking|passed/.test(message))).toEqual([
+      'Running Validate',
+      'Agent checking the todo list',
+      'Validate passed'
+    ])
+    expect(events.filter(isCompleted)).toHaveLength(1)
+  })
+
+  it('asks only once per message even when the agent does not answer', async () => {
+    const events: AgentTaskEvent[] = []
+    const store = memoryTodos([{ content: 'Old', status: 'pending', priority: 'low' }])
+    const execute = selecting()
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute, store)
+
+    controller.start(request)
+    await vi.waitFor(() => expect(events.some(isCompleted)).toBe(true))
+
+    expect(execute).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not ask when the list is empty', async () => {
+    const events: AgentTaskEvent[] = []
+    const execute = selecting()
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute, memoryTodos())
+
+    controller.start(request)
+    await vi.waitFor(() => expect(events.some(isCompleted)).toBe(true))
+
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the check card before the closing turn so a finished plan stays closed', async () => {
+    const events: AgentTaskEvent[] = []
+    const store = memoryTodos([{ content: 'Step', status: 'pending', priority: 'low' }])
+    const execute = vi
+      .fn<AgentExecutor>()
+      .mockImplementationOnce(async (_request, _prompt, output) => {
+        output('## Plan\n\nFAROL_PLAN: finished\n')
+        return 0
+      })
+      .mockImplementationOnce(async (_request, _prompt, output) => {
+        output(`${TODOS_MARKER} [{"content":"Step","status":"pending","priority":"low"}]\nFAROL_PIPELINES: []\n`)
+        return 0
+      })
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute, store)
+
+    controller.start({ ...request, mode: 'plan' })
+    await vi.waitFor(() => expect(events.some(isCompleted)).toBe(true))
+
+    const plan = events.findIndex((event) => event.kind === 'output' && event.chunk.includes('FAROL_PLAN: finished'))
+    const card = events.findIndex((event) => event.kind === 'tool' && event.detail === 'Checking the list')
+    const closing = events.findIndex((event) => event.kind === 'output' && event.chunk.includes(TODOS_MARKER))
+    expect(plan).toBeGreaterThan(-1)
+    expect(card).toBeGreaterThan(plan)
+    expect(closing).toBeGreaterThan(card)
+    expect(
+      events.some((event) => event.kind === 'status' && event.message === 'Plan ready to execute')
+    ).toBe(true)
+  })
+
+  it('drops todo saves still queued after Stop, and settles only after the save in flight', async () => {
+    const events: AgentTaskEvent[] = []
+    const log: string[] = []
+    let finishSave!: () => void
+    const saving = new Promise<void>((resolve) => {
+      finishSave = resolve
+    })
+    let stop!: () => void
+    const stopped = new Promise<void>((resolve) => {
+      stop = resolve
+    })
+    const store: TodoStore = {
+      load: vi.fn().mockResolvedValue([]),
+      save: vi.fn(async () => {
+        await saving
+        log.push('saved')
+      }),
+      forget: vi.fn()
+    }
+    const execute = vi
+      .fn<AgentExecutor>()
+      .mockImplementationOnce(async (_request, _prompt, output) => {
+        for (const content of ['One', 'Two', 'Three']) {
+          output(`${TODOS_MARKER} [{"content":"${content}","status":"pending","priority":"low"}]\n`)
+        }
+        await stopped
+        return 0
+      })
+      .mockImplementationOnce(async (_request, _prompt, output) => {
+        log.push('follow-up')
+        output('FAROL_PIPELINES: []\n')
+        return 0
+      })
+    const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute, store)
+
+    controller.start(request)
+    await vi.waitFor(() => expect(store.save).toHaveBeenCalledTimes(1))
+    controller.cancel(request.id)
+    expect(controller.message(request.id, 'continue please')).toEqual({ ok: true })
+    stop()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(execute).toHaveBeenCalledTimes(1)
+
+    finishSave()
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2))
+    expect(log).toEqual(['saved', 'follow-up'])
+    expect(store.save).toHaveBeenCalledTimes(1)
+    expect(events.some((event) => event.kind === 'tool' && event.name === 'todo')).toBe(false)
   })
 
   it('injects the stored list into the next turn', async () => {
@@ -126,7 +338,7 @@ describe('AgentController', () => {
       forget: vi.fn()
     }
     const execute = vi.fn().mockImplementation(async (_request, _prompt, output: (chunk: string) => void) => {
-      output('ok\nFAROL_PIPELINES: []\n')
+      output(`${TODOS_MARKER} [{"content":"Existing","status":"pending","priority":"low"}]\nFAROL_PIPELINES: []\n`)
       return 0
     })
     const controller = new AgentController({ run }, () => {}, execute, store)
@@ -135,7 +347,10 @@ describe('AgentController', () => {
     await vi.waitFor(() => expect(execute).toHaveBeenCalled())
 
     expect(store.load).toHaveBeenCalledWith(request.checkout)
-    expect(execute.mock.calls[0][1]).toContain('- [pending] (low) Existing')
+    const prompt: string = execute.mock.calls[0][1]
+    expect(prompt).toContain('- [pending] (low) Existing')
+    expect(prompt).toContain('at the start of your reply')
+    expect(prompt).toContain('just before your final marker')
   })
 
   it('adds the active custom instructions after the task and before Farol\'s instructions', async () => {
@@ -220,11 +435,11 @@ describe('AgentController', () => {
     }
     const execute = vi.fn()
       .mockImplementationOnce(async (_request, _prompt, output: (chunk: string) => void) => {
-        output('Drafting.\nFAROL_PIPELINES: []\n')
+        output(`Drafting.\n${TODOS_MARKER} [{"content":"Plan work","status":"pending","priority":"high"}]\nFAROL_PIPELINES: []\n`)
         return 0
       })
       .mockImplementationOnce(async (_request, _prompt, output: (chunk: string) => void) => {
-        output('## Plan\n\nFAROL_PLAN: finished\n')
+        output(`## Plan\n\n${TODOS_MARKER} [{"content":"Build work","status":"in_progress","priority":"high"}]\nFAROL_PLAN: finished\n`)
         return 0
       })
     const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute, store)
@@ -1713,7 +1928,7 @@ describe('AgentController', () => {
         return 0
       })
       .mockImplementationOnce(async (_request: AgentTaskRequest, _prompt: string, output: (chunk: string) => void) => {
-        output('FAROL_PIPELINES: []\n')
+        output(`${TODOS_MARKER} [{"content":"Retry item","status":"pending","priority":"low"}]\nFAROL_PIPELINES: []\n`)
         return 0
       })
     const controller = new AgentController({ run: vi.fn() }, () => {}, execute, store)
@@ -1762,9 +1977,7 @@ describe('AgentController', () => {
     controller.start(request)
     await vi.waitFor(() => expect(store.save).toHaveBeenCalled())
 
-    expect(store.save).toHaveBeenCalledWith(request.checkout, [
-      { content: 'late', status: 'pending', priority: 'low' }
-    ], [])
+    expect(store.save).toHaveBeenCalledWith(request.checkout, [stamped('late', 'pending', 'low')], [])
   })
 })
 

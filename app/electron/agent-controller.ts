@@ -92,7 +92,9 @@ import {
 import {
   TODOS_MARKER,
   formatTodos,
-  parseTodosMarker,
+  isAgentTodoToolName,
+  mergeTodos,
+  parseTodosValue,
   todoSummary,
   type Todo,
   type TodoStore
@@ -240,6 +242,12 @@ interface Task {
   askEpoch: number
   questionSeq: number
   todoSeq: number
+  /** When the user message being worked on began; todo notes count "earlier request" from here. */
+  requestStart: number
+  /** The last agent turn ended with a saved todo line and no tool call after it. */
+  todoEndOk: boolean
+  /** Set once the closing todo turn is asked for this message; holds the completion message it delays. */
+  todoClosing?: string
   pendingQuestions?: { requestId: string; questions: AgentQuestion[] }
 }
 
@@ -269,6 +277,16 @@ type CycleScan = ControlLineState & {
   changedTargets: string[]
   /** Tool card names observed this turn — for policy violation diagnostics. */
   toolNames: string[]
+  /** How much of `control` the todo scan has read, so a line is handled once. */
+  controlSeen: number
+  /** Todo saves in the order their lines came; the turn waits for them. */
+  todoSaves: Promise<void>
+  /** Tool events this turn, not counting the CLI's own todo tools. */
+  workCalls: number
+  /** `workCalls` when the last todo line was saved; unset if none was, or the last one failed. */
+  todoAt?: number
+  /** Why the last todo save failed. */
+  todoFailure?: string
   questions?: AgentQuestion[]
   questionId?: string
 }
@@ -362,6 +380,19 @@ function repairPromptOpening(
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+/** What the closing todo turn asks of the agent once the work and its validation are done. */
+function todoClosingText(message: string): string {
+  return `Farol finished this request (${message}). Check the todo list one last time: send one ${TODOS_MARKER} line with the true status of every item, so that none of your items stays in_progress. Do not change files, ask questions, or repeat your answer. End with ${PIPELINES_MARKER} [].`
+}
+
+/** The status line for an agent run: the closing todo turn, the first try, or a repair. */
+function attemptStatus(attempt: number, checkingTodos: boolean): [AgentTaskStatus, string] {
+  if (checkingTodos) return ['working', 'Agent checking the todo list']
+  return attempt === 1
+    ? ['working', 'Agent working']
+    : ['repairing', 'Agent repairing validation failures']
 }
 
 function activityStatus(result: PipelineRunResult): PipelineActivity['status'] {
@@ -671,7 +702,9 @@ export class AgentController {
       sameModelAttempts: 0,
       askEpoch: 0,
       questionSeq: 0,
-      todoSeq: 0
+      todoSeq: 0,
+      requestStart: Date.now(),
+      todoEndOk: false
     }
     this.tasks.set(request.id, task)
     this.emit({ kind: 'user', taskId: request.id, text: clean })
@@ -1396,6 +1429,7 @@ export class AgentController {
   private continueIfGuidanceOpening(task: Task): Opening | null {
     const guidance = task.guidance.splice(0).join('\n')
     if (!guidance) return null
+    this.beginRequest(task)
     return continued(`User request:\n${guidance}`)
   }
 
@@ -1415,6 +1449,7 @@ export class AgentController {
         scan.assistant = (scan.assistant + chunk).slice(-SCAN_WINDOW)
         scan.output = (scan.output + chunk).slice(-SCAN_WINDOW)
         appendControlLines(scan, chunk)
+        this.noteTodoLine(task, scan)
         check()
       },
       turn: (text) => {
@@ -1422,6 +1457,7 @@ export class AgentController {
         scan.assistant = (`${scan.assistant}\n${text}`).slice(-SCAN_WINDOW)
         scan.output = (`${scan.output}\n${text}`).slice(-SCAN_WINDOW)
         appendControlLines(scan, `${text}\n`)
+        this.noteTodoLine(task, scan)
         check()
       },
       tool: (event) => {
@@ -1435,15 +1471,14 @@ export class AgentController {
         const auto = task.runAutoApproves && needsApproval(event.name)
         this.emit({ kind: 'tool', taskId: task.request.id, ...event, ...(auto ? { auto } : {}) })
         scan.toolNames.push(event.name)
+        if (!isAgentTodoToolName(event.name)) scan.workCalls += 1
         // Codex sometimes only fills command on item.completed; accept either.
         if (event.detail && isShellToolName(event.name) && event.state !== 'error') {
           scan.shellInvocations.push(event.detail)
         }
         if (event.state === 'done' && isWriteToolName(event.name)) {
-          scan.filesChanged = true
+          noteWrite(scan, event.detail)
           task.mandatoryOutstanding = true
-          const target = event.detail?.trim()
-          if (target && !scan.changedTargets.includes(target)) scan.changedTargets.push(target)
         }
       },
       question: (questions) => {
@@ -1481,35 +1516,86 @@ export class AgentController {
     task.customInstructions = await this.promptStore.activeBlock(task.request.checkout).catch(() => '')
   }
 
-  private async applyTodos(task: Task, assistant: string): Promise<void> {
-    if (task.disposeWhenIdle) return
-    const todos = parseTodosMarker(assistant)
+  /** A user message starts a request: todo notes count "earlier request" from here, and the closing check is open again. */
+  private beginRequest(task: Task): void {
+    task.requestStart = Date.now()
+    task.todoClosing = undefined
+  }
+
+  /** Save the newest todo line the moment it is complete, so the dock follows the run. */
+  private noteTodoLine(task: Task, scan: CycleScan): void {
+    const line = lastControlLine(scan.control.slice(scan.controlSeen), TODOS_MARKER)
+    scan.controlSeen = scan.control.length
+    if (line === undefined || task.disposeWhenIdle) return
+    const todos = parseTodosValue(line)
     if (!todos) return
+    const at = scan.workCalls
+    scan.todoSaves = scan.todoSaves.then(() => this.saveTodos(task, scan, todos, at))
+  }
+
+  /**
+   * The agent writes only text, status and priority; Farol stamps the chat and the time. A line still
+   * queued when the chat is stopped or cleared is dropped; the one already saving finishes.
+   */
+  private async saveTodos(task: Task, scan: CycleScan, todos: Todo[], at: number): Promise<void> {
+    if (task.cancelled || task.disposeWhenIdle) return
     const previous = task.todos
-    task.todos = todos
-    task.todoSeq += 1
-    const toolId = `${task.request.id}:todos:${task.todoSeq}`
     try {
-      await this.todoStore?.save(task.request.checkout, todos, previous)
-      this.emit({
-        kind: 'tool',
-        taskId: task.request.id,
-        toolId,
-        name: 'todo',
-        detail: todoSummary(todos),
-        state: 'done'
-      })
+      const chat = { chatId: task.request.id, title: turnPreview(task.context.task) }
+      const merged = mergeTodos(previous, todos, chat, Date.now())
+      await this.todoStore?.save(task.request.checkout, merged, previous)
+      task.todos = merged
+      scan.todoAt = at
+      scan.todoFailure = undefined
     } catch (error) {
-      task.todos = previous
-      this.emit({
-        kind: 'tool',
-        taskId: task.request.id,
-        toolId,
-        name: 'todo',
-        detail: error instanceof Error ? error.message : 'Could not save the todo list',
-        state: 'error'
-      })
+      scan.todoAt = undefined
+      scan.todoFailure = error instanceof Error ? error.message : 'Could not save the todo list'
     }
+  }
+
+  /** Read the last line and wait for the run's todo saves, so none is still writing when the turn settles. */
+  private async drainTodos(task: Task, scan: CycleScan): Promise<void> {
+    flushControlLines(scan)
+    this.noteTodoLine(task, scan)
+    await scan.todoSaves
+  }
+
+  /** After a run's saves are done: note whether the list was current at its end, and show one card for them. */
+  private endTodos(task: Task, scan: CycleScan): void {
+    if (task.disposeWhenIdle) return
+    task.todoEndOk = scan.todoAt === scan.workCalls
+    if (scan.todoAt === undefined && scan.todoFailure === undefined) return
+    this.emit({
+      kind: 'tool',
+      taskId: task.request.id,
+      toolId: `${task.request.id}:todos:${++task.todoSeq}`,
+      name: 'todo',
+      detail: scan.todoFailure ?? todoSummary(task.todos),
+      state: scan.todoFailure === undefined ? 'done' : 'error'
+    })
+  }
+
+  /**
+   * One closing turn per message, once the work is done and the agent's list is stale: its last turn
+   * did not end with a saved todo line, or one of its own items still reads in_progress.
+   * The card goes first so a finished plan message stays closed and Execute plan stays.
+   */
+  private checkTodos(task: Task, message: string): CycleAttemptResult | null {
+    if (task.todoClosing !== undefined || task.cancelled || task.disposeWhenIdle || !task.todos.length) return null
+    const running = task.todos.some(
+      (todo) => todo.status === 'in_progress' && todo.source?.chatId === task.request.id
+    )
+    if (task.todoEndOk && !running) return null
+    task.todoClosing = message
+    this.emit({
+      kind: 'tool',
+      taskId: task.request.id,
+      toolId: `${task.request.id}:todos:${++task.todoSeq}`,
+      name: 'todo',
+      detail: 'Checking the list',
+      state: 'done'
+    })
+    return { kind: 'retry', rewindAttempt: true, opening: continued(todoClosingText(message)) }
   }
 
   /** Keep the CLI's session id so the next turn on this CLI and directory resumes it. */
@@ -1640,8 +1726,10 @@ export class AgentController {
   private completeCycle(task: Task, attempt: number, message: string): CycleAttemptResult {
     const next = this.continueIfGuidanceOpening(task)
     if (next) return { kind: 'retry', opening: next }
+    const closing = this.checkTodos(task, message)
+    if (closing) return closing
     task.running = false
-    this.status(task, 'completed', attempt, message)
+    this.status(task, 'completed', attempt, task.todoClosing ?? message)
     this.releaseIfDisposed(task)
     return { kind: 'done' }
   }
@@ -1949,8 +2037,7 @@ export class AgentController {
       this.settleCancel(task)
       return { kind: 'done' }
     }
-    flushControlLines(scan)
-    await this.applyTodos(task, scan.control)
+    this.endTodos(task, scan)
     this.applyHandoff(task, scan.control)
     const asked = this.questionsAfterRun(task, attempt, scan)
     if (asked) return asked
@@ -1998,12 +2085,8 @@ export class AgentController {
     opening: Opening,
     attempt: number
   ): Promise<CycleAttemptResult> {
-    this.status(
-      task,
-      attempt === 1 ? 'working' : 'repairing',
-      attempt,
-      attempt === 1 ? 'Agent working' : 'Agent repairing validation failures'
-    )
+    const [status, message] = attemptStatus(attempt, task.todoClosing !== undefined)
+    this.status(task, status, attempt, message)
     // Decided per run: a fallback or a provider switch since the opening was
     // chosen means this CLI has no session and needs the rebuilt history.
     const resume = resumableSession(task.context, cliFor(task.request.provider, openRouterAgent()), task.request.cwd)
@@ -2023,7 +2106,10 @@ export class AgentController {
       shellInvocations: [],
       filesChanged: false,
       changedTargets: [],
-      toolNames: []
+      toolNames: [],
+      controlSeen: 0,
+      todoSaves: Promise.resolve(),
+      workCalls: 0
     }
     const policy = await this.resolveToolPolicy(task, opening.text, attempt)
     task.runAutoApproves = this.autoApproves(task, task.request.provider)
@@ -2049,6 +2135,7 @@ export class AgentController {
           session
         })
     this.observeTools(task, policy, scan.toolNames, attempt)
+    await this.drainTodos(task, scan)
     if (task.askEpoch !== epoch) return { kind: 'done' }
     await this.noteTreeChange(task, scan, before)
     return await this.cycleAfterRun(task, attempt, scan, code, opening)
@@ -2122,6 +2209,7 @@ export class AgentController {
     let opening = first
     let attempt = 0
     task.resumeAbandoned = false
+    this.beginRequest(task)
     // Fresh cycle → fresh tool ask; within the cycle, same-attempt retries remap.
     task.toolSelection = undefined
     task.toolSelectionAttempt = undefined
@@ -2199,12 +2287,13 @@ export class AgentController {
   }
 
   private todoContext(task: Task): string {
-    return (
-      `Todo list (shared by every chat in this checkout): put one line ` +
-      `${TODOS_MARKER} [{"content":"...","status":"pending|in_progress|completed|cancelled","priority":"high|medium|low"}] ` +
-      `just before your final marker to replace the whole list, or ${TODOS_MARKER} [] to clear it. ` +
-      `Keep exactly one todo in_progress while work remains.\n${formatTodos(task.todos)}`
-    )
+    const viewer = { chatId: task.request.id, now: Date.now(), since: task.requestStart }
+    return [
+      `Todo list (shared by every chat in this checkout). One line ${TODOS_MARKER} [{"content":"...","status":"pending|in_progress|completed|cancelled","priority":"high|medium|low"}] replaces the whole list; ${TODOS_MARKER} [] clears it.`,
+      `Check the list twice. First, at the start of your reply and before other work, send the line: remove finished items marked "earlier request", add the steps of this request, and keep open items of other chats as they are. Last, just before your final marker, send the line again with the true status of every item.`,
+      `Keep one of your items in_progress while you work. When you stop, none of your items stays in_progress: completed, or pending if work remains. Add no items for validation that Farol runs. Each item below may end with a ⟨note⟩ that says where it came from; it is not part of content, so do not copy it. A one-step request on an empty list needs neither line.`,
+      formatTodos(task.todos, viewer)
+    ].join('\n')
   }
 
   private pipelineHistory(task: Task): string {
