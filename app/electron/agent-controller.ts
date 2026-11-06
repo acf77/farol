@@ -66,12 +66,15 @@ import {
   type ContextUsage
 } from '../shared/agent-context'
 import {
+  GIT_MARKER,
   appendControlLines,
   flushControlLines,
   lastControlLine,
   stripControlMarkerLines,
   type ControlLineState
 } from '../shared/control-line'
+import { formatGitResult, gitActionsFrom, type GitAction, type GitActionResult } from '../shared/git-action'
+import { repoRoot, type GitScope } from './git'
 import {
   BLOCK_MARKER,
   FINISHED_PLAN,
@@ -136,6 +139,28 @@ interface ValidationRunner {
   ): Promise<PipelineRunResult>
 }
 
+/** How the app performs a Git action a managed Chat asked for with a `FAROL_GIT` line. */
+export interface GitActions {
+  /** Whether Farol performs agent Git actions on this machine (a Settings switch). */
+  enabled(): Promise<boolean>
+  /** The branch the checkout in `cwd` is on, or undefined when it is on none. */
+  branch(cwd: string): Promise<string | undefined>
+  /**
+   * `cwd` is the chat's folder as the renderer sent it, so it decides nothing: the app finds the
+   * open project that holds the folder, and the action may touch only that repository. `scope` is
+   * what the turn's actions hold fixed.
+   */
+  run(cwd: string, action: GitAction, scope: GitScope): Promise<GitActionResult>
+}
+
+/** What the agent is told when another chat shared its checkout: the turn's files are in doubt. */
+const SHARED_CHECKOUT: GitActionResult = {
+  ok: false,
+  refused: true,
+  message:
+    "Another chat worked in this checkout during this turn, so Farol cannot tell which files are this turn's. Commit them from the Git panel, or give each chat its own worktree."
+}
+
 export type AgentToolReport = {
   toolId: string
   name: string
@@ -190,6 +215,19 @@ interface Task {
   delegateRuns: Map<string, DelegateRun>
   /** The tree at the start of the turn, handed to its first attempt so it is not captured twice. */
   turnBefore?: string
+  /** Paths the agent changed in this turn, across its attempts: what an agent commit contains. */
+  turnFiles: Set<string>
+  /** The working copy when the turn's last attempt ended, which validation saw: what an agent commit must match. */
+  validatedTree?: string
+  /** The branch the checkout was on when the turn began: Git actions hold to it. */
+  turnBranch?: string
+  /** The repository root of the checkout (the folder itself when it is no repository). */
+  repoKey?: string
+  /** Another chat ran in this checkout while this turn did, so the turn's files cannot be told from theirs. */
+  sharedCheckout: boolean
+  /** Git actions are on for this turn, so the agent is told to request them. */
+  gitEnabled: boolean
+  gitSeq: number
   /** What the agent should hear first on the next turn (e.g. an Undo). */
   notes: string[]
   /** The subagent running now, so its approval requests name it. */
@@ -614,7 +652,9 @@ export class AgentController {
     /** Farol's managed tools for a task, for the providers that can take them per run. */
     private managed?: ManagedTools,
     /** Each agent run reports here, so the memory it and its children use is counted. */
-    private procs?: ProcRegistry
+    private procs?: ProcRegistry,
+    /** Without it, `FAROL_GIT` lines are not offered or acted on. */
+    private gitActions?: GitActions
   ) {}
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
@@ -654,6 +694,10 @@ export class AgentController {
       delegateSeq: 0,
       delegateRuns: new Map(),
       notes: [],
+      turnFiles: new Set(),
+      sharedCheckout: false,
+      gitEnabled: false,
+      gitSeq: 0,
       approvals: new Map(),
       approvalSeq: 0,
       allowedTools: new Set(),
@@ -1479,6 +1523,10 @@ export class AgentController {
     task.todos = await this.todoStore.load(task.request.checkout).catch(() => task.todos)
   }
 
+  private async loadGitEnabled(task: Task): Promise<void> {
+    task.gitEnabled = task.request.mode !== 'plan' && !!(await this.gitActions?.enabled().catch(() => false))
+  }
+
   private async loadCustomInstructions(task: Task): Promise<void> {
     if (!this.promptStore) return
     task.customInstructions = await this.promptStore.activeBlock(task.request.checkout).catch(() => '')
@@ -1708,20 +1756,95 @@ export class AgentController {
 
     // Mandatory pipelines do not run unless files changed (or a previous
     // mandatory run is still waiting to pass).
-    if (!pipelines.length) return this.completeCycle(task, attempt, 'No validation needed')
+    if (!pipelines.length) return this.completeWithGit(task, attempt, scan, 'No validation needed')
 
     const names = pipelines.map((pipeline) => pipeline.name).join(', ')
     this.status(task, 'validating', attempt, `Running ${names}`)
     const outcome = await this.runValidationPipelines(task, pipelines, attempt)
-    return this.handleValidationOutcome(task, attempt, outcome, names)
+    return this.handleValidationOutcome(task, attempt, scan, outcome, names)
   }
 
-  private handleValidationOutcome(
+  /**
+   * The turn is validated: perform the Git actions the agent asked for, then finish. A hook
+   * pipeline that blocks one is a failure for the agent to repair, like a failed validation.
+   */
+  private async completeWithGit(
     task: Task,
     attempt: number,
+    scan: CycleScan,
+    message: string
+  ): Promise<CycleAttemptResult> {
+    const repair = await this.performGitActions(task, scan)
+    if (task.cancelled) {
+      this.settleCancel(task)
+      return { kind: 'done' }
+    }
+    return repair ? { kind: 'retry', opening: continued(repair) } : this.completeCycle(task, attempt, message)
+  }
+
+  /**
+   * Perform the turn's `FAROL_GIT` requests in order, stopping at the first that fails. Returns
+   * what the agent must fix when a hook pipeline blocked one or a line could not be read; any
+   * other refusal is shown in Chat and told to the agent at the start of its next turn.
+   * Stop ends the queue: the action in flight finishes, since a commit or push is not safe to
+   * tear down halfway, but none that the agent queued after it runs, nor one still waiting for
+   * its turn on the checkout. The actions hold to the branch the checkout was on when they began:
+   * a branch switch that ran between two of them stops the rest, instead of moving them. A commit
+   * holds only files as validation saw them (the scope's tree), and none when another chat shared
+   * the checkout, since a snapshot cannot tell whose files are whose.
+   */
+  private async performGitActions(task: Task, scan: CycleScan): Promise<string | undefined> {
+    const git = this.gitActions
+    if (!git || !task.gitEnabled) return undefined
+    const { actions, errors } = gitActionsFrom(scan.control)
+    if (errors.length) return `Farol could not read a ${GIT_MARKER} line. ${errors.join(' ')} Send it again.`
+    if (!actions.length) return undefined
+    const scope: GitScope = {
+      branch: task.turnBranch,
+      tree: task.validatedTree,
+      signal: task.abort.signal
+    }
+    for (const request of actions) {
+      if (task.cancelled) return undefined
+      const result = await this.runGitRequest(task, git, request, scope)
+      this.reportGitAction(task, request, result)
+      if (result.ok) continue
+      if (result.hookRun) return `${formatGitResult(request.action, result)}\nFix what it reports, then send the ${GIT_MARKER} line again.`
+      task.notes.push(`Note from Farol: ${formatGitResult(request.action, result)}`)
+      return undefined
+    }
+    return undefined
+  }
+
+  /**
+   * One `FAROL_GIT` request. A commit holds the files this turn changed, whatever the line says, and
+   * none at all when another chat shared the checkout.
+   */
+  private runGitRequest(task: Task, git: GitActions, request: GitAction, scope: GitScope): Promise<GitActionResult> {
+    if (request.action !== 'commit') return git.run(task.request.cwd, request, scope)
+    if (task.sharedCheckout) return Promise.resolve(SHARED_CHECKOUT)
+    return git.run(task.request.cwd, { ...request, files: [...task.turnFiles] }, scope)
+  }
+
+  private reportGitAction(task: Task, action: GitAction, result: GitActionResult): void {
+    task.gitSeq += 1
+    this.emit({
+      kind: 'tool',
+      taskId: task.request.id,
+      toolId: `${task.request.id}:git:${task.gitSeq}`,
+      name: 'git',
+      detail: formatGitResult(action.action, result),
+      state: result.ok ? 'done' : 'error'
+    })
+  }
+
+  private async handleValidationOutcome(
+    task: Task,
+    attempt: number,
+    scan: CycleScan,
     outcome: Awaited<ReturnType<AgentController['runValidationPipelines']>>,
     names: string
-  ): CycleAttemptResult {
+  ): Promise<CycleAttemptResult> {
     if (outcome.kind === 'cancelled') {
       this.settleCancel(task)
       return { kind: 'done' }
@@ -1729,7 +1852,7 @@ export class AgentController {
     if (outcome.kind === 'stopped') return { kind: 'done' }
     if (outcome.kind === 'passed') {
       task.mandatoryOutstanding = false
-      return this.completeCycle(task, attempt, `${names} passed`)
+      return this.completeWithGit(task, attempt, scan, `${names} passed`)
     }
 
     if (outcome.failures.some(({ pipeline }) => pipeline.mandatory === true)) task.mandatoryOutstanding = true
@@ -2072,9 +2195,11 @@ export class AgentController {
     const cwd = task.request.cwd
     const after = (await this.turnCapture(task))?.tree
     if (!after || !turnChangedFiles(false, before, after)) return
+    task.validatedTree = after
     scan.filesChanged = true
     task.mandatoryOutstanding = true
     for (const target of await changedPaths(cwd, before, after).catch(() => [])) {
+      task.turnFiles.add(target)
       if (!scan.changedTargets.includes(target)) scan.changedTargets.push(target)
     }
   }
@@ -2097,8 +2222,28 @@ export class AgentController {
     this.releaseIfDisposed(task)
   }
 
+  /**
+   * A chat that runs in this checkout while this turn does may write files too, and a snapshot cannot
+   * tell whose: the turn's files, and an agent commit of them, are then in doubt. Both chats are
+   * marked, whichever began first.
+   */
+  private async markSharedCheckout(task: Task): Promise<void> {
+    task.sharedCheckout = false
+    const key = (await repoRoot(task.request.cwd).catch(() => undefined)) ?? task.request.cwd
+    task.repoKey = key
+    for (const other of this.tasks.values()) {
+      if (other === task || !other.running || other.repoKey !== key) continue
+      task.sharedCheckout = true
+      other.sharedCheckout = true
+    }
+  }
+
   /** One user message: checkpoint the files before it runs and after it ends, around the attempts. */
   private async cycle(task: Task, first: Opening): Promise<void> {
+    task.turnFiles.clear()
+    task.validatedTree = undefined
+    task.turnBranch = await this.gitActions?.branch(task.request.cwd).catch(() => undefined)
+    await this.markSharedCheckout(task)
     const before = await this.turnCapture(task)
     task.turnBefore = before?.tree
     const record = before ? startTurn(task.request.cwd, task.request.id, before, turnPreview(first.text)) : undefined
@@ -2132,6 +2277,7 @@ export class AgentController {
       for (attempt = 1; attempt <= maxAttempts && !task.cancelled; attempt++) {
         await this.loadTodos(task)
         await this.loadCustomInstructions(task)
+        await this.loadGitEnabled(task)
         const result = await this.runCycleAttempt(task, opening, attempt)
         if (result.kind === 'done') return
         opening = result.opening
@@ -2183,6 +2329,7 @@ export class AgentController {
         ? `Plan mode is read-only. You may inspect the project, ask clarifying questions, and propose a plan, but must not change project files or modify external systems. A finished plan ends with exactly one final line: ${FINISHED_PLAN}. If you need a decision, end with ${QUESTIONS_MARKER}. For an ordinary non-final response, end with ${PIPELINES_MARKER} []. Do not emit ${FINISHED_PLAN} until the plan is complete and ready for the developer to execute. Farol will never run pipelines from a Plan response.`
         : `When the requested file change is complete, select every relevant validation pipeline from the catalog below. If you made no file changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
       plan ? '' : mandatoryNote,
+      plan ? '' : this.gitContext(task),
       this.todoContext(task),
       `Handoff note: another agent may take the next turn of this chat without seeing this conversation. When the work's state changed this turn, put one line ${HANDOFF_MARKER} "<JSON string>" just before your final marker: what is done, decisions made, dead ends, and the next step, in at most ${MAX_HANDOFF_CHARS} characters. It replaces the previous note; omit it when nothing changed.`,
       plan
@@ -2199,6 +2346,18 @@ export class AgentController {
     ]
       .filter(Boolean)
       .join('\n')
+  }
+
+  /** The standing rules for Git actions; empty when Farol does not perform them on this machine. */
+  private gitContext(task: Task): string {
+    if (!task.gitEnabled) return ''
+    return [
+      `Git: Farol performs Git actions for you. Never run git or gh yourself to commit, push or open a pull request.`,
+      `When this turn changed files, put one line ${GIT_MARKER} {"action":"commit","message":"<the full commit message>"} just before your final marker. Once validation passes, Farol commits exactly the files this turn changed.`,
+      `Only when the developer asked for it, add ${GIT_MARKER} {"action":"push"} and then ${GIT_MARKER} {"action":"create_pr","base":"<branch>","title":"<title>","body":"<description>"} (base, title and body are optional) after the commit line. Each is one JSON object on one line; Farol performs them in order and stops at the first that fails.`,
+      `A pipeline bound to a Git action runs first and can block it; its output comes back to you to fix.`,
+      `Never call the Farol MCP Git tools (git_status, git_commit, git_push, git_create_pr) in this managed Chat session; use ${GIT_MARKER}.`
+    ].join(' ')
   }
 
   private todoContext(task: Task): string {

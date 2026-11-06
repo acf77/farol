@@ -155,6 +155,14 @@ export interface GitChanged {
   info: GitInfo
 }
 
+/** An agent had Farol perform a Git action: the Git log and the status follow it. */
+export interface GitActionEvent {
+  projectPath: string
+  action: 'status' | 'commit' | 'push' | 'create_pr'
+  ok: boolean
+  message: string
+}
+
 export type GitFileKind = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict'
 
 export interface GitStatusFile {
@@ -241,7 +249,7 @@ export interface PullRequest {
   hasConflicts: boolean
   /** PR base branch, when GitHub reported it. */
   base?: string
-  /** GitHub HTML URL for this PR, when `gh` reported it. */
+  /** GitHub HTML URL for this PR, when GitHub reported it. */
   url?: string
   /** True when the PR is still a draft on GitHub. */
   isDraft?: boolean
@@ -252,6 +260,8 @@ export interface PullRequest {
 export interface GitHubInfo {
   available: boolean
   message?: string
+  /** Farol holds no usable GitHub token and the gh CLI could not stand in: the panel offers Sign in. */
+  signInRequired?: true
   prs: PullRequest[]
   /** Paths that would conflict if the open PR's base were merged into HEAD. */
   conflictFiles?: string[]
@@ -719,6 +729,8 @@ export interface FarolApi {
     ): Promise<{ ok: boolean; message: string; prompt?: string }>
     /** Fires when HEAD changes, including from outside the app. */
     onChanged(cb: (changed: GitChanged) => void): () => void
+    /** Fires when an agent had Farol perform a Git action, so the Git log and status follow. */
+    onAction(cb: (event: GitActionEvent) => void): () => void
   }
   run: {
     start(pipeline: Pipeline, cwd: string, branch: string): Promise<string>

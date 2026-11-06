@@ -12,6 +12,7 @@
  * hook event.
  */
 
+import type { GitAction } from './git-action'
 import type { GitHookEvent } from './types'
 
 /** Env var carrying the socket path from `.mcp.json` to the MCP server. */
@@ -42,6 +43,8 @@ export type BridgeAsk =
   | { op: 'list'; cwd: string }
   | { op: 'run'; cwd: string; pipeline: string }
   | { op: 'hook'; cwd: string; event: GitHookEvent }
+  /** A Git action for an agent outside managed Chat; `action` is validated again by the app. */
+  | { op: 'git'; cwd: string; action: GitAction }
   | DelegateAsk
   | ApproveAsk
 
@@ -79,6 +82,7 @@ export type BridgeReply =
   | { id: number; ok: true; op: 'list'; pipelines: { id: string; name: string; steps: string[] }[] }
   | { id: number; ok: true; op: 'run'; text: string; failed: boolean }
   | { id: number; ok: true; op: 'hook'; text: string; failed: boolean }
+  | { id: number; ok: true; op: 'git'; text: string; failed: boolean }
   | { id: number; ok: true; op: 'delegate'; text: string; failed: boolean }
   | { id: number; ok: true; op: 'approve'; allow: boolean; message?: string }
   | { id: number; ok: false; message: string }

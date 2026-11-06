@@ -1,9 +1,12 @@
 /**
  * Signing in with GitHub. The service exchanges a device code or an authorization
- * code for a GitHub token itself (it holds the client secret), reads who the user
- * is, and then drops the token: GitHub only proves identity, the service issues
- * its own session (see `sessions.ts`). Works with a GitHub App or an OAuth App.
+ * code for a GitHub token itself (it holds the client secret) and reads who the user
+ * is. It issues its own session (see `sessions.ts`). A client that asks for GitHub
+ * access (the desktop app, to call GitHub itself) also gets the GitHub token back; the
+ * service keeps no GitHub token. Works with a GitHub App or an OAuth App.
  */
+
+import type { GitHubGrant } from '../shared/github-grant'
 
 export interface GitHubAppConfig {
   clientId: string
@@ -32,7 +35,7 @@ export interface DeviceStart {
 export type DevicePoll =
   | { status: 'pending'; interval?: number }
   | { status: 'denied' | 'expired' }
-  | { status: 'ok'; token: string }
+  | { status: 'ok'; grant: GitHubGrant }
 
 export class GitHubError extends Error {}
 
@@ -40,6 +43,17 @@ type Fetch = typeof fetch
 
 const API = 'https://api.github.com'
 const WEB = 'https://github.com'
+
+/** The grant in a token response, or undefined when GitHub sent an error instead. */
+function grantFrom(body: Record<string, unknown>): GitHubGrant | undefined {
+  if (typeof body.access_token !== 'string') return undefined
+  const expiresIn = Number(body.expires_in)
+  return {
+    token: body.access_token,
+    ...(expiresIn > 0 ? { expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString() } : {}),
+    ...(typeof body.refresh_token === 'string' ? { refreshToken: body.refresh_token } : {})
+  }
+}
 
 export class GitHub {
   constructor(
@@ -89,7 +103,8 @@ export class GitHub {
       device_code: deviceCode,
       grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
     })
-    if (typeof body.access_token === 'string') return { status: 'ok', token: body.access_token }
+    const grant = grantFrom(body)
+    if (grant) return { status: 'ok', grant }
     switch (body.error) {
       case 'authorization_pending':
         return { status: 'pending' }
@@ -112,7 +127,7 @@ export class GitHub {
   }
 
   /** Exchange a code from the browser flow. Check `codeFlowRefusal` first. */
-  async exchangeCode(code: string, redirectUri: string, codeVerifier?: string): Promise<string> {
+  async exchangeCode(code: string, redirectUri: string, codeVerifier?: string): Promise<GitHubGrant> {
     const { clientId, clientSecret } = this.config
     const refusal = this.codeFlowRefusal(redirectUri)
     if (refusal || !clientSecret) throw new GitHubError(refusal ?? 'No client secret')
@@ -123,10 +138,22 @@ export class GitHub {
       redirect_uri: redirectUri,
       ...(codeVerifier ? { code_verifier: codeVerifier } : {})
     })
-    if (typeof body.access_token !== 'string') {
-      throw new GitHubError(String(body.error_description ?? body.error ?? 'GitHub sign-in failed'))
-    }
-    return body.access_token
+    const grant = grantFrom(body)
+    if (!grant) throw new GitHubError(String(body.error_description ?? body.error ?? 'GitHub sign-in failed'))
+    return grant
+  }
+
+  /** A new grant for a refresh token (GitHub App user tokens expire), or null when GitHub no longer accepts it. */
+  async refresh(refreshToken: string): Promise<GitHubGrant | null> {
+    const { clientId, clientSecret } = this.config
+    if (!clientSecret) throw new GitHubError('Refreshing GitHub tokens is not configured on this service')
+    const body = await this.oauth('/login/oauth/access_token', {
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken
+    })
+    return grantFrom(body) ?? null
   }
 
   async user(token: string): Promise<GitHubUser> {

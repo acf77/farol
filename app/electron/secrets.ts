@@ -8,6 +8,8 @@ export type SecretName =
   | 'openrouterApiKey'
   | 'aiGatewayApiKey'
   | 'remoteSession'
+  /** The GitHub token the service handed back at sign-in, as JSON (see `shared/github-grant.ts`). */
+  | 'githubGrant'
   | 'anthropicAdminKey'
   | 'openaiAdminKey'
   | 'openrouterManagementKey'
