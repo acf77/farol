@@ -1,3 +1,4 @@
+import type { MachineConfig, MachineStatus } from './machine'
 /** Types shared between the main process, the preload bridge, and the renderer. */
 
 import type { AgentEffort, AgentMode, AiProvider, ProviderKey } from './ai'
@@ -806,6 +807,27 @@ export interface FarolApi {
   /** Refresh live `--model` lists from each installed coding CLI. */
   agentModels: {
     refresh(force?: boolean): Promise<SettingsResult>
+  }
+  /**
+   * A **Remote machine** reached over SSH (usually on the tailnet). While one is
+   * in use, projects, git, shells, pipelines and agents all run there.
+   */
+  machine: {
+    /** Where things stand, and the last machine used (to fill the form). */
+    status(): Promise<{ status: MachineStatus; saved: MachineConfig | null }>
+    /** Switch to this machine. On success the window reloads with that machine's projects. */
+    connect(config: MachineConfig): Promise<{ ok: true; status: MachineStatus } | { ok: false; error: string }>
+    /** Back to this computer. The remote server and its agents keep running there. */
+    disconnect(): Promise<void>
+    /** Open a folder on the Remote machine as a project (`~` is that machine's home). */
+    openProject(path: string): Promise<{ ok: true; project: Project } | { ok: false; error: string }>
+    /** Choose a private key file in `~/.ssh`. */
+    pickKey(): Promise<string | null>
+    /** Open a login link SSH asked for (Tailscale SSH check mode). */
+    openAuthUrl(url: string): Promise<boolean>
+    onStatus(cb: (status: MachineStatus) => void): () => void
+    /** Open Project was chosen while on a Remote machine: ask for a path instead of a native picker. */
+    onPickProject(cb: () => void): () => void
   }
   /** Signing in to the built-in remote pipeline service. */
   remote: {

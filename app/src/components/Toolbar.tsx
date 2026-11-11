@@ -5,6 +5,7 @@ import type { View } from '../types'
 import { SURFACES, SURFACE_LABEL, type Surface } from '../workspace-layout'
 import { REMOTE_ENABLED } from '@shared/features'
 import AccountMenu from './AccountMenu'
+import { MachineBadge } from './MachineControls'
 import { CHROME_ROW } from './side-panel'
 import ActivityDot from './ActivityDot'
 import { SettingsIcon } from './icons'
@@ -328,6 +329,8 @@ export default function Toolbar({
             Update
           </button>
         )}
+
+        <MachineBadge />
 
         <button
           type="button"

@@ -41,6 +41,7 @@ import { formatTokens } from '@shared/usage'
 import { C, UI } from '../theme'
 import { Button, Checkbox, CliModelDropdown, SegmentedControl, Switch } from './controls'
 import { CustomPromptsSection } from './CustomPromptsSection'
+import { MachineForm } from './MachineControls'
 import { ChevronDown, ChevronUp } from './icons'
 import { CHROME_ROW } from './side-panel'
 
@@ -55,10 +56,11 @@ interface Props {
   projectName?: string
 }
 
-type PageKey = 'general' | 'prompts' | 'models' | 'fallbacks' | 'openrouter' | 'keys' | 'jev' | 'usage'
+type PageKey = 'general' | 'machine' | 'prompts' | 'models' | 'fallbacks' | 'openrouter' | 'keys' | 'jev' | 'usage'
 
 const PAGES: readonly { value: PageKey; label: string }[] = [
   { value: 'general', label: 'General' },
+  { value: 'machine', label: 'Remote machine' },
   { value: 'prompts', label: 'Custom prompts' },
   { value: 'models', label: 'Models' },
   { value: 'fallbacks', label: 'Fallbacks' },
@@ -920,6 +922,24 @@ function UsageSection() {
   )
 }
 
+/** Work on another computer — usually one on the tailnet. Farol only needs how to SSH there. */
+function MachineSection() {
+  return (
+    <Group
+      title="Remote machine"
+      foot="Projects, git, terminals, pipelines and agents run on that machine; this window shows them. Agents keep running there when Farol closes. API keys saved in Farol stay on this computer: agents on the remote use the logins their CLIs have there."
+    >
+      <Card>
+        <Blurb>
+          Work on another computer over SSH, such as one on your tailnet. It needs Node.js 20+, git, and the agent CLIs you
+          use, signed in. Farol installs its own small server there the first time.
+        </Blurb>
+        <MachineForm />
+      </Card>
+    </Group>
+  )
+}
+
 export default function SettingsPage({
   settings,
   onSettings,
@@ -1396,6 +1416,7 @@ export default function SettingsPage({
               </>
             )}
 
+            {page === 'machine' && <MachineSection />}
             {page === 'keys' && <ProviderKeysSection settings={settings} onSettings={onSettings} onAdoptSettings={onAdoptSettings} />}
             {page === 'jev' && <JevSection settings={settings} onAdoptSettings={onAdoptSettings} />}
             {page === 'usage' && <UsageSection />}

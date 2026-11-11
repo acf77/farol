@@ -87,6 +87,12 @@ Pipelines are saved in `.farol/pipelines.json`, so you can commit them and the w
 
 Shell steps run on your Mac. AI steps send their prompt and the code they need to the model provider you picked, through that provider&rsquo;s own CLI and login. Checks apply to the agents Farol runs in Chat. An agent you start yourself in a terminal can use Farol&rsquo;s pipeline tools over MCP, but Farol doesn&rsquo;t enforce them there.
 
+## Work on another machine
+
+Farol can drive a machine on your tailnet (or anywhere you can SSH) instead of your Mac: a beefy desktop, a dev server, a cloud VM. Open **Settings → Remote machine** (or **Work on a remote machine…** with no project open), enter its Tailscale IP or MagicDNS name, and connect. User and SSH key are optional: Farol uses your `~/.ssh/config`, SSH agent, or Tailscale SSH.
+
+The first connection installs a small Farol server in `~/.farol-server` on that machine. From then on projects, git, terminals, pipelines and agents run there, and they keep running when your laptop sleeps. The remote needs Node.js 20+, git, and the agent CLIs you use, signed in. For terminals it also builds `node-pty`, which needs `python3`, `make` and a C++ compiler.
+
 ## Build from source
 
 ```bash

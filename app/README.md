@@ -205,6 +205,24 @@ Open Chat from the toolbar, or **New agent terminal** from the command palette (
   pipelines, but tool use is controlled by that external CLI and is therefore
   not enforced. Open Terminal from a Chat tab to place both side by side.
 
+### Remote machines
+
+The backend (projects, files, git, shells, pipelines, agents) lives in
+`electron/backend.ts` and talks to its host only through `BackendHost`. In the
+app it runs inside Electron's main process. For a **Remote machine** it runs
+headless as `out/server/farol-server.js` (built by `npm run build:server`, with
+`electron` swapped for `electron/headless-electron.ts`).
+
+`electron/machine.ts` reaches the remote with the system `ssh` (`BatchMode`,
+`ControlMaster` multiplexing). On connect it probes for node and git, uploads
+the server bundle to `~/.farol-server/<version>-<hash>/` when that build is not
+there yet (`npm install` builds node-pty), then runs `farol-server.js attach`.
+That joins the SSH session's stdio to the server's Unix socket, starting the
+server when it is not running. Calls and events cross as JSON lines
+(`electron/machine-wire.ts`). While a machine is in use, `main.ts` forwards
+every backend channel to it and reloads the window when the backend changes
+sides.
+
 ### Shortcuts
 
 `⌘T` new tab · `⌘D` split right · `⇧⌘D` split down · `⌘W` close tab ·

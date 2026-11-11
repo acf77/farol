@@ -74,6 +74,7 @@ import type { Surface } from './workspace-layout'
 import Toolbar from './components/Toolbar'
 import ErrorBoundary from './ErrorBoundary'
 import EmptyState from './components/EmptyState'
+import { MachineBadge, MachineHost } from './components/MachineControls'
 import Onboarding from './components/Onboarding'
 import { RUN_ONBOARDING_EVENT } from './onboarding-event'
 import { remoteAccount } from './remote-account'
@@ -2867,9 +2868,11 @@ export default function App() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'flex-end',
+            gap: 8,
             padding: '0 16px'
           } as React.CSSProperties}
         >
+          <MachineBadge />
           <button
             type="button"
             className="bf-focus bf-icon-btn"
@@ -2893,6 +2896,7 @@ export default function App() {
           </button>
         </div>
         <EmptyState onOpenProject={openProject} />
+        <MachineHost />
       </div>
     )
   }
@@ -2979,6 +2983,7 @@ export default function App() {
           )
         })}
       </div>
+      <MachineHost />
     </div>
   )
 }

@@ -14,6 +14,7 @@ import type {
   UpdateStatus
 } from '../shared/types'
 import type { ProcSnapshot } from '../shared/proc'
+import type { MachineStatus } from '../shared/machine'
 
 /** Subscribe to a main-process channel; returns an unsubscribe function. */
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -144,6 +145,16 @@ const api: FarolApi = {
   },
   agentModels: {
     refresh: (force) => ipcRenderer.invoke('agentModels:refresh', force === true)
+  },
+  machine: {
+    status: () => ipcRenderer.invoke('machine:status'),
+    connect: (config) => ipcRenderer.invoke('machine:connect', config),
+    disconnect: () => ipcRenderer.invoke('machine:disconnect'),
+    openProject: (dir) => ipcRenderer.invoke('machine:openProject', dir),
+    pickKey: () => ipcRenderer.invoke('machine:pickKey'),
+    openAuthUrl: (url) => ipcRenderer.invoke('machine:openAuthUrl', url),
+    onStatus: (cb) => on<MachineStatus>('machine:status', cb),
+    onPickProject: (cb) => on('machine:pickProject', () => cb())
   },
   remote: {
     signInStart: () => ipcRenderer.invoke('remote:signInStart'),
