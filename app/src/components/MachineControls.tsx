@@ -355,7 +355,7 @@ export function MachineHost() {
       {connecting && (
         <Modal
           title="Remote machine"
-          description="Work on another computer over SSH, such as one on your tailnet. It needs Node.js 20+, git, and your agent CLIs signed in. Farol installs its own small server there the first time."
+          description="Work on a Linux machine over SSH, such as one on your tailnet. Farol sets it up the first time: its own Node.js and server in ~/.farol-server, plus git if it is missing (that needs root or passwordless sudo). Sign in to the agent CLIs you use on that machine."
           onClose={() => setConnecting(false)}
         >
           <MachineForm onDone={() => setConnecting(false)} />

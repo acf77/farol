@@ -931,8 +931,9 @@ function MachineSection() {
     >
       <Card>
         <Blurb>
-          Work on another computer over SSH, such as one on your tailnet. It needs Node.js 20+, git, and the agent CLIs you
-          use, signed in. Farol installs its own small server there the first time.
+          Work on a Linux machine over SSH, such as one on your tailnet. Farol sets it up the first time: its own Node.js
+          and server in ~/.farol-server, plus git if it is missing (that needs root or passwordless sudo). Sign in to the
+          agent CLIs you use on that machine.
         </Blurb>
         <MachineForm />
       </Card>

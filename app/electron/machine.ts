@@ -5,14 +5,20 @@ import os from 'os'
 import path from 'path'
 import {
   attachScript,
+  installPlan,
   installScript,
+  machineArch,
   machineLabel,
+  nodeInstallScript,
+  packagesProblem,
+  packagesScript,
   parseProbe,
   probeProblem,
   probeScript,
   remoteCommand,
   sshArgs,
   sshDiagnostics,
+  type MachineArch,
   type MachineConfig,
   type MachineFrame,
   type MachineStatus,
@@ -74,6 +80,9 @@ export function bundleBuildId(bundleDir: string, version: string): string {
   }
   return `${version.replace(/[^A-Za-z0-9.-]/g, '_')}-${hash.digest('hex').slice(0, 10)}`
 }
+
+/** A reason this machine cannot be used that only the user can fix; not retried. */
+class MachineUnusable extends Error {}
 
 export class MachineConnection {
   private config: MachineConfig | null = null
@@ -158,23 +167,38 @@ export class MachineConnection {
       const probe = await this.probe(config, buildId)
       if (generation !== this.generation) return
       const problem = probeProblem(probe)
-      if (problem) throw new Error(problem)
-      if (!probe.ready) {
-        this.setStatus({ state: 'connecting', message: `Installing Farol on ${label} (first time takes a minute)…` })
-        await this.install(config, buildId)
+      if (problem) throw new MachineUnusable(problem)
+      const arch = machineArch(probe.machine) as MachineArch
+      const plan = installPlan(probe)
+      if (plan.packages.length) {
+        this.setStatus({ state: 'connecting', message: `Installing ${plan.packages.join(', ')} on ${label}…` })
+        await this.installPackages(config, plan.packages, label)
         if (generation !== this.generation) return
       }
-      await this.attach(config, buildId, probe, generation)
+      if (plan.node) {
+        this.setStatus({ state: 'connecting', message: `Downloading Node.js for Farol on ${label}…` })
+        await this.installNode(config, arch)
+        if (generation !== this.generation) return
+      }
+      if (plan.server) {
+        this.setStatus({ state: 'connecting', message: `Installing Farol on ${label}…` })
+        await this.install(config, buildId, arch)
+        if (generation !== this.generation) return
+      }
+      await this.attach(config, buildId, arch, generation)
       this.backoff = 1000
     } catch (err) {
       if (generation !== this.generation) return
       const message = err instanceof Error ? err.message : String(err)
       const authUrl = (err as { authUrl?: string }).authUrl
-      if (!retrying) {
+      // Retrying cannot fix a machine Farol does not support, or a package only the user can install.
+      const permanent = err instanceof MachineUnusable
+      if (!retrying || permanent) {
         // The first attempt reports straight back to whoever asked to connect.
         this.setStatus({ state: 'error', message, ...(authUrl ? { authUrl } : {}) })
-        this.scheduleRetry(generation)
-        throw err
+        if (!permanent) this.scheduleRetry(generation)
+        if (!retrying) throw err
+        return
       }
       this.setStatus({ state: 'reconnecting', message, ...(authUrl ? { authUrl } : {}) })
       this.scheduleRetry(generation)
@@ -221,15 +245,26 @@ export class MachineConnection {
     return parseProbe(await this.run(config, probeScript(buildId), undefined, 30_000))
   }
 
-  private async install(config: MachineConfig, buildId: string): Promise<void> {
+  private async installPackages(config: MachineConfig, packages: string[], label: string): Promise<void> {
+    const out = await this.run(config, packagesScript(packages), undefined, 10 * 60_000)
+    const code = Number(/FAROL_PKGS=(\d+)/.exec(out)?.[1] ?? NaN)
+    if (code !== 0) throw new MachineUnusable(packagesProblem(packages, label, Number.isFinite(code) ? code : null))
+  }
+
+  private async installNode(config: MachineConfig, arch: MachineArch): Promise<void> {
+    const out = await this.run(config, nodeInstallScript(arch), undefined, 10 * 60_000)
+    if (!out.includes('FAROL_NODE_INSTALLED=1')) throw new Error('Downloading Node.js on the remote machine did not finish.')
+  }
+
+  private async install(config: MachineConfig, buildId: string, arch: MachineArch): Promise<void> {
     const tar = spawn(findTar(), ['-czf', '-', '-C', this.opts.bundleDir, '.'], { stdio: ['ignore', 'pipe', 'ignore'] })
-    const out = await this.run(config, installScript(buildId), tar.stdout ?? undefined, 10 * 60_000)
+    const out = await this.run(config, installScript(buildId, arch), tar.stdout ?? undefined, 15 * 60_000)
     if (!out.includes('FAROL_INSTALLED=1')) throw new Error('Installing Farol on the remote machine did not finish.')
   }
 
-  private attach(config: MachineConfig, buildId: string, probe: ProbeResult, generation: number): Promise<void> {
+  private attach(config: MachineConfig, buildId: string, arch: MachineArch, generation: number): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.ssh, [...sshArgs(config, this.controlPath), remoteCommand(attachScript(buildId, probe.node))], {
+      const child = spawn(this.ssh, [...sshArgs(config, this.controlPath), remoteCommand(attachScript(buildId, arch))], {
         stdio: ['pipe', 'pipe', 'pipe']
       })
       this.proc = child
@@ -255,7 +290,7 @@ export class MachineConnection {
               home: frame.home,
               message: frame.pty
                 ? `Connected to ${machineLabel(config)}.`
-                : `Connected to ${machineLabel(config)}. Terminals and pipeline steps are off: node-pty did not install there.`
+                : `Connected to ${machineLabel(config)}. Terminals and pipeline steps are off: the terminal library did not install there.`
             })
             resolve()
           } else this.onFrame(frame)

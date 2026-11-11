@@ -214,9 +214,14 @@ headless as `out/server/farol-server.js` (built by `npm run build:server`, with
 `electron` swapped for `electron/headless-electron.ts`).
 
 `electron/machine.ts` reaches the remote with the system `ssh` (`BatchMode`,
-`ControlMaster` multiplexing). On connect it probes for node and git, uploads
-the server bundle to `~/.farol-server/<version>-<hash>/` when that build is not
-there yet (`npm install` builds node-pty), then runs `farol-server.js attach`.
+`ControlMaster` multiplexing). On connect it probes the machine and refuses
+anything but glibc Linux on x64 or arm64. It then installs what is missing:
+git (and curl) with the system package manager, as root or with passwordless
+sudo; a pinned Node.js release, checked against its SHA-256 list, into
+`~/.farol-server/runtime`; and the server bundle into
+`~/.farol-server/<version>-<hash>/`, whose `npm install` fetches a prebuilt
+node-pty fork (`@homebridge/node-pty-prebuilt-multiarch`), so no compiler is
+needed. Then it runs `farol-server.js attach`.
 That joins the SSH session's stdio to the server's Unix socket, starting the
 server when it is not running. Calls and events cross as JSON lines
 (`electron/machine-wire.ts`). While a machine is in use, `main.ts` forwards

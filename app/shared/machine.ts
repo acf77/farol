@@ -124,91 +124,216 @@ export function remoteCommand(script: string): string {
   return `exec $SHELL -lc ${shq(`exec /bin/sh -c ${shq(script)}`)}`
 }
 
-/** PATH additions for a node that a login shell did not put on PATH. */
-const NODE_PATH_SETUP = [
-  'for d in "$HOME/.volta/bin" "$HOME/.local/bin" "$HOME/.bun/bin" /usr/local/bin /opt/homebrew/bin; do',
-  '  [ -d "$d" ] && PATH="$PATH:$d"',
-  'done',
-  'if [ -d "$HOME/.nvm/versions/node" ]; then',
-  '  for d in "$HOME"/.nvm/versions/node/*/bin; do PATH="$d:$PATH"; done',
-  'fi',
-  'export PATH'
-].join('\n')
+/**
+ * The Node.js the Farol server runs on. Farol downloads its own copy into
+ * `~/.farol-server/runtime` instead of relying on (or changing) the machine's,
+ * so the terminal library's prebuilt binary always matches it.
+ */
+export const NODE_VERSION = 'v22.23.4'
+const NODE_DIST = `https://nodejs.org/dist/${NODE_VERSION}`
+
+export type MachineArch = 'x64' | 'arm64'
+
+/** `node-v22…-linux-x64`: the release's directory name, and where it is unpacked. */
+export function nodeDistName(arch: MachineArch): string {
+  return `node-${NODE_VERSION}-linux-${arch}`
+}
 
 /** Where a given server build lives on the remote, relative to `$HOME`. */
 export function serverDir(buildId: string): string {
   return `.farol-server/${buildId}`
 }
 
-/** Reports node, git, home, and whether this build is installed — as `FAROL_<KEY>=value` lines. */
+function runtimeBin(arch: MachineArch): string {
+  return `"$HOME/.farol-server/runtime/${nodeDistName(arch)}/bin"`
+}
+
+/**
+ * `farol_pkgs base|build PKG…` installs system packages with the machine's
+ * package manager: as root, or with passwordless sudo — there is no terminal
+ * to type a password into. `build` maps to each distribution's compiler
+ * toolchain. Exit 10: no root and no passwordless sudo. 11: unknown package
+ * manager.
+ */
+const PKG_FUNCTION = `farol_pkgs() {
+  kind="$1"; shift
+  if [ "$(id -u)" = 0 ]; then S=""; elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then S="sudo -n"; else return 10; fi
+  if command -v apt-get >/dev/null 2>&1; then
+    [ "$kind" = build ] && set -- build-essential python3
+    $S env DEBIAN_FRONTEND=noninteractive apt-get update -qq && $S env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@"
+  elif command -v dnf >/dev/null 2>&1; then
+    [ "$kind" = build ] && set -- gcc-c++ make python3
+    $S dnf install -y -q "$@"
+  elif command -v yum >/dev/null 2>&1; then
+    [ "$kind" = build ] && set -- gcc-c++ make python3
+    $S yum install -y -q "$@"
+  elif command -v zypper >/dev/null 2>&1; then
+    [ "$kind" = build ] && set -- gcc-c++ make python3
+    $S zypper --non-interactive install "$@"
+  elif command -v pacman >/dev/null 2>&1; then
+    [ "$kind" = build ] && set -- base-devel python
+    $S pacman -Sy --noconfirm --needed "$@"
+  elif command -v apk >/dev/null 2>&1; then
+    [ "$kind" = build ] && set -- build-base python3 linux-headers
+    $S apk add --no-cache "$@"
+  else
+    return 11
+  fi
+}`
+
+/** Reports the machine as `FAROL_<KEY>=value` lines; anything else a login shell prints is ignored. */
 export function probeScript(buildId: string): string {
   return [
-    NODE_PATH_SETUP,
     'echo "FAROL_HOME=$HOME"',
-    'echo "FAROL_NODE=$(command -v node || true)"',
-    'echo "FAROL_NODE_VERSION=$(node -v 2>/dev/null || true)"',
-    'echo "FAROL_GIT=$(command -v git || true)"',
     'echo "FAROL_OS=$(uname -s)"',
+    'echo "FAROL_ARCH=$(uname -m)"',
+    'if ls /lib/ld-musl-* >/dev/null 2>&1; then echo FAROL_LIBC=musl; else echo FAROL_LIBC=glibc; fi',
+    'echo "FAROL_GIT=$(command -v git || true)"',
+    'if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then echo FAROL_FETCH=1; fi',
+    'if [ "$(id -u)" = 0 ] || { command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; }; then echo FAROL_ROOT=1; fi',
+    `for a in x64 arm64; do if [ -x "$HOME/.farol-server/runtime/${'node-' + NODE_VERSION}-linux-$a/bin/node" ]; then echo "FAROL_RUNTIME=$a"; fi; done`,
     `if [ -f "$HOME/${serverDir(buildId)}/.ready" ]; then echo FAROL_READY=1; fi`
   ].join('\n')
 }
 
 export interface ProbeResult {
   home: string
-  node: string
-  nodeVersion: string
-  git: string
+  /** `uname -s`: Linux, Darwin, … */
   os: string
+  /** `uname -m`: x86_64, aarch64, … */
+  machine: string
+  libc: 'glibc' | 'musl'
+  git: boolean
+  /** curl or wget, to download Node.js. */
+  fetch: boolean
+  /** Root, or passwordless sudo: system packages can be installed. */
+  root: boolean
+  /** Farol's own Node.js is already unpacked. */
+  runtime: boolean
+  /** This server build is already installed. */
   ready: boolean
 }
 
 export function parseProbe(stdout: string): ProbeResult {
-  const values = new Map<string, string>()
+  const values = new Map<string, string[]>()
   for (const line of stdout.split('\n')) {
     const m = /^FAROL_([A-Z_]+)=(.*)$/.exec(line.trim())
-    if (m) values.set(m[1], m[2].trim())
+    if (m) values.set(m[1], [...(values.get(m[1]) ?? []), m[2].trim()])
   }
+  const one = (key: string): string => values.get(key)?.[0] ?? ''
+  const arch = machineArch(one('ARCH'))
   return {
-    home: values.get('HOME') ?? '',
-    node: values.get('NODE') ?? '',
-    nodeVersion: values.get('NODE_VERSION') ?? '',
-    git: values.get('GIT') ?? '',
-    os: values.get('OS') ?? '',
-    ready: values.get('READY') === '1'
+    home: one('HOME'),
+    os: one('OS'),
+    machine: one('ARCH'),
+    libc: one('LIBC') === 'musl' ? 'musl' : 'glibc',
+    git: !!one('GIT'),
+    fetch: one('FETCH') === '1',
+    root: one('ROOT') === '1',
+    runtime: !!arch && (values.get('RUNTIME') ?? []).includes(arch),
+    ready: one('READY') === '1'
   }
 }
 
-export const MIN_NODE_MAJOR = 20
-
-/** Why this machine cannot run the Farol server, or null when it can. */
-export function probeProblem(probe: ProbeResult): string | null {
-  if (!probe.home) return 'The remote shell did not report a home directory.'
-  if (!probe.node) {
-    return `Node.js ${MIN_NODE_MAJOR} or newer is needed on the remote machine (install it, for example with nvm).`
-  }
-  const major = Number(/^v?(\d+)/.exec(probe.nodeVersion)?.[1] ?? NaN)
-  if (!Number.isFinite(major) || major < MIN_NODE_MAJOR) {
-    return `Node.js ${MIN_NODE_MAJOR} or newer is needed on the remote machine; it has ${probe.nodeVersion || 'an unknown version'}.`
-  }
-  if (!probe.git) return 'git is needed on the remote machine.'
+/** Node.js's name for the CPU, or null for one Farol does not support. */
+export function machineArch(unameM: string): MachineArch | null {
+  if (unameM === 'x86_64' || unameM === 'amd64') return 'x64'
+  if (unameM === 'aarch64' || unameM === 'arm64') return 'arm64'
   return null
 }
 
+/** Why Farol cannot use this machine at all, or null when it can. Only Linux on x64 or arm64 with glibc. */
+export function probeProblem(probe: ProbeResult): string | null {
+  if (!probe.home) return 'The remote shell did not report a home directory.'
+  if (probe.os !== 'Linux') {
+    return `Farol works with Linux machines only; this one runs ${probe.os || 'an unknown system'}.`
+  }
+  if (!machineArch(probe.machine)) {
+    return `Farol supports x86_64 and arm64 Linux machines; this one is ${probe.machine || 'an unknown CPU'}.`
+  }
+  if (probe.libc === 'musl') {
+    return 'Farol does not support musl-based Linux (such as Alpine) yet. Use a glibc distribution like Debian, Ubuntu or Fedora.'
+  }
+  return null
+}
+
+/** What has to be installed before the server can run. */
+export interface InstallPlan {
+  /** System packages (needs root or passwordless sudo). */
+  packages: string[]
+  /** Download Farol's own Node.js. */
+  node: boolean
+  /** Upload this build of the server. */
+  server: boolean
+}
+
+export function installPlan(probe: ProbeResult): InstallPlan {
+  const packages = [...(probe.git ? [] : ['git']), ...(probe.fetch || probe.runtime ? [] : ['curl', 'ca-certificates'])]
+  return { packages, node: !probe.runtime, server: !probe.ready }
+}
+
+/** The words for a package install Farol cannot do itself. */
+export function packagesProblem(packages: string[], host: string, code: number | null): string {
+  const list = packages.join(' ')
+  if (code === 10) {
+    return `${host} needs ${list}, and Farol can only install packages as root or with passwordless sudo. Install ${packages.length > 1 ? 'them' : 'it'} there (for example \`sudo apt install ${list}\`) and connect again.`
+  }
+  if (code === 11) return `${host} needs ${list}, and Farol does not know its package manager. Install ${packages.length > 1 ? 'them' : 'it'} there and connect again.`
+  return `Installing ${list} on ${host} failed.`
+}
+
+/** Installs system packages; ends with `FAROL_PKGS=0` on success or the failure code. */
+export function packagesScript(packages: string[]): string {
+  return [PKG_FUNCTION, `farol_pkgs base ${packages.map(shq).join(' ')}`, 'echo "FAROL_PKGS=$?"'].join('\n')
+}
+
+/** Downloads Farol's Node.js, checks it against the release's SHA-256 list, and unpacks it. */
+export function nodeInstallScript(arch: MachineArch): string {
+  const name = nodeDistName(arch)
+  return [
+    'set -e',
+    'dest="$HOME/.farol-server/runtime"',
+    'mkdir -p "$dest"',
+    'tmp=$(mktemp -d "$dest/dl.XXXXXX")',
+    'trap \'rm -rf "$tmp"\' EXIT',
+    'cd "$tmp"',
+    'fetch() { if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"; else wget -q "$1" -O "$2"; fi; }',
+    `fetch ${shq(`${NODE_DIST}/${name}.tar.gz`)} node.tar.gz`,
+    `fetch ${shq(`${NODE_DIST}/SHASUMS256.txt`)} SHASUMS256.txt`,
+    `want=$(grep ' ${name}.tar.gz$' SHASUMS256.txt | cut -d' ' -f1)`,
+    'got=$(sha256sum node.tar.gz | cut -d" " -f1)',
+    'if [ -z "$want" ] || [ "$want" != "$got" ]; then echo "Node.js download did not match its checksum" >&2; exit 1; fi',
+    'tar -xzf node.tar.gz',
+    `rm -rf "$dest/${name}"`,
+    `mv ${name} "$dest/${name}"`,
+    'echo FAROL_NODE_INSTALLED=1'
+  ].join('\n')
+}
+
 /**
- * Unpacks the server (a tar.gz on stdin) and installs node-pty for terminal
- * panes. A failed install still leaves a working server — only terminal panes
- * need it — so it is logged and `.ready` is written either way.
+ * Unpacks the server (a tar.gz on stdin) and runs `npm install` with Farol's
+ * Node.js. The terminal library comes prebuilt for Linux; only if that fails
+ * does npm compile it, and then Farol installs a compiler first when it can.
+ * A server without it still runs — only terminals and pipeline steps need it
+ * — so `.ready` is written either way and `FAROL_PTY=0` reports the miss.
  */
-export function installScript(buildId: string): string {
+export function installScript(buildId: string, arch: MachineArch): string {
   const dir = `"$HOME/${serverDir(buildId)}"`
   return [
-    NODE_PATH_SETUP,
+    PKG_FUNCTION,
+    `PATH=${runtimeBin(arch)}:$PATH`,
+    'export PATH',
     'set -e',
     `rm -rf ${dir}.tmp`,
     `mkdir -p ${dir}.tmp`,
     `tar -xzf - -C ${dir}.tmp`,
     `cd ${dir}.tmp`,
-    'if ! npm install --omit=dev --no-audit --no-fund > npm-install.log 2>&1; then echo "FAROL_PTY=0"; fi',
+    'set +e',
+    'npm install --omit=dev --no-audit --no-fund > npm-install.log 2>&1',
+    'if [ $? -ne 0 ]; then',
+    '  farol_pkgs build >> npm-install.log 2>&1 && npm install --omit=dev --no-audit --no-fund >> npm-install.log 2>&1 || echo FAROL_PTY=0',
+    'fi',
+    'set -e',
     'touch .ready',
     'cd "$HOME"',
     `rm -rf ${dir}`,
@@ -217,9 +342,13 @@ export function installScript(buildId: string): string {
   ].join('\n')
 }
 
-/** Joins this connection to the server, starting it if it is not running. */
-export function attachScript(buildId: string, node: string): string {
-  return [NODE_PATH_SETUP, `exec ${shq(node)} "$HOME/${serverDir(buildId)}/farol-server.js" attach`].join('\n')
+/**
+ * Joins this connection to the server, starting it if it is not running.
+ * Farol's Node.js goes first on PATH; the login shell's PATH stays after it,
+ * so agent CLIs installed there are still found.
+ */
+export function attachScript(buildId: string, arch: MachineArch): string {
+  return [`PATH=${runtimeBin(arch)}:$PATH`, 'export PATH', `exec node "$HOME/${serverDir(buildId)}/farol-server.js" attach`].join('\n')
 }
 
 /** Lines of SSH's stderr worth showing: the last non-empty one, and any login URL. */

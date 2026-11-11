@@ -192,12 +192,12 @@ _Avoid_: a sign-in form in Settings, showing the service address, retrying a run
 ### Remote machines
 
 **Remote machine**:
-Another computer the desktop app works on over SSH, usually one on the user's tailnet reached by its Tailscale IP or MagicDNS name. The user gives only the host, and optionally a user, port and SSH key; with none, SSH falls back to `~/.ssh/config`, the SSH agent, or Tailscale SSH. While one is in use, projects, git, terminals, pipelines and agents all run there, and the window shows that machine's workspace. Provider keys saved in Farol stay on the desktop; agents on the remote use the logins their own CLIs have there. Chosen under **Settings → Remote machine** or from the empty state; the header badge names it.
+A Linux computer (glibc, x64 or arm64) the desktop app works on over SSH, usually one on the user's tailnet reached by its Tailscale IP or MagicDNS name. The user gives only the host, and optionally a user, port and SSH key; with none, SSH falls back to `~/.ssh/config`, the SSH agent, or Tailscale SSH. While one is in use, projects, git, terminals, pipelines and agents all run there, and the window shows that machine's workspace. Provider keys saved in Farol stay on the desktop; agents on the remote use the logins their own CLIs have there. Chosen under **Settings → Remote machine** or from the empty state; the header badge names it.
 _Avoid_: Remote pipeline, sandbox, syncing files between machines, a password prompt, storing keys on the remote, running some features locally while a Remote machine is in use
 
 **Farol server**:
-The backend (`app/electron/backend.ts`) running headless under Node on a **Remote machine**, in `~/.farol-server/<build>/`. The desktop app installs it over SSH the first time it connects to that build, then attaches to it through SSH; the server listens only on a Unix socket only that user can open, so SSH is the authentication. It outlives the connection, so agents keep working while the laptop sleeps, and the app reconnects with backoff.
-_Avoid_: Run service, a listening TCP port, a token in the URL, stopping agents when the app disconnects
+The backend (`app/electron/backend.ts`) running headless under Node on a **Remote machine**, in `~/.farol-server/<build>/`. The desktop app installs it over SSH the first time it connects to that build, then attaches to it through SSH; the server listens only on a Unix socket only that user can open, so SSH is the authentication. It outlives the connection, so agents keep working while the laptop sleeps, and the app reconnects with backoff. Farol sets the machine up itself: its own pinned Node.js under `~/.farol-server/runtime`, a prebuilt terminal library, and git through the system package manager when root or passwordless sudo allows. Agent CLIs and their logins are the user's to install.
+_Avoid_: Run service, a listening TCP port, a token in the URL, stopping agents when the app disconnects, using or upgrading the system's Node.js, asking for a sudo password, supporting macOS, Windows or Alpine remotes
 
 ## Relationships
 

@@ -2,7 +2,7 @@
 //
 //   out/server/farol-server.js   the backend (electron/server.ts)
 //   out/server/mcp.js, git-hook.js, codex-hook.js   the scripts agents and git start
-//   out/server/package.json      node-pty, installed on the remote by `npm install`
+//   out/server/package.json      the terminal library, installed on the remote by `npm install`
 //
 // Plain Node, CommonJS, everything bundled except node-pty (native, built on
 // the remote). `electron` is replaced by a small headless stand-in.
@@ -14,7 +14,10 @@ import { fileURLToPath } from 'url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const outdir = join(root, 'out', 'server')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-const ptyVersion = JSON.parse(readFileSync(join(root, 'node_modules', 'node-pty', 'package.json'), 'utf8')).version
+// node-pty publishes no Linux binaries; this fork of it does (x64 and arm64), so
+// a Remote machine needs no compiler. Same API.
+const PTY_PACKAGE = '@homebridge/node-pty-prebuilt-multiarch'
+const PTY_VERSION = '0.15.0'
 
 rmSync(outdir, { recursive: true, force: true })
 mkdirSync(outdir, { recursive: true })
@@ -46,7 +49,7 @@ await build({
 writeFileSync(
   join(outdir, 'package.json'),
   JSON.stringify(
-    { name: 'farol-server', version: pkg.version, private: true, dependencies: { 'node-pty': ptyVersion } },
+    { name: 'farol-server', version: pkg.version, private: true, dependencies: { [PTY_PACKAGE]: PTY_VERSION } },
     null,
     2
   ) + '\n'

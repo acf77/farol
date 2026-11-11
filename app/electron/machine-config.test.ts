@@ -1,7 +1,13 @@
 import { execFileSync } from 'child_process'
 import { describe, expect, it } from 'vitest'
+import { mkdtempSync, readFileSync, writeFileSync, chmodSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import {
   attachScript,
+  installPlan,
+  packagesProblem,
+  packagesScript,
   parseMachineConfig,
   parseProbe,
   probeProblem,
@@ -67,25 +73,93 @@ describe('remoteCommand', () => {
     expect(execFileSync('/bin/sh', ['-c', `printf %s ${shq("a'b c")}`]).toString()).toBe("a'b c")
   })
 
-  it('quotes the node path in the attach script', () => {
-    expect(attachScript('0.7.1-abc', "/opt/my node/bin/node")).toContain(`exec '/opt/my node/bin/node' "$HOME/.farol-server/0.7.1-abc/farol-server.js" attach`)
+  it('runs the server on Farol\'s own Node.js, ahead of the login PATH', () => {
+    const script = attachScript('0.7.1-abc', 'arm64')
+    expect(script).toContain('PATH="$HOME/.farol-server/runtime/node-v22.23.4-linux-arm64/bin":$PATH')
+    expect(script).toContain('exec node "$HOME/.farol-server/0.7.1-abc/farol-server.js" attach')
   })
 })
 
 describe('probe', () => {
-  const ok = parseProbe(
-    ['motd noise', 'FAROL_HOME=/home/ana', 'FAROL_NODE=/usr/bin/node', 'FAROL_NODE_VERSION=v22.3.0', 'FAROL_GIT=/usr/bin/git', 'FAROL_OS=Linux', 'FAROL_READY=1'].join('\n')
-  )
+  const lines = [
+    'motd noise',
+    'FAROL_HOME=/home/ana',
+    'FAROL_OS=Linux',
+    'FAROL_ARCH=x86_64',
+    'FAROL_LIBC=glibc',
+    'FAROL_GIT=/usr/bin/git',
+    'FAROL_FETCH=1',
+    'FAROL_ROOT=1',
+    'FAROL_RUNTIME=arm64',
+    'FAROL_RUNTIME=x64',
+    'FAROL_READY=1'
+  ]
+  const ok = parseProbe(lines.join('\n'))
 
   it('reads the marked lines and ignores the rest', () => {
-    expect(ok).toEqual({ home: '/home/ana', node: '/usr/bin/node', nodeVersion: 'v22.3.0', git: '/usr/bin/git', os: 'Linux', ready: true })
+    expect(ok).toEqual({
+      home: '/home/ana',
+      os: 'Linux',
+      machine: 'x86_64',
+      libc: 'glibc',
+      git: true,
+      fetch: true,
+      root: true,
+      runtime: true,
+      ready: true
+    })
     expect(probeProblem(ok)).toBeNull()
   })
 
-  it('names what is missing', () => {
-    expect(probeProblem({ ...ok, node: '' })).toMatch(/Node\.js 20/)
-    expect(probeProblem({ ...ok, nodeVersion: 'v18.19.0' })).toMatch(/has v18\.19\.0/)
-    expect(probeProblem({ ...ok, git: '' })).toMatch(/git/)
+  it('only counts a runtime for this machine\'s CPU', () => {
+    expect(parseProbe(lines.filter((l) => l !== 'FAROL_RUNTIME=x64').join('\n')).runtime).toBe(false)
+  })
+
+  it('accepts only Linux on x86_64 or arm64 with glibc', () => {
+    expect(probeProblem({ ...ok, os: 'Darwin' })).toMatch(/Linux machines only; this one runs Darwin/)
+    expect(probeProblem({ ...ok, machine: 'armv7l' })).toMatch(/x86_64 and arm64/)
+    expect(probeProblem({ ...ok, machine: 'aarch64' })).toBeNull()
+    expect(probeProblem({ ...ok, libc: 'musl' })).toMatch(/Alpine/)
+  })
+
+  it('plans only what is missing', () => {
+    expect(installPlan(ok)).toEqual({ packages: [], node: false, server: false })
+    expect(installPlan({ ...ok, git: false, fetch: false, runtime: false, ready: false })).toEqual({
+      packages: ['git', 'curl', 'ca-certificates'],
+      node: true,
+      server: true
+    })
+    // curl only matters for downloading Node.js.
+    expect(installPlan({ ...ok, fetch: false }).packages).toEqual([])
+  })
+
+  it('says what to run when it cannot install packages itself', () => {
+    expect(packagesProblem(['git'], 'devbox', 10)).toMatch(/passwordless sudo.*sudo apt install git/)
+    expect(packagesProblem(['git'], 'devbox', 11)).toMatch(/package manager/)
+  })
+})
+
+describe('packagesScript', () => {
+  it('installs with the machine\'s package manager, non-interactively', () => {
+    const bin = mkdtempSync(join(tmpdir(), 'farol-pm-'))
+    const log = join(bin, 'calls')
+    writeFileSync(join(bin, 'apt-get'), `#!/bin/sh\necho "$@" >> '${log}'\n`)
+    writeFileSync(join(bin, 'id'), '#!/bin/sh\necho 0\n')
+    chmodSync(join(bin, 'apt-get'), 0o755)
+    chmodSync(join(bin, 'id'), 0o755)
+    const out = execFileSync('/bin/sh', ['-c', packagesScript(['git', 'curl'])], {
+      env: { PATH: `${bin}:/usr/bin:/bin` }
+    }).toString()
+    expect(out).toContain('FAROL_PKGS=0')
+    expect(readFileSync(log, 'utf8')).toBe('update -qq\ninstall -y -qq git curl\n')
+  })
+
+  it('reports no package manager', () => {
+    const bin = mkdtempSync(join(tmpdir(), 'farol-pm-'))
+    writeFileSync(join(bin, 'id'), '#!/bin/sh\necho 0\n')
+    chmodSync(join(bin, 'id'), 0o755)
+    const out = execFileSync('/bin/sh', ['-c', packagesScript(['git'])], { env: { PATH: bin } }).toString()
+    expect(out).toContain('FAROL_PKGS=11')
   })
 })
 

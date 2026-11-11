@@ -89,9 +89,11 @@ Shell steps run on your Mac. AI steps send their prompt and the code they need t
 
 ## Work on another machine
 
-Farol can drive a machine on your tailnet (or anywhere you can SSH) instead of your Mac: a beefy desktop, a dev server, a cloud VM. Open **Settings → Remote machine** (or **Work on a remote machine…** with no project open), enter its Tailscale IP or MagicDNS name, and connect. User and SSH key are optional: Farol uses your `~/.ssh/config`, SSH agent, or Tailscale SSH.
+Farol can drive a Linux machine on your tailnet (or anywhere you can SSH) instead of your Mac: a beefy desktop, a dev server, a cloud VM. Open **Settings → Remote machine** (or **Work on a remote machine…** with no project open), enter its Tailscale IP or MagicDNS name, and connect. User and SSH key are optional: Farol uses your `~/.ssh/config`, SSH agent, or Tailscale SSH.
 
-The first connection installs a small Farol server in `~/.farol-server` on that machine. From then on projects, git, terminals, pipelines and agents run there, and they keep running when your laptop sleeps. The remote needs Node.js 20+, git, and the agent CLIs you use, signed in. For terminals it also builds `node-pty`, which needs `python3`, `make` and a C++ compiler.
+The first connection sets the machine up by itself: it downloads its own Node.js and installs a small Farol server in `~/.farol-server`, without touching the system's Node. If git is missing, Farol installs it with the system package manager, which needs root or passwordless sudo; otherwise it tells you the command to run. From then on projects, git, terminals, pipelines and agents run there, and they keep running when your laptop sleeps.
+
+Supported: Linux on x86_64 or arm64 with glibc (Debian, Ubuntu, Fedora, Arch, openSUSE and similar). macOS, Windows and Alpine machines are refused. Agent CLIs are not installed for you: install and sign in to the ones you use on that machine.
 
 ## Build from source
 

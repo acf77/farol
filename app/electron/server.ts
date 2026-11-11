@@ -32,12 +32,15 @@ const dataDir = process.env.FAROL_SERVER_DATA || path.join(os.homedir(), '.farol
 const logFile = path.join(here, 'server.log')
 
 function hasPty(): boolean {
-  try {
-    require.resolve('node-pty')
-    return true
-  } catch {
-    return false
+  for (const name of ['@homebridge/node-pty-prebuilt-multiarch', 'node-pty']) {
+    try {
+      require.resolve(name)
+      return true
+    } catch {
+      /* try the next */
+    }
   }
+  return false
 }
 
 function connect(): Promise<net.Socket> {
