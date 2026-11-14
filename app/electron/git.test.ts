@@ -240,6 +240,47 @@ describe('commitAll', () => {
     expect(git(cwd, ['rev-parse', ':app.ts']).trim()).toBe(stagedBlob)
   })
 
+  it('keeps partial staging of an unselected file when a scoped commit fails in a hook', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'a.ts'), 'a\n')
+    fs.writeFileSync(path.join(cwd, 'b.ts'), 'b\n')
+    git(cwd, ['add', 'a.ts', 'b.ts'])
+    git(cwd, ['commit', '-m', 'init'])
+    fs.writeFileSync(path.join(cwd, 'a.ts'), 'staged\n')
+    git(cwd, ['add', 'a.ts'])
+    fs.writeFileSync(path.join(cwd, 'a.ts'), 'working\n')
+    fs.writeFileSync(path.join(cwd, 'b.ts'), 'b2\n')
+    const stagedBlob = git(cwd, ['rev-parse', ':a.ts']).trim()
+    git(cwd, ['config', 'core.hooksPath', '.git/hooks'])
+    const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+    fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n')
+    fs.chmodSync(hook, 0o755)
+
+    const scope = { branch: git(cwd, ['branch', '--show-current']).trim(), tree: undefined, anyTree: true }
+    const res = await commitAll(cwd, 'feat: change', ['b.ts'], scope)
+    expect(res.ok).toBe(false)
+    expect(git(cwd, ['rev-parse', ':a.ts']).trim()).toBe(stagedBlob)
+  })
+
+  it('keeps partial staging of an unselected file when a scoped commit succeeds', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'a.ts'), 'a\n')
+    fs.writeFileSync(path.join(cwd, 'b.ts'), 'b\n')
+    git(cwd, ['add', 'a.ts', 'b.ts'])
+    git(cwd, ['commit', '-m', 'init'])
+    fs.writeFileSync(path.join(cwd, 'a.ts'), 'staged\n')
+    git(cwd, ['add', 'a.ts'])
+    fs.writeFileSync(path.join(cwd, 'a.ts'), 'working\n')
+    fs.writeFileSync(path.join(cwd, 'b.ts'), 'b2\n')
+    const stagedBlob = git(cwd, ['rev-parse', ':a.ts']).trim()
+
+    const scope = { branch: git(cwd, ['branch', '--show-current']).trim(), tree: undefined, anyTree: true }
+    const res = await commitAll(cwd, 'feat: change', ['b.ts'], scope)
+    expect(res.ok).toBe(true)
+    expect(git(cwd, ['show', '--pretty=', '--name-only', 'HEAD']).trim()).toBe('b.ts')
+    expect(git(cwd, ['rev-parse', ':a.ts']).trim()).toBe(stagedBlob)
+  })
+
   it('commits only the selected files and leaves the rest unstaged', async () => {
     const cwd = tmpRepo()
     fs.writeFileSync(path.join(cwd, 'app.ts'), 'a\n')

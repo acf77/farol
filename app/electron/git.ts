@@ -805,9 +805,13 @@ async function failedCommit(
   removed: string[],
   failure: string,
   fallback: string,
-  hookRun?: GitHookRun
+  hookRun?: GitHookRun,
+  saved?: string
 ): Promise<{ ok: false; error: string; hookRun?: GitHookRun }> {
-  const restored = await restoreStagedFiles(cwd, added, removed)
+  // An agent commit saved the whole index before staging: put it back exactly, partial staging included.
+  const restored = saved
+    ? await git(cwd, ['read-tree', saved]).then((res) => ({ ok: res.code === 0, message: res.err.trim() }))
+    : await restoreStagedFiles(cwd, added, removed)
   const message = failure || fallback
   return {
     ok: false,
@@ -1089,24 +1093,16 @@ async function staleStaged(cwd: string, scope: GitScope | undefined, staged: str
   return changed.length ? staleFilesMessage(changed) : undefined
 }
 
-/** The index as a tree, so a refused agent commit can put it back exactly, partial staging included. Undefined with no scope; null when git cannot write it. */
+/** The index as a tree, so a failed agent commit can put it back exactly, partial staging included. Undefined with no scope; null when git cannot write it. */
 async function indexTree(cwd: string, scope: GitScope | undefined): Promise<string | undefined | null> {
   if (!scope) return undefined
   const res = await git(cwd, ['write-tree'])
   return res.code === 0 ? res.out.trim() : null
 }
 
-/** Refuse a commit whose staged files are not what validation saw, and restore the index saved before staging. */
-async function staleRefusal(
-  cwd: string,
-  scope: GitScope | undefined,
-  selected: string[],
-  saved: string | undefined | null
-): Promise<{ ok: false; error: string } | undefined> {
-  const stale = await staleStaged(cwd, scope, selected)
-  if (!stale) return undefined
-  const back = saved ? await git(cwd, ['read-tree', saved]) : undefined
-  return { ok: false, error: back?.code === 0 || !saved ? stale : `${stale}; Could not restore the staged files` }
+/** After an agent commit succeeded, give the files it left out their staging back, exactly as the saved index had it. */
+async function keepStaged(cwd: string, saved: string | undefined, removed: string[]): Promise<void> {
+  if (saved && removed.length) await git(cwd, ['restore', '--staged', `--source=${saved}`, '--', ...removed])
 }
 
 /** Make the index match `files`, commit, and restore its prior state on failure. */
@@ -1142,7 +1138,7 @@ async function commitAllNow(
 
   const unstaged = await unstageFiles(cwd, removed)
   if (!unstaged.ok) {
-    return failedCommit(cwd, added, removed, unstaged.message, 'Could not update staged files')
+    return failedCommit(cwd, added, removed, unstaged.message, 'Could not update staged files', undefined, saved)
   }
 
   // A deletion already in the index has nothing left for `git add` to match.
@@ -1152,16 +1148,17 @@ async function commitAllNow(
   if (toStage.length) {
     const staged = await stageFiles(cwd, toStage)
     if (!staged.ok) {
-      return failedCommit(cwd, added, removed, staged.message, 'Could not stage changes')
+      return failedCommit(cwd, added, removed, staged.message, 'Could not stage changes', undefined, saved)
     }
   }
   // An agent's commit holds only what validation checked: what is staged must match its snapshot.
-  const stale = await staleRefusal(cwd, scope, selected, saved)
-  if (stale) return stale
+  const stale = await staleStaged(cwd, scope, selected)
+  if (stale) return failedCommit(cwd, added, removed, stale, 'Could not check the staged files', undefined, saved)
   const done = await commit(cwd, text)
   if (!done.ok) {
-    return failedCommit(cwd, added, removed, done.message, 'Commit failed', done.hookRun)
+    return failedCommit(cwd, added, removed, done.message, 'Commit failed', done.hookRun, saved)
   }
+  await keepStaged(cwd, saved, removed)
   return { ok: true, message: text }
 }
 
