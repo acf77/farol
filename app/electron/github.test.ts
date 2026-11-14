@@ -222,6 +222,16 @@ describe('githubInfo through the API', () => {
     await expect(githubInfo('/repo')).resolves.toEqual({ available: true, prs: [] })
   })
 
+  it.each([
+    ['a pull request list that is not a list', () => { found = 'oops' as unknown as unknown[] }],
+    ['a pull request without a number', () => { found = [{ headRepositoryOwner: { login: 'acme' } }] }],
+    ['a view without commits', () => { view = { number: 9, state: 'OPEN' } }]
+  ])('reports a fixed message for %s, never a raw error', async (_name, shape) => {
+    shape()
+    const info = await githubInfo('/repo')
+    expect(info).toMatchObject({ available: false, message: 'GitHub sent a reply Farol could not read.' })
+  })
+
   it('ignores a pull request from someone else\'s branch of the same name', async () => {
     found = [{ number: 5, headRepositoryOwner: { login: 'someone-else' } }]
     await expect(githubInfo('/repo')).resolves.toEqual({ available: true, prs: [] })

@@ -73,7 +73,7 @@ import {
   stripControlMarkerLines,
   type ControlLineState
 } from '../shared/control-line'
-import { formatGitResult, gitActionsFrom, type GitAction, type GitActionResult } from '../shared/git-action'
+import { formatGitResult, gitActionsFrom, GIT_ACTION_NAMES, type GitAction, type GitActionResult } from '../shared/git-action'
 import { repoRoot, type GitScope } from './git'
 import {
   BLOCK_MARKER,
@@ -290,6 +290,7 @@ interface PipelineActivity {
   finishedAt?: number
   durationMs?: number
   runId?: string
+  git?: { detail: string }
 }
 
 type CycleScan = ControlLineState & {
@@ -1806,8 +1807,12 @@ export class AgentController {
     }
     for (const request of actions) {
       if (task.cancelled) return undefined
+      task.gitSeq += 1
+      const seq = task.gitSeq
+      const startedAt = Date.now()
+      this.reportGitAction(task, request, seq, startedAt)
       const result = await this.runGitRequest(task, git, request, scope)
-      this.reportGitAction(task, request, result)
+      this.reportGitAction(task, request, seq, startedAt, result)
       if (result.ok) continue
       if (result.hookRun) return `${formatGitResult(request.action, result)}\nFix what it reports, then send the ${GIT_MARKER} line again.`
       task.notes.push(`Note from Farol: ${formatGitResult(request.action, result)}`)
@@ -1826,15 +1831,17 @@ export class AgentController {
     return git.run(task.request.cwd, { ...request, files: [...task.turnFiles] }, scope)
   }
 
-  private reportGitAction(task: Task, action: GitAction, result: GitActionResult): void {
-    task.gitSeq += 1
-    this.emit({
-      kind: 'tool',
-      taskId: task.request.id,
-      toolId: `${task.request.id}:git:${task.gitSeq}`,
-      name: 'git',
-      detail: formatGitResult(action.action, result),
-      state: result.ok ? 'done' : 'error'
+  /** A Git action shows in Chat as a pipeline run does: running first, then passed or failed. */
+  private reportGitAction(task: Task, action: GitAction, seq: number, startedAt: number, result?: GitActionResult): void {
+    const finishedAt = Date.now()
+    this.pipelineStatus(task, {
+      pipelineId: `git:${action.action}`,
+      pipelineName: `Git ${GIT_ACTION_NAMES[action.action]}`,
+      status: !result ? 'running' : result.ok ? 'passed' : 'failed',
+      startedAt,
+      runId: `git:${task.request.id}:${seq}`,
+      ...(result ? { finishedAt, durationMs: finishedAt - startedAt } : {}),
+      git: { detail: result ? formatGitResult(action.action, result) : '' }
     })
   }
 

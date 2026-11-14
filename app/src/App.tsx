@@ -598,11 +598,12 @@ function applyAgentPipelineEvent(
     startedAt: event.startedAt,
     finishedAt: event.finishedAt,
     durationMs: event.durationMs,
-    tabId: `run:${pipelineId}:${branch}`
+    tabId: `run:${pipelineId}:${branch}`,
+    ...(event.git ? { git: event.git } : {})
   }
   const message = {
     role: 'system' as const,
-    text: pipelineActivityText(pipeline),
+    text: event.git?.detail || pipelineActivityText(pipeline),
     pipeline
   }
   return appendAgentMessages(
@@ -672,8 +673,8 @@ function applyAgentEvent(
   // The turn panel listens for this itself.
   if (event.kind === 'turns') return pane
   if (event.kind === 'pipeline') {
-    // Runner start/end owns the card. Only start-failed pipelines (error:) never emit a RunEvent.
-    if (!event.runId?.startsWith('error:')) return pane
+    // Runner start/end owns the card. Start-failed pipelines (error:) and Git actions never emit a RunEvent.
+    if (!event.git && !event.runId?.startsWith('error:')) return pane
     return applyAgentPipelineEvent(pane, event, localPipelineId, tabs, project, git)
   }
   return applyAgentStatusEvent(pane, event)

@@ -434,6 +434,8 @@ export type AgentTaskEvent =
       finishedAt?: number
       durationMs?: number
       runId?: string
+      /** A Git action Farol ran for the agent; `detail` is its result. Not a pipeline run. */
+      git?: { detail: string }
     }
   /**
    * Plain-text stdout, appended to the assistant turn in progress.

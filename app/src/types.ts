@@ -45,6 +45,8 @@ export interface AgentPipelineCard {
   durationMs?: number
   /** Tab id of the run this card reports on — jumped to via "Open in terminal". */
   tabId: string
+  /** Set for a Git action the agent requested: it has no run tab, and `detail` is its result. */
+  git?: { detail: string }
 }
 
 /** Questions the agent asked; stays interactive until the user answers. */

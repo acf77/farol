@@ -115,7 +115,7 @@ export function formatGitStatus(branch: string, status: GitStatus): string {
   ].join('\n')
 }
 
-const LABELS: Record<GitActionEvent['action'], string> = {
+export const GIT_ACTION_NAMES: Record<GitActionEvent['action'], string> = {
   status: 'status',
   commit: 'commit',
   push: 'push',
@@ -123,12 +123,12 @@ const LABELS: Record<GitActionEvent['action'], string> = {
 }
 
 /** The Git log's name for an action. */
-export const gitActionLabel = (action: GitActionEvent['action']): string => `Agent ${LABELS[action]}`
+export const gitActionLabel = (action: GitActionEvent['action']): string => `Agent ${GIT_ACTION_NAMES[action]}`
 
 /** What an agent is told about a finished action, with the output of any hook that blocked it. */
 export function formatGitResult(action: GitAction['action'], result: GitActionResult): string {
   const outcome = result.ok ? 'done' : result.refused ? 'refused' : 'failed'
-  const head = `Git ${LABELS[action]} ${outcome}: ${result.message}`
+  const head = `Git ${GIT_ACTION_NAMES[action]} ${outcome}: ${result.message}`
   if (!result.hookRun) return head
   return `${head}\nBlocked by ${result.hookRun.hooks.join(', ')}. Its output:\n${result.hookRun.output}`
 }

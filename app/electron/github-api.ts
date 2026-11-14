@@ -105,14 +105,22 @@ async function call(path: string, init?: RequestInit): Promise<unknown> {
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
 
-async function graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-  const body = (await call('/graphql', {
+type Obj = Record<string, unknown>
+const isObj = (value: unknown): value is Obj => typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** What a reply that is not shaped as asked says; the reply itself is never shown. */
+const badReply = (): Error => new Error('GitHub sent a reply Farol could not read.')
+
+/** The `data` of a GraphQL reply, as an object whose fields the caller checks one by one. */
+async function graphql(query: string, variables: Record<string, unknown>): Promise<Obj> {
+  const body = await call('/graphql', {
     method: 'POST',
     headers: JSON_HEADERS,
     body: JSON.stringify({ query, variables })
-  })) as { data?: T; errors?: { message: string }[] }
-  if (!body.data) throw new Error(body.errors?.[0]?.message ?? 'GitHub returned no data.')
-  return body.data
+  })
+  if (isObj(body) && isObj(body.data)) return body.data
+  const first = isObj(body) && Array.isArray(body.errors) ? body.errors[0] : undefined
+  throw new Error(isObj(first) && typeof first.message === 'string' ? first.message : 'GitHub returned no data.')
 }
 
 const noRepository = (ref: RepoRef): Error =>
@@ -122,20 +130,33 @@ const FIND_PULL_REQUEST = `query($owner:String!,$repo:String!,$head:String!){rep
 
 /** The open pull request whose head is this branch, on the branch owner's remote. */
 export async function findPullRequestNumber(ref: RepoRef): Promise<number | undefined> {
-  const data = await graphql<{
-    repository: { pullRequests: { nodes: { number: number; headRepositoryOwner: { login: string } | null }[] } } | null
-  }>(FIND_PULL_REQUEST, { owner: ref.owner, repo: ref.repo, head: ref.branch })
-  if (!data.repository) throw noRepository(ref)
+  const { repository } = await graphql(FIND_PULL_REQUEST, { owner: ref.owner, repo: ref.repo, head: ref.branch })
+  if (repository === null) throw noRepository(ref)
+  const nodes = isObj(repository) && isObj(repository.pullRequests) ? repository.pullRequests.nodes : undefined
+  if (!Array.isArray(nodes)) throw badReply()
   const head = ref.headOwner.toLowerCase()
-  return data.repository.pullRequests.nodes.find((pr) => pr.headRepositoryOwner?.login.toLowerCase() === head)?.number
+  for (const pr of nodes) {
+    if (!isObj(pr) || typeof pr.number !== 'number') throw badReply()
+    const login = isObj(pr.headRepositoryOwner) ? pr.headRepositoryOwner.login : undefined
+    if (typeof login === 'string' && login.toLowerCase() === head) return pr.number
+  }
+  return undefined
 }
 
 const VIEW_PULL_REQUEST = `query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){number state mergeable baseRefName url isDraft commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion detailsUrl isRequired(pullRequestNumber:$number)} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}}}}}}}}}}`
 
-type ViewNode = Omit<PullRequestView, 'statusCheckRollup'> & {
-  commits: {
-    nodes: { commit: { statusCheckRollup: { contexts: { nodes: (CheckRollup & { isRequired?: boolean })[] } } | null } }[]
-  }
+type CheckNode = CheckRollup & { isRequired?: boolean }
+
+/** The checks of the latest commit; a missing rollup means none ran. */
+function latestChecks(commits: unknown): CheckNode[] {
+  const nodes = isObj(commits) ? commits.nodes : undefined
+  if (!Array.isArray(nodes)) throw badReply()
+  const commit = isObj(nodes[0]) ? nodes[0].commit : undefined
+  const rollup = isObj(commit) ? commit.statusCheckRollup : undefined
+  if (rollup === undefined || rollup === null) return []
+  const contexts = isObj(rollup) && isObj(rollup.contexts) ? rollup.contexts.nodes : undefined
+  if (!Array.isArray(contexts) || !contexts.every(isObj)) throw badReply()
+  return contexts as CheckNode[]
 }
 
 /** One pull request with the checks of its latest commit, and the names of the checks branch protection requires. */
@@ -143,16 +164,13 @@ export async function pullRequestView(
   ref: RepoRef,
   number: number
 ): Promise<{ pr: PullRequestView; required: Set<string> }> {
-  const data = await graphql<{ repository: { pullRequest: ViewNode | null } | null }>(VIEW_PULL_REQUEST, {
-    owner: ref.owner,
-    repo: ref.repo,
-    number
-  })
-  if (!data.repository) throw noRepository(ref)
-  const node = data.repository.pullRequest
-  if (!node) throw new Error(`Pull request #${number} was not found.`)
-  const { commits, ...pr } = node
-  const contexts = commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? []
+  const { repository } = await graphql(VIEW_PULL_REQUEST, { owner: ref.owner, repo: ref.repo, number })
+  if (repository === null) throw noRepository(ref)
+  const node = isObj(repository) ? repository.pullRequest : undefined
+  if (node === null) throw new Error(`Pull request #${number} was not found.`)
+  if (!isObj(node) || typeof node.number !== 'number') throw badReply()
+  const { commits, ...pr } = node as Obj & Omit<PullRequestView, 'statusCheckRollup'>
+  const contexts = latestChecks(commits)
   const required = contexts.filter((check) => check.isRequired).map((check) => check.name || check.context || '')
   return { pr: { ...pr, statusCheckRollup: contexts }, required: new Set(required.filter(Boolean)) }
 }

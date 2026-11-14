@@ -114,7 +114,7 @@ describe('Git actions a managed Chat asks for', () => {
     expect(action).toMatchObject({ action: 'commit', message: 'feat: rename widget' })
     expect(action.action === 'commit' && [...(action.files ?? [])].sort()).toEqual(['app.ts', 'new.ts'])
     expect(run.mock.invocationCallOrder[0]).toBeLessThan(gitRun.mock.invocationCallOrder[0]!)
-    expect(events.some((e) => e.kind === 'tool' && e.name === 'git' && e.state === 'done')).toBe(true)
+    expect(events.some((e) => e.kind === 'pipeline' && !!e.git && e.status === 'passed')).toBe(true)
   })
 
   it('stops at the first action that fails, so a failed commit is not pushed', async () => {
@@ -162,7 +162,7 @@ describe('Git actions a managed Chat asks for', () => {
 
     // Neither chat can say which files are its own, so neither commit goes on.
     expect(gitRun).not.toHaveBeenCalled()
-    expect(events.filter((e) => e.kind === 'tool' && e.name === 'git' && e.state === 'error')).toHaveLength(2)
+    expect(events.filter((e) => e.kind === 'pipeline' && !!e.git && e.status === 'failed')).toHaveLength(2)
   })
 
   it('hands a hook pipeline\'s failure back to the agent and commits after the repair', async () => {
@@ -186,7 +186,7 @@ describe('Git actions a managed Chat asks for', () => {
     await completed()
 
     expect(execute).toHaveBeenCalledTimes(1)
-    expect(events.some((e) => e.kind === 'tool' && e.name === 'git' && e.state === 'error')).toBe(true)
+    expect(events.some((e) => e.kind === 'pipeline' && !!e.git && e.status === 'failed')).toBe(true)
 
     controller.message('task-1', 'carry on')
     await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2), { timeout: 10_000 })
