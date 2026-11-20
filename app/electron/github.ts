@@ -1,6 +1,5 @@
 import { app } from 'electron'
 import path from 'path'
-import { errorMessage } from '../shared/jev'
 import { mergePullRequestBlockReason, summarizePrChecks } from '../shared/git-status'
 import { GitHubSignInRequired } from '../shared/remote'
 import type {
@@ -18,6 +17,7 @@ import { githubToken } from './remote'
 import {
   createPullRequestApi,
   findPullRequestNumber,
+  GitHubReply,
   GitHubUnavailable,
   mergePullRequestApi,
   pullRequestView,
@@ -127,11 +127,20 @@ function checksFromView(raw: PullRequestView, required?: Set<string>): PrCheckSu
 /** Whether the gh CLI should take over from an API call that failed with `err`; any other error is GitHub's own answer. */
 const ghMayHelp = (err: unknown): boolean => err instanceof GitHubUnavailable || err instanceof GitHubSignInRequired
 
+const UNEXPECTED_MESSAGE = 'Could not complete the GitHub request.'
+
+/** What a person may read about `err`: a message Farol or GitHub worded; any other failure is logged and not shown. */
+function publicMessage(err: unknown): string {
+  if (err instanceof GitHubUnavailable || err instanceof GitHubSignInRequired || err instanceof GitHubReply) return err.message
+  console.error('Unexpected GitHub failure:', err)
+  return UNEXPECTED_MESSAGE
+}
+
 /** What the Git panel is told when neither the API nor the CLI could answer. */
 function unavailable(cause: unknown): GitHubInfo {
   return {
     available: false,
-    message: errorMessage(cause),
+    message: publicMessage(cause),
     prs: [],
     ...(cause instanceof GitHubSignInRequired ? { signInRequired: true as const } : {})
   }
@@ -269,7 +278,7 @@ async function apiCreate(cwd: string, base?: string, title?: string, body?: stri
  * target base, title, and description; without them gh still falls back to the repository's default.
  */
 async function ghCreate(cwd: string, cause: unknown, base?: string, title?: string, body?: string): Promise<Created> {
-  if (!(await ghReady(cwd))) return { ok: false, message: errorMessage(cause) }
+  if (!(await ghReady(cwd))) return { ok: false, message: publicMessage(cause) }
 
   const args = ['pr', 'create', '--fill']
   const baseName = base?.trim()
@@ -303,7 +312,7 @@ export async function createPullRequest(
   try {
     return await apiCreate(cwd, base, title, body)
   } catch (err) {
-    return ghMayHelp(err) ? ghCreate(cwd, err, base, title, body) : { ok: false, message: errorMessage(err) }
+    return ghMayHelp(err) ? ghCreate(cwd, err, base, title, body) : { ok: false, message: publicMessage(err) }
   }
 }
 
@@ -319,7 +328,7 @@ async function ghMerge(
   number: number,
   strategy: MergeStrategy
 ): Promise<{ ok: boolean; message: string }> {
-  if (!(await ghReady(cwd))) return { ok: false, message: errorMessage(cause) }
+  if (!(await ghReady(cwd))) return { ok: false, message: publicMessage(cause) }
   const res = await execCli('gh', cwd, ['pr', 'merge', String(number), STRATEGY_FLAG[strategy]], PR_MERGE_TIMEOUT)
   const lines = `${res.out}\n${res.err}`.split('\n').map((l) => l.trim()).filter(Boolean)
   if (res.code !== 0) {
@@ -348,6 +357,6 @@ export async function mergePullRequest(
   try {
     return { ok: true, message: await mergePullRequestApi(await repoRef(cwd), pr!.number, strategy) }
   } catch (err) {
-    return ghMayHelp(err) ? ghMerge(cwd, err, pr!.number, strategy) : { ok: false, message: errorMessage(err) }
+    return ghMayHelp(err) ? ghMerge(cwd, err, pr!.number, strategy) : { ok: false, message: publicMessage(err) }
   }
 }

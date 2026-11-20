@@ -504,6 +504,7 @@ export default function ChatPane({
       )}
       <ComposerBox
         projectPath={projectPath}
+        chatId={pane?.taskId}
         availableCount={availableCount}
         isBusy={isBusy}
         modeLocked={modeLocked}

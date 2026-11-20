@@ -113,6 +113,33 @@ describe('performGitAction', () => {
     expect(fs.existsSync(marker)).toBe(false)
   })
 
+  it('keeps an action inside the checkout when that is a subfolder of the repository', async () => {
+    const repo = dirtyRepo()
+    const sub = path.join(repo, 'sub')
+    fs.writeFileSync(path.join(sub, 'inside.txt'), 'in\n')
+    const refused = await performGitAction(sub, { action: 'commit', message: 'm', files: ['a.txt'] }, sub)
+    expect(refused.ok).toBe(false)
+    expect(refused.message).toContain('outside the open project folder')
+    expect(git(repo, 'log', '--format=%s')).toBe('init\n')
+    const diff = await performGitAction(sub, { action: 'diff' }, sub)
+    expect(diff.message).not.toContain('a.txt')
+    const done = await performGitAction(sub, { action: 'commit', message: 'in', files: ['sub/inside.txt'] }, sub)
+    expect(done.ok).toBe(true)
+  })
+
+  it('refuses a blob or tree id as a show revision, so a secret blob is never printed', async () => {
+    const repo = dirtyRepo()
+    fs.writeFileSync(path.join(repo, '.env'), 'API_KEY=hunter2\n')
+    git(repo, 'add', '-f', '.env')
+    git(repo, 'commit', '-m', 'add env')
+    for (const spec of ['HEAD:.env', 'HEAD^{tree}']) {
+      const ref = git(repo, 'rev-parse', spec).trim()
+      const res = await performGitAction(repo, { action: 'show', ref }, repo)
+      expect(res.ok).toBe(false)
+      expect(res.message).not.toContain('hunter2')
+    }
+  })
+
   it('refuses unsafe show revisions even when a typed caller bypasses parsing', async () => {
     const repo = dirtyRepo()
     const res = await performGitAction(repo, { action: 'show', ref: '--output=stolen' }, repo)

@@ -22,17 +22,31 @@ import { createPullRequest } from './github'
  * own repository (which sits above the checkout when that is a subfolder), or one nested inside.
  * A caller that confined its folder to the checkout by where the folder really is gets the same
  * answer from git; this checks git's answer too, so an action never reaches another repository.
+ * Returns the checkout's real path when the repository belongs to it.
  */
-async function ownsRepo(checkout: string, root: string): Promise<boolean> {
+async function ownedHome(checkout: string, root: string): Promise<string | undefined> {
   const home = await realPath(checkout)
-  if (!home) return false
+  if (!home) return undefined
   const own = await repoRoot(home)
   const top = path.resolve(root)
-  return isInside(home, top) || (own !== undefined && path.resolve(own) === top)
+  return isInside(home, top) || (own !== undefined && path.resolve(own) === top) ? home : undefined
 }
 
-async function commit(root: string, message: string, files: string[], scope?: GitScope): Promise<GitActionResult> {
+/** What an action may touch: the whole repository, or only the checkout when it is a subfolder of it. */
+type Within = { home: string; root: string; spec: string[] }
+
+function within(home: string, root: string): Within {
+  const rel = path.relative(root, home)
+  const sub = rel !== '' && isInside(root, home)
+  return { home, root, spec: sub ? [`:(top,literal)${rel.split(path.sep).join('/')}`] : [] }
+}
+
+async function commit(at: Within, message: string, files: string[], scope?: GitScope): Promise<GitActionResult> {
+  const { root } = at
   if (!files.length) return { ok: false, message: 'There are no files to commit: this turn changed none.' }
+  if (files.some((file) => !isInside(at.home, path.resolve(root, file)))) {
+    return { ok: false, message: 'A file to commit is outside the open project folder.' }
+  }
   const done = await commitAll(root, message, files, scope)
   if (!done.ok) {
     return { ok: false, message: done.error || 'Commit failed', ...(done.hookRun ? { hookRun: done.hookRun } : {}) }
@@ -48,24 +62,32 @@ const readGit = (root: string, args: string[]) =>
   execCli('git', root, ['--no-pager', ...args], 10_000, { GIT_OPTIONAL_LOCKS: '0' })
 
 /** The files a diff or a show reads, or undefined for a log, which prints no file content. */
-function readNames(request: GitAction): string[] | undefined {
-  if (request.action === 'show') return [...SHOW, '--name-only', '--format=', '-z', request.ref, '--']
-  return request.action === 'diff' ? gitNamesArgs({ op: 'diff' }) : undefined
+function readNames(action: GitAction['action'], commitId?: string): string[] | undefined {
+  if (commitId) return [...SHOW, '--name-only', '--format=', '-z', commitId, '--']
+  return action === 'diff' ? gitNamesArgs({ op: 'diff' }) : undefined
+}
+
+/** The commit a show reads. A blob or tree id is refused: its name listing would print file contents. */
+async function showCommit(root: string, ref: string): Promise<string | undefined> {
+  const found = await readGit(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+  return found.code === 0 ? found.out.trim() : undefined
 }
 
 /**
  * A diff, log or show. A tracked .env or key must not reach the agent's prompt, so such files
  * are left out of the patch, as in a diff step.
  */
-async function readAction(root: string, request: GitAction): Promise<GitActionResult> {
-  const names = readNames(request)
+async function readAction({ root, spec }: Within, request: GitAction): Promise<GitActionResult> {
+  const commitId = request.action === 'show' ? await showCommit(root, request.ref) : undefined
+  if (request.action === 'show' && !commitId) return { ok: false, message: 'Git show needs a commit.' }
+  const names = readNames(request.action, commitId)?.concat(spec)
   const listed = names && (await readGit(root, names))
   if (listed && listed.code !== 0) return { ok: false, message: listed.err || 'No output.' }
   const hidden = (listed ? listed.out.split('\0') : []).filter(isSecretPath)
   const excluded = hidden.map((p) => `:(top,exclude,literal)${p}`)
   const result = await readGit(
     root,
-    request.action === 'show' ? [...SHOW, request.ref, '--', ...excluded] : gitArgs({ op: request.action }, hidden)
+    commitId ? [...SHOW, commitId, '--', ...spec, ...excluded] : [...gitArgs({ op: request.action }, hidden), ...spec]
   )
   const output = result.code === 0 ? result.out : result.err
   const cut = output.length > READ_LIMIT ? `${output.slice(0, READ_LIMIT)}\n[Output cut at ${READ_LIMIT} characters.]` : output
@@ -88,20 +110,20 @@ export async function performGitAction(
   request = parsed
   const root = await repoRoot(cwd)
   if (!root) return { ok: false, message: 'This folder is not in a Git repository.' }
-  if (!(await ownsRepo(checkout, root))) {
-    return { ok: false, message: 'This folder is in a repository that is not part of the open project.' }
-  }
+  const home = await ownedHome(checkout, root)
+  if (!home) return { ok: false, message: 'This folder is in a repository that is not part of the open project.' }
+  const at = within(home, root)
   switch (request.action) {
     case 'diff':
     case 'log':
     case 'show':
-      return readAction(root, request)
+      return readAction(at, request)
     case 'status': {
       const [st, git] = await Promise.all([status(root), gitInfo(root)])
       return { ok: true, message: formatGitStatus(git.branch, st) }
     }
     case 'commit':
-      return commit(root, request.message, request.files ?? [], scope)
+      return commit(at, request.message, request.files ?? [], scope)
     case 'push':
       return push(root, scope)
     case 'create_pr':

@@ -27,6 +27,21 @@ describe('createTodoStore', () => {
     ])
   })
 
+  it('keeps the source and change time, and ignores them when it checks the expected list', async () => {
+    const checkout = path.join(dir, 'repo')
+    const source = { chatId: 'agent:1', title: 'Fix login' }
+    await store.save(checkout, [{ content: 'Ship it', status: 'pending', priority: 'low', source, changedAt: 5 }])
+
+    await store.save(
+      checkout,
+      [{ content: 'Ship it', status: 'completed', priority: 'low', source, changedAt: 9 }],
+      [{ content: 'Ship it', status: 'pending', priority: 'low' }]
+    )
+    expect(await store.load(checkout)).toEqual([
+      { content: 'Ship it', status: 'completed', priority: 'low', source, changedAt: 9 }
+    ])
+  })
+
   it('isolates checkouts of the same repo', async () => {
     const main = path.join(dir, 'repo')
     const worktree = path.join(dir, 'repo-feature')

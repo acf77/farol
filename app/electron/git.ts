@@ -1181,6 +1181,31 @@ export function commitAll(
   return alone(cwd, () => commitAllNow(cwd, message, files, scope))
 }
 
+type StageFailure = { message: string; fallback: string }
+
+/** Make the index hold exactly `selected`; for an agent, also match the turn's validated snapshot. */
+async function stageSelection(
+  cwd: string,
+  st: Awaited<ReturnType<typeof status>>,
+  selected: string[],
+  removed: string[],
+  scope: GitScope | undefined
+): Promise<StageFailure | undefined> {
+  const unstaged = await unstageFiles(cwd, removed)
+  if (!unstaged.ok) return { message: unstaged.message, fallback: 'Could not update staged files' }
+
+  // A deletion already in the index has nothing left for `git add` to match.
+  const needsAdd = new Set([...st.unstaged, ...st.untracked].map((file) => file.path))
+  const indexed = new Set(st.staged.filter((file) => file.kind === 'deleted').map((file) => file.path))
+  const toStage = selected.filter((file) => needsAdd.has(file) || !indexed.has(file))
+  const staged = toStage.length ? await stageFiles(cwd, toStage) : undefined
+  if (staged && !staged.ok) return { message: staged.message, fallback: 'Could not stage changes' }
+
+  // An agent's commit holds only what validation checked: what is staged must match its snapshot.
+  const invalid = await stagedCommitError(cwd, scope, selected)
+  return invalid ? { message: invalid, fallback: 'Could not check the staged files' } : undefined
+}
+
 async function commitAllNow(
   cwd: string,
   message: string,
@@ -1202,24 +1227,8 @@ async function commitAllNow(
   if (saved === null) return { ok: false, error: 'Could not read the staged files' }
   const { added, removed } = indexChanges(st, selected)
 
-  const unstaged = await unstageFiles(cwd, removed)
-  if (!unstaged.ok) {
-    return failedCommit(cwd, added, removed, unstaged.message, 'Could not update staged files', undefined, saved)
-  }
-
-  // A deletion already in the index has nothing left for `git add` to match.
-  const needsAdd = new Set([...st.unstaged, ...st.untracked].map((file) => file.path))
-  const indexed = new Set(st.staged.filter((file) => file.kind === 'deleted').map((file) => file.path))
-  const toStage = selected.filter((file) => needsAdd.has(file) || !indexed.has(file))
-  if (toStage.length) {
-    const staged = await stageFiles(cwd, toStage)
-    if (!staged.ok) {
-      return failedCommit(cwd, added, removed, staged.message, 'Could not stage changes', undefined, saved)
-    }
-  }
-  // An agent's commit holds only what validation checked: what is staged must match its snapshot.
-  const invalid = await stagedCommitError(cwd, scope, selected)
-  if (invalid) return failedCommit(cwd, added, removed, invalid, 'Could not check the staged files', undefined, saved)
+  const stageFailure = await stageSelection(cwd, st, selected, removed, scope)
+  if (stageFailure) return failedCommit(cwd, added, removed, stageFailure.message, stageFailure.fallback, undefined, saved)
   const done = await commitChecked(cwd, text, scope, selected)
   if (!done.ok) {
     if ('committed' in done && done.committed) return { ok: false, error: done.message }

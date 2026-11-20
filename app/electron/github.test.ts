@@ -283,6 +283,18 @@ describe('githubInfo through the API', () => {
   })
 })
 
+describe('an unexpected failure', () => {
+  it('is not shown, only a fixed message is', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    githubFetch.mockResolvedValue(undefined)
+    const info = await githubInfo('/repo')
+    expect(info.available).toBe(false)
+    expect(info.message).toBe('Could not complete the GitHub request.')
+    expect(log).toHaveBeenCalled()
+    log.mockRestore()
+  })
+})
+
 describe('githubInfo without the API', () => {
   it('asks the user to sign in when there is no token and gh cannot help', async () => {
     githubFetch.mockRejectedValue(new GitHubSignInRequired())

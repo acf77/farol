@@ -16,6 +16,9 @@ const GIT_TIMEOUT = 10_000
 /** GitHub cannot be asked from here: no github.com remote, or the network failed. The gh CLI may still be able to. */
 export class GitHubUnavailable extends Error {}
 
+/** GitHub's own answer, or a refusal Farol worded itself: safe to show. Any other error stays in the main process. */
+export class GitHubReply extends Error {}
+
 /** One check run or commit status in a pull request's rollup. */
 export interface CheckRollup {
   __typename?: string
@@ -98,9 +101,9 @@ async function call(path: string, init?: RequestInit): Promise<unknown> {
   }
   const body = (await res.json().catch(() => ({}))) as ApiBody
   if (res.ok) return body
-  if (res.status === 404) throw new Error('GitHub could not find this repository, or this sign-in has no access to it.')
+  if (res.status === 404) throw new GitHubReply('GitHub could not find this repository, or this sign-in has no access to it.')
   const detail = body.errors?.find((error) => error.message)?.message
-  throw new Error([body.message ?? `GitHub replied HTTP ${res.status}`, detail].filter(Boolean).join(': '))
+  throw new GitHubReply([body.message ?? `GitHub replied HTTP ${res.status}`, detail].filter(Boolean).join(': '))
 }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
@@ -109,7 +112,7 @@ type Obj = Record<string, unknown>
 const isObj = (value: unknown): value is Obj => typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /** What a reply that is not shaped as asked says; the reply itself is never shown. */
-const badReply = (): Error => new Error('GitHub sent a reply Farol could not read.')
+const badReply = (): GitHubReply => new GitHubReply('GitHub sent a reply Farol could not read.')
 
 /** The `data` of a GraphQL reply, as an object whose fields the caller checks one by one. */
 async function graphql(query: string, variables: Record<string, unknown>): Promise<Obj> {
@@ -120,11 +123,11 @@ async function graphql(query: string, variables: Record<string, unknown>): Promi
   })
   if (isObj(body) && isObj(body.data)) return body.data
   const first = isObj(body) && Array.isArray(body.errors) ? body.errors[0] : undefined
-  throw new Error(isObj(first) && typeof first.message === 'string' ? first.message : 'GitHub returned no data.')
+  throw new GitHubReply(isObj(first) && typeof first.message === 'string' ? first.message : 'GitHub returned no data.')
 }
 
-const noRepository = (ref: RepoRef): Error =>
-  new Error(`GitHub could not find ${ref.owner}/${ref.repo}, or this sign-in has no access to it.`)
+const noRepository = (ref: RepoRef): GitHubReply =>
+  new GitHubReply(`GitHub could not find ${ref.owner}/${ref.repo}, or this sign-in has no access to it.`)
 
 const FIND_PULL_REQUEST = `query($owner:String!,$repo:String!,$head:String!){repository(owner:$owner,name:$repo){pullRequests(headRefName:$head,states:OPEN,first:10,orderBy:{field:CREATED_AT,direction:DESC}){nodes{number headRepositoryOwner{login}}}}}`
 
@@ -167,7 +170,7 @@ export async function pullRequestView(
   const { repository } = await graphql(VIEW_PULL_REQUEST, { owner: ref.owner, repo: ref.repo, number })
   if (repository === null) throw noRepository(ref)
   const node = isObj(repository) ? repository.pullRequest : undefined
-  if (node === null) throw new Error(`Pull request #${number} was not found.`)
+  if (node === null) throw new GitHubReply(`Pull request #${number} was not found.`)
   if (!isObj(node) || typeof node.number !== 'number') throw badReply()
   const { commits, ...pr } = node as Obj & Omit<PullRequestView, 'statusCheckRollup'>
   const contexts = latestChecks(commits)
@@ -179,7 +182,7 @@ const repoPath = (ref: RepoRef): string => `/repos/${encodeURIComponent(ref.owne
 
 async function defaultBranch(ref: RepoRef): Promise<string> {
   const repo = (await call(repoPath(ref))) as { default_branch?: string }
-  if (!repo.default_branch) throw new Error('GitHub did not say which branch is the default.')
+  if (!repo.default_branch) throw new GitHubReply('GitHub did not say which branch is the default.')
   return repo.default_branch
 }
 
@@ -207,7 +210,7 @@ export async function createPullRequestApi(
   input: { base?: string; title?: string; body?: string }
 ): Promise<{ number: number; url: string }> {
   const base = input.base || (await defaultBranch(ref))
-  if (!isSafeBranchName(base)) throw new Error(`"${base}" is not a valid base branch name.`)
+  if (!isSafeBranchName(base)) throw new GitHubReply(`"${base}" is not a valid base branch name.`)
   const filled = input.title && input.body ? undefined : await fillFromCommits(cwd, base, ref.branch)
   const sameRepo = ref.headOwner.toLowerCase() === ref.owner.toLowerCase()
   const created = (await call(`${repoPath(ref)}/pulls`, {
@@ -220,7 +223,7 @@ export async function createPullRequestApi(
       head: sameRepo ? ref.branch : `${ref.headOwner}:${ref.branch}`
     })
   })) as { number?: number; html_url?: string }
-  if (typeof created.number !== 'number' || !created.html_url) throw new Error('GitHub did not return the new pull request.')
+  if (typeof created.number !== 'number' || !created.html_url) throw new GitHubReply('GitHub did not return the new pull request.')
   return { number: created.number, url: created.html_url }
 }
 
