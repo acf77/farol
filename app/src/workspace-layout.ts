@@ -2,15 +2,20 @@ import { leaf, leaves, MAX_SPLIT, MIN_SPLIT, removeLeaf, setSize, splitLeaf, typ
 import type { View } from './types'
 
 /**
- * The workspace's own split tree. Leaves are the three surfaces, each shown at
+ * The workspace's own split tree. Leaves are the surfaces, each shown at
  * most once per project; splits reuse the terminal tab's {@link PaneNode}
  * geometry, so the same dividers and drag maths serve both.
  */
-export type Surface = 'chat' | 'code' | 'terminal'
+export type Surface = 'chat' | 'code' | 'terminal' | 'browser'
 
-export const SURFACES: readonly Surface[] = ['chat', 'code', 'terminal']
+export const SURFACES: readonly Surface[] = ['chat', 'code', 'terminal', 'browser']
 
-export const SURFACE_LABEL: Record<Surface, string> = { chat: 'Chat', code: 'Code', terminal: 'Terminal' }
+export const SURFACE_LABEL: Record<Surface, string> = {
+  chat: 'Chat',
+  code: 'Code',
+  terminal: 'Terminal',
+  browser: 'Browser'
+}
 
 export interface WorkspaceLayout {
   root: PaneNode

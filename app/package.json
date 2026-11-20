@@ -1,6 +1,6 @@
 {
   "name": "farol",
-  "version": "0.7.1",
+  "version": "0.7.0",
   "private": true,
   "author": "Farol",
   "description": "A terminal workspace with runnable shell + AI pipelines.",
@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "build:procsnap": "mkdir -p build && clang -O2 -arch arm64 -arch x86_64 native/procsnap.c -o build/procsnap",
     "rebuild": "electron-rebuild -f -w node-pty",
-    "postinstall": "electron-rebuild -f -w node-pty",
+    "postinstall": "node ./node_modules/electron/install.js && electron-rebuild -f -w node-pty",
     "test": "vitest run",
     "dist": "npm run build:procsnap && electron-vite build && electron-builder --mac dmg zip && node scripts/publish-local.mjs",
     "dist:alpha": "electron-vite build && electron-builder --mac dmg zip -c.appId=com.farol.app.alpha \"-c.productName=Farol Alpha\" -c.directories.output=dist-alpha \"-c.dmg.title=Farol Alpha ${version}\"",
@@ -121,8 +121,7 @@
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.68.0",
     "vite": "^5.4.11",
-    "vitest": "^4.1.10",
-    "@types/bun": "latest"
+    "vitest": "^4.1.10"
   },
   "trustedDependencies": [
     "electron",

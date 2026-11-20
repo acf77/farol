@@ -22,6 +22,16 @@ import {
   withModel
 } from './ai'
 
+/** The project `farol` server's tools that managed Claude must not call. */
+const FAROL_TOOLS_OFF = [
+  'mcp__farol__list_pipelines',
+  'mcp__farol__run_pipeline',
+  'mcp__farol__git_status',
+  'mcp__farol__git_commit',
+  'mcp__farol__git_push',
+  'mcp__farol__git_create_pr'
+].join(',')
+
 describe('normalizeAi', () => {
   it('keeps a known provider', () => {
     expect(normalizeAi('codex')).toBe('codex')
@@ -215,7 +225,7 @@ describe('managedAiCommand', () => {
       'stream-json',
       '--verbose',
       '--disallowedTools',
-      'mcp__farol__list_pipelines,mcp__farol__run_pipeline',
+      FAROL_TOOLS_OFF,
       '--permission-mode',
       'bypassPermissions',
       'fix this'
@@ -261,13 +271,11 @@ describe('managedAiCommand', () => {
     ])
   })
 
-  it('loads the user\'s MCP servers in managed Claude but keeps Farol\'s pipeline tools off', () => {
+  it('loads the user\'s MCP servers in managed Claude but keeps Farol\'s pipeline and Git tools off', () => {
     const args = managedAiCommand('claude', 'fix this').args
     expect(args).not.toContain('--strict-mcp-config')
     expect(args).not.toContain('--mcp-config')
-    expect(args[args.indexOf('--disallowedTools') + 1]).toBe(
-      'mcp__farol__list_pipelines,mcp__farol__run_pipeline'
-    )
+    expect(args[args.indexOf('--disallowedTools') + 1]).toBe(FAROL_TOOLS_OFF)
     expect(managedAiCommand('claude', 'plan', undefined, { mode: 'plan' }).args).toContain('--disallowedTools')
   })
 
@@ -532,7 +540,7 @@ describe('managedAiCommand', () => {
       'stream-json',
       '--verbose',
       '--disallowedTools',
-      'mcp__farol__list_pipelines,mcp__farol__run_pipeline',
+      FAROL_TOOLS_OFF,
       '--permission-mode',
       'bypassPermissions',
       '--model',

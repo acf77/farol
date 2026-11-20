@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
 import { errorMessage } from '@shared/jev'
 import { trimSlashes } from '@shared/project-groups'
+import { gitActionLabel } from '@shared/git-action'
 import { committableFiles } from '@shared/git-status'
 import type { GitCommit, GitHookInfo, GitHubInfo, GitInfo, GitStatus } from '@shared/types'
 
@@ -19,6 +20,7 @@ function mergeGithubPoll(prev: GitHubInfo | null, gh: GitHubInfo, clearPrevious:
   return {
     available: false,
     message: gh.message || 'GitHub is unavailable.',
+    ...(gh.signInRequired ? { signInRequired: true as const } : {}),
     prs: clearPrevious && prev?.prs.length ? [] : (gh.prs ?? [])
   }
 }
@@ -360,6 +362,15 @@ export function useGitSync(
   useEffect(() => {
     return () => stopBurstPoll()
   }, [opts?.enabled, projectPath, stopBurstPoll])
+
+  // An agent's Git action reaches the log like the panel's own, and the status follows.
+  useEffect(() => {
+    return api.git.onAction((done) => {
+      if (!sameProject(done.projectPath, projectPath)) return
+      appendLog(gitActionLabel(done.action), done.message, done.ok)
+      refresh()
+    })
+  }, [appendLog, projectPath, refresh])
 
   useEffect(() => {
     return api.git.onChanged((changed) => {

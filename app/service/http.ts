@@ -2,8 +2,9 @@ import { errorMessage } from '../shared/jev'
 import type { IncomingMessage, RequestListener, ServerResponse } from 'http'
 import { gzipSync } from 'zlib'
 import { resolvePipeline, validateRunnable } from '../shared/graph'
+import type { GitHubGrant } from '../shared/github-grant'
 import type { Pipeline } from '../shared/types'
-import { AccessDenied, identify, loginScope, signIn, type AuthConfig, type Identity, type LoginConfig } from './auth'
+import { AccessDenied, identify, loginScope, refreshGrant, signIn, type AuthConfig, type Identity, type LoginConfig } from './auth'
 import { GitHubError } from './github'
 import { aiStepNames, type ServiceEvent } from './run'
 import { BusyError, type RunRecord, type RunRegistry } from './runs'
@@ -239,9 +240,9 @@ function stringField(body: Record<string, unknown>, name: string, required = tru
 }
 
 /** Map sign-in failures to responses: refused users get 403, GitHub trouble 502. */
-async function signInWith(login: LoginConfig, githubToken: Promise<string>): ReturnType<typeof signIn> {
+async function signInWith(login: LoginConfig, grant: Promise<GitHubGrant>): ReturnType<typeof signIn> {
   try {
-    return await signIn(login, await githubToken)
+    return await signIn(login, await grant)
   } catch (error) {
     if (error instanceof AccessDenied) throw new HttpError(403, error.message)
     if (error instanceof GitHubError) throw new HttpError(502, error.message)
@@ -249,11 +250,24 @@ async function signInWith(login: LoginConfig, githubToken: Promise<string>): Ret
   }
 }
 
+/**
+ * Whether the client asked for GitHub access (`githubAccess: true`): the `repo` scope when it
+ * starts a device flow, and GitHub's own token with its session when the sign-in finishes. The
+ * desktop app asks, to call the GitHub API as the user; every other client gets a session only.
+ */
+const wantsGitHub = (body: Record<string, unknown>): boolean => body.githubAccess === true
+
+/** The reply to a finished sign-in: the session, and GitHub's token only for a client that asked. */
+function signInReply({ github, ...session }: Awaited<ReturnType<typeof signIn>>, githubAccess: boolean) {
+  return githubAccess ? { ...session, github } : session
+}
+
 /** Device flow, step 1: the client shows `userCode` and opens `verificationUri`. */
-async function startDeviceLogin(deps: ServiceDeps, _req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function startDeviceLogin(deps: ServiceDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const login = requireLogin(deps)
+  const githubAccess = wantsGitHub(await readJson(req))
   try {
-    json(res, 200, await login.github.startDevice(loginScope(login)))
+    json(res, 200, await login.github.startDevice(loginScope(login, githubAccess)))
   } catch (error) {
     if (error instanceof GitHubError) throw new HttpError(502, error.message)
     throw error
@@ -263,13 +277,15 @@ async function startDeviceLogin(deps: ServiceDeps, _req: IncomingMessage, res: S
 /** Device flow, step 2: poll every `interval` seconds until the user approves. */
 async function pollDeviceLogin(deps: ServiceDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const login = requireLogin(deps)
-  const deviceCode = stringField(await readJson(req), 'deviceCode') as string
+  const body = await readJson(req)
+  const deviceCode = stringField(body, 'deviceCode') as string
   const poll = await login.github.pollDevice(deviceCode).catch((error: unknown) => {
     throw error instanceof GitHubError ? new HttpError(502, error.message) : error
   })
   if (poll.status === 'pending') return json(res, 200, { status: 'pending', ...(poll.interval ? { interval: poll.interval } : {}) })
   if (poll.status !== 'ok') throw new HttpError(400, poll.status === 'denied' ? 'Sign-in was denied' : 'The device code expired; start again')
-  json(res, 200, { status: 'ok', ...(await signInWith(login, Promise.resolve(poll.token))) })
+  const session = await signInWith(login, Promise.resolve(poll.grant))
+  json(res, 200, { status: 'ok', ...signInReply(session, wantsGitHub(body)) })
 }
 
 /** Browser flow (web and mobile): exchange the code GitHub redirected back with. */
@@ -281,7 +297,8 @@ async function codeLogin(deps: ServiceDeps, req: IncomingMessage, res: ServerRes
   const codeVerifier = stringField(body, 'codeVerifier', false)
   const refusal = login.github.codeFlowRefusal(redirectUri)
   if (refusal) throw new HttpError(400, refusal)
-  json(res, 200, await signInWith(login, login.github.exchangeCode(code, redirectUri, codeVerifier)))
+  const session = await signInWith(login, login.github.exchangeCode(code, redirectUri, codeVerifier))
+  json(res, 200, signInReply(session, wantsGitHub(body)))
 }
 
 const signInRoutes: { method: string; path: string; handler: (deps: ServiceDeps, req: IncomingMessage, res: ServerResponse) => Promise<void> }[] = [
@@ -289,6 +306,24 @@ const signInRoutes: { method: string; path: string; handler: (deps: ServiceDeps,
   { method: 'POST', path: '/v1/auth/device/token', handler: pollDeviceLogin },
   { method: 'POST', path: '/v1/auth/code', handler: codeLogin }
 ]
+
+/**
+ * Trade a GitHub refresh token for a new grant: the service holds the client secret. The
+ * new token must belong to the caller, so the route cannot refresh someone else's token.
+ */
+async function refreshGitHub({ deps, req, res, owner }: Context): Promise<void> {
+  if (owner.githubId === undefined) throw new HttpError(400, 'API keys have no GitHub token to refresh')
+  const login = requireLogin(deps)
+  const refreshToken = stringField(await readJson(req), 'refreshToken') as string
+  try {
+    const grant = await refreshGrant(login, owner.githubId, refreshToken)
+    if (!grant) throw new HttpError(400, 'GitHub no longer accepts this sign-in; sign in again')
+    json(res, 200, { github: grant })
+  } catch (error) {
+    if (error instanceof AccessDenied) throw new HttpError(403, error.message)
+    throw error instanceof GitHubError ? new HttpError(502, error.message) : error
+  }
+}
 
 function showMe({ res, owner }: Context): void {
   const { id, kind, name, displayName, avatarUrl } = owner
@@ -306,6 +341,7 @@ const routes: { method: string; pattern: RegExp; handler: (ctx: Context) => Prom
   { method: 'GET', pattern: /^\/v1\/ping$/, handler: (ctx) => json(ctx.res, 200, { ok: true }) },
   { method: 'GET', pattern: /^\/v1\/me$/, handler: showMe },
   { method: 'POST', pattern: /^\/v1\/auth\/logout$/, handler: logout },
+  { method: 'POST', pattern: /^\/v1\/auth\/github\/refresh$/, handler: refreshGitHub },
   { method: 'POST', pattern: /^\/v1\/workspaces$/, handler: createWorkspace },
   { method: 'POST', pattern: /^\/v1\/workspaces\/([0-9a-f]+)\/exec$/, handler: execInWorkspace },
   { method: 'DELETE', pattern: /^\/v1\/workspaces\/([0-9a-f]+)$/, handler: closeWorkspace },
