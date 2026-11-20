@@ -1,3 +1,5 @@
+import { app } from 'electron'
+import path from 'path'
 import { errorMessage } from '../shared/jev'
 import { mergePullRequestBlockReason, summarizePrChecks } from '../shared/git-status'
 import { GitHubSignInRequired } from '../shared/remote'
@@ -11,6 +13,7 @@ import type {
 } from '../shared/types'
 import { MERGE_STRATEGIES } from '../shared/types'
 import { execCli } from './exec-cli'
+import { CREDENTIAL_NONCE_ENV, CREDENTIAL_SOCKET_ENV, grantCredential } from './git-credential-broker'
 import { githubToken } from './remote'
 import {
   createPullRequestApi,
@@ -134,19 +137,36 @@ function unavailable(cause: unknown): GitHubInfo {
   }
 }
 
+function shellQuote(p: string): string {
+  return `'${p.replace(/'/g, `'\\''`)}'`
+}
+
+function gitCredentialHelper(): string {
+  const script = path.join(app.getAppPath(), 'out', 'main', 'git-credential.js')
+  return `!${shellQuote(process.execPath)} ${shellQuote(script)}`
+}
+
 /**
- * Git configuration that makes git sign in to github.com as the signed-in user, or undefined
- * without a token. It travels in the environment of one git command (`GIT_CONFIG_*`), so the
- * token is never on a command line, and the header goes to github.com only.
+ * Extra environment for one git transport. Registers a Farol credential helper
+ * for github.com so git asks for the password only when it talks to the remote,
+ * after client-side hooks run, and the token is not in GIT_CONFIG_VALUE_*. An empty helper first
+ * clears the chain, so no other configured helper is asked for a login or is handed the token to
+ * store. The caller ends the command's one-use grant with `releaseCredential`.
  */
 export async function githubGitEnv(): Promise<Record<string, string> | undefined> {
-  const token = await githubToken()
-  if (!token) return undefined
+  if (!(await githubToken())) return undefined
+  const { socket, nonce } = await grantCredential(githubToken)
   const next = Number(process.env.GIT_CONFIG_COUNT) || 0
   return {
-    GIT_CONFIG_COUNT: String(next + 1),
-    [`GIT_CONFIG_KEY_${next}`]: 'http.https://github.com/.extraheader',
-    [`GIT_CONFIG_VALUE_${next}`]: `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`
+    [CREDENTIAL_SOCKET_ENV]: socket,
+    [CREDENTIAL_NONCE_ENV]: nonce,
+    GIT_TERMINAL_PROMPT: '0',
+    ELECTRON_RUN_AS_NODE: '1',
+    GIT_CONFIG_COUNT: String(next + 2),
+    [`GIT_CONFIG_KEY_${next}`]: 'credential.https://github.com.helper',
+    [`GIT_CONFIG_VALUE_${next}`]: '',
+    [`GIT_CONFIG_KEY_${next + 1}`]: 'credential.https://github.com.helper',
+    [`GIT_CONFIG_VALUE_${next + 1}`]: gitCredentialHelper()
   }
 }
 

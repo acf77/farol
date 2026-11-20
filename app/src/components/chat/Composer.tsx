@@ -526,19 +526,16 @@ export function ChatModeSwitch({
 export function AutoApproveChip({
   on,
   provider,
-  via,
   mode,
   onChange
 }: {
   on: boolean
   provider: AiProvider
-  /** The CLI OpenRouter runs through, which decides whether it can ask. */
-  via?: OpenRouterAgent
   mode: AgentMode
   onChange: (on: boolean) => void
 }) {
   if (mode === 'plan') return null
-  const canAsk = canAskApproval(provider, via)
+  const canAsk = canAskApproval(provider)
   const active = on || !canAsk
   const title = !canAsk
     ? `${AI_LABELS[provider]}: Cannot ask for approval`
@@ -675,7 +672,7 @@ function ComposerToolbar({
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 46, padding: '0 10px 0 12px' }}>
       <ChatModeSwitch mode={mode} locked={modeLocked} onChange={onModeChange} />
-      <AutoApproveChip on={autoApprove} provider={provider} via={openRouterVia} mode={mode} onChange={onAutoApproveChange} />
+      <AutoApproveChip on={autoApprove} provider={provider} mode={mode} onChange={onAutoApproveChange} />
       <button
         type="button"
         className="bf-focus bf-composer-btn"

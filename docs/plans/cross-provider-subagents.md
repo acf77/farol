@@ -1,3 +1,5 @@
+> Managed Chat now uses the restricted Claude execution path in ADR 0001. The ACP and Codex hook paths described below were removed. This document records the earlier design.
+
 # Plan: cross-provider subagents in managed Chat
 
 Status: proposed · Owner: TBD · Decision record to follow as an ADR once Phase 1 lands.

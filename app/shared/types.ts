@@ -158,7 +158,7 @@ export interface GitChanged {
 /** An agent had Farol perform a Git action: the Git log and the status follow it. */
 export interface GitActionEvent {
   projectPath: string
-  action: 'status' | 'commit' | 'push' | 'create_pr'
+  action: 'status' | 'diff' | 'log' | 'show' | 'commit' | 'push' | 'create_pr'
   ok: boolean
   message: string
 }

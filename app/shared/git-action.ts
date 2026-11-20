@@ -10,10 +10,18 @@ import type { GitActionEvent, GitHookRun, GitStatus } from './types'
 
 export type GitAction =
   | { action: 'status' }
+  | { action: 'diff' }
+  | { action: 'log' }
+  | { action: 'show'; ref: string }
   /** `files`: the paths to commit. Managed Chat ignores it and commits the files the turn changed. */
   | { action: 'commit'; message: string; files?: string[] }
   | { action: 'push' }
   | { action: 'create_pr'; base?: string; title?: string; body?: string }
+
+/** These actions can run in Plan and return their output to the agent. */
+export function isGitReadAction(request: GitAction): boolean {
+  return ['status', 'diff', 'log', 'show'].includes(request.action)
+}
 
 export interface GitActionResult {
   ok: boolean
@@ -47,7 +55,16 @@ export function parseGitAction(value: unknown): GitAction | { error: string } {
   const raw = value as Record<string, unknown>
   switch (raw.action) {
     case 'status':
-      return { action: 'status' }
+    case 'diff':
+    case 'log':
+      return { action: raw.action }
+    case 'show': {
+      const ref = raw.ref === undefined ? 'HEAD' : text(raw.ref)
+      if (!ref || !/^(?:HEAD(?:~[0-9]{1,3})?|[0-9a-fA-F]{7,64})$/.test(ref)) {
+        return { error: 'Git show needs HEAD, HEAD~<number>, or a commit hash.' }
+      }
+      return { action: 'show', ref }
+    }
     case 'push':
       return { action: 'push' }
     case 'commit': {
@@ -64,7 +81,7 @@ export function parseGitAction(value: unknown): GitAction | { error: string } {
         ...optional('body', text(raw.body))
       }
     default:
-      return { error: `Unknown Git action ${JSON.stringify(raw.action)}; use status, commit, push or create_pr.` }
+      return { error: `Unknown Git action ${JSON.stringify(raw.action)}; use status, diff, log, show, commit, push or create_pr.` }
   }
 }
 
@@ -117,6 +134,9 @@ export function formatGitStatus(branch: string, status: GitStatus): string {
 
 export const GIT_ACTION_NAMES: Record<GitActionEvent['action'], string> = {
   status: 'status',
+  diff: 'diff',
+  log: 'log',
+  show: 'show',
   commit: 'commit',
   push: 'push',
   create_pr: 'pull request'

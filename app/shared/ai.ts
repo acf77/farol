@@ -1,13 +1,11 @@
 /** Which coding CLI an AI pipeline step invokes. */
 
-import { codexHookArgs } from './codex-hook'
 import { FAILURE_REPORT_REL } from './failure'
 import { opencodeRunConfig } from './opencode-config'
 import { openCodeModel } from './openrouter'
 import {
   APPROVE_TOOL,
   claudeMcpConfig,
-  codexMcpOverrides,
   DELEGATE_TOOL,
   GIT_MCP_TOOLS,
   PIPELINE_MCP_TOOLS,
@@ -108,17 +106,9 @@ export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
   openrouter: []
 }
 
-/** CLIs Farol runs over ACP in managed Chat (see `shared/acp.ts`). */
-export const ACP_CLIS: readonly AiCli[] = ['opencode']
-
-/**
- * Whether the CLI can stop a headless run to ask the developer about a tool
- * call: Claude through `--permission-prompt-tool`, Codex through a
- * `PreToolUse` hook, ACP CLIs through `session/request_permission`. Every
- * other CLI runs with all tools approved, so auto-approve is always on for it.
- */
-export function canAskApproval(provider: AiProvider, via: OpenRouterAgent = 'opencode'): boolean {
-  return provider === 'claude' || provider === 'codex' || ACP_CLIS.includes(cliFor(provider, via))
+/** Only the supported managed provider can ask through Farol's permission tool. */
+export function canAskApproval(provider: AiProvider): boolean {
+  return provider === 'claude'
 }
 
 export function isAiProvider(value: unknown): value is AiProvider {
@@ -304,17 +294,6 @@ export interface AiCommand {
   opencodeConfig?: Record<string, unknown>
 }
 
-/** Older OpenCode builds reject `--format json` with an unknown-option error. */
-export function isUnknownJsonFormatError(text: string): boolean {
-  const lower = text.toLowerCase()
-  return lower.includes('format') && /unknown (option|flag|argument)/.test(lower)
-}
-
-/** `--tools a,b` argv fragment, or empty when the CLI should keep its defaults. */
-function toolsArgv(tools: string | undefined): string[] {
-  return tools ? ['--tools', tools] : []
-}
-
 /** `--flag <id>` to continue the CLI's own saved conversation, or empty for a new one. */
 function resumeArgv(flag: string, resume: string | undefined): string[] {
   return resume ? [flag, resume] : []
@@ -389,187 +368,21 @@ export function aiCommand(
   }
 }
 
-function managedCodexCommand(
-  prompt: string,
-  passed: string | undefined,
-  plan: boolean,
-  webSearch?: boolean,
-  resume?: string,
-  mcp?: McpServerEntry,
-  hook?: string,
-  effort?: AgentEffort
-): AiCommand {
-  const sandbox = plan ? 'read-only' : 'workspace-write'
-  const effortFlags = effortArgv('codex', effort)
-  // Ask first: a PreToolUse hook gates every call; Plan's read-only sandbox needs none.
-  const gate = hook && !plan ? codexHookArgs(hook) : []
-  if (resume) {
-    // `exec resume` takes no `--sandbox`; the config key sets the same mode.
-    return {
-      bins: ['codex'],
-      args: withModel(
-        [
-          'exec',
-          'resume',
-          '--json',
-          '-c',
-          'approval_policy=never',
-          '-c',
-          `sandbox_mode="${sandbox}"`,
-          ...(webSearch ? ['-c', 'web_search=live'] : []),
-          ...effortFlags,
-          ...(mcp ? codexMcpOverrides(mcp) : []),
-          ...gate,
-          resume,
-          prompt
-        ],
-        passed
-      ),
-      hint: "Install the Codex CLI (npm i -g @openai/codex) to use managed Chat.",
-      stream: 'ndjson'
-    }
-  }
-  return {
-    bins: ['codex'],
-    // Codex removed `--full-auto` (closer to workspace-write + on-request).
-    // Use approval_policy=never + sandbox so headless Chat never prompts;
-    // do not use --dangerously-bypass-approvals-and-sandbox (no sandbox at all).
-    // Keep workspace-write network_access off (default): never-approve + network
-    // would let model shell commands reach the internet without confirmation.
-    // Native Codex web search is `-c web_search=live`, not sandbox network_access.
-    args: withModel(
-      [
-        'exec',
-        '--json',
-        '-c',
-        'approval_policy=never',
-        '--sandbox',
-        sandbox,
-        ...(webSearch ? ['-c', 'web_search=live'] : []),
-        ...effortFlags,
-        ...(mcp ? codexMcpOverrides(mcp) : []),
-        ...gate,
-        prompt
-      ],
-      passed
-    ),
-    hint: "Install the Codex CLI (npm i -g @openai/codex) to use managed Chat.",
-    stream: 'ndjson'
-  }
-}
-
-function managedCursorCommand(prompt: string, passed: string | undefined, plan: boolean, resume?: string): AiCommand {
-  return {
-    bins: ['agent', 'cursor-agent'],
-    // Agent mode is the CLI default; `plan` is Cursor's own read-only mode.
-    args: withModel(
-      [
-        '-p',
-        '--force',
-        ...(plan ? ['--mode=plan'] : []),
-        ...resumeArgv('--resume', resume),
-        '--output-format',
-        'stream-json',
-        prompt
-      ],
-      passed
-    ),
-    hint: 'Install the Cursor CLI (https://cursor.com/docs/cli) to use managed Chat.',
-    stream: 'ndjson'
-  }
-}
-
-function managedOpencodeCommand(
-  prompt: string,
-  passed: string | undefined,
-  plan: boolean,
-  jsonFormat: boolean,
-  resume?: string
-): AiCommand {
-  // OpenCode's `plan` agent lacks the write tools, which
-  // `--dangerously-skip-permissions` does not grant back; but it runs `bash`
-  // freely, so Plan also denies shell through the run's config.
-  const planArgv = [...(plan ? ['--agent', 'plan'] : []), ...resumeArgv('--session', resume)]
-  const config = opencodeRunConfig(plan ? 'plan' : 'build', false)
-  return {
-    bins: ['opencode'],
-    args: withModel(
-      jsonFormat
-        ? ['run', '--format', 'json', '--dangerously-skip-permissions', ...planArgv, prompt]
-        : ['run', '--dangerously-skip-permissions', ...planArgv, prompt],
-      passed
-    ),
-    hint: 'Install OpenCode (https://opencode.ai) to use managed Chat. Farol needs a build that accepts `opencode run --format json`.',
-    ...(jsonFormat ? { stream: 'ndjson' as const } : {}),
-    ...(config ? { opencodeConfig: config } : {})
-  }
-}
-
-function managedOmpCommand(
-  prompt: string,
-  passed: string | undefined,
-  plan: boolean,
-  tools: string | undefined,
-  effort?: AgentEffort
-): AiCommand {
-  return {
-    bins: ['omp'],
-    // `--mode json` is already non-interactive, so `-p` is redundant; it also
-    // routes omp's own banners to stderr, leaving stdout pure NDJSON.
-    // Plan mode defaults to inspection-only when Jev did not supply a list;
-    // Build with an explicit allowlist uses that; otherwise omp keeps all tools.
-    args: withModel(
-      [
-        '--mode',
-        'json',
-        '--auto-approve',
-        ...effortArgv('omp', effort),
-        ...toolsArgv(tools ?? (plan ? OMP_READONLY_TOOLS : undefined)),
-        prompt
-      ],
-      passed
-    ),
-    hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to use managed Chat.',
-    stream: 'ndjson'
-  }
-}
-
-function managedPiCommand(prompt: string, passed: string | undefined, plan: boolean, tools: string | undefined): AiCommand {
-  return {
-    bins: ['pi'],
-    // `--mode json` is non-interactive on its own. Plan defaults to the
-    // inspection-only allowlist, exactly like OMP.
-    args: withModel(
-      ['--mode', 'json', ...toolsArgv(tools ?? (plan ? PI_READONLY_TOOLS : undefined)), prompt],
-      passed
-    ),
-    hint: PI_HINT,
-    stream: 'ndjson'
-  }
-}
-
 function managedClaudeCommand(
   prompt: string,
   passed: string | undefined,
   plan: boolean,
-  tools: string | undefined,
+  tools: string,
   resume?: string,
   mcp?: McpServerEntry,
   askApproval?: boolean,
   effort?: AgentEffort
 ): AiCommand {
-  // Asking goes through the managed server, so it needs one; Plan keeps its own read-only mode.
   const ask = !!(askApproval && mcp && !plan)
   return {
     bins: ['claude'],
-    // `--verbose` is what makes stream-json emit each turn as it happens;
-    // without it the CLI still waits and prints one final event.
-    // The user's MCP servers load as usual, but the project `farol` server's
-    // pipeline tools are disallowed: called instead of emitting
-    // FAROL_PIPELINES, the managed harness would never run validation, and
-    // MCP runs use origin `agent`, which does not hand failures back.
-    // `--mcp-config` and `--disallowedTools` take several values, so a
-    // single-valued flag must follow them before the prompt.
+    // Restricted mode removes execution tools, confines file access, and protects Git metadata.
+    // Unknown flags fail before the model runs on older CLIs. User MCP servers and hooks stay off.
     args: withModel(
       [
         '-p',
@@ -577,13 +390,23 @@ function managedClaudeCommand(
         'stream-json',
         '--verbose',
         ...effortArgv('claude', effort),
-        ...(mcp ? ['--mcp-config', claudeMcpConfig(mcp)] : []),
+        '--restricted',
+        '--strict-mcp-config',
+        '--disable-slash-commands',
+        '--no-chrome',
+        '--settings',
+        JSON.stringify({ disableAllHooks: true }),
+        '--mcp-config',
+        mcp ? claudeMcpConfig(mcp) : JSON.stringify({ mcpServers: {} }),
         '--disallowedTools',
         [...PIPELINE_MCP_TOOLS, ...GIT_MCP_TOOLS].join(','),
-        ...(ask ? ['--allowedTools', DELEGATE_TOOL, '--permission-prompt-tool', APPROVE_TOOL] : []),
+        '--allowedTools',
+        ask ? DELEGATE_TOOL : `${tools},${DELEGATE_TOOL}`,
+        ...(ask ? ['--permission-prompt-tool', APPROVE_TOOL] : []),
         '--permission-mode',
-        plan ? 'plan' : ask ? 'default' : 'bypassPermissions',
-        ...toolsArgv(tools),
+        plan ? 'plan' : ask ? 'default' : 'dontAsk',
+        '--tools',
+        tools,
         ...resumeArgv('--resume', resume),
         prompt
       ],
@@ -594,68 +417,64 @@ function managedClaudeCommand(
   }
 }
 
-/**
- * Headless coding commands used by Farol's managed Chat harness.
- * stdin is ignored (see agent-controller.ts), so a mode that can still stop
- * to ask for approval — e.g. Claude's `acceptEdits`, which only auto-accepts
- * edits and leaves Bash pending — would hang forever. Every provider here
- * must therefore auto-approve *all* tool calls, including shell commands,
- * except in Plan mode (`opts.mode === 'plan'`), where the CLI's own
- * read-only plan mode replaces full auto-approval.
- *
- * Claude and Cursor print nothing at all under `--output-format text` until
- * the whole run is over, which leaves Chat blank while the agent works, so
- * both run in `stream-json` and are decoded by `shared/agent-stream.ts`.
- * Codex also emits NDJSON when passed `--json`; decoding it lets managed Chat
- * render command, file, MCP, and web-search activity as tool cards.
- * OpenCode does the same with `--format json`, and OMP and pi with `--mode json`;
- * OpenRouter rides whichever of OpenCode or pi `opts.via` names.
- *
- * `opts.resume` continues the CLI's own saved conversation (see
- * `shared/agent-context.ts`). OMP and pi have no headless resume and ignore it.
- */
+/** Only a provider with a native execution barrier may run in managed Chat. */
+export function managedGitRefusal(provider: AiProvider): string | undefined {
+  if (provider === 'claude') return undefined
+  return `${AI_LABELS[provider]} cannot enforce the Git action limit. Select Claude with restricted mode support.`
+}
+
+/** Built-ins only: no shell, code interpreter, browser automation, or native subagents. */
+const MANAGED_CLAUDE_TOOLS = {
+  inspect: ['Read', 'Glob', 'Grep', 'AskUserQuestion'],
+  edit: ['Edit', 'Write', 'NotebookEdit'],
+  web: ['WebFetch', 'WebSearch']
+}
+
+/** The tool policy and launch ceiling use the same built-ins. */
+export function managedClaudeTools(allowed: readonly ('edit' | 'web')[]): string[] {
+  return [...MANAGED_CLAUDE_TOOLS.inspect, ...allowed.flatMap((family) => MANAGED_CLAUDE_TOOLS[family])]
+}
+
+/** A permission answer cannot restore execution or permit direct Git metadata writes. */
+export function managedToolRefusal(name: string, input: unknown, mode?: AgentMode): string | undefined {
+  const edit = MANAGED_CLAUDE_TOOLS.edit.includes(name)
+  if (!managedClaudeTools(mode === 'plan' ? ['web'] : ['edit', 'web']).includes(name)) {
+    return 'This tool is disabled. Use Farol actions for Git and pipelines for commands.'
+  }
+  if (edit) {
+    const fields = input && typeof input === 'object' ? input as Record<string, unknown> : {}
+    const file = fields.file_path ?? fields.notebook_path
+    if (typeof file !== 'string' || /(^|[\\/])\.git([\\/]|$)/i.test(file)) {
+      return 'Direct Git metadata writes are disabled. Use Farol Git actions.'
+    }
+  }
+  return undefined
+}
+
+/** Every launch, including resume and delegates, applies the same execution barrier. */
 export function managedAiCommand(
   provider: AiProvider,
   prompt: string,
   model?: string,
   opts?: {
-    jsonFormat?: boolean
     mode?: AgentMode
     tools?: string[]
-    webSearch?: boolean
-    via?: OpenRouterAgent
     resume?: string
-    /** Farol's managed server for this task; Claude and Codex load it for the run. */
+    /** Farol's only MCP server for this run. */
     mcp?: McpServerEntry
     /** Ask the developer before tool calls instead of approving them all (Claude, Build, with `mcp`). */
     askApproval?: boolean
-    /** Codex's Ask-first hook command (see `shared/codex-hook.ts`); Build only. */
-    codexHook?: string
-    /** Thinking level for Claude, Codex and OMP; other CLIs ignore it. */
+    /** Thinking level for the supported managed CLI. */
     effort?: AgentEffort
   }
 ): AiCommand {
-  const { via, resume: resumeId, mode, tools: toolList, webSearch, mcp, askApproval, codexHook, effort } = opts ?? {}
-  const cli = cliFor(provider, via)
-  const resume = resumeId?.trim() || undefined
-  const passed = provider === 'openrouter' ? openCodeModel(model) : model
-  const jsonFormat = opts?.jsonFormat !== false
+  const refusal = managedGitRefusal(provider)
+  if (refusal) throw new Error(refusal)
+  const { resume: resumeId, mode, tools: requested, mcp, askApproval, effort } = opts ?? {}
   const plan = mode === 'plan'
-  const tools = toolList?.length ? toolList.join(',') : undefined
-  switch (cli) {
-    case 'codex':
-      return managedCodexCommand(prompt, passed, plan, webSearch, resume, mcp, codexHook, effort)
-    case 'cursor':
-      return managedCursorCommand(prompt, passed, plan, resume)
-    case 'opencode':
-      return managedOpencodeCommand(prompt, passed, plan, jsonFormat, resume)
-    case 'omp':
-      return managedOmpCommand(prompt, passed, plan, tools, effort)
-    case 'pi':
-      return managedPiCommand(prompt, passed, plan, tools)
-    case 'claude':
-      return managedClaudeCommand(prompt, passed, plan, tools, resume, mcp, askApproval, effort)
-  }
+  const ceiling = managedClaudeTools(plan ? ['web'] : ['edit', 'web'])
+  const tools = requested === undefined ? ceiling : ceiling.filter((tool) => requested.includes(tool))
+  return managedClaudeCommand(prompt, model, plan, tools.join(','), resumeId?.trim() || undefined, mcp, askApproval, effort)
 }
 
 /** Prompt that points the UI chat (or a CLI) at the report a failed run left. */

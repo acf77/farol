@@ -47,11 +47,13 @@ describe('applyApprovalEvent', () => {
 })
 
 describe('AutoApproveChip', () => {
-  it('can be turned off for Codex too', () => {
+  it('does not offer approval for an unsupported managed provider', () => {
     const onChange = vi.fn()
     render(<AutoApproveChip on provider="codex" mode="build" onChange={onChange} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Auto-approve' }))
-    expect(onChange).toHaveBeenCalledWith(false)
+    const chip = screen.getByRole('button', { name: 'Auto-approve' }) as HTMLButtonElement
+    expect(chip.disabled).toBe(true)
+    fireEvent.click(chip)
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('shows on, and turns off for Claude', () => {

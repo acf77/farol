@@ -9,8 +9,9 @@ import {
   effortSupported,
   interactiveAiCommand,
   isAiProvider,
-  isUnknownJsonFormatError,
   managedAiCommand,
+  managedGitRefusal,
+  managedToolRefusal,
   modelsFor,
   normalizeAi,
   normalizeEffort,
@@ -27,6 +28,9 @@ const FAROL_TOOLS_OFF = [
   'mcp__farol__list_pipelines',
   'mcp__farol__run_pipeline',
   'mcp__farol__git_status',
+  'mcp__farol__git_diff',
+  'mcp__farol__git_log',
+  'mcp__farol__git_show',
   'mcp__farol__git_commit',
   'mcp__farol__git_push',
   'mcp__farol__git_create_pr'
@@ -142,292 +146,89 @@ describe('aiCommand', () => {
 })
 
 describe('managedAiCommand', () => {
-  it('continues the CLI session when given one', () => {
-    const claude = managedAiCommand('claude', 'next', 'opus', { resume: 's1' }).args
-    expect(claude.slice(-5)).toEqual(['--resume', 's1', '--model', 'opus', 'next'])
-    expect(managedAiCommand('cursor', 'next', undefined, { resume: 'c1' }).args).toEqual(
-      expect.arrayContaining(['--resume', 'c1'])
-    )
-    expect(managedAiCommand('opencode', 'next', undefined, { resume: 'ses_1' }).args).toEqual(
-      expect.arrayContaining(['--session', 'ses_1'])
-    )
-    expect(managedAiCommand('omp', 'next', undefined, { resume: 'x' }).args).not.toContain('x')
-    expect(managedAiCommand('openrouter', 'next', undefined, { via: 'pi', resume: 'x' }).args).not.toContain(
-      'x'
-    )
-    expect(managedAiCommand('claude', 'next').args).not.toContain('--resume')
+  it('refuses providers without a native execution barrier in every launch mode', () => {
+    for (const provider of AI_PROVIDERS.filter((provider) => provider !== 'claude')) {
+      for (const mode of ['build', 'plan'] as const) {
+        expect(() => managedAiCommand(provider, 'run git', undefined, {
+          mode, resume: 'old-session', askApproval: true, tools: ['Bash']
+        })).toThrow('cannot enforce the Git action limit')
+      }
+    }
+    expect(managedGitRefusal('claude')).toBeUndefined()
   })
 
-  it('resumes Codex through `exec resume`, which takes the sandbox as config', () => {
-    expect(managedAiCommand('codex', 'next', 'gpt-5.6', { mode: 'plan', resume: 't1' }).args).toEqual([
-      'exec',
-      'resume',
-      '--json',
-      '-c',
-      'approval_policy=never',
-      '-c',
-      'sandbox_mode="read-only"',
-      't1',
-      '--model',
-      'gpt-5.6',
-      'next'
-    ])
-    const build = managedAiCommand('codex', 'next', undefined, { resume: 't1', webSearch: true }).args
-    expect(build).toContain('sandbox_mode="workspace-write"')
-    expect(build).toContain('web_search=live')
-    expect(build).not.toContain('--sandbox')
+  it('keeps restricted mode, fixed tools, and a closed MCP config on fresh and resumed runs', () => {
+    for (const resume of [undefined, 'old-session']) {
+      const args = managedAiCommand('claude', 'fix this', 'opus', { resume }).args
+      expect(args).toContain('--restricted')
+      expect(args).toContain('--strict-mcp-config')
+      expect(args).toContain('--disable-slash-commands')
+      expect(args).toContain('--no-chrome')
+      expect(JSON.parse(args[args.indexOf('--settings') + 1])).toEqual({ disableAllHooks: true })
+      expect(JSON.parse(args[args.indexOf('--mcp-config') + 1])).toEqual({ mcpServers: {} })
+      expect(args[args.indexOf('--disallowedTools') + 1]).toBe(FAROL_TOOLS_OFF)
+      expect(args).not.toContain('bypassPermissions')
+      const tools = args[args.indexOf('--tools') + 1].split(',')
+      expect(tools).toContain('Read')
+      expect(tools).toContain('Edit')
+      expect(tools).not.toContain('Bash')
+      expect(tools).not.toContain('Agent')
+      expect(args.slice(-3)).toEqual(['--model', 'opus', 'fix this'])
+      expect(args.includes('--resume')).toBe(!!resume)
+    }
   })
 
-  it('switches each provider to its read-only Plan flags', () => {
-    expect(managedAiCommand('codex', 'plan this', undefined, { mode: 'plan' }).args).toContain('read-only')
-    expect(managedAiCommand('cursor', 'plan this', undefined, { mode: 'plan' }).args).toContain(
-      '--mode=plan'
-    )
-    expect(managedAiCommand('omp', 'plan this', undefined, { mode: 'plan' }).args).toContain('read,glob,grep,lsp')
-    expect(managedAiCommand('claude', 'plan this', undefined, { mode: 'plan' }).args).toContain('plan')
-    expect(managedAiCommand('claude', 'plan this', undefined, { mode: 'plan' }).args).not.toContain(
-      'bypassPermissions'
-    )
-    expect(managedAiCommand('opencode', 'plan this', undefined, { mode: 'plan' }).args).toEqual([
-      'run',
-      '--format',
-      'json',
-      '--dangerously-skip-permissions',
-      '--agent',
-      'plan',
-      'plan this'
-    ])
-    // OpenRouter rides OpenCode, so it gets the same read-only plan agent.
-    expect(managedAiCommand('openrouter', 'plan this', undefined, { mode: 'plan' }).args).toEqual([
-      'run',
-      '--format',
-      'json',
-      '--dangerously-skip-permissions',
-      '--agent',
-      'plan',
-      'plan this'
-    ])
+  it('intersects caller tools with the execution limit, including empty and Plan lists', () => {
+    const forbidden = ['Bash', 'PowerShell', 'python', 'browser', 'Agent', 'Task', 'Skill', 'mcp__external__exec']
+    for (const mode of ['build', 'plan'] as const) {
+      const args = managedAiCommand('claude', 'x', undefined, {
+        mode, tools: ['Read', 'Write', ...forbidden]
+      }).args
+      expect(args[args.indexOf('--tools') + 1]).toBe(mode === 'plan' ? 'Read' : 'Read,Write')
+    }
+    const empty = managedAiCommand('claude', 'x', undefined, { tools: [] }).args
+    expect(empty[empty.indexOf('--tools') + 1]).toBe('')
   })
 
-  it('enables Codex native web search when the policy allows web', () => {
-    expect(
-      managedAiCommand('codex', 'plan this', undefined, { mode: 'plan', webSearch: true }).args
-    ).toContain('web_search=live')
-    expect(
-      managedAiCommand('codex', 'plan this', undefined, { mode: 'plan' }).args
-    ).not.toContain('web_search=live')
-  })
-
-  it('auto-approves every provider so headless Chat can use shell tools', () => {
-    expect(managedAiCommand('claude', 'fix this').args).toEqual([
-      '-p',
-      '--output-format',
-      'stream-json',
-      '--verbose',
-      '--disallowedTools',
-      FAROL_TOOLS_OFF,
-      '--permission-mode',
-      'bypassPermissions',
-      'fix this'
-    ])
-    expect(managedAiCommand('codex', 'fix this').args).toEqual([
-      'exec',
-      '--json',
-      '-c',
-      'approval_policy=never',
-      '--sandbox',
-      'workspace-write',
-      'fix this'
-    ])
-    expect(managedAiCommand('codex', 'fix this').args).not.toContain(
-      'sandbox_workspace_write.network_access=true'
-    )
-    expect(managedAiCommand('cursor', 'fix this').args).toEqual([
-      '-p',
-      '--force',
-      '--output-format',
-      'stream-json',
-      'fix this'
-    ])
-    expect(managedAiCommand('opencode', 'fix this').args).toEqual([
-      'run',
-      '--format',
-      'json',
-      '--dangerously-skip-permissions',
-      'fix this'
-    ])
-    expect(managedAiCommand('openrouter', 'fix this').args).toEqual([
-      'run',
-      '--format',
-      'json',
-      '--dangerously-skip-permissions',
-      'fix this'
-    ])
-    expect(managedAiCommand('omp', 'fix this').args).toEqual([
-      '--mode',
-      'json',
-      '--auto-approve',
-      'fix this'
-    ])
-  })
-
-  it('loads the user\'s MCP servers in managed Claude but keeps Farol\'s pipeline and Git tools off', () => {
-    const args = managedAiCommand('claude', 'fix this').args
-    expect(args).not.toContain('--strict-mcp-config')
-    expect(args).not.toContain('--mcp-config')
-    expect(args[args.indexOf('--disallowedTools') + 1]).toBe(FAROL_TOOLS_OFF)
-    expect(managedAiCommand('claude', 'plan', undefined, { mode: 'plan' }).args).toContain('--disallowedTools')
-  })
-
-  it('adds the managed farol-chat server to Claude and Codex runs', () => {
-    const mcp = { command: '/app/Farol', args: ['/app/mcp.js'], env: { FAROL_MANAGED: '1', FAROL_TASK_ID: 't1' } }
-    const claude = managedAiCommand('claude', 'fix this', undefined, { mcp }).args
-    const config = claude[claude.indexOf('--mcp-config') + 1]
-    expect(JSON.parse(config)).toEqual({ mcpServers: { 'farol-chat': mcp } })
-    // Both flags take several values; a single-valued flag must end them before the prompt.
-    expect(claude.indexOf('--permission-mode')).toBeGreaterThan(claude.indexOf('--disallowedTools'))
-    expect(claude.indexOf('--disallowedTools')).toBeGreaterThan(claude.indexOf('--mcp-config'))
-    expect(claude.at(-1)).toBe('fix this')
-
-    expect(managedAiCommand('codex', 'fix this', undefined, { mcp }).args).toEqual([
-      'exec',
-      '--json',
-      '-c',
-      'approval_policy=never',
-      '--sandbox',
-      'workspace-write',
-      '-c',
-      'mcp_servers.farol-chat.command="/app/Farol"',
-      '-c',
-      'mcp_servers.farol-chat.args=["/app/mcp.js"]',
-      '-c',
-      'mcp_servers.farol-chat.env={ "FAROL_MANAGED" = "1", "FAROL_TASK_ID" = "t1" }',
-      '-c',
-      'mcp_servers.farol-chat.tool_timeout_sec=86400',
-      'fix this'
-    ])
-    const resumed = managedAiCommand('codex', 'next', undefined, { mcp, resume: 't9' }).args
-    expect(resumed).toContain('mcp_servers.farol-chat.command="/app/Farol"')
-    expect(resumed.slice(-2)).toEqual(['t9', 'next'])
-
-    // Providers without a per-run MCP flag are unchanged.
-    expect(managedAiCommand('cursor', 'fix this', undefined, { mcp }).args).toEqual(
-      managedAiCommand('cursor', 'fix this').args
-    )
-  })
-
-  it('asks through farol-chat only for Claude in Build with the managed server', () => {
+  it('loads only the host managed server and keeps Ask first within the same limit', () => {
     const mcp = { command: '/app/Farol', args: ['/app/mcp.js'] }
-    const ask = managedAiCommand('claude', 'fix this', undefined, { mcp, askApproval: true }).args
-    expect(ask[ask.indexOf('--permission-mode') + 1]).toBe('default')
-    expect(ask[ask.indexOf('--permission-prompt-tool') + 1]).toBe('mcp__farol-chat__approve')
-    expect(ask[ask.indexOf('--allowedTools') + 1]).toBe('mcp__farol-chat__delegate')
-    expect(ask.indexOf('--permission-mode')).toBeGreaterThan(ask.indexOf('--allowedTools'))
-
-    // No server to ask through, or Plan: unchanged.
-    const noServer = managedAiCommand('claude', 'fix this', undefined, { askApproval: true }).args
-    expect(noServer).not.toContain('--permission-prompt-tool')
-    expect(noServer[noServer.indexOf('--permission-mode') + 1]).toBe('bypassPermissions')
+    for (const askApproval of [true, false]) {
+      const args = managedAiCommand('claude', 'x', undefined, { mcp, askApproval }).args
+      expect(JSON.parse(args[args.indexOf('--mcp-config') + 1])).toEqual({ mcpServers: { 'farol-chat': mcp } })
+      expect(args[args.indexOf('--permission-mode') + 1]).toBe(askApproval ? 'default' : 'dontAsk')
+      expect(args).toContain('--restricted')
+      expect(args.includes('--permission-prompt-tool')).toBe(askApproval)
+      expect(args.indexOf('--permission-mode')).toBeGreaterThan(args.indexOf('--allowedTools'))
+      expect(args.at(-1)).toBe('x')
+    }
     const plan = managedAiCommand('claude', 'x', undefined, { mcp, askApproval: true, mode: 'plan' }).args
-    expect(plan).not.toContain('--permission-prompt-tool')
     expect(plan[plan.indexOf('--permission-mode') + 1]).toBe('plan')
+    expect(plan[plan.indexOf('--tools') + 1]).not.toContain('Write')
+    expect(plan).not.toContain('--permission-prompt-tool')
+  })
 
+  it('cannot grant command or custom tools through a permission answer', () => {
+    for (const name of ['Bash', 'shell', 'python', 'Agent', 'Task', 'mcp__external__exec']) {
+      expect(managedToolRefusal(name, { command: 'git status' })).toBeDefined()
+    }
+    expect(managedToolRefusal('Write', { file_path: '.git/config' })).toBeDefined()
+    expect(managedToolRefusal('Write', { file_path: 'app.ts' }, 'plan')).toBeDefined()
+    expect(managedToolRefusal('Write', { file_path: 'app.ts' }, 'build')).toBeUndefined()
+    expect(managedToolRefusal('Read', {})).toBeUndefined()
+  })
+
+  it('offers approval only for the supported managed provider', () => {
+    for (const provider of AI_PROVIDERS) expect(canAskApproval(provider)).toBe(provider === 'claude')
+  })
+
+  it('keeps model, effort, resume, and stream output on supported launches', () => {
+    const spec = managedAiCommand('claude', 'next', 'opus', { effort: 'high', resume: 's1' })
+    expect(spec.args.slice(-5)).toEqual(['--resume', 's1', '--model', 'opus', 'next'])
+    expect(spec.args[spec.args.indexOf('--effort') + 1]).toBe('high')
+    expect(spec.stream).toBe('ndjson')
     expect(canAskApproval('claude')).toBe(true)
-    expect(canAskApproval('codex')).toBe(true)
-    expect(canAskApproval('cursor')).toBe(false)
-    expect(canAskApproval('opencode')).toBe(true)
-    expect(canAskApproval('openrouter', 'opencode')).toBe(true)
-    expect(canAskApproval('openrouter', 'pi')).toBe(false)
-    expect(canAskApproval('omp')).toBe(false)
-  })
-
-  it('passes the thinking effort to the CLIs that have a flag for it', () => {
-    const claude = managedAiCommand('claude', 'x', undefined, { effort: 'high' }).args
-    expect(claude.slice(claude.indexOf('--effort'), claude.indexOf('--effort') + 2)).toEqual(['--effort', 'high'])
-    expect(managedAiCommand('claude', 'x').args).not.toContain('--effort')
-
-    const codex = managedAiCommand('codex', 'x', undefined, { effort: 'max' }).args
-    expect(codex).toContain('model_reasoning_effort="xhigh"')
-    const resumed = managedAiCommand('codex', 'x', undefined, { effort: 'low', resume: 't9' }).args
-    expect(resumed).toContain('model_reasoning_effort="low"')
-    expect(resumed.slice(-2)).toEqual(['t9', 'x'])
-
-    const omp = managedAiCommand('omp', 'x', undefined, { effort: 'medium' }).args
-    expect(omp.slice(omp.indexOf('--thinking'), omp.indexOf('--thinking') + 2)).toEqual(['--thinking', 'medium'])
-
-    expect(managedAiCommand('cursor', 'x', undefined, { effort: 'high' }).args).toEqual(
-      managedAiCommand('cursor', 'x').args
-    )
     expect(effortSupported('claude')).toBe(true)
-    expect(effortSupported('openrouter', 'opencode')).toBe(false)
     expect(normalizeEffort('ultra')).toBeUndefined()
-    expect(normalizeEffort('max')).toBe('max')
-  })
-
-  it('keeps OpenCode Plan read-only by denying shell for the run', () => {
-    expect(managedAiCommand('opencode', 'x', undefined, { mode: 'plan' }).opencodeConfig).toEqual({
-      agent: { plan: { permission: { bash: 'deny' } } }
-    })
-    expect(managedAiCommand('opencode', 'x').opencodeConfig).toBeUndefined()
-  })
-
-  it('gates Codex with its PreToolUse hook in Build only, on fresh and resumed runs', () => {
-    const codexHook = "env A='1' '/bin/hook'"
-    const fresh = managedAiCommand('codex', 'fix this', undefined, { codexHook }).args
-    expect(fresh).toContain('--dangerously-bypass-hook-trust')
-    expect(fresh.find((a) => a.startsWith('hooks.PreToolUse='))).toContain(codexHook)
-    expect(fresh.at(-1)).toBe('fix this')
-    const resumed = managedAiCommand('codex', 'next', undefined, { codexHook, resume: 't1' }).args
-    expect(resumed).toContain('--dangerously-bypass-hook-trust')
-    expect(resumed.slice(-2)).toEqual(['t1', 'next'])
-    expect(managedAiCommand('codex', 'x', undefined, { codexHook, mode: 'plan' }).args).not.toContain(
-      '--dangerously-bypass-hook-trust'
-    )
-  })
-
-  it('passes a native --tools allowlist for Claude and OMP when supplied', () => {
-    expect(
-      managedAiCommand('claude', 'fix this', undefined, {
-        tools: ['Read', 'Glob', 'Grep', 'AskUserQuestion', 'Edit']
-      }).args
-    ).toContain('--tools')
-    expect(
-      managedAiCommand('claude', 'fix this', undefined, {
-        tools: ['Read', 'Edit']
-      }).args
-    ).toContain('Read,Edit')
-    expect(
-      managedAiCommand('omp', 'fix this', undefined, {
-        tools: ['read', 'glob', 'grep', 'lsp', 'edit']
-      }).args
-    ).toEqual(['--mode', 'json', '--auto-approve', '--tools', 'read,glob,grep,lsp,edit', 'fix this'])
-    // Prompt-only providers ignore the allowlist in argv.
-    expect(
-      managedAiCommand('cursor', 'fix this', undefined, { tools: ['Read', 'Edit'] }).args
-    ).not.toContain('--tools')
-  })
-
-  it('marks the providers whose stdout has to be decoded as NDJSON', () => {
-    // Claude and Cursor print nothing under `text` until the run ends, so
-    // Chat would sit blank; OpenCode's default format is formatted prose.
-    expect(managedAiCommand('claude', 'x').stream).toBe('ndjson')
-    expect(managedAiCommand('cursor', 'x').stream).toBe('ndjson')
-    expect(managedAiCommand('codex', 'x').stream).toBe('ndjson')
-    expect(managedAiCommand('opencode', 'x').stream).toBe('ndjson')
-    expect(managedAiCommand('openrouter', 'x').stream).toBe('ndjson')
-    expect(managedAiCommand('omp', 'x').stream).toBe('ndjson')
-    expect(managedAiCommand('opencode', 'x', undefined, { jsonFormat: false }).stream).toBeUndefined()
-    expect(managedAiCommand('opencode', 'x', undefined, { jsonFormat: false }).args).toEqual([
-      'run',
-      '--dangerously-skip-permissions',
-      'x'
-    ])
-  })
-
-  it('detects older OpenCode builds that reject --format json', () => {
-    expect(isUnknownJsonFormatError('error: unknown option --format')).toBe(true)
-    expect(isUnknownJsonFormatError('Unknown flag: --format')).toBe(true)
-    expect(isUnknownJsonFormatError('command failed')).toBe(false)
   })
 
   it('runs OpenRouter through OpenCode with a prefixed --model', () => {
@@ -443,15 +244,6 @@ describe('managedAiCommand', () => {
       '--model',
       'openrouter/anthropic/claude-sonnet-4',
       'review this'
-    ])
-    expect(managedAiCommand('openrouter', 'fix this', 'openai/gpt-4o').args).toEqual([
-      'run',
-      '--format',
-      'json',
-      '--dangerously-skip-permissions',
-      '--model',
-      'openrouter/openai/gpt-4o',
-      'fix this'
     ])
     expect(interactiveAiCommand('openrouter')).toBe('opencode')
   })
@@ -472,20 +264,10 @@ describe('managedAiCommand', () => {
       'openrouter/anthropic/claude-sonnet-4',
       'review this'
     ])
-    const build = managedAiCommand('openrouter', 'fix this', 'openai/gpt-4o', { via: 'pi' })
-    expect(build.stream).toBe('ndjson')
-    expect(build.args).toEqual(['--mode', 'json', '--model', 'openrouter/openai/gpt-4o', 'fix this'])
-    // Pi's review gate for Plan is the read-only tool allowlist.
-    expect(
-      managedAiCommand('openrouter', 'plan this', undefined, { mode: 'plan', via: 'pi' }).args
-    ).toEqual(['--mode', 'json', '--tools', 'read,grep,find,ls', 'plan this'])
-    expect(
-      managedAiCommand('openrouter', 'x', undefined, { via: 'pi', tools: ['read', 'bash'] }).args
-    ).toEqual(['--mode', 'json', '--tools', 'read,bash', 'x'])
     expect(interactiveAiCommand('openrouter', 'pi')).toBe('pi')
     expect(aiFixCommand('openrouter', undefined, 'pi')).toMatch(/^pi "/)
     // The choice only reroutes OpenRouter; plain OpenCode stays OpenCode.
-    expect(managedAiCommand('opencode', 'x', undefined, { via: 'pi' }).bins).toEqual(['opencode'])
+    expect(cliFor('opencode', 'pi')).toBe('opencode')
   })
 
   it('shows OpenRouter after a key and catalog exist, listing only its pins', () => {
@@ -533,21 +315,6 @@ describe('managedAiCommand', () => {
     ).toEqual(['fable', 'opus'])
   })
 
-  it('passes --model through on managed commands', () => {
-    expect(managedAiCommand('claude', 'fix this', 'opus').args).toEqual([
-      '-p',
-      '--output-format',
-      'stream-json',
-      '--verbose',
-      '--disallowedTools',
-      FAROL_TOOLS_OFF,
-      '--permission-mode',
-      'bypassPermissions',
-      '--model',
-      'opus',
-      'fix this'
-    ])
-  })
 })
 
 describe('omp', () => {
@@ -561,13 +328,6 @@ describe('omp', () => {
   it('takes the prompt directly, interactively and headless', () => {
     expect(interactiveAiCommand('omp')).toBe('omp')
     expect(aiFixCommand('omp', 'REPORT.md')).toContain('omp "')
-    expect(managedAiCommand('omp', 'fix this', 'gpt-5.6-terra').args).toEqual([
-      '--mode',
-      'json',
-      '--auto-approve',
-      '--model',
-      'gpt-5.6-terra',
-      'fix this'
-    ])
+    expect(() => managedAiCommand('omp', 'fix this')).toThrow('cannot enforce the Git action limit')
   })
 })

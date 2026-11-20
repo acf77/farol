@@ -13,6 +13,7 @@ vi.mock('./github', () => ({
 }))
 
 import { performGitAction } from './git-actions'
+import { captureTree } from './delegate-snapshot'
 
 const dirs: string[] = []
 const FILES = ['a.txt', 'b.txt', 'app.txt', 'sub/app.txt']
@@ -69,6 +70,66 @@ describe('performGitAction', () => {
     expect(res.message).toContain('untracked: c.txt')
   })
 
+  it('reads diff, log and show from the repository root without staging files', async () => {
+    const repo = dirtyRepo()
+    const diff = await performGitAction(path.join(repo, 'sub'), { action: 'diff' }, repo)
+    expect(diff.ok).toBe(true)
+    expect(diff.message).toContain('-one')
+    expect(diff.message).toContain('+two')
+    const log = await performGitAction(repo, { action: 'log' }, repo)
+    expect(log.ok).toBe(true)
+    expect(log.message).toContain('init')
+    const show = await performGitAction(repo, { action: 'show', ref: 'HEAD' }, repo)
+    expect(show.ok).toBe(true)
+    expect(show.message).toContain('init')
+    expect(git(repo, 'diff', '--cached', '--name-only')).toBe('')
+  })
+
+  it('leaves likely-secret files out of a diff and a show', async () => {
+    const repo = dirtyRepo()
+    fs.writeFileSync(path.join(repo, '.env'), 'API_KEY=hunter2\n')
+    git(repo, 'add', '-f', '.env')
+    git(repo, 'commit', '-m', 'add env')
+    fs.writeFileSync(path.join(repo, '.env'), 'API_KEY=swordfish\n')
+    const diff = await performGitAction(repo, { action: 'diff' }, repo)
+    const show = await performGitAction(repo, { action: 'show', ref: 'HEAD' }, repo)
+    expect(diff.message).toContain('+two')
+    expect(show.message).toContain('add env')
+    for (const res of [diff, show]) expect(res.message).not.toMatch(/hunter2|swordfish/)
+  })
+
+  it('does not run diff drivers or text conversion commands for a read', async () => {
+    const repo = dirtyRepo()
+    const marker = path.join(repo, 'driver-ran')
+    const driver = path.join(repo, 'driver.sh')
+    fs.writeFileSync(driver, '#!/bin/sh\ntouch "' + marker + '"\n')
+    fs.chmodSync(driver, 0o755)
+    fs.writeFileSync(path.join(repo, '.gitattributes'), '*.txt diff=unsafe\n')
+    git(repo, 'config', 'diff.unsafe.command', driver)
+    git(repo, 'config', 'diff.unsafe.textconv', driver)
+    for (const action of [{ action: 'diff' }, { action: 'show', ref: 'HEAD' }] as const) {
+      expect((await performGitAction(repo, action, repo)).ok).toBe(true)
+    }
+    expect(fs.existsSync(marker)).toBe(false)
+  })
+
+  it('refuses unsafe show revisions even when a typed caller bypasses parsing', async () => {
+    const repo = dirtyRepo()
+    const res = await performGitAction(repo, { action: 'show', ref: '--output=stolen' }, repo)
+    expect(res.ok).toBe(false)
+    expect(res.message).toContain('Git show needs')
+    expect(fs.existsSync(path.join(repo, 'stolen'))).toBe(false)
+  })
+
+  it('limits large read results before they return to an agent', async () => {
+    const repo = dirtyRepo()
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'large change\n'.repeat(5000))
+    const result = await performGitAction(repo, { action: 'diff' }, repo)
+    expect(result.ok).toBe(true)
+    expect(result.message).toContain('[Output cut at 40000 characters.]')
+    expect(result.message.length).toBeLessThan(40_100)
+  })
+
   it('commits only the files it is given and leaves the rest of the working tree alone', async () => {
     const repo = dirtyRepo()
     const res = await performGitAction(repo, { action: 'commit', message: 'feat: change a', files: ['a.txt'] }, repo)
@@ -82,6 +143,29 @@ describe('performGitAction', () => {
       '?? c.txt'
     ])
   })
+
+  for (const validated of [true, false]) {
+    it(`commits exact wildcard and magic filenames with ${validated ? 'a validated snapshot' : 'an MCP scope'}`, async () => {
+      const repo = dirtyRepo()
+      const selected = ['*.txt', ':(glob)*']
+      for (const file of selected) fs.writeFileSync(path.join(repo, file), 'agent change\n')
+      git(repo, 'add', '--', 'a.txt')
+      const savedBlob = git(repo, 'rev-parse', ':a.txt').trim()
+      fs.writeFileSync(path.join(repo, 'a.txt'), 'user change\n')
+      const scope = { branch: 'main', tree: validated ? await captureTree(repo) : undefined, anyTree: !validated }
+      // A change outside the selection must neither enter the commit nor make its content check fail.
+      fs.writeFileSync(path.join(repo, 'b.txt'), 'user change after validation\n')
+
+      const res = await performGitAction(repo, { action: 'commit', message: 'agent files', files: selected }, repo, scope)
+
+      expect(res.ok).toBe(true)
+      expect(git(repo, 'diff-tree', '--no-commit-id', '--name-only', '--no-renames', '-r', '-z', 'HEAD').split('\0').filter(Boolean).sort()).toEqual([...selected].sort())
+      expect(git(repo, 'diff', '--cached', '--name-only', '-z').split('\0').filter(Boolean)).toEqual(['a.txt'])
+      expect(git(repo, 'rev-parse', ':a.txt').trim()).toBe(savedBlob)
+      expect(fs.readFileSync(path.join(repo, 'b.txt'), 'utf8')).toBe('user change after validation\n')
+      expect(git(repo, 'show', 'HEAD:b.txt')).toBe('one\n')
+    })
+  }
 
   it('names files from the top of the repository, so an agent working in a subfolder commits the right ones', async () => {
     const repo = dirtyRepo()

@@ -6,8 +6,13 @@ const { execCli, githubFetch, githubToken } = vi.hoisted(() => ({
   githubFetch: vi.fn(),
   githubToken: vi.fn()
 }))
+vi.mock('electron', () => ({ app: { getAppPath: () => '/mock/app' } }))
 vi.mock('./exec-cli', () => ({ execCli }))
 vi.mock('./remote', () => ({ githubFetch, githubToken }))
+vi.mock('./git-credential-broker', async (original) => ({
+  ...(await original<typeof import('./git-credential-broker')>()),
+  grantCredential: async () => ({ socket: '/mock/cred.sock', nonce: 'one-use' })
+}))
 
 import {
   createPullRequest,
@@ -103,22 +108,36 @@ describe('githubGitEnv', () => {
     await expect(githubGitEnv()).resolves.toBeUndefined()
   })
 
-  it('hands git the token as a header for github.com only, in the environment', async () => {
+  it('registers a credential helper for github.com and keeps the token out of the environment', async () => {
     vi.stubEnv('GIT_CONFIG_COUNT', '')
     githubToken.mockResolvedValue('tok')
-    await expect(githubGitEnv()).resolves.toEqual({
-      GIT_CONFIG_COUNT: '1',
-      GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-      GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from('x-access-token:tok').toString('base64')}`
+    const env = await githubGitEnv()
+    expect(env?.GIT_CONFIG_KEY_0).toBe('credential.https://github.com.helper')
+    // An empty helper first clears the chain, so no other helper is handed the login to store.
+    expect(env?.GIT_CONFIG_VALUE_0).toBe('')
+    expect(env?.GIT_CONFIG_KEY_1).toBe('credential.https://github.com.helper')
+    expect(env?.GIT_CONFIG_VALUE_1).toMatch(/^!/)
+    expect(env?.GIT_CONFIG_VALUE_1).toContain('git-credential.js')
+    expect(env?.GIT_CONFIG_VALUE_1).not.toContain('tok')
+    expect(env?.GIT_CONFIG_VALUE_1).not.toMatch(/Authorization/i)
+    expect(env).toMatchObject({
+      GIT_TERMINAL_PROMPT: '0',
+      ELECTRON_RUN_AS_NODE: '1',
+      GIT_CONFIG_COUNT: '2',
+      FAROL_GIT_CREDENTIAL_SOCKET: '/mock/cred.sock',
+      FAROL_GIT_CREDENTIAL_NONCE: 'one-use'
     })
+    expect(Object.values(env ?? {})).not.toContain('tok')
   })
 
   it('goes after the git configuration the environment already holds', async () => {
     vi.stubEnv('GIT_CONFIG_COUNT', '2')
     githubToken.mockResolvedValue('tok')
-    await expect(githubGitEnv()).resolves.toMatchObject({
-      GIT_CONFIG_COUNT: '3',
-      GIT_CONFIG_KEY_2: 'http.https://github.com/.extraheader'
+    await expect(githubGitEnv()).toMatchObject({
+      GIT_CONFIG_COUNT: '4',
+      GIT_CONFIG_KEY_2: 'credential.https://github.com.helper',
+      GIT_CONFIG_VALUE_2: '',
+      GIT_CONFIG_KEY_3: 'credential.https://github.com.helper'
     })
   })
 })

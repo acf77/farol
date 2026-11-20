@@ -509,6 +509,27 @@ describe('AgentController', () => {
     expect(pipelineEvents[1].finishedAt).toBeGreaterThanOrEqual(pipelineEvents[0].startedAt)
   })
 
+  it('keeps a queued request out of a validation repair and applies it on the next cycle', async () => {
+    let finishValidation!: (value: PipelineRunResult) => void
+    const run = vi.fn().mockImplementationOnce(() => new Promise<PipelineRunResult>((resolve) => { finishValidation = resolve }))
+      .mockResolvedValue(result(true))
+    const calls: Array<{ mode: AgentTaskRequest['mode']; cwd: string; prompt: string }> = []
+    const execute = vi.fn<AgentExecutor>().mockImplementation(async (req, prompt, output) => {
+      calls.push({ mode: req.mode, cwd: req.cwd, prompt })
+      output(req.mode === 'plan' ? 'FAROL_PIPELINES: []\n' : 'FAROL_PIPELINES: ["validate"]\n')
+      return 0
+    })
+    const controller = new AgentController({ run }, () => {}, execute)
+    controller.start(request)
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1))
+    controller.message(request.id, 'Review in plan mode', undefined, undefined, undefined, 'plan', undefined, '/tmp/other')
+    finishValidation(result(false))
+    await vi.waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(3))
+    expect(calls[1].prompt).not.toContain('Review in plan mode')
+    expect(calls[2]).toMatchObject({ mode: 'plan', cwd: '/tmp/other' })
+    expect(calls[2].prompt).toContain('Review in plan mode')
+  })
+
   it('does not validate or complete when the agent process fails', async () => {
     const events: AgentTaskEvent[] = []
     const run = vi.fn()
@@ -1517,9 +1538,9 @@ describe('AgentController', () => {
     selectTools.mockResolvedValueOnce({
       kind: 'selected',
       focus: 'implement',
-      kept: ['edit', 'shell'],
+      kept: ['edit'],
       omitted: ['web'],
-      candidatesFingerprint: 'answer\0implement\0inspect\0verify'
+      candidatesFingerprint: 'answer\0implement\0inspect'
     })
     const events: AgentTaskEvent[] = []
     const execute = selecting()
@@ -1537,7 +1558,7 @@ describe('AgentController', () => {
     expect(execute.mock.calls[0][1]).not.toMatch(/mutating shell/i)
   })
 
-  it('fails open to the full tool set when Jev tool selection is unavailable', async () => {
+  it('keeps the command limit when Jev tool selection is unavailable', async () => {
     selectTools.mockClear()
     selectTools.mockResolvedValueOnce(null)
     const events: AgentTaskEvent[] = []
@@ -1550,7 +1571,8 @@ describe('AgentController', () => {
     )
 
     expect(selectTools).toHaveBeenCalledTimes(1)
-    expect(execute.mock.calls[0][1]).not.toMatch(/Tool policy/)
+    expect(execute.mock.calls[0][1]).toMatch(/Tool policy/)
+    expect(execute.mock.calls[0][1]).toContain('all shell commands and code execution')
   })
 
   it('does not treat CreateGoal as a code change', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { GIT_MARKER, isControlLine, stripControlMarkerLines } from './control-line'
-import { formatGitResult, formatGitStatus, gitActionsFrom, parseGitAction } from './git-action'
+import { formatGitResult, formatGitStatus, gitActionsFrom, isGitReadAction, parseGitAction } from './git-action'
 import type { GitStatus } from './types'
 
 describe('parseGitAction', () => {
@@ -18,6 +18,19 @@ describe('parseGitAction', () => {
       base: 'main'
     })
     expect(parseGitAction({ action: 'create_pr' })).toEqual({ action: 'create_pr' })
+  })
+
+  it('reads fixed inspection actions and checks show revisions', () => {
+    for (const action of ['status', 'diff', 'log'] as const) {
+      expect(parseGitAction({ action })).toEqual({ action })
+      expect(isGitReadAction({ action })).toBe(true)
+    }
+    expect(parseGitAction({ action: 'show' })).toEqual({ action: 'show', ref: 'HEAD' })
+    expect(parseGitAction({ action: 'show', ref: 'HEAD~12' })).toEqual({ action: 'show', ref: 'HEAD~12' })
+    for (const ref of ['--output=/tmp/x', '../other', 'HEAD:../../secret', 'main; git push', '', 42]) {
+      expect(parseGitAction({ action: 'show', ref })).toHaveProperty('error')
+    }
+    expect(isGitReadAction({ action: 'commit', message: 'x' })).toBe(false)
   })
 
   it('says what is wrong with a request it cannot use', () => {

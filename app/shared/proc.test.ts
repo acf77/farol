@@ -19,7 +19,9 @@ const T = 1_700_000_000_000
 const MB = 1024 * 1024
 
 function proc(pid: number, ppid: number, over: Partial<ProcInfo> = {}): ProcInfo {
-  return { pid, ppid, pgid: pid, uid: UID, startMs: T + 100, footprint: 10 * MB, cpu: 1, name: 'node', ...over }
+  const startMs = over.startMs ?? T + 100
+  const startId = `${Math.floor(startMs / 1000)}:${Math.round((startMs % 1000) * 1000)}`
+  return { pid, ppid, pgid: pid, uid: UID, startMs, startId, footprint: 10 * MB, cpu: 1, name: 'node', ...over }
 }
 
 function session(id: string, rootPid: number, worktree: string, over: Partial<ProcSession> = {}): ProcSession {
@@ -62,7 +64,7 @@ describe('attribute', () => {
 
   it('trusts an orphan that was seen in the agent tree before launchd adopted it', () => {
     const orphan = proc(300, 1, { cwd: '/w/a' })
-    const seen = new Set([procKey(orphan)])
+    const seen = new Set([procKey(orphan)!])
     const [usage] = attribute([root(100), orphan], [session('a', 100, '/w/a', { seen })], UID)
     expect(usage.procs.find((p) => p.pid === 300)).toMatchObject({ via: 'cwd', owned: true })
   })
@@ -98,23 +100,32 @@ describe('attribute', () => {
     expect(pids(folderOnly.procs)).toEqual([100, 300, 301, 302])
     expect(folderOnly.procs.filter((p) => p.via === 'cwd').every((p) => !p.owned)).toBe(true)
 
-    const seen = new Set([procKey(orphan)])
+    const seen = new Set([procKey(orphan)!])
     const [proven] = attribute(procs, [session('a', 100, '/w/a', { seen })], UID)
     expect(proven.procs.filter((p) => p.via === 'cwd').every((p) => p.owned)).toBe(true)
   })
 
-  it('keeps a process it saw before, even after it left the folder, and its workers', () => {
+  it.each([0.001, 700, 3_600_000])('does not retain ownership after PID reuse %s ms later', (delay) => {
     const wanderer = proc(300, 1, { cwd: '/somewhere/else' })
-    const seen = new Set([procKey(wanderer)])
+    const seen = new Set([procKey(wanderer)!])
     const procs = [root(100), wanderer, proc(301, 300)]
     const [usage] = attribute(procs, [session('a', 100, '/w/a', { seen })], UID)
     expect(pids(usage.procs)).toEqual([100, 300, 301])
     expect(usage.procs.filter((p) => p.pid !== 100).every((p) => p.via === 'seen' && p.owned)).toBe(true)
 
     // The same pid with another start time is a different process.
-    const reused = proc(300, 1, { cwd: '/somewhere/else', startMs: T + 3_600_000 })
+    const reused = proc(300, 1, { cwd: '/somewhere/else', startMs: wanderer.startMs + delay })
     const [other] = attribute([root(100), reused], [session('a', 100, '/w/a', { seen })], UID)
     expect(pids(other.procs)).toEqual([100])
+  })
+
+  it('does not use a coarse start time as remembered ownership', () => {
+    const original = proc(300, 1, { startMs: T })
+    const seen = new Set([procKey(original)!])
+    const coarse = { ...original, startId: undefined, cwd: '/somewhere/else' }
+    expect(procKey(coarse)).toBeUndefined()
+    const [usage] = attribute([coarse], [session('a', 100, '/w/a', { seen })], UID)
+    expect(usage.procs).toEqual([])
   })
 
   it('leaves alone an orphan that is older than the session', () => {
@@ -165,7 +176,7 @@ describe('attribute', () => {
     const procs = [proc(101, 1, { pgid: 100 })]
     const [unseen] = attribute(procs, [session('a', 100, '/w/a', { state: 'done' })], UID)
     expect(unseen.procs[0]).toMatchObject({ via: 'group', owned: false })
-    const seen = new Set([procKey(procs[0])])
+    const seen = new Set([procKey(procs[0])!])
     const [proven] = attribute(procs, [session('a', 100, '/w/a', { state: 'done', seen })], UID)
     expect(proven.procs[0]).toMatchObject({ owned: true })
   })

@@ -55,7 +55,6 @@ import {
   MCP_CONFIG_REL_PATHS,
   type McpServerEntry
 } from '../shared/mcp-config'
-import { codexHookCommand } from '../shared/codex-hook'
 import type { ProjectSession } from '../shared/session'
 import { pruneTrees } from './delegate-snapshot'
 import { pruneCheckpoints } from './checkpoints'
@@ -133,8 +132,7 @@ const agents = new AgentController(
   loadPipelines,
   MANAGED_MCP_TOOLS.length
     ? {
-        mcp: (taskId, delegateId, tools) => managedMcpEntry(managedScript('mcp.js'), taskId, delegateId, tools),
-        codexHook: (taskId, delegateId) => codexHookCommand(managedMcpEntry(managedScript('codex-hook.js'), taskId, delegateId))
+        mcp: (taskId, delegateId, tools) => managedMcpEntry(managedScript('mcp.js'), taskId, delegateId, tools)
       }
     : undefined,
   procs,

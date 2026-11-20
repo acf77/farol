@@ -75,7 +75,7 @@ export const PIPELINE_MCP_TOOLS = [`mcp__${MCP_SERVER_KEY}__list_pipelines`, `mc
  * Git action with a `FAROL_GIT` line, which Farol performs once validation has passed and
  * with the files the turn changed, so Chat must not call these.
  */
-export const GIT_MCP_TOOLS = ['git_status', 'git_commit', 'git_push', 'git_create_pr'].map(
+export const GIT_MCP_TOOLS = ['git_status', 'git_diff', 'git_log', 'git_show', 'git_commit', 'git_push', 'git_create_pr'].map(
   (name) => `mcp__${MCP_SERVER_KEY}__${name}`
 )
 
@@ -111,13 +111,9 @@ export const APPROVE_TOOL = `mcp__${MANAGED_MCP_SERVER_KEY}__approve`
 /** Farol's own delegate tool, which never needs the developer's approval. */
 export const DELEGATE_TOOL = `mcp__${MANAGED_MCP_SERVER_KEY}__delegate`
 
-/** How each provider names the managed `delegate` call: Claude, Codex, and ACP CLIs (OpenCode, OMP). */
+/** The supported managed CLI's delegate tool name. */
 export function isDelegateToolName(name: string): boolean {
-  return (
-    name === DELEGATE_TOOL ||
-    name === `${MANAGED_MCP_SERVER_KEY}.delegate` ||
-    name === `${MANAGED_MCP_SERVER_KEY}_delegate`
-  )
+  return name === DELEGATE_TOOL
 }
 
 /**
@@ -154,25 +150,4 @@ export function managedMcpEntry(
 /** Inline value for Claude's `--mcp-config`, which takes a JSON string as well as a path. */
 export function claudeMcpConfig(entry: McpServerEntry): string {
   return JSON.stringify({ mcpServers: { [MANAGED_MCP_SERVER_KEY]: entry } })
-}
-
-/**
- * `-c` overrides that add the managed server to one Codex run without
- * touching the user's `config.toml`. Codex parses each value as TOML, and a
- * JSON string or string array is valid TOML.
- */
-export function codexMcpOverrides(entry: McpServerEntry): string[] {
-  const key = `mcp_servers.${MANAGED_MCP_SERVER_KEY}`
-  const env = Object.entries(entry.env ?? {})
-    .map(([name, value]) => `${JSON.stringify(name)} = ${JSON.stringify(value)}`)
-    .join(', ')
-  return [
-    '-c',
-    `${key}.command=${JSON.stringify(entry.command)}`,
-    '-c',
-    `${key}.args=${JSON.stringify(entry.args)}`,
-    ...(env ? ['-c', `${key}.env={ ${env} }`] : []),
-    '-c',
-    `${key}.tool_timeout_sec=${MANAGED_TOOL_TIMEOUT_SEC}`
-  ]
 }

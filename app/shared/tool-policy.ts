@@ -2,9 +2,9 @@
  * Managed Chat Tool policy — which capability families an agent turn may use.
  *
  * Inspection (read/search) is always available. Build-mode turns ask Jev for
- * one host-prepared focus (`inspect` / `implement` / `verify` / `answer`); the
+ * one host-prepared focus (`inspect` / `implement` / `answer`); the
  * focus maps to optional families. Mid-confidence, unknown ids, fingerprint
- * drift, and gateway failures fail open to the full set.
+ * drift, and gateway failures restore edit/web tools within the execution limit.
  */
 
 import {
@@ -16,32 +16,30 @@ import {
 } from './jev'
 import { isWriteToolName } from './mandatory'
 import { isShellToolName } from './catalog-shell'
-import type { AiProvider } from './ai'
-import { cliFor, type OpenRouterAgent } from './ai'
+import { managedClaudeTools } from './ai'
 
 /** Optional families a focus may admit. */
-export const TOOL_OPTIONAL = ['edit', 'shell', 'web'] as const
+export const TOOL_OPTIONAL = ['edit', 'web'] as const
 export type ToolCapabilityId = (typeof TOOL_OPTIONAL)[number]
 
 /** Host-prepared foci for one Build-mode turn. */
-export const TOOL_FOCI = ['inspect', 'implement', 'verify', 'answer'] as const
+export const TOOL_FOCI = ['inspect', 'implement', 'answer'] as const
 export type ToolFocusId = (typeof TOOL_FOCI)[number]
 
-/** Read-only foci Plan mode may choose. Never edit or mutating shell. */
+/** Read-only foci Plan mode may choose. */
 export const PLAN_FOCI = ['inspect', 'answer'] as const
 export type PlanFocusId = (typeof PLAN_FOCI)[number]
 
 /** Optional families each Build focus admits. Inspection tools always stay on. */
 export const FOCUS_ALLOWED: Record<ToolFocusId, readonly ToolCapabilityId[]> = {
   inspect: [],
-  implement: ['edit', 'shell'],
-  verify: ['shell'],
+  implement: ['edit'],
   answer: []
 }
 
 /**
  * Optional families each Plan focus admits. Web search/fetch is read-only
- * research; edit and shell stay off.
+ * research; edits stay off. Execution is never available.
  */
 export const PLAN_FOCUS_ALLOWED: Record<PlanFocusId, readonly ToolCapabilityId[]> = {
   inspect: ['web'],
@@ -55,8 +53,6 @@ export const TOOL_SELECTION_TIMEOUT_MS = 1000
 const TASK_STATE_CAP = 800
 const OPENING_STATE_CAP = 1_500
 
-export type ToolEnforcement = 'native' | 'prompt'
-
 export type ToolSelection =
   | {
       kind: 'selected'
@@ -69,7 +65,7 @@ export type ToolSelection =
   | { kind: 'fallback-full'; reason: string }
   | {
       kind: 'plan'
-      /** Read-only focus — inspection (+ web on inspect); never edit/shell. */
+      /** Read-only focus — inspection (+ web on inspect). */
       focus: PlanFocusId
       candidatesFingerprint: string
     }
@@ -78,8 +74,7 @@ export interface ToolPolicy {
   selection: ToolSelection
   /** Optional families still allowed after selection / fallback / plan ceiling. */
   allowed: ToolCapabilityId[]
-  enforcement: ToolEnforcement
-  /** Native argv list when enforcement is native; otherwise empty. */
+  /** Claude built-ins passed to the restricted managed launch. */
   nativeTools: string[]
 }
 
@@ -90,11 +85,14 @@ export interface ToolSelectionContext {
   attempt: number
 }
 
+/** Shell can be observed as a violation, but is never an optional capability. */
+type ObservedCapability = ToolCapabilityId | 'shell'
+
 export interface ToolObservation {
-  used: ToolCapabilityId[]
+  used: ObservedCapability[]
   unknownCount: number
-  /** Optional families used while omitted by the active policy (diagnostic only). */
-  violations: ToolCapabilityId[]
+  /** Disabled families used in tool cards (diagnostic only). */
+  violations: ObservedCapability[]
 }
 
 export function toolFocusFingerprint(mode: 'plan' | 'build' = 'build'): string {
@@ -113,13 +111,11 @@ export function toolSelectionState(ctx: ToolSelectionContext): string {
 
 const FOCUS_CRITERIA: Record<ToolFocusId, string> = {
   inspect:
-    'Read and search the project only — answer or diagnose without editing files, mutating shell commands, or web access',
+    'Read and search the project only — answer or diagnose without editing files or web access',
   implement:
-    'Create or modify project files; shell may run for builds/tests tied to the change; no public web',
-  verify:
-    'Run checks, tests, or lint via shell without editing files or using the public web',
+    'Create or modify project files; request Farol pipelines for checks; no public web',
   answer:
-    'Reply from context already gathered — no file edits, no shell, no web'
+    'Reply from context already gathered — no file edits or web access'
 }
 
 /** One Choice over host-prepared Build foci. */
@@ -133,10 +129,10 @@ export function toolSelectionQuestions(
         instructions:
           'Which read-only focus should this managed Chat Plan turn use? Pick exactly one. ' +
           'Plan mode may inspect the project and use web search/fetch when researching, ' +
-          'but must not edit files or run mutating shell commands.',
+          'but must not edit files or execute commands.',
         criteria: {
           inspect:
-            'Read and search the project, and use web search/fetch when needed to research docs or APIs — no file edits or mutating shell',
+            'Read and search the project, and use web search/fetch when needed to research docs or APIs — no file edits or commands',
           answer: FOCUS_CRITERIA.answer
         }
       }
@@ -147,7 +143,8 @@ export function toolSelectionQuestions(
       type: 'choice',
       instructions:
         'Which focus should this managed Chat Build turn use? Pick exactly one. ' +
-        'Inspection (read/search) stays available under every focus.',
+        'Inspection (read/search) stays available under every focus. ' +
+        'Commands and code execution are disabled; request Farol pipelines for checks.',
       criteria: { ...FOCUS_CRITERIA }
     }
   }
@@ -255,103 +252,32 @@ export function validateToolSelection(selection: ToolSelection): ToolSelection {
   return selection
 }
 
-export function toolEnforcementFor(provider: AiProvider, via?: OpenRouterAgent): ToolEnforcement {
-  const cli = cliFor(provider, via)
-  return cli === 'claude' || cli === 'omp' || cli === 'pi' ? 'native' : 'prompt'
-}
-
-/** Claude built-ins for the active policy. AskUserQuestion stays so Farol choosers work. */
-export function claudeToolsFor(allowed: ToolCapabilityId[]): string[] {
-  const tools = ['Read', 'Glob', 'Grep', 'AskUserQuestion']
-  if (allowed.includes('edit')) tools.push('Edit', 'Write', 'NotebookEdit')
-  if (allowed.includes('shell')) tools.push('Bash')
-  if (allowed.includes('web')) tools.push('WebFetch', 'WebSearch')
-  return tools
-}
-
-/** OMP built-ins for the active policy. */
-export function ompToolsFor(allowed: ToolCapabilityId[]): string[] {
-  const tools = ['read', 'glob', 'grep', 'lsp']
-  if (allowed.includes('edit')) tools.push('edit', 'write', 'notebook')
-  if (allowed.includes('shell')) tools.push('bash', 'python')
-  if (allowed.includes('web')) tools.push('web_search', 'browser')
-  return tools
-}
-
-/** Pi built-ins for the active policy. Pi ships no web tools. */
-export function piToolsFor(allowed: ToolCapabilityId[]): string[] {
-  const tools = ['read', 'grep', 'find', 'ls']
-  if (allowed.includes('edit')) tools.push('edit', 'write')
-  if (allowed.includes('shell')) tools.push('bash')
-  return tools
-}
-
-export function nativeToolsFor(
-  provider: AiProvider,
-  allowed: ToolCapabilityId[],
-  via?: OpenRouterAgent
-): string[] {
-  const cli = cliFor(provider, via)
-  if (cli === 'claude') return claudeToolsFor(allowed)
-  if (cli === 'omp') return ompToolsFor(allowed)
-  if (cli === 'pi') return piToolsFor(allowed)
-  return []
-}
-
 function allowedFrom(selection: ToolSelection): ToolCapabilityId[] {
   if (selection.kind === 'fallback-full') return [...TOOL_OPTIONAL]
   if (selection.kind === 'plan') return allowedForPlanFocus(selection.focus)
   return [...selection.kept]
 }
 
-/** Remap a cached selection onto the current provider's enforcement path. */
-export function toolPolicyFor(
-  provider: AiProvider,
-  selection: ToolSelection,
-  via?: OpenRouterAgent
-): ToolPolicy {
+/** Re-check the cached selection and map it to the managed Claude tools. */
+export function toolPolicyFor(selection: ToolSelection): ToolPolicy {
   const validated = validateToolSelection(selection)
   const allowed = allowedFrom(validated)
-  const enforcement = toolEnforcementFor(provider, via)
-  return {
-    selection: validated,
-    allowed,
-    enforcement,
-    nativeTools:
-      enforcement === 'native' && validated.kind !== 'fallback-full'
-        ? nativeToolsFor(provider, allowed, via)
-        : []
-  }
-}
-
-export function fullToolPolicy(provider: AiProvider, reason: string): ToolPolicy {
-  return toolPolicyFor(provider, { kind: 'fallback-full', reason })
-}
-
-export function planToolPolicy(provider: AiProvider, focus: PlanFocusId = 'inspect'): ToolPolicy {
-  return toolPolicyFor(provider, {
-    kind: 'plan',
-    focus,
-    candidatesFingerprint: toolFocusFingerprint('plan')
-  })
+  return { selection: validated, allowed, nativeTools: managedClaudeTools(allowed) }
 }
 
 /** Human-readable description of each omitted capability family, for prompt text. */
 const CAPABILITY_FORBIDDEN_LABEL: Record<ToolCapabilityId, string> = {
   edit: 'file edits/writes/deletes',
-  shell: 'mutating shell/terminal commands (read-only shell inspection is allowed when this provider has no separate read tool)',
   web: 'web fetch/search'
 }
 
 function forbiddenClause(omitted: ToolCapabilityId[]): string {
-  return omitted.map((id) => CAPABILITY_FORBIDDEN_LABEL[id]).join('; ')
+  return ['all shell commands and code execution', ...omitted.map((id) => CAPABILITY_FORBIDDEN_LABEL[id])].join('; ')
 }
 
 /**
- * Prompt clause for every provider. Capability families — not CLI tool names —
- * so a cached selection remaps across provider fallback without a new Jev call.
- * When shell is omitted, read-only shell inspection remains allowed for CLIs
- * that have no separate read tool.
+ * Prompt clause for the managed launch. Shell stays off under every focus
+ * and fallback; only edit and web access can change.
  */
 export function toolPolicyPrompt(policy: ToolPolicy): string {
   if (policy.selection.kind === 'plan') {
@@ -365,17 +291,8 @@ export function toolPolicyPrompt(policy: ToolPolicy): string {
       'Do not call unknown custom or Farol MCP tools — use FAROL control lines instead.'
     )
   }
-  if (policy.selection.kind === 'fallback-full') {
-    return ''
-  }
-  const focus = policy.selection.focus
-  const omitted = policy.selection.omitted
-  if (!omitted.length) {
-    return (
-      `Tool policy: Focus "${focus}". You may use inspection, edit, shell, and web tools as needed for this turn. ` +
-      'Do not call unknown custom or Farol MCP tools — use FAROL control lines instead.'
-    )
-  }
+  const focus = policy.selection.kind === 'fallback-full' ? 'full' : policy.selection.focus
+  const omitted = TOOL_OPTIONAL.filter((id) => !policy.allowed.includes(id))
   const forbidden = forbiddenClause(omitted)
   const allowed = ['inspection (read/search)', ...policy.allowed].join(', ')
   return (
@@ -403,7 +320,7 @@ const SHELL_EXTRA = new Set(['python', 'repl'])
 const WEB_TOOLS = new Set(['websearch', 'webfetch', 'browser', 'browseruse'])
 
 /** Map a streamed tool card name to an optional capability, inspection, or unknown. */
-export function capabilityForToolName(name: string): ToolCapabilityId | 'inspect' | 'unknown' {
+export function capabilityForToolName(name: string): ObservedCapability | 'inspect' | 'unknown' {
   const n = name.toLowerCase().replace(/[_-]/g, '')
   if (INSPECT_TOOLS.has(n)) return 'inspect'
   if (isWriteToolName(name) || EDIT_EXTRA.has(n)) return 'edit'
@@ -414,11 +331,9 @@ export function capabilityForToolName(name: string): ToolCapabilityId | 'inspect
 
 /** Diagnostic observation of tool cards against the active policy. */
 export function observeToolUse(policy: ToolPolicy, toolNames: string[]): ToolObservation {
-  const used = new Set<ToolCapabilityId>()
-  const violations = new Set<ToolCapabilityId>()
+  const used = new Set<ObservedCapability>()
+  const violations = new Set<ObservedCapability>()
   let unknownCount = 0
-  const omitted =
-    policy.selection.kind === 'selected' ? new Set(policy.selection.omitted) : new Set<ToolCapabilityId>()
   for (const name of toolNames) {
     const cap = capabilityForToolName(name)
     if (cap === 'inspect') continue
@@ -427,11 +342,12 @@ export function observeToolUse(policy: ToolPolicy, toolNames: string[]): ToolObs
       continue
     }
     used.add(cap)
-    if (omitted.has(cap)) violations.add(cap)
+    if (cap === 'shell' || !policy.allowed.includes(cap)) violations.add(cap)
   }
+  const order: ObservedCapability[] = ['edit', 'shell', 'web']
   return {
-    used: TOOL_OPTIONAL.filter((id) => used.has(id)),
+    used: order.filter((id) => used.has(id)),
     unknownCount,
-    violations: TOOL_OPTIONAL.filter((id) => violations.has(id))
+    violations: order.filter((id) => violations.has(id))
   }
 }

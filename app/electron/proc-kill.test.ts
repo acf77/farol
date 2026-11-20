@@ -6,7 +6,9 @@ const UID = 501
 const T = 1_700_000_000_000
 
 function proc(pid: number, ppid: number, over: Partial<ProcInfo> = {}): ProcInfo {
-  return { pid, ppid, pgid: pid, uid: UID, startMs: T + 100, footprint: 1, cpu: 0, name: 'node', ...over }
+  const startMs = over.startMs ?? T + 100
+  const startId = `${Math.floor(startMs / 1000)}:${Math.round((startMs % 1000) * 1000)}`
+  return { pid, ppid, pgid: pid, uid: UID, startMs, startId, footprint: 1, cpu: 0, name: 'node', ...over }
 }
 
 /** A tiny machine: signals change the process table the next sample sees. */
@@ -34,7 +36,7 @@ const without = (table: ProcInfo[], pid: number): ProcInfo[] => table.filter((p)
 const exitOnAnySignal = (pid: number, _signal: string, table: ProcInfo[]): ProcInfo[] => without(table, pid)
 
 /** The sampler saw these in the agent's group while it ran, so they are proven. */
-const seenPids = (...pids: number[]): Set<string> => new Set(pids.map((pid) => procKey(proc(pid, 1))))
+const seenPids = (...pids: number[]): Set<string> => new Set(pids.map((pid) => procKey(proc(pid, 1))!))
 
 const doneSession: ProcSession = {
   id: 'a',
@@ -122,14 +124,29 @@ describe('killSessionProcs', () => {
     expect(m.signals).toEqual([])
   })
 
-  it('does not SIGKILL a pid that was reused after the SIGTERM', async () => {
+  it.each([0.001, 700, 60_000])('does not SIGKILL a PID reused %s ms after SIGTERM', async (delay) => {
     const m = machine([proc(101, 1, { pgid: 100 })], [doneSession], (pid, signal, table) =>
       // 101 exits on SIGTERM and an unrelated process takes the pid at once.
-      signal === 'SIGTERM' ? [...without(table, pid), proc(pid, 7, { startMs: T + 60_000 })] : table
+      signal === 'SIGTERM' ? [...without(table, pid), proc(pid, 7, { startMs: T + 100 + delay })] : table
     )
     const result = await killSessionProcs('a', undefined, m.deps)
     expect(m.signals).toEqual([[101, 'SIGTERM']])
     expect(result).toMatchObject({ ok: true, terminated: 1, killed: 0 })
+  })
+
+  it('refuses a coarse process identity before sending any signal', async () => {
+    const m = machine([proc(100, 1, { startMs: T }), proc(101, 100, { startId: undefined })], [doneSession], exitOnAnySignal)
+    expect(await killSessionProcs('a', undefined, m.deps)).toMatchObject({ ok: false, message: 'Cannot confirm the process start time.' })
+    expect(await killSessionProcs('a', 101, m.deps)).toMatchObject({ ok: false })
+    expect(m.signals).toEqual([])
+  })
+
+  it('does not escalate when the second sample has only coarse identity', async () => {
+    const m = machine([proc(101, 1, { pgid: 100 })], [doneSession], (pid, signal, table) =>
+      signal === 'SIGTERM' ? [proc(pid, 1, { startId: undefined })] : table
+    )
+    await killSessionProcs('a', undefined, m.deps)
+    expect(m.signals).toEqual([[101, 'SIGTERM']])
   })
 
   it('stops when the process list cannot be read, instead of trusting an empty one', async () => {

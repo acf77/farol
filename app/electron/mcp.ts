@@ -71,6 +71,30 @@ function registerGitTools(server: McpServer, cwd: string): void {
     () => perform({ action: 'status' })
   )
 
+  for (const action of ['diff', 'log'] as const) {
+    server.registerTool(
+      `git_${action}`,
+      {
+        title: `Git ${action}`,
+        description: action === 'diff' ? 'Read tracked changes against HEAD.' : 'Read up to 50 recent commits.',
+        inputSchema: {},
+        annotations: { readOnlyHint: true }
+      },
+      () => perform({ action })
+    )
+  }
+
+  server.registerTool(
+    'git_show',
+    {
+      title: 'Git show',
+      description: 'Read one commit. Use HEAD, HEAD~<number>, or a commit hash.',
+      inputSchema: { ref: z.string().optional() },
+      annotations: { readOnlyHint: true }
+    },
+    ({ ref }) => perform({ action: 'show', ref: ref ?? 'HEAD' })
+  )
+
   server.registerTool(
     'git_commit',
     {

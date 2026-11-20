@@ -17,7 +17,7 @@ import type { ProcRegistry } from './proc-sessions'
 let repo: string
 
 beforeEach(() => {
-  repo = fs.mkdtempSync(path.join(os.tmpdir(), 'farol-procs-'))
+  repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'farol-procs-')))
   const git = (...args: string[]) => execFileSync('git', args, { cwd: repo })
   git('init', '-q')
   git('config', 'user.email', 't@example.com')

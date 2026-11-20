@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { StringDecoder } from 'string_decoder'
+import path from 'path'
 import type {
   AgentTaskEvent,
   AgentTaskRequest,
@@ -13,13 +14,13 @@ import type {
   TurnInfo
 } from '../shared/types'
 import {
-  ACP_CLIS,
   aiSelectionLabel,
   canAskApproval,
   cliFor,
   isAiProvider,
-  isUnknownJsonFormatError,
   managedAiCommand,
+  managedGitRefusal,
+  managedToolRefusal,
   normalizeAi,
   normalizeMode,
   normalizeEffort,
@@ -28,16 +29,11 @@ import {
 } from '../shared/ai'
 import {
   isDelegateToolName,
-  MANAGED_MCP_SERVER_KEY,
   MANAGED_TOOL_TIMEOUT_SEC,
   managedToolsFor,
   type ManagedTool,
   type McpServerEntry
 } from '../shared/mcp-config'
-import { applyOpencodeConfig, opencodeRunConfig } from '../shared/opencode-config'
-import { acpApprovalAsk, acpMcpServer } from '../shared/acp'
-import { openCodeModel } from '../shared/openrouter'
-import { runAcp } from './acp-run'
 import { captureLimited, captureTree, changedPaths, pinTree, releaseTrees, restoreTree, treeDiffStat, undoChange, type Capture } from './delegate-snapshot'
 import {
   CHECKPOINT_MAX_FILE_BYTES,
@@ -73,8 +69,10 @@ import {
   stripControlMarkerLines,
   type ControlLineState
 } from '../shared/control-line'
-import { formatGitResult, gitActionsFrom, GIT_ACTION_NAMES, type GitAction, type GitActionResult } from '../shared/git-action'
+import { formatGitResult, gitActionsFrom, isGitReadAction, GIT_ACTION_NAMES, type GitAction, type GitActionResult } from '../shared/git-action'
 import { repoRoot, type GitScope } from './git'
+import { isInside, realPath } from './confine'
+import { execCli } from './exec-cli'
 import {
   BLOCK_MARKER,
   FINISHED_PLAN,
@@ -200,8 +198,18 @@ interface AgentSink {
   noise(chunk: string): void
 }
 
+interface TurnContext {
+  readonly cwd: string
+  readonly checkout: string
+  readonly repository: string
+  readonly mode: 'plan' | 'build'
+}
+
 interface Task {
   request: AgentTaskRequest
+  /** User overrides wait until the active turn ends. */
+  pendingRequest?: AgentTaskRequest
+  turn?: TurnContext
   process: ChildProcess | null
   /** The subagent a `delegate` call is running; at most one, while the agent waits on it. */
   child: ChildProcess | null
@@ -221,8 +229,6 @@ interface Task {
   validatedTree?: string
   /** The branch the checkout was on when the turn began: Git actions hold to it. */
   turnBranch?: string
-  /** The repository root of the checkout (the folder itself when it is no repository). */
-  repoKey?: string
   /** Another chat ran in this checkout while this turn did, so the turn's files cannot be told from theirs. */
   sharedCheckout: boolean
   /** Git actions are on for this turn, so the agent is told to request them. */
@@ -239,8 +245,6 @@ interface Task {
   allowedTools: Set<string>
   /** Whether the agent's run in flight approves tools without asking; fixed when the run starts. */
   runAutoApproves: boolean
-  /** Ask-first Codex runs in flight, by `PARENT_GATE` or the subagent's delegate id. */
-  gates: Map<string, Gate>
   running: boolean
   cancelled: boolean
   /** Drop from the map once the in-flight cycle settles (cleared chats). */
@@ -268,8 +272,8 @@ interface Task {
    */
   sameModelAttempts: number
   /**
-   * Jev's tool-focus selection for the current attempt. Remapped onto each
-   * provider via `toolPolicyFor` (which re-checks the prepared focus set)
+   * Jev's tool-focus selection for the current attempt. `toolPolicyFor`
+   * re-checks the prepared focus set before each launch
    * without a new Jev call; cleared when the attempt number advances
    * (repair turns re-ask).
    */
@@ -329,7 +333,7 @@ function continued(text: string): Opening {
 
 type CycleAttemptResult =
   | { kind: 'done' }
-  | { kind: 'retry'; opening: Opening; rewindAttempt?: boolean }
+  | { kind: 'retry'; opening: Opening; rewindAttempt?: boolean; gitRead?: true }
 
 const DEFAULT_MAX_ATTEMPTS = 5
 /**
@@ -343,20 +347,6 @@ const SAME_MODEL_RETRIES = 3
 const SCAN_WINDOW = 16_384
 /** Cap pipeline activity retained for prompt context. */
 const MAX_PIPELINE_RUNS = 40
-
-function shouldRetryPlainOpenCode(
-  plain: boolean,
-  exit: number,
-  provider: AiProvider,
-  diagnostics: string
-): boolean {
-  return (
-    !plain &&
-    exit !== 0 &&
-    cliFor(provider, openRouterAgent()) === 'opencode' &&
-    isUnknownJsonFormatError(diagnostics)
-  )
-}
 
 /**
  * Give agents an explicit marker for task-ending blockers. Scanned over what
@@ -497,22 +487,6 @@ function pipelineCatalog(pipelines: Pipeline[]): string {
     .join('\n')
 }
 
-/** The optional parts of an agent command, present only when set. */
-function commandExtras(
-  opts: { tools?: string[]; webSearch?: boolean; session?: AgentSessionIo } | undefined,
-  extra: { mcp?: McpServerEntry; askApproval: boolean; codexHook?: string }
-) {
-  const { mcp, askApproval, codexHook } = extra
-  return {
-    ...(opts?.tools?.length ? { tools: opts.tools } : {}),
-    ...(opts?.webSearch ? { webSearch: true } : {}),
-    ...(opts?.session?.resume ? { resume: opts.session.resume } : {}),
-    ...(mcp ? { mcp } : {}),
-    ...(askApproval && mcp ? { askApproval } : {}),
-    ...(codexHook ? { codexHook } : {})
-  }
-}
-
 /** Turns an agent's stream events into chat output, reporting context use when it changes. */
 function streamConsumer(
   parser: AgentStreamParser | null,
@@ -560,23 +534,9 @@ async function treeChanges(
 
 /** How a run reaches Farol's managed tools; `delegateId` names a subagent's run. */
 export interface ManagedTools {
-  /** The managed MCP server offering `tools` (Claude, Codex, ACP CLIs). */
+  /** The managed MCP server offering only the tools of this run. */
   mcp(taskId: string, delegateId: string | undefined, tools: readonly ManagedTool[]): McpServerEntry
-  /** Codex's Ask-first `PreToolUse` hook command (see `shared/codex-hook.ts`). */
-  codexHook?(taskId: string, delegateId?: string): string
 }
-
-/**
- * A Codex run set to Ask first. Its hook can fail open (a timeout, or a Codex
- * that ignores hooks passed with `-c`), so every write or shell call it makes
- * must follow an approval Farol granted, one for one.
- */
-interface Gate {
-  credits: number
-  seen: Set<string>
-}
-
-const PARENT_GATE = 'parent'
 
 interface PendingApproval {
   event: Extract<AgentTaskEvent, { kind: 'approval' }>
@@ -667,12 +627,13 @@ export class AgentController {
       if (this.reverting.has(request.id)) return { ok: false, message: 'Wait for the revert to finish.' }
       if (existing.running) return { ok: false, message: 'An agent task with this id is already running.' }
       existing.request = {
-        ...existing.request,
+        ...(existing.pendingRequest ?? existing.request),
         ...request,
         prompt: existing.request.prompt,
         mode,
         pipelines: request.pipelines.filter((pipeline) => pipeline.nodes.length)
       }
+      existing.pendingRequest = undefined
       existing.fallbacks = [...(request.fallbacks ?? [])]
       existing.sameModelAttempts = 0
       this.emit({ kind: 'user', taskId: request.id, text: clean })
@@ -703,7 +664,6 @@ export class AgentController {
       approvalSeq: 0,
       allowedTools: new Set(),
       runAutoApproves: true,
-      gates: new Map(),
       running: true,
       cancelled: false,
       disposeWhenIdle: false,
@@ -753,18 +713,18 @@ export class AgentController {
     if (!task) return { ok: false, message: 'This agent task is no longer available.' }
     if (!clean) return { ok: false, message: 'Enter a message.' }
     if (this.reverting.has(taskId)) return { ok: false, message: 'Wait for the revert to finish.' }
-    this.applyMessageOverrides(task, provider, model, mode, pipelines, fallbacks)
-    task.request.effort = effort
-    if (cwd) task.request.cwd = cwd
-    if (checkout) task.request.checkout = checkout
+    const next = { ...(task.pendingRequest ?? task.request) }
+    this.applyMessageOverrides(next, provider, model, mode, pipelines, fallbacks)
+    next.effort = effort
+    if (cwd) next.cwd = cwd
+    if (checkout) next.checkout = checkout
+    task.pendingRequest = next
     this.emit({ kind: 'user', taskId, text: clean })
     if (task.pendingQuestions) {
       this.dismissPendingQuestions(task)
       this.followUp(task, clean)
       return { ok: true }
     }
-    // Stop only aborts the in-flight run. A follow-up message resumes the same
-    // chat — queue it if the cancelled cycle is still winding down.
     if (task.running) {
       task.guidance.push(clean)
       return { ok: true }
@@ -773,14 +733,9 @@ export class AgentController {
     return { ok: true }
   }
 
-  /**
-   * A provider switch mid-chat (e.g. after a usage limit) must stick before
-   * the next cycle, including when the follow-up is only queued. Pipeline
-   * edits (e.g. AI step provider) are snapshotted at start; refresh on every
-   * follow-up so validation uses what the user configured now.
-   */
+  /** Build a follow-up request without changing the active turn. */
   private applyMessageOverrides(
-    task: Task,
+    request: AgentTaskRequest,
     provider: AiProvider | undefined,
     model: string | undefined,
     mode: AgentTaskRequest['mode'] | undefined,
@@ -788,15 +743,14 @@ export class AgentController {
     fallbacks: ModelChoice[] | undefined
   ): void {
     if (isAiProvider(provider)) {
-      task.request.provider = provider
-      task.request.model = normalizeModel(model)
-      task.sameModelAttempts = 0
+      request.provider = provider
+      request.model = normalizeModel(model)
     }
-    if (fallbacks) task.fallbacks = [...fallbacks]
-    task.request.mode = normalizeMode(mode ?? task.request.mode)
+    if (fallbacks) request.fallbacks = [...fallbacks]
+    request.mode = normalizeMode(mode ?? request.mode)
     if (pipelines) {
       const next = pipelines.filter((pipeline) => pipeline.nodes.length)
-      if (next.length) task.request.pipelines = next
+      if (next.length) request.pipelines = next
     }
   }
 
@@ -824,9 +778,15 @@ export class AgentController {
     const task = this.tasks.get(taskId)
     if (!task) return { ok: false, message: 'This agent task is no longer available.' }
     if (!isAiProvider(provider)) return { ok: false, message: 'Unknown agent provider.' }
-    task.request.provider = provider
-    task.request.model = normalizeModel(model)
-    task.request.mode = normalizeMode(mode ?? task.request.mode)
+    const next = { ...(task.pendingRequest ?? task.request) }
+    next.provider = provider
+    next.model = normalizeModel(model)
+    next.mode = normalizeMode(mode ?? next.mode)
+    if (task.running) task.pendingRequest = next
+    else {
+      task.request = next
+      task.pendingRequest = undefined
+    }
     task.sameModelAttempts = 0
     return { ok: true }
   }
@@ -870,7 +830,6 @@ export class AgentController {
     const before = await captureTree(cwd).catch(() => undefined)
 
     task.activeDelegate = { id: delegateId, provider }
-    this.setGate(task, delegateId, provider)
     const { sink, run } = this.delegateSink(task, delegateId, this.autoApproves(task, provider))
     const onAbort = (): void => {
       if (task.child?.pid) killPidTree(task.child.pid)
@@ -882,7 +841,7 @@ export class AgentController {
       const prompt = this.delegatePrompt(task, work, ask.context)
       code = this.executor
         ? await this.executor({ ...task.request, provider, model }, prompt, sink.text, sink.tool)
-        : await this.runAgent(task, prompt, sink, false, { child: { provider, model, delegateId } })
+        : await this.runAgent(task, prompt, sink, { child: { provider, model, delegateId } })
     } catch (error) {
       run.diagnostics = `${run.diagnostics}\n${errorMessage(error)}`
     } finally {
@@ -890,7 +849,6 @@ export class AgentController {
       task.child = null
       task.delegating = false
       task.activeDelegate = undefined
-      task.gates.delete(delegateId)
     }
 
     const { after, diffStat } = await treeChanges(cwd, before)
@@ -985,37 +943,7 @@ export class AgentController {
    * where there is something to approve, with the managed server to ask through).
    */
   private autoApproves(task: Task, provider: AiProvider): boolean {
-    // Claude asks through the managed server, Codex through its hook, ACP CLIs over ACP itself.
-    const via = openRouterAgent()
-    const route =
-      provider === 'codex' ? !!this.managed?.codexHook : ACP_CLIS.includes(cliFor(provider, via)) || !!this.managed
-    return !(task.request.autoApprove === false && canAskApproval(provider, via) && task.request.mode !== 'plan' && route)
-  }
-
-  /** Open (or clear) the Ask-first gate for a run that is about to start. */
-  private setGate(task: Task, key: string, provider: AiProvider): void {
-    const gated =
-      !this.autoApproves(task, provider) && cliFor(provider, openRouterAgent()) === 'codex' && !!this.managed?.codexHook
-    if (gated) task.gates.set(key, { credits: 0, seen: new Set() })
-    else task.gates.delete(key)
-  }
-
-  /** An approval the developer granted lets one write or shell call through its run's gate. */
-  private creditGate(task: Task, delegateId: string | undefined, toolName: string): void {
-    const gate = task.gates.get(delegateId ?? PARENT_GATE)
-    if (gate && needsApproval(toolName)) gate.credits += 1
-  }
-
-  /** Why a gated run must stop: a write or shell call ran that nobody approved. */
-  private passGate(task: Task, key: string, event: { toolId: string; name: string }): string | undefined {
-    const gate = task.gates.get(key)
-    if (!gate || !needsApproval(event.name) || gate.seen.has(event.toolId)) return undefined
-    gate.seen.add(event.toolId)
-    if (gate.credits > 0) {
-      gate.credits -= 1
-      return undefined
-    }
-    return `Codex ran ${event.name} without asking, so Farol stopped it. Ask first is not working with this Codex version; turn on Auto-approve to keep using Codex, or switch to Claude.`
+    return !(canAskApproval(provider) && this.managed && task.request.autoApprove === false && task.request.mode !== 'plan')
   }
 
   /** Turn auto-approve on or off; the next run picks it up, a running one keeps its own. */
@@ -1031,16 +959,22 @@ export class AgentController {
    * prompt. Resolves when they answer, or with a deny when nobody can any
    * more: the turn was stopped or the asking agent went away (`signal`).
    */
-  requestApproval(
+  async requestApproval(
     taskId: string,
     ask: { toolName: string; input: unknown; delegateId?: string },
     signal?: AbortSignal
   ): Promise<{ allow: boolean; message?: string }> {
     const task = this.tasks.get(taskId)
-    if (!task?.running || task.cancelled) return Promise.resolve({ allow: false, message: 'This Chat turn is no longer running.' })
+    if (!task?.running || task.cancelled) return { allow: false, message: 'This Chat turn is no longer running.' }
+    const refusal = managedToolRefusal(ask.toolName, ask.input, task.request.mode)
+    if (refusal) return { allow: false, message: refusal }
+    if (isWriteToolName(ask.toolName)) {
+      const reason = await this.writeApprovalRefusal(task, ask.input)
+      if (reason) return { allow: false, message: reason }
+    }
+    if (!task.running || task.cancelled || signal?.aborted) return { allow: false, message: 'This tool call is no longer active.' }
     if (task.allowedTools.has(ask.toolName)) {
-      this.creditGate(task, ask.delegateId, ask.toolName)
-      return Promise.resolve({ allow: true })
+      return { allow: true }
     }
     task.approvalSeq += 1
     const requestId = `${taskId}:a${task.approvalSeq}`
@@ -1067,6 +1001,33 @@ export class AgentController {
     })
   }
 
+  /** Resolve missing targets through their nearest existing parent before checking Git metadata. */
+  private async writeApprovalRefusal(task: Task, input: unknown): Promise<string | undefined> {
+    const fields = input as Record<string, string>
+    const target = path.resolve(task.request.cwd, fields.file_path ?? fields.notebook_path)
+    let ancestor = target
+    let resolved: string | undefined
+    while (!resolved) {
+      const real = await realPath(ancestor)
+      if (real) resolved = path.resolve(real, path.relative(ancestor, target))
+      else {
+        const parent = path.dirname(ancestor)
+        if (parent === ancestor) return 'Cannot verify the file path.'
+        ancestor = parent
+      }
+    }
+    const file = resolved
+    const root = await realPath(task.request.cwd)
+    if (!root || !isInside(root, file)) return 'The file path is outside this Chat folder.'
+    const metadata = await execCli('git', root, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'], 10_000)
+    if (metadata.code !== 0) return 'Cannot verify the Git metadata paths.'
+    const dirs = await Promise.all(metadata.out.trim().split('\n').map((dir) => realPath(dir)))
+    if (dirs.length !== 2 || dirs.some((dir) => !dir || isInside(dir, file))) {
+      return 'Direct Git metadata writes are disabled. Use Farol Git actions.'
+    }
+    return undefined
+  }
+
   /** The developer's answer to an approval request. */
   respondApproval(taskId: string, requestId: string, decision: 'once' | 'chat' | 'deny'): { ok: boolean; message?: string } {
     const task = this.tasks.get(taskId)
@@ -1080,7 +1041,6 @@ export class AgentController {
     if (!pending) return
     task.approvals.delete(requestId)
     if (decision === 'chat') task.allowedTools.add(pending.event.toolName)
-    if (decision === 'once' || decision === 'chat') this.creditGate(task, pending.event.delegateId, pending.event.toolName)
     this.emit({ ...pending.event, decision })
     pending.resolve(
       decision === 'once' || decision === 'chat'
@@ -1124,11 +1084,6 @@ export class AgentController {
         this.emit({ kind: 'assistant', taskId, text, delegateId })
       },
       tool: (event) => {
-        const breach = this.passGate(task, delegateId, event)
-        if (breach) {
-          run.diagnostics = `${run.diagnostics}\n${breach}`
-          if (task.child?.pid) killPidTree(task.child.pid)
-        }
         const auto = autoApproves && needsApproval(event.name)
         this.emit({ kind: 'tool', taskId, ...event, toolId: `${delegateId}:${event.toolId}`, delegateId, ...(auto ? { auto } : {}) })
         if (event.state !== 'done' || !isWriteToolName(event.name)) return
@@ -1152,7 +1107,9 @@ export class AgentController {
       `Work only in ${task.request.cwd}. Nobody else edits these files while you run.`,
       plan
         ? `This is read-only: inspect and report, but do not change project files or modify external systems.`
-        : `You may change files as the task needs. Do not run git commands that commit, push, or rewrite history.`,
+        : `You may change files as the task needs.`,
+      `Never run Git or GitHub commands, directly or through scripts, code, external tools, or other agents. Do not edit Git metadata. Ask the calling agent for Farol Git actions.`,
+      `Shell and code execution are disabled. Report any required command to the calling agent.`,
       `You cannot ask the user anything. If something is unclear, make the most reasonable choice and say so, or stop and report what you need.`,
       `Do not run Farol pipelines and do not print Farol control lines (lines starting with FAROL_). The agent that called you decides on validation.`,
       `Finish with a short summary: what you did, what you found, and anything left open.`,
@@ -1280,7 +1237,7 @@ export class AgentController {
     try {
       code = this.executor
         ? await this.executor(task.request, prompt, sink.text, undefined, session)
-        : await this.runAgent(task, prompt, sink, false, { session })
+        : await this.runAgent(task, prompt, sink, { session })
     } catch {
       code = 1
     } finally {
@@ -1387,6 +1344,12 @@ export class AgentController {
 
   /** Append a user follow-up and start a new cycle that continues the chat. */
   private followUp(task: Task, message: string): void {
+    if (task.pendingRequest) {
+      task.request = task.pendingRequest
+      task.pendingRequest = undefined
+    }
+    task.fallbacks = [...(task.request.fallbacks ?? [])]
+    task.sameModelAttempts = 0
     // Farol's own notes (an Undo) go first, and into the history like the message.
     const notes = task.notes.splice(0).join('\n')
     const userText = notes ? `${notes}\n\n${message}` : message
@@ -1440,13 +1403,6 @@ export class AgentController {
     this.followUp(task, text)
   }
 
-  /** If the user typed while a cycle was finishing, run their message next. */
-  private continueIfGuidanceOpening(task: Task): Opening | null {
-    const guidance = task.guidance.splice(0).join('\n')
-    if (!guidance) return null
-    return continued(`User request:\n${guidance}`)
-  }
-
   private cycleSink(task: Task, scan: CycleScan): AgentSink {
     const check = (): void => {
       const agentStop = blockedMarker(scan.assistant)
@@ -1474,12 +1430,6 @@ export class AgentController {
       },
       tool: (event) => {
         if (event.state === 'running' && isDelegateToolName(event.name)) task.delegateToolId = event.toolId
-        const breach = this.passGate(task, PARENT_GATE, event)
-        if (breach && !scan.blocked) {
-          scan.blocked = breach
-          scan.blockedByProvider = false
-          if (task.process?.pid) killPidTree(task.process.pid)
-        }
         const auto = task.runAutoApproves && needsApproval(event.name)
         this.emit({ kind: 'tool', taskId: task.request.id, ...event, ...(auto ? { auto } : {}) })
         scan.toolNames.push(event.name)
@@ -1525,7 +1475,7 @@ export class AgentController {
   }
 
   private async loadGitEnabled(task: Task): Promise<void> {
-    task.gitEnabled = task.request.mode !== 'plan' && !!(await this.gitActions?.enabled().catch(() => false))
+    task.gitEnabled = !!(await this.gitActions?.enabled().catch(() => false))
   }
 
   private async loadCustomInstructions(task: Task): Promise<void> {
@@ -1690,11 +1640,7 @@ export class AgentController {
   }
 
   private completeCycle(task: Task, attempt: number, message: string): CycleAttemptResult {
-    const next = this.continueIfGuidanceOpening(task)
-    if (next) return { kind: 'retry', opening: next }
-    task.running = false
-    this.status(task, 'completed', attempt, message)
-    this.releaseIfDisposed(task)
+    this.finishOrContinue(task, attempt, 'completed', message)
     return { kind: 'done' }
   }
 
@@ -1780,7 +1726,7 @@ export class AgentController {
       this.settleCancel(task)
       return { kind: 'done' }
     }
-    return repair ? { kind: 'retry', opening: continued(repair) } : this.completeCycle(task, attempt, message)
+    return repair ? { kind: 'retry', opening: continued(repair.message), gitRead: repair.read } : this.completeCycle(task, attempt, message)
   }
 
   /**
@@ -1794,41 +1740,50 @@ export class AgentController {
    * holds only files as validation saw them (the scope's tree), and none when another chat shared
    * the checkout, since a snapshot cannot tell whose files are whose.
    */
-  private async performGitActions(task: Task, scan: CycleScan): Promise<string | undefined> {
-    const git = this.gitActions
-    if (!git || !task.gitEnabled) return undefined
+  private async performGitActions(task: Task, scan: CycleScan): Promise<{ message: string; read?: true } | undefined> {
     const { actions, errors } = gitActionsFrom(scan.control)
-    if (errors.length) return `Farol could not read a ${GIT_MARKER} line. ${errors.join(' ')} Send it again.`
+    if (errors.length) return { message: `Farol could not read a ${GIT_MARKER} line. ${errors.join(' ')} Send it again.` }
     if (!actions.length) return undefined
     const scope: GitScope = {
       branch: task.turnBranch,
       tree: task.validatedTree,
       signal: task.abort.signal
     }
+    const reads: string[] = []
     for (const request of actions) {
       if (task.cancelled) return undefined
       task.gitSeq += 1
       const seq = task.gitSeq
       const startedAt = Date.now()
       this.reportGitAction(task, request, seq, startedAt)
-      const result = await this.runGitRequest(task, git, request, scope)
+      const result = await this.runGitRequest(task, request, scope)
       this.reportGitAction(task, request, seq, startedAt, result)
+      if (isGitReadAction(request) && !result.refused) reads.push(formatGitResult(request.action, result))
       if (result.ok) continue
-      if (result.hookRun) return `${formatGitResult(request.action, result)}\nFix what it reports, then send the ${GIT_MARKER} line again.`
+      if (result.hookRun) return { message: `${formatGitResult(request.action, result)}\nFix what it reports, then send the ${GIT_MARKER} line again.` }
       task.notes.push(`Note from Farol: ${formatGitResult(request.action, result)}`)
-      return undefined
+      break
     }
-    return undefined
+    return reads.length ? { read: true, message: `${reads.join('\n\n')}\nContinue with these results. Do not repeat completed actions. Request another read only if needed.` } : undefined
   }
 
   /**
    * One `FAROL_GIT` request. A commit holds the files this turn changed, whatever the line says, and
    * none at all when another chat shared the checkout.
    */
-  private runGitRequest(task: Task, git: GitActions, request: GitAction, scope: GitScope): Promise<GitActionResult> {
-    if (request.action !== 'commit') return git.run(task.request.cwd, request, scope)
-    if (task.sharedCheckout) return Promise.resolve(SHARED_CHECKOUT)
-    return git.run(task.request.cwd, { ...request, files: [...task.turnFiles] }, scope)
+  private async runGitRequest(task: Task, request: GitAction, scope: GitScope): Promise<GitActionResult> {
+    const git = this.gitActions
+    if (!git || !task.gitEnabled) {
+      return { ok: false, refused: true, message: 'Git actions are turned off. Do not use another route.' }
+    }
+    const turn = task.turn
+    if (!turn) return { ok: false, refused: true, message: 'No Git turn is active.' }
+    if (turn.mode === 'plan' && !isGitReadAction(request)) {
+      return { ok: false, refused: true, message: 'Plan permits only Git read actions.' }
+    }
+    if (request.action !== 'commit') return git.run(turn.cwd, request, scope)
+    if (task.sharedCheckout) return SHARED_CHECKOUT
+    return git.run(turn.cwd, { ...request, files: [...task.turnFiles] }, scope)
   }
 
   /** A Git action shows in Chat as a pipeline run does: running first, then passed or failed. */
@@ -1863,10 +1818,9 @@ export class AgentController {
     }
 
     if (outcome.failures.some(({ pipeline }) => pipeline.mandatory === true)) task.mandatoryOutstanding = true
-    const guidance = task.guidance.splice(0).join('\n')
     return {
       kind: 'retry',
-      opening: continued(repairPromptOpening(attempt, outcome.failures, guidance))
+      opening: continued(repairPromptOpening(attempt, outcome.failures, ''))
     }
   }
 
@@ -1903,10 +1857,9 @@ export class AgentController {
 
   /**
    * Resolve the turn's tool policy. Build asks Jev for a focus among all
-   * host-prepared foci and remaps across retries; uncertain → full tools.
+   * host-prepared foci; uncertainty restores edit/web within the execution limit.
    * Plan asks Jev only among read-only foci (`inspect` / `answer`) and soft-fails
-   * to inspect — never to the full set. Provider review gates stay the hard
-   * enforcement. `toolPolicyFor` rejects stale or unknown foci before apply.
+   * to inspect. The managed launch keeps the execution barrier under every focus. `toolPolicyFor` rejects stale or unknown foci before apply.
    */
   private async resolveToolPolicy(
     task: Task,
@@ -1915,7 +1868,7 @@ export class AgentController {
   ): Promise<ToolPolicy> {
     const mode = task.request.mode === 'plan' ? 'plan' : 'build'
     if (task.toolSelection && task.toolSelectionAttempt === attempt) {
-      return toolPolicyFor(task.request.provider, task.toolSelection, openRouterAgent())
+      return toolPolicyFor(task.toolSelection)
     }
     const state = toolSelectionState({
       task: task.request.prompt,
@@ -1929,7 +1882,7 @@ export class AgentController {
       (mode === 'plan' ? defaultPlanSelection() : { kind: 'fallback-full', reason: 'jev-unavailable' })
     task.toolSelection = resolved
     task.toolSelectionAttempt = attempt
-    return toolPolicyFor(task.request.provider, resolved, openRouterAgent())
+    return toolPolicyFor(resolved)
   }
 
   /** Diagnostic-only: log omitted-family tool cards without killing the run. */
@@ -1949,8 +1902,14 @@ export class AgentController {
     })
   }
 
-  /** Plan mode never validates — it only recognizes the finished-plan marker. */
-  private finishPlanCycleAttempt(task: Task, attempt: number, scan: CycleScan): CycleAttemptResult {
+  /** Plan permits Git reads and never runs validation or Git writes. */
+  private async finishPlanCycleAttempt(task: Task, attempt: number, scan: CycleScan): Promise<CycleAttemptResult> {
+    const result = await this.performGitActions(task, scan)
+    if (task.cancelled) {
+      this.settleCancel(task)
+      return { kind: 'done' }
+    }
+    if (result) return { kind: 'retry', opening: continued(result.message), gitRead: result.read }
     if (isFinishedPlan(scan.assistant)) {
       return this.completeCycle(task, attempt, 'Plan ready to execute')
     }
@@ -1975,28 +1934,27 @@ export class AgentController {
    * a rate limit is not immediately hammered again.
    */
   private async shouldRetryAfterError(task: Task, attempt: number, reason: string): Promise<boolean> {
-    if (!task.guidance.length) {
-      task.sameModelAttempts += 1
-      if (task.sameModelAttempts <= SAME_MODEL_RETRIES) {
-        this.status(
-          task,
-          'working',
-          attempt,
-          `${reason} — retrying with ${aiSelectionLabel(task.request.provider, task.request.model)} (${task.sameModelAttempts}/${SAME_MODEL_RETRIES})`
-        )
-        logAgentFailure({
-          ts: Date.now(),
-          taskId: task.request.id,
-          attempt,
-          provider: task.request.provider,
-          model: task.request.model,
-          reason,
-          outcome: 'retry-same-model',
-          sameModelAttempt: task.sameModelAttempts
-        })
-        await backoffWait(task.sameModelAttempts, task.abort.signal)
-        return true
-      }
+    if (task.guidance.length) return false
+    task.sameModelAttempts += 1
+    if (task.sameModelAttempts <= SAME_MODEL_RETRIES) {
+      this.status(
+        task,
+        'working',
+        attempt,
+        `${reason} — retrying with ${aiSelectionLabel(task.request.provider, task.request.model)} (${task.sameModelAttempts}/${SAME_MODEL_RETRIES})`
+      )
+      logAgentFailure({
+        ts: Date.now(),
+        taskId: task.request.id,
+        attempt,
+        provider: task.request.provider,
+        model: task.request.model,
+        reason,
+        outcome: 'retry-same-model',
+        sameModelAttempt: task.sameModelAttempts
+      })
+      await backoffWait(task.sameModelAttempts, task.abort.signal)
+      return true
     }
     task.sameModelAttempts = 0
     return this.switchToFallback(task, attempt, reason)
@@ -2115,14 +2073,6 @@ export class AgentController {
       return { kind: 'done' }
     }
     task.sameModelAttempts = 0
-    if (task.guidance.length) {
-      const guidance = task.guidance.splice(0).join('\n')
-      return {
-        kind: 'retry',
-        rewindAttempt: true,
-        opening: continued(`Additional user guidance:\n${guidance}`)
-      }
-    }
     return this.finishCycleAttempt(task, attempt, scan)
   }
 
@@ -2160,7 +2110,6 @@ export class AgentController {
     }
     const policy = await this.resolveToolPolicy(task, opening.text, attempt)
     task.runAutoApproves = this.autoApproves(task, task.request.provider)
-    this.setGate(task, PARENT_GATE, task.request.provider)
     const clause = toolPolicyPrompt(policy)
     const effective = clause ? `${prompt}\n\n${clause}` : prompt
     const sink = this.cycleSink(task, scan)
@@ -2176,9 +2125,8 @@ export class AgentController {
     }
     const code = this.executor
       ? await this.executor(task.request, effective, sink.text, sink.tool, session)
-      : await this.runAgent(task, effective, sink, false, {
+      : await this.runAgent(task, effective, sink, {
           tools: policy.nativeTools,
-          webSearch: policy.allowed.includes('web'),
           session
         })
     this.observeTools(task, policy, scan.toolNames, attempt)
@@ -2188,9 +2136,9 @@ export class AgentController {
   }
 
   /** The working copy at the start or end of a Build turn; undefined in Plan mode or outside git. */
-  private async turnCapture(task: Task): Promise<Capture | undefined> {
-    if (task.request.mode === 'plan') return undefined
-    return captureLimited(task.request.cwd, CHECKPOINT_MAX_FILE_BYTES).catch(() => undefined)
+  private async turnCapture(task: Task, turn = task.turn): Promise<Capture | undefined> {
+    if (!turn || turn.mode === 'plan') return undefined
+    return captureLimited(turn.cwd, CHECKPOINT_MAX_FILE_BYTES).catch(() => undefined)
   }
 
   /**
@@ -2234,12 +2182,10 @@ export class AgentController {
    * tell whose: the turn's files, and an agent commit of them, are then in doubt. Both chats are
    * marked, whichever began first.
    */
-  private async markSharedCheckout(task: Task): Promise<void> {
+  private markSharedCheckout(task: Task, turn: TurnContext): void {
     task.sharedCheckout = false
-    const key = (await repoRoot(task.request.cwd).catch(() => undefined)) ?? task.request.cwd
-    task.repoKey = key
     for (const other of this.tasks.values()) {
-      if (other === task || !other.running || other.repoKey !== key) continue
+      if (other === task || !other.running || other.turn?.repository !== turn.repository) continue
       task.sharedCheckout = true
       other.sharedCheckout = true
     }
@@ -2247,25 +2193,35 @@ export class AgentController {
 
   /** One user message: checkpoint the files before it runs and after it ends, around the attempts. */
   private async cycle(task: Task, first: Opening): Promise<void> {
+    const request = task.request
+    const cwd = (await realPath(request.cwd)) ?? path.resolve(request.cwd)
+    const turn: TurnContext = Object.freeze({
+      cwd,
+      checkout: (await realPath(request.checkout)) ?? path.resolve(request.checkout),
+      repository: (await repoRoot(cwd).catch(() => undefined)) ?? cwd,
+      mode: normalizeMode(request.mode)
+    })
+    task.turn = turn
+    task.request = { ...request, cwd: turn.cwd, checkout: turn.checkout }
     task.turnFiles.clear()
     task.validatedTree = undefined
-    task.turnBranch = await this.gitActions?.branch(task.request.cwd).catch(() => undefined)
-    await this.markSharedCheckout(task)
+    task.turnBranch = await this.gitActions?.branch(turn.cwd).catch(() => undefined)
+    this.markSharedCheckout(task, turn)
     const before = await this.turnCapture(task)
     task.turnBefore = before?.tree
-    const record = before ? startTurn(task.request.cwd, task.request.id, before, turnPreview(first.text)) : undefined
+    const record = before ? startTurn(turn.cwd, task.request.id, before, turnPreview(first.text)) : undefined
     void record?.started.then(() => this.emit({ kind: 'turns', taskId: task.request.id }))
     try {
       await this.runAttempts(task, first)
     } finally {
-      task.turnBefore = undefined
-      if (record) void this.endTurn(task, record)
+      if (task.turn === turn) task.turnBefore = undefined
+      if (record) void this.endTurn(task, record, turn)
     }
   }
 
   /** Off the agent's path: the end snapshot and the writes happen after the chat has moved on. */
-  private async endTurn(task: Task, record: TurnRecord): Promise<void> {
-    const after = await this.turnCapture(task)
+  private async endTurn(task: Task, record: TurnRecord, turn: TurnContext): Promise<void> {
+    const after = await this.turnCapture(task, turn)
     // A cleared chat has released its checkpoints; writing now would bring them back.
     if (task.disposeWhenIdle) return
     await record.finish(after, task.request.checkpointLimit)
@@ -2276,6 +2232,7 @@ export class AgentController {
     const maxAttempts = Math.max(1, Math.min(20, task.request.maxAttempts ?? DEFAULT_MAX_ATTEMPTS))
     let opening = first
     let attempt = 0
+    let gitReads = 0
     task.resumeAbandoned = false
     // Fresh cycle → fresh tool ask; within the cycle, same-attempt retries remap.
     task.toolSelection = undefined
@@ -2288,16 +2245,18 @@ export class AgentController {
         const result = await this.runCycleAttempt(task, opening, attempt)
         if (result.kind === 'done') return
         opening = result.opening
-        if (result.rewindAttempt) attempt--
+        if (result.gitRead && ++gitReads > 32) {
+          this.finishOrContinue(task, attempt, 'needs-attention', 'Git read limit reached for this turn')
+          return
+        }
+        if (result.rewindAttempt || result.gitRead) attempt--
       }
 
       if (task.cancelled) {
         this.settleCancel(task)
         return
       }
-      task.running = false
-      this.status(task, 'needs-attention', maxAttempts, `Validation still fails after ${maxAttempts} attempts`)
-      this.releaseIfDisposed(task)
+      this.finishOrContinue(task, maxAttempts, 'needs-attention', `Validation still fails after ${maxAttempts} attempts`)
     } catch (error) {
       this.handleCycleError(task, attempt, error)
     }
@@ -2336,7 +2295,7 @@ export class AgentController {
         ? `Plan mode is read-only. You may inspect the project, ask clarifying questions, and propose a plan, but must not change project files or modify external systems. A finished plan ends with exactly one final line: ${FINISHED_PLAN}. If you need a decision, end with ${QUESTIONS_MARKER}. For an ordinary non-final response, end with ${PIPELINES_MARKER} []. Do not emit ${FINISHED_PLAN} until the plan is complete and ready for the developer to execute. Farol will never run pipelines from a Plan response.`
         : `When the requested file change is complete, select every relevant validation pipeline from the catalog below. If you made no file changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
       plan ? '' : mandatoryNote,
-      plan ? '' : this.gitContext(task),
+      this.gitContext(task),
       this.todoContext(task),
       `Handoff note: another agent may take the next turn of this chat without seeing this conversation. When the work's state changed this turn, put one line ${HANDOFF_MARKER} "<JSON string>" just before your final marker: what is done, decisions made, dead ends, and the next step, in at most ${MAX_HANDOFF_CHARS} characters. It replaces the previous note; omit it when nothing changed.`,
       plan
@@ -2355,15 +2314,19 @@ export class AgentController {
       .join('\n')
   }
 
-  /** The standing rules for Git actions; empty when Farol does not perform them on this machine. */
+  /** The Git rule stays on even when actions are off or the turn is read-only. */
   private gitContext(task: Task): string {
-    if (!task.gitEnabled) return ''
+    const rule = `Git: use only Farol Git actions. Never run git or gh, directly or through a shell, script, code, external tool, or another agent. Do not edit Git metadata. Shell and code execution are disabled.`
+    if (!task.gitEnabled) return `${rule} Git actions are off. Report this limit; do not use another route.`
+    const reads = `For each Git read, put one line ${GIT_MARKER} followed by one JSON object before the final marker. Use {"action":"status"}, {"action":"diff"}, {"action":"log"}, or {"action":"show","ref":"HEAD"}. Diff compares tracked files with HEAD; log lists up to 50 commits; show takes HEAD, HEAD~<number>, or a commit hash. Farol returns the result for you to read and continue.`
+    if (task.request.mode === 'plan') return `${rule} ${reads} Plan permits only Git read actions.`
     return [
-      `Git: Farol performs Git actions for you. Never run git or gh yourself to commit, push or open a pull request.`,
+      rule,
+      reads,
       `When this turn changed files, put one line ${GIT_MARKER} {"action":"commit","message":"<the full commit message>"} just before your final marker. Once validation passes, Farol commits exactly the files this turn changed.`,
-      `Only when the developer asked for it, add ${GIT_MARKER} {"action":"push"} and then ${GIT_MARKER} {"action":"create_pr","base":"<branch>","title":"<title>","body":"<description>"} (base, title and body are optional) after the commit line. Each is one JSON object on one line; Farol performs them in order and stops at the first that fails.`,
+      `Only when the developer asked for it, add ${GIT_MARKER} {"action":"push"} and then ${GIT_MARKER} {"action":"create_pr","base":"<branch>","title":"<title>","body":"<description>"} (base, title and body are optional) after the commit line. Farol performs them in order and stops at the first that fails.`,
       `A pipeline bound to a Git action runs first and can block it; its output comes back to you to fix.`,
-      `Never call the Farol MCP Git tools (git_status, git_commit, git_push, git_create_pr) in this managed Chat session; use ${GIT_MARKER}.`
+      `Never call the Farol MCP Git tools in this managed Chat session; use ${GIT_MARKER}.`
     ].join(' ')
   }
 
@@ -2391,76 +2354,6 @@ export class AgentController {
     return `Farol pipeline activity for this chat:\n${lines.join('\n')}`
   }
 
-  /**
-   * A run over ACP (OpenCode): Farol's managed server rides in the session,
-   * and permission requests go to the developer, or are answered by
-   * auto-approve. Plan answers every request with no: its run config already
-   * denies shell, and nothing in Plan should need permission.
-   */
-  private async runAcpAgent(
-    task: Task,
-    prompt: string,
-    sink: AgentSink,
-    opts: Parameters<AgentController['runAgent']>[4]
-  ): Promise<number> {
-    const via = openRouterAgent()
-    const child = opts?.child
-    const provider = child?.provider ?? task.request.provider
-    const model = child ? child.model : task.request.model
-    const cli = cliFor(provider, via)
-    const bin = resolveBinFrom([cli])
-    if (!bin) {
-      sink.text(`farol: ${managedAiCommand(provider, prompt, model, { via }).hint}\n`)
-      return 127
-    }
-    const plan = task.request.mode === 'plan'
-    const askFirst = !this.autoApproves(task, provider)
-    const env = aiEnv(provider, via)
-    // Subagents get no managed server, so they cannot delegate in turn; ACP asks for approval itself.
-    const mcp = this.managed && !child ? this.managed.mcp(task.request.id, undefined, ['delegate']) : undefined
-    applyOpencodeConfig(env, opencodeRunConfig(plan ? 'plan' : 'build', askFirst, !!mcp))
-    const result = await runAcp({
-      bin,
-      args: ['acp'],
-      cwd: task.request.cwd,
-      env,
-      prompt,
-      mode: plan ? 'plan' : 'build',
-      ...(model ? { model: provider === 'openrouter' ? openCodeModel(model) : model } : {}),
-      ...(opts?.session?.resume ? { resume: opts.session.resume } : {}),
-      mcpServers: mcp ? [acpMcpServer(MANAGED_MCP_SERVER_KEY, mcp)] : [],
-      permission: this.acpPermission(task, plan, askFirst, child?.delegateId),
-      ...this.acpCallbacks(task, sink, opts, !!child)
-    })
-    if (result.unsupported && !task.cancelled) return this.runAgent(task, prompt, sink, false, { ...opts, noAcp: true })
-    return result.code
-  }
-
-  /** Answers the agent's permission requests: no in Plan, yes under auto-approve, otherwise the developer decides. */
-  private acpPermission(task: Task, plan: boolean, askFirst: boolean, delegateId: string | undefined) {
-    return async (call: Parameters<typeof acpApprovalAsk>[0]): Promise<boolean> => {
-      if (plan) return false
-      if (!askFirst) return true
-      const answer = await this.requestApproval(task.request.id, {
-        ...acpApprovalAsk(call),
-        ...(delegateId ? { delegateId } : {})
-      })
-      return answer.allow
-    }
-  }
-
-  /** Passes an ACP run's output, session, usage and process on to the chat. */
-  private acpCallbacks(task: Task, sink: AgentSink, opts: Parameters<AgentController['runAgent']>[4], child: boolean) {
-    return {
-      onText: (chunk: string) => sink.text(chunk),
-      onTool: (event: Parameters<AgentSink['tool']>[0]) => sink.tool(event),
-      onNoise: (chunk: string) => sink.noise(chunk),
-      onSession: (id: string) => opts?.session?.onSession(id),
-      onUsage: (tokens: number) => opts?.session?.onUsage?.({ tokens }),
-      onProcess: (proc: ChildProcess | null) => this.setProcess(task, child, proc)
-    }
-  }
-
   private setProcess(task: Task, child: boolean, proc: ChildProcess | null): void {
     const prev = child ? task.child : task.process
     if (child) task.child = proc
@@ -2473,26 +2366,24 @@ export class AgentController {
   private agentCommand(
     task: Task,
     prompt: string,
-    plain: boolean,
-    opts: Parameters<AgentController['runAgent']>[4],
-    who: { provider: AiProvider; model: string | undefined; via: ReturnType<typeof openRouterAgent> }
+    opts: Parameters<AgentController['runAgent']>[3],
+    who: { provider: AiProvider; model: string | undefined }
   ) {
-    const { provider, model, via } = who
+    const { provider, model } = who
     const child = opts?.child
     const askApproval = !this.autoApproves(task, provider)
     const tools = managedToolsFor({ subagent: !!child, claudeAsks: askApproval && provider === 'claude' })
     // A server with no tools shows up as broken, so a run with nothing to offer gets none.
     const mcp = this.managed && tools.length ? this.managed.mcp(task.request.id, child?.delegateId, tools) : undefined
-    const codexHook = askApproval ? this.managed?.codexHook?.(task.request.id, child?.delegateId) : undefined
     const spec = managedAiCommand(provider, prompt, model, {
-      jsonFormat: !plain,
-      via,
       mode: task.request.mode,
       ...(child ? {} : { effort: normalizeEffort(task.request.effort) }),
-      ...commandExtras(opts, { mcp, askApproval, codexHook })
+      tools: opts?.tools,
+      resume: opts?.session?.resume,
+      mcp,
+      askApproval
     })
-    const env = aiEnv(provider, via)
-    applyOpencodeConfig(env, spec.opencodeConfig)
+    const env = aiEnv(provider)
     // Claude's limit on one MCP call; a `delegate` waits as long as its subagent runs.
     if (mcp) env.MCP_TOOL_TIMEOUT = String(MANAGED_TOOL_TIMEOUT_SEC * 1000)
     return { spec, env }
@@ -2502,27 +2393,24 @@ export class AgentController {
     task: Task,
     prompt: string,
     sink: AgentSink,
-    plain = false,
     opts?: {
       tools?: string[]
-      webSearch?: boolean
       session?: AgentSessionIo
       /** Run a subagent with this provider/model instead of the task's own agent. */
       child?: { provider: AiProvider; model?: string; delegateId: string }
-      /** The CLI turned out not to speak ACP; use its JSON mode. */
-      noAcp?: boolean
     }
   ): Promise<number> {
     if (task.cancelled) return Promise.resolve(1)
-    const via = openRouterAgent()
     const child = opts?.child
     const provider = child?.provider ?? task.request.provider
     const model = child ? child.model : task.request.model
-    if (!plain && !opts?.noAcp && ACP_CLIS.includes(cliFor(provider, via))) {
-      return this.runAcpAgent(task, prompt, sink, opts)
+    const refusal = managedGitRefusal(provider)
+    if (refusal) {
+      sink.text(`${BLOCK_MARKER} ${refusal}\n`)
+      return Promise.resolve(1)
     }
     const isChild = !!child
-    const { spec, env } = this.agentCommand(task, prompt, plain, opts, { provider, model, via })
+    const { spec, env } = this.agentCommand(task, prompt, opts, { provider, model })
     const bin = resolveBinFrom(spec.bins)
     if (!bin) {
       sink.text(`farol: ${spec.hint}\n`)
@@ -2533,7 +2421,6 @@ export class AgentController {
     // hold on to the tail and show it if the run turns out to have failed.
     const parser = spec.stream === 'ndjson' ? new AgentStreamParser() : null
     let diagnostics = ''
-    let stdoutScan = ''
     // Chunks split wherever the pipe fills, including mid-character.
     const stdoutText = new StringDecoder('utf8')
     const stderrText = new StringDecoder('utf8')
@@ -2577,7 +2464,6 @@ export class AgentController {
         // would eat a space that straddles two chunks. Parse the bytes as-is.
         const text = stdoutText.write(chunk)
         if (parser) {
-          stdoutScan = (stdoutScan + text).slice(-SCAN_WINDOW)
           consume(parser.push(text))
         } else {
           sink.text(plainText(text))
@@ -2598,16 +2484,6 @@ export class AgentController {
       })
       child.on('close', (code) => {
         const exit = code ?? 127
-        if (
-          !settled &&
-          !task.cancelled &&
-          shouldRetryPlainOpenCode(plain, exit, provider, `${diagnostics}\n${stdoutScan}`)
-        ) {
-          settled = true
-          this.setProcess(task, isChild, null)
-          void this.runAgent(task, prompt, sink, true, opts).then(resolve)
-          return
-        }
         done(exit)
       })
     })

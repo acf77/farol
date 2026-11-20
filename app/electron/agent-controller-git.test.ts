@@ -17,7 +17,7 @@ import { AgentController, type AgentExecutor, type GitActions } from './agent-co
 let repo: string
 
 beforeEach(() => {
-  repo = fs.mkdtempSync(path.join(os.tmpdir(), 'farol-git-actions-'))
+  repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'farol-git-actions-')))
   const git = (...args: string[]) => execFileSync('git', args, { cwd: repo })
   git('init', '-q')
   git('config', 'user.email', 't@example.com')
@@ -139,6 +139,60 @@ describe('Git actions a managed Chat asks for', () => {
     expect(commitScope.signal?.aborted).toBe(false)
   })
 
+  it('keeps an in-flight action queue in its original repository and mode', async () => {
+    execFileSync('git', ['branch', '-M', 'main'], { cwd: repo })
+    const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'farol-other-repo-')))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: other })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const execute = agent([
+      'FAROL_GIT: {"action":"push"}\nFAROL_GIT: {"action":"create_pr"}\nFAROL_PIPELINES: []',
+      'FAROL_PIPELINES: []'
+    ])
+    let calls = 0
+    const { gitRun, controller, events } = setup(execute, {
+      branch: 'main',
+      run: async () => { if (++calls === 1) await gate; return DONE }
+    })
+    try {
+      await vi.waitFor(() => expect(gitRun).toHaveBeenCalledTimes(1), { timeout: 10_000 })
+      controller.message('task-1', 'Read the other repository', undefined, undefined, undefined, 'plan', undefined, other, other)
+      expect(execute.mock.calls[0][0]).toMatchObject({ cwd: repo, mode: 'build' })
+      release()
+      await vi.waitFor(() => expect(events.filter((event) => event.kind === 'status' && event.status === 'completed')).toHaveLength(2), { timeout: 10_000 })
+      expect(gitRun.mock.calls.map((call) => [call[0], call[1].action, call[2].branch])).toEqual([
+        [repo, 'push', 'main'], [repo, 'create_pr', 'main']
+      ])
+      expect(execute.mock.calls[1][0]).toMatchObject({ cwd: other, checkout: other, mode: 'plan' })
+    } finally {
+      release()
+      fs.rmSync(other, { recursive: true, force: true })
+    }
+  })
+
+  it('cannot lift an active Plan restriction with a queued Build request', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let calls = 0
+    const execute = vi.fn<AgentExecutor>(async (_request, _prompt, output) => {
+      if (++calls === 1) {
+        await gate
+        output('FAROL_GIT: {"action":"push"}\nFAROL_PIPELINES: []\n')
+      } else output('FAROL_PIPELINES: []\n')
+      return 0
+    })
+    const { gitRun, controller, events } = setup(execute, { request: request({ mode: 'plan' }) })
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1), { timeout: 10_000 })
+    controller.setProvider('task-1', 'claude', undefined, 'build')
+    controller.message('task-1', 'Start the change', undefined, undefined, undefined, 'build')
+    expect(execute.mock.calls[0][0].mode).toBe('plan')
+    release()
+    await vi.waitFor(() => expect(events.filter((event) => event.kind === 'status' && event.status === 'completed')).toHaveLength(2), { timeout: 10_000 })
+    expect(gitRun).not.toHaveBeenCalled()
+    expect(events.some((event) => event.kind === 'pipeline' && event.git?.detail.includes('Plan permits only Git read actions'))).toBe(true)
+    expect(execute.mock.calls[1][0].mode).toBe('build')
+  })
+
   it('does not commit when another chat worked in the same checkout during the turn', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
@@ -225,7 +279,7 @@ describe('Git actions a managed Chat asks for', () => {
     expect(gitRun.mock.calls[0]![1]).toEqual({ action: 'push' })
   })
 
-  it('tells the agent about Git actions, and acts on them, only while they are switched on', async () => {
+  it('keeps the Git rule when actions are off and refuses requests without another route', async () => {
     const on = agent(['FAROL_PIPELINES: []'])
     await setup(on).completed()
     expect(vi.mocked(on).mock.calls[0]![1]).toContain('FAROL_GIT:')
@@ -233,15 +287,38 @@ describe('Git actions a managed Chat asks for', () => {
     const off = agent([`FAROL_GIT: ${COMMIT}\nFAROL_PIPELINES: []`])
     const { gitRun, completed } = setup(off, { enabled: false })
     await completed()
-    expect(vi.mocked(off).mock.calls[0]![1]).not.toContain('FAROL_GIT:')
+    expect(vi.mocked(off).mock.calls[0]![1]).toContain('Never run git or gh')
+    expect(vi.mocked(off).mock.calls[0]![1]).toContain('Git actions are off')
     expect(gitRun).not.toHaveBeenCalled()
   })
 
-  it('ignores a Git request in Plan mode', async () => {
+  it('refuses a Git write request in Plan and keeps the Git rule', async () => {
     const execute = agent(['FAROL_GIT: {"action":"push"}\nFAROL_PIPELINES: []'])
-    const { gitRun, completed } = setup(execute, { request: request({ mode: 'plan' }) })
+    const { gitRun, events, completed } = setup(execute, { request: request({ mode: 'plan' }) })
     await completed()
-    expect(vi.mocked(execute).mock.calls[0]![1]).not.toContain('FAROL_GIT:')
+    expect(vi.mocked(execute).mock.calls[0]![1]).toContain('Plan permits only Git read actions')
+    expect(events.some((event) => event.kind === 'pipeline' && event.git?.detail.includes('Plan permits only Git read actions'))).toBe(true)
     expect(gitRun).not.toHaveBeenCalled()
   })
+
+  for (const mode of ['build', 'plan'] as const) {
+    it(`returns Git read results for the agent to use in ${mode}`, async () => {
+      const execute = agent([
+        'FAROL_GIT: {"action":"status"}\nFAROL_GIT: {"action":"diff"}\nFAROL_GIT: {"action":"log"}\nFAROL_GIT: {"action":"show","ref":"HEAD"}\nFAROL_PIPELINES: []',
+        'FAROL_PIPELINES: []'
+      ])
+      const { gitRun, run, completed } = setup(execute, {
+        request: request({ mode, maxAttempts: 1 }), run: async (_cwd, action) => ({ ok: true, message: `Read ${action.action}` })
+      })
+      await completed()
+      expect(gitRun.mock.calls.map((call) => call[1].action)).toEqual(['status', 'diff', 'log', 'show'])
+      expect(execute).toHaveBeenCalledTimes(2)
+      const prompt = execute.mock.calls[1]![1]
+      expect(prompt).toContain('Git status done: Read status')
+      expect(prompt).toContain('Git show done: Read show')
+      expect(prompt).toContain('Do not repeat completed actions')
+      expect(run).not.toHaveBeenCalled()
+    })
+  }
+
 })

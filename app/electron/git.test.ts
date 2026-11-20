@@ -4,16 +4,22 @@ import os from 'os'
 import path from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { runAiOnce, githubInfo, githubGitEnv, execCli, realExec } = vi.hoisted(() => ({
+const { runAiOnce, githubInfo, githubGitEnv, execCli, realExec, releaseCredential } = vi.hoisted(() => ({
   runAiOnce: vi.fn(),
   githubInfo: vi.fn(),
   githubGitEnv: vi.fn(),
+  releaseCredential: vi.fn(),
   /** Runs the real git, but lets a test see how it was called and make a command fail. */
   execCli: vi.fn(),
   realExec: { run: undefined as unknown as typeof import('./exec-cli').execCli }
 }))
 vi.mock('./ai-oneshot', () => ({ runAiOnce }))
 vi.mock('./github', () => ({ githubInfo, githubGitEnv }))
+vi.mock('./git-credential-broker', () => ({
+  CREDENTIAL_NONCE_ENV: 'FAROL_GIT_CREDENTIAL_NONCE',
+  CREDENTIAL_SOCKET_ENV: 'FAROL_GIT_CREDENTIAL_SOCKET',
+  releaseCredential
+}))
 vi.mock('./exec-cli', async (importOriginal) => {
   realExec.run = (await importOriginal<typeof import('./exec-cli')>()).execCli
   return { execCli }
@@ -39,6 +45,13 @@ function tmpRepo(): string {
   return dir
 }
 
+/** Name the clone's origin as an https://github.com URL that git still maps to the local repo. */
+function githubOrigin(cwd: string): void {
+  const origin = git(cwd, ['remote', 'get-url', 'origin']).trim()
+  git(cwd, ['config', 'url.' + origin + '.insteadOf', 'https://github.com/acme/repo.git'])
+  git(cwd, ['remote', 'set-url', 'origin', 'https://github.com/acme/repo.git'])
+}
+
 beforeEach(() => {
   githubInfo.mockResolvedValue({ available: true, prs: [] })
   githubGitEnv.mockResolvedValue(undefined)
@@ -49,6 +62,7 @@ afterEach(() => {
   runAiOnce.mockReset()
   githubInfo.mockReset()
   githubGitEnv.mockReset()
+  releaseCredential.mockReset()
   execCli.mockReset()
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
 })
@@ -281,6 +295,125 @@ describe('commitAll', () => {
     expect(git(cwd, ['rev-parse', ':a.ts']).trim()).toBe(stagedBlob)
   })
 
+  it('restores an unselected wildcard filename without reverting selected files in the index', async () => {
+    const cwd = tmpRepo()
+    for (const file of ['app.txt', '*.txt', ':(glob)*']) fs.writeFileSync(path.join(cwd, file), 'one\n')
+    git(cwd, ['add', '.'])
+    git(cwd, ['commit', '-m', 'init'])
+    for (const file of ['app.txt', '*.txt', ':(glob)*']) fs.writeFileSync(path.join(cwd, file), 'two\n')
+    git(cwd, ['--literal-pathspecs', 'add', '--', '*.txt', ':(glob)*'])
+    const savedBlob = git(cwd, ['rev-parse', ':*.txt']).trim()
+    fs.writeFileSync(path.join(cwd, '*.txt'), 'working copy\n')
+    const scope = { branch: git(cwd, ['branch', '--show-current']).trim(), tree: await captureTree(cwd) }
+
+    expect((await commitAll(cwd, 'selected file', ['app.txt'], scope)).ok).toBe(true)
+    expect(git(cwd, ['diff', '--cached', '--name-only', '-z']).split('\0').filter(Boolean).sort()).toEqual(['*.txt', ':(glob)*'].sort())
+    expect(git(cwd, ['rev-parse', ':*.txt']).trim()).toBe(savedBlob)
+    expect(fs.readFileSync(path.join(cwd, '*.txt'), 'utf8')).toBe('working copy\n')
+  })
+
+  it('refuses an extra staged path and restores the saved index before any commit', async () => {
+    const cwd = tmpRepo()
+    for (const file of ['app.ts', 'user.ts']) fs.writeFileSync(path.join(cwd, file), 'one\n')
+    git(cwd, ['add', '.'])
+    git(cwd, ['commit', '-m', 'init'])
+    for (const file of ['app.ts', 'user.ts']) fs.writeFileSync(path.join(cwd, file), 'two\n')
+    const saved = git(cwd, ['write-tree']).trim()
+    const scope = { branch: git(cwd, ['branch', '--show-current']).trim(), tree: await captureTree(cwd) }
+    execCli.mockImplementation(async (...args: Parameters<typeof realExec.run>) => {
+      const result = await realExec.run(...args)
+      if (args[2][0] === '--literal-pathspecs' && args[2][1] === 'add') git(cwd, ['add', '--', 'user.ts'])
+      return result
+    })
+
+    const result = await commitAll(cwd, 'selected file', ['app.ts'], scope)
+
+    expect(result).toMatchObject({ ok: false, error: 'The staged files include paths outside the commit selection.' })
+    expect(git(cwd, ['write-tree']).trim()).toBe(saved)
+    expect(execCli.mock.calls.some(([, , args]) => args[0] === 'commit')).toBe(false)
+    expect(git(cwd, ['log', '-1', '--format=%s']).trim()).toBe('init')
+  })
+
+  describe('when a pre-commit hook changes what is staged', () => {
+    function repoWithHook(body: string): { cwd: string; saved: string; scope: { branch: string; tree: string | undefined } } {
+      const cwd = tmpRepo()
+      for (const file of ['app.ts', 'user.ts']) fs.writeFileSync(path.join(cwd, file), 'one\n')
+      git(cwd, ['add', '.'])
+      git(cwd, ['commit', '-m', 'init'])
+      for (const file of ['app.ts', 'user.ts']) fs.writeFileSync(path.join(cwd, file), 'two\n')
+      const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
+      fs.writeFileSync(hook, `#!/bin/sh\n${body}\n`)
+      fs.chmodSync(hook, 0o755)
+      return { cwd, saved: git(cwd, ['write-tree']).trim(), scope: { branch: git(cwd, ['branch', '--show-current']).trim(), tree: undefined } }
+    }
+
+    it('reports an agent commit that holds a file the hook staged', async () => {
+      const { cwd, saved, scope } = repoWithHook('git add user.ts')
+      const tree = await captureTree(cwd)
+      const result = await commitAll(cwd, 'selected file', ['app.ts'], { ...scope, tree })
+      expect(result.error).toContain('The staged files include paths outside the commit selection.')
+      expect(git(cwd, ['log', '-1', '--format=%s']).trim()).toBe('selected file')
+      expect(git(cwd, ['write-tree']).trim()).not.toBe(saved)
+    })
+
+    it('reports an agent commit whose selected file the hook rewrote', async () => {
+      const { cwd, scope } = repoWithHook("echo hooked > app.ts\ngit add app.ts")
+      const tree = await captureTree(cwd)
+      const result = await commitAll(cwd, 'selected file', ['app.ts'], { ...scope, tree })
+      expect(result.ok).toBe(false)
+      expect(result.error).toMatch(/app\.ts/)
+      expect(git(cwd, ['log', '-1', '--format=%s']).trim()).toBe('selected file')
+    })
+
+    it('does not move a branch or restore the index after another commit', async () => {
+      const { cwd, scope } = repoWithHook('git add user.ts')
+      const tree = await captureTree(cwd)
+      execCli.mockImplementation(async (...args: Parameters<typeof realExec.run>) => {
+        const result = await realExec.run(...args)
+        if (args[2][0] === 'diff-tree' && args[2].includes('--no-commit-id')) {
+          git(cwd, ['checkout', '-b', 'other'])
+          fs.writeFileSync(path.join(cwd, 'external.txt'), 'external\n')
+          git(cwd, ['add', 'external.txt'])
+          git(cwd, ['-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'external'])
+        }
+        return result
+      })
+      const result = await commitAll(cwd, 'selected file', ['app.ts'], { ...scope, tree })
+      expect(result.ok).toBe(false)
+      expect(git(cwd, ['branch', '--show-current']).trim()).toBe('other')
+      expect(git(cwd, ['log', '-1', '--format=%s']).trim()).toBe('external')
+    })
+  })
+
+  it('refuses a commit when the staged path set cannot be read', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'app.ts'), 'new\n')
+    execCli.mockImplementation((...args: Parameters<typeof realExec.run>) =>
+      args[2][0] === 'diff' && args[2].includes('--cached')
+        ? Promise.resolve({ code: 1, out: '', err: 'cannot read index' })
+        : realExec.run(...args)
+    )
+    expect(await commitAll(cwd, 'selected file', ['app.ts'])).toMatchObject({ ok: false, error: 'Could not read the staged files.' })
+    expect(execCli.mock.calls.some(([, , args]) => args[0] === 'commit')).toBe(false)
+  })
+
+  it('checks rename source paths and new nested files as individual selected files', async () => {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'old.txt'), 'one\n')
+    git(cwd, ['add', '.'])
+    git(cwd, ['commit', '-m', 'init'])
+    git(cwd, ['mv', 'old.txt', 'new.txt'])
+    fs.mkdirSync(path.join(cwd, 'nested'))
+    fs.writeFileSync(path.join(cwd, 'nested', 'new.txt'), 'new\n')
+    fs.writeFileSync(path.join(cwd, 'nested', 'user.txt'), 'user\n')
+    const selected = ['old.txt', 'new.txt', 'nested/new.txt']
+    const scope = { branch: git(cwd, ['branch', '--show-current']).trim(), tree: await captureTree(cwd) }
+
+    expect((await commitAll(cwd, 'selected files', selected, scope)).ok).toBe(true)
+    expect(git(cwd, ['diff-tree', '--no-commit-id', '--name-only', '--no-renames', '-r', '-z', 'HEAD']).split('\0').filter(Boolean).sort()).toEqual([...selected].sort())
+    expect(git(cwd, ['status', '--porcelain'])).toContain('?? nested/user.txt')
+  })
+
   it('commits only the selected files and leaves the rest unstaged', async () => {
     const cwd = tmpRepo()
     fs.writeFileSync(path.join(cwd, 'app.ts'), 'a\n')
@@ -298,16 +431,16 @@ describe('commitAll', () => {
     expect(git(cwd, ['diff', '--name-only']).trim()).toBe('extra.ts')
   })
 
-  it('restores an unchecked staged file when the commit fails', async () => {
+  it('restores an unchecked wildcard file when the commit fails', async () => {
     const cwd = tmpRepo()
     fs.writeFileSync(path.join(cwd, 'selected.ts'), 'a\n')
-    fs.writeFileSync(path.join(cwd, 'unchecked.ts'), 'a\nc\n')
-    git(cwd, ['add', 'selected.ts', 'unchecked.ts'])
+    fs.writeFileSync(path.join(cwd, '*.ts'), 'a\nc\n')
+    git(cwd, ['--literal-pathspecs', 'add', '--', 'selected.ts', '*.ts'])
     git(cwd, ['commit', '-m', 'init'])
     fs.writeFileSync(path.join(cwd, 'selected.ts'), 'b\n')
-    fs.writeFileSync(path.join(cwd, 'unchecked.ts'), 'b\nc\n')
-    git(cwd, ['add', 'unchecked.ts'])
-    fs.writeFileSync(path.join(cwd, 'unchecked.ts'), 'b\nd\n')
+    fs.writeFileSync(path.join(cwd, '*.ts'), 'b\nc\n')
+    git(cwd, ['--literal-pathspecs', 'add', '--', '*.ts'])
+    fs.writeFileSync(path.join(cwd, '*.ts'), 'b\nd\n')
 
     git(cwd, ['config', 'core.hooksPath', '.git/hooks'])
     const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
@@ -317,9 +450,9 @@ describe('commitAll', () => {
     const res = await commitAll(cwd, 'feat: change', ['selected.ts'])
     expect(res.ok).toBe(false)
     expect(res.hookRun?.hooks).toEqual(['pre-commit'])
-    expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('unchecked.ts')
-    expect(git(cwd, ['diff', '--cached', '--', 'unchecked.ts'])).toContain('+d')
-    expect(git(cwd, ['diff', '--', 'unchecked.ts']).trim()).toBe('')
+    expect(git(cwd, ['diff', '--cached', '--name-only']).trim()).toBe('*.ts')
+    expect(git(cwd, ['--literal-pathspecs', 'diff', '--cached', '--', '*.ts'])).toContain('+d')
+    expect(git(cwd, ['--literal-pathspecs', 'diff', '--', '*.ts']).trim()).toBe('')
     expect(git(cwd, ['diff', '--name-only']).trim()).toBe('selected.ts')
   })
 
@@ -377,7 +510,7 @@ describe('operations that overlap on one checkout', () => {
     return { held: () => held, release }
   }
 
-  const calls = (name: string) => execCli.mock.calls.filter(([, , args]) => args[0] === name)
+  const calls = (name: string) => execCli.mock.calls.filter(([, , args]) => args[args[0] === '--literal-pathspecs' ? 1 : 0] === name)
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
   it('run commits one after the other, so neither commits the other\'s files', async () => {
@@ -805,6 +938,7 @@ describe('status and push without upstream', () => {
   it('holds a branch switch until the push is done, so the push publishes the branch it began on', async () => {
     const cwd = cloneRepo()
     const origin = git(cwd, ['remote', 'get-url', 'origin']).trim()
+    githubOrigin(cwd)
     git(cwd, ['checkout', '-b', 'feat'])
     fs.writeFileSync(path.join(cwd, 'feat.txt'), 'new\n')
     git(cwd, ['add', 'feat.txt'])
@@ -831,13 +965,20 @@ describe('status and push without upstream', () => {
 
   describe('with a GitHub token', () => {
     const TOKEN_ENV = {
-      GIT_CONFIG_COUNT: '1',
-      GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-      GIT_CONFIG_VALUE_0: 'Authorization: Basic c2VjcmV0'
+      FAROL_GIT_CREDENTIAL_SOCKET: '/mock/cred.sock',
+      FAROL_GIT_CREDENTIAL_NONCE: 'test-nonce',
+      GIT_TERMINAL_PROMPT: '0',
+      ELECTRON_RUN_AS_NODE: '1',
+      GIT_CONFIG_COUNT: '2',
+      GIT_CONFIG_KEY_0: 'credential.https://github.com.helper',
+      GIT_CONFIG_VALUE_0: '',
+      GIT_CONFIG_KEY_1: 'credential.https://github.com.helper',
+      GIT_CONFIG_VALUE_1: "!'/mock/Farol' '/mock/git-credential.js'"
     }
 
-    function branchAhead(): string {
+    function branchAhead(github = true): string {
       const cwd = cloneRepo()
+      if (github) githubOrigin(cwd)
       git(cwd, ['checkout', '-b', 'feat'])
       fs.writeFileSync(path.join(cwd, 'feat.txt'), 'new\n')
       git(cwd, ['add', 'feat.txt'])
@@ -847,13 +988,37 @@ describe('status and push without upstream', () => {
 
     const pushes = () => execCli.mock.calls.filter(([, , args]) => args[0] === 'push')
 
-    it('signs the push in through the environment and keeps the token off the command line', async () => {
+    it('registers the credential helper in the environment and keeps the token off the command line', async () => {
       githubGitEnv.mockResolvedValue(TOKEN_ENV)
       await expect(push(branchAhead())).resolves.toMatchObject({ ok: true })
       expect(pushes()).toHaveLength(1)
       const [, , args, , env] = pushes()[0]!
-      expect(args.join(' ')).not.toContain('c2VjcmV0')
+      expect(args.join(' ')).not.toMatch(/Authorization|c2VjcmV0/i)
       expect(env).toEqual(TOKEN_ENV)
+      expect(env?.GIT_CONFIG_VALUE_1).not.toMatch(/Authorization|x-access-token/i)
+      expect(releaseCredential).toHaveBeenCalledWith('test-nonce')
+    })
+
+    it('does not put the token in the environment a pre-push hook inherits', async () => {
+      githubGitEnv.mockResolvedValue(TOKEN_ENV)
+      const cwd = branchAhead()
+      const dump = path.join(cwd, 'hook-env.log')
+      prePushHook(cwd, `env > '${dump}'`)
+      await expect(push(cwd)).resolves.toMatchObject({ ok: true })
+      const text = fs.readFileSync(dump, 'utf8')
+      expect(text).not.toMatch(/GIT_CONFIG_VALUE.*Authorization/i)
+      expect(text).not.toMatch(/x-access-token|c2VjcmV0/i)
+    })
+
+    it('does not give a pre-push hook the credential grant, whether or not git spent it', async () => {
+      githubGitEnv.mockResolvedValue(TOKEN_ENV)
+      const cwd = branchAhead()
+      const dump = path.join(cwd, 'hook-env.log')
+      prePushHook(cwd, `echo "args: $@" > '${dump}'\nenv >> '${dump}'`)
+      await expect(push(cwd)).resolves.toMatchObject({ ok: true })
+      const text = fs.readFileSync(dump, 'utf8')
+      expect(text).toMatch(/^args: origin /)
+      expect(text).not.toMatch(/FAROL_GIT_CREDENTIAL/)
     })
 
     /** A `pre-push` hook in `cwd` running `body`. */
@@ -900,6 +1065,26 @@ describe('status and push without upstream', () => {
       expect(res.ok).toBe(false)
       expect(res.hookRun?.hooks).toEqual(['pre-push'])
       expect(pushes()).toHaveLength(1)
+    })
+
+    it('gives no credentials to a remote that is not https://github.com', async () => {
+      githubGitEnv.mockResolvedValue(TOKEN_ENV)
+      // A local remote never asks for the token, so a hook could redeem the grant: none is made.
+      const cwd = branchAhead(false)
+      await expect(push(cwd)).resolves.toMatchObject({ ok: true })
+      expect(githubGitEnv).not.toHaveBeenCalled()
+      expect(pushes()[0]![4]).toBeUndefined()
+    })
+
+    it('pulls with hooks off while the token is granted, and merges without it', async () => {
+      githubGitEnv.mockResolvedValue(TOKEN_ENV)
+      const cwd = cloneRepo()
+      githubOrigin(cwd)
+      await expect(pull(cwd)).resolves.toMatchObject({ ok: true })
+      const [fetch, merge] = [['fetch'], ['merge']].map(([cmd]) => execCli.mock.calls.find(([, , args]) => args.includes(cmd!))!)
+      expect(fetch[2]).toEqual(['-c', `core.hooksPath=${os.devNull}`, 'fetch'])
+      expect(fetch[4]).toEqual(TOKEN_ENV)
+      expect(merge[4]).toBeUndefined()
     })
 
     it('reports a failure that is not about credentials without trying again', async () => {

@@ -1,22 +1,17 @@
 import { describe, expect, it } from 'vitest'
+import { managedAiCommand } from './ai'
 import {
   capabilityForToolName,
-  claudeToolsFor,
   defaultPlanSelection,
   FOCUS_ALLOWED,
-  fullToolPolicy,
   observeToolUse,
-  ompToolsFor,
-  planToolPolicy,
   selectionFromChoice,
   TOOL_FOCI,
-  toolEnforcementFor,
   toolFocusFingerprint,
   toolPolicyFor,
   toolPolicyPrompt,
   toolSelectionQuestions,
   toolSelectionState,
-  TOOL_OPTIONAL,
   validateToolSelection,
   type ToolSelection
 } from './tool-policy'
@@ -34,7 +29,7 @@ describe('selectionFromChoice', () => {
     expect(selectionFromChoice(choice('implement'), { fingerprint })).toEqual({
       kind: 'selected',
       focus: 'implement',
-      kept: ['edit', 'shell'],
+      kept: ['edit'],
       omitted: ['web'],
       candidatesFingerprint: fingerprint
     })
@@ -43,11 +38,7 @@ describe('selectionFromChoice', () => {
       focus: 'inspect',
       kept: []
     })
-    expect(selectionFromChoice(choice('verify'), { fingerprint })).toMatchObject({
-      kind: 'selected',
-      focus: 'verify',
-      kept: ['shell']
-    })
+    expect(selectionFromChoice(choice('verify'), { fingerprint })).toBe(null)
   })
 
   it('abstains on low confidence, foreign ids, and fingerprint drift', () => {
@@ -73,11 +64,11 @@ describe('selectionFromChoice', () => {
 })
 
 describe('validateToolSelection', () => {
-  it('fails open when the cached Build focus set drifted', () => {
+  it('restores only edit/web when the cached Build focus set drifted', () => {
     const selection: ToolSelection = {
       kind: 'selected',
       focus: 'implement',
-      kept: ['edit', 'shell'],
+      kept: ['edit'],
       omitted: ['web'],
       candidatesFingerprint: 'old'
     }
@@ -91,15 +82,15 @@ describe('validateToolSelection', () => {
     const fingerprint = toolFocusFingerprint('build')
     const selection: ToolSelection = {
       kind: 'selected',
-      focus: 'verify',
+      focus: 'inspect',
       kept: ['edit'],
-      omitted: ['shell', 'web'],
+      omitted: ['web'],
       candidatesFingerprint: fingerprint
     }
     expect(validateToolSelection(selection)).toEqual({
       kind: 'selected',
-      focus: 'verify',
-      kept: [...FOCUS_ALLOWED.verify],
+      focus: 'inspect',
+      kept: [...FOCUS_ALLOWED.inspect],
       omitted: ['edit', 'web'],
       candidatesFingerprint: fingerprint
     })
@@ -123,6 +114,9 @@ describe('toolSelectionQuestions', () => {
     expect(questions.focus.type).toBe('choice')
     expect(Object.keys(questions.focus.criteria).sort()).toEqual([...TOOL_FOCI].sort())
     expect(questions.focus.criteria.implement).toMatch(/modify project files/i)
+    expect(questions.focus.criteria.implement).toContain('Farol pipelines')
+    expect(questions.focus.criteria).not.toHaveProperty('verify')
+    expect(questions.focus.instructions).toContain('code execution are disabled')
   })
 
   it('asks only read-only foci in Plan mode', () => {
@@ -146,93 +140,47 @@ describe('toolSelectionState', () => {
 })
 
 describe('toolPolicyFor', () => {
-  it('uses native enforcement for Claude and OMP with mapped tools', () => {
+  it('maps the Build focus to the restricted launch tool list', () => {
     const selection: ToolSelection = {
       kind: 'selected',
       focus: 'implement',
-      kept: ['edit', 'shell'],
+      kept: ['edit'],
       omitted: ['web'],
       candidatesFingerprint: toolFocusFingerprint('build')
     }
-    const claude = toolPolicyFor('claude', selection)
-    expect(claude.enforcement).toBe('native')
-    expect(claude.nativeTools).toEqual(claudeToolsFor(['edit', 'shell']))
-    expect(claude.nativeTools).toContain('Read')
-    expect(claude.nativeTools).toContain('Edit')
-    expect(claude.nativeTools).toContain('Bash')
-    expect(claude.nativeTools).not.toContain('WebSearch')
-
-    const omp = toolPolicyFor('omp', selection)
-    expect(omp.enforcement).toBe('native')
-    expect(omp.nativeTools).toEqual(ompToolsFor(['edit', 'shell']))
-    expect(omp.nativeTools).toContain('read')
-    expect(omp.nativeTools).toContain('bash')
-    expect(omp.nativeTools).not.toContain('web_search')
+    const policy = toolPolicyFor(selection)
+    expect(policy.nativeTools).toEqual(['Read', 'Glob', 'Grep', 'AskUserQuestion', 'Edit', 'Write', 'NotebookEdit'])
+    const args = managedAiCommand('claude', 'apply the change', undefined, { tools: policy.nativeTools }).args
+    expect(args[args.indexOf('--tools') + 1].split(',')).toEqual(policy.nativeTools)
+    expect(toolPolicyPrompt(policy)).toMatch(/Do not use:.*web fetch\/search/i)
   })
 
-  it('uses prompt enforcement for Codex, Cursor, OpenCode, and OpenRouter', () => {
-    const selection: ToolSelection = {
-      kind: 'selected',
-      focus: 'implement',
-      kept: ['edit', 'shell'],
-      omitted: ['web'],
-      candidatesFingerprint: toolFocusFingerprint('build')
-    }
-    for (const provider of ['codex', 'cursor', 'opencode', 'openrouter'] as const) {
-      expect(toolEnforcementFor(provider)).toBe('prompt')
-      const policy = toolPolicyFor(provider, selection)
-      expect(policy.nativeTools).toEqual([])
-      expect(toolPolicyPrompt(policy)).toMatch(/Focus "implement"/i)
-      expect(toolPolicyPrompt(policy)).toMatch(/Do not use:.*web fetch\/search/i)
-    }
-  })
-
-  it('enforces OpenRouter natively with pi tool names when it rides pi', () => {
-    const selection: ToolSelection = {
-      kind: 'selected',
-      focus: 'implement',
-      kept: ['edit', 'shell'],
-      omitted: ['web'],
-      candidatesFingerprint: toolFocusFingerprint('build')
-    }
-    expect(toolEnforcementFor('openrouter', 'pi')).toBe('native')
-    expect(toolPolicyFor('openrouter', selection, 'pi').nativeTools).toEqual([
-      'read',
-      'grep',
-      'find',
-      'ls',
-      'edit',
-      'write',
-      'bash'
-    ])
-  })
-
-  it('fails open to the full set without native argv when fallback-full', () => {
-    const policy = fullToolPolicy('claude', 'no-key')
-    expect(policy.allowed).toEqual([...TOOL_OPTIONAL])
-    expect(policy.nativeTools).toEqual([])
-    expect(toolPolicyPrompt(policy)).toBe('')
+  it('keeps the execution limit and native tools when selection falls back', () => {
+    const policy = toolPolicyFor({ kind: 'fallback-full', reason: 'no-key' })
+    expect(policy.allowed).toEqual(['edit', 'web'])
+    expect(policy.nativeTools).toContain('Edit')
+    expect(policy.nativeTools).toContain('WebSearch')
+    expect(policy.nativeTools).not.toContain('Bash')
+    expect(toolPolicyPrompt(policy)).toContain('all shell commands and code execution')
   })
 
   it('applies a Plan ceiling with inspection + web on inspect, never edit/shell', () => {
-    const policy = planToolPolicy('codex', 'inspect')
+    const policy = toolPolicyFor(defaultPlanSelection())
     expect(policy.allowed).toEqual(['web'])
     expect(policy.selection).toEqual(defaultPlanSelection())
     expect(toolPolicyPrompt(policy)).toMatch(/Plan mode is read-only \(focus "inspect"\)/i)
     expect(toolPolicyPrompt(policy)).toMatch(/web fetch\/search|web/i)
     expect(toolPolicyPrompt(policy)).toMatch(/Do not use:.*file edits/i)
-    expect(toolPolicyPrompt(policy)).toMatch(/mutating shell/i)
+    expect(toolPolicyPrompt(policy)).toMatch(/all shell commands/i)
 
-    const claude = planToolPolicy('claude', 'inspect')
-    expect(claude.nativeTools).toEqual(claudeToolsFor(['web']))
-    expect(claude.nativeTools).toContain('Read')
-    expect(claude.nativeTools).toContain('WebSearch')
-    expect(claude.nativeTools).not.toContain('Edit')
-    expect(claude.nativeTools).not.toContain('Bash')
+    expect(policy.nativeTools).toContain('Read')
+    expect(policy.nativeTools).toContain('WebSearch')
+    expect(policy.nativeTools).not.toContain('Edit')
+    expect(policy.nativeTools).not.toContain('Bash')
 
-    const answer = planToolPolicy('claude', 'answer')
+    const answer = toolPolicyFor({ kind: 'plan', focus: 'answer', candidatesFingerprint: toolFocusFingerprint('plan') })
     expect(answer.allowed).toEqual([])
-    expect(answer.nativeTools).toEqual(claudeToolsFor([]))
+    expect(answer.nativeTools).toEqual(['Read', 'Glob', 'Grep', 'AskUserQuestion'])
     expect(answer.nativeTools).not.toContain('WebSearch')
     expect(toolPolicyPrompt(answer)).toMatch(/focus "answer"/i)
   })
@@ -250,17 +198,24 @@ describe('capabilityForToolName', () => {
 })
 
 describe('observeToolUse', () => {
+  it('reports execution under fallback and edits in Plan as violations', () => {
+    const fallback = toolPolicyFor({ kind: 'fallback-full', reason: 'no-key' })
+    expect(observeToolUse(fallback, ['Bash', 'Edit']).violations).toEqual(['shell'])
+    expect(observeToolUse(toolPolicyFor(defaultPlanSelection()), ['Write', 'python', 'WebFetch']).violations).toEqual(['edit', 'shell'])
+  })
+
+
   it('records omitted-family violations without treating inspection as a violation', () => {
-    const policy = toolPolicyFor('cursor', {
+    const policy = toolPolicyFor({
       kind: 'selected',
       focus: 'implement',
-      kept: ['edit', 'shell'],
+      kept: ['edit'],
       omitted: ['web'],
       candidatesFingerprint: toolFocusFingerprint('build')
     })
     const observation = observeToolUse(policy, ['Read', 'Bash', 'WebFetch', 'mystery'])
     expect(observation.used).toEqual(['shell', 'web'])
-    expect(observation.violations).toEqual(['web'])
+    expect(observation.violations).toEqual(['shell', 'web'])
     expect(observation.unknownCount).toBe(1)
   })
 })
