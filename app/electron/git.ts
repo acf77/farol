@@ -1,12 +1,15 @@
 import { execCli } from './exec-cli'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { runAiOnce } from './ai-oneshot'
+import { inTurn } from './repo-queue'
 import {
   activeHooks,
   commitBlockReason,
   conflictMergeBase,
   conflictResolvePrompt,
+  isSafeBranchName,
   isSecretPath,
   parseAheadBehind,
   parseGitStatus,
@@ -17,6 +20,7 @@ import {
   committableFiles
 } from '../shared/git-status'
 import { GIT_HOOK_EVENTS } from '../shared/types'
+import { branchMoved, staleFilesMessage } from '../shared/git-action'
 import { quoteShellArg } from '../shared/graph'
 import type {
   AiProvider,
@@ -30,7 +34,9 @@ import type {
   GitStatusFile,
   Pipeline
 } from '../shared/types'
-import { githubInfo } from './github'
+import { githubGitEnv, githubInfo } from './github'
+import { CREDENTIAL_NONCE_ENV, releaseCredential } from './git-credential-broker'
+import { shieldHooks } from './git-hook-shield'
 import type { WorktreeRequest } from '../shared/worktree'
 import {
   parseAlreadyOpenPath,
@@ -54,6 +60,51 @@ function git(
   return execCli('git', cwd, args, timeout)
 }
 
+/** What git prints when a remote refuses the credentials it was given. */
+const AUTH_FAILURE =
+  /authentication failed|invalid (username|credentials)|could not read (username|password)|permission to .+ denied|returned error: 40[13]/i
+
+/** The remote a push or fetch uses when the caller names none: the upstream of the current branch. */
+async function upstreamRemote(cwd: string): Promise<string | undefined> {
+  const head = await git(cwd, ['symbolic-ref', '-q', 'HEAD'])
+  if (head.code !== 0) return undefined
+  const res = await git(cwd, ['for-each-ref', '--format=%(upstream:remotename)', head.out.trim()])
+  return res.out.trim() || undefined
+}
+
+/** Only an https://github.com remote spends the one-use token grant; a hook can redeem a grant git never asked for. */
+async function isGithubHttps(cwd: string, remote: string, push: boolean): Promise<boolean> {
+  const res = await git(cwd, ['remote', 'get-url', ...(push ? ['--push'] : []), '--', remote])
+  return res.code === 0 && /^https:\/\/([^@/]*@)?github\.com\//i.test(res.out.trim())
+}
+
+/**
+ * Remote git with Farol's GitHub token, only for an https://github.com remote. On auth refuse (128) retry
+ * once with machine creds. A push keeps its hooks, run without the grant; a fetch runs with hooks off.
+ */
+async function gitRemote(
+  cwd: string,
+  args: string[],
+  timeout: number,
+  remote?: string
+): Promise<{ code: number; out: string; err: string }> {
+  const push = args[0] === 'push'
+  const named = remote ?? (await upstreamRemote(cwd))
+  const env = named && (await isGithubHttps(cwd, named, push)) ? await githubGitEnv() : undefined
+  if (!env) return git(cwd, push ? args : ['-c', `core.hooksPath=${os.devNull}`, ...args], timeout)
+  // A fetch runs no hook. A push runs its hooks through shims that drop the grant, which git may never spend.
+  const shield = push ? shieldHooks(await hooksInfo(cwd)) : undefined
+  const run = shield ? [...shield.args, ...args] : ['-c', `core.hooksPath=${os.devNull}`, ...args]
+  try {
+    const res = await execCli('git', cwd, run, timeout, env)
+    if (res.code !== 128 || !AUTH_FAILURE.test(res.err)) return res
+    return git(cwd, push ? args : run, timeout)
+  } finally {
+    shield?.cleanup()
+    releaseCredential(env[CREDENTIAL_NONCE_ENV])
+  }
+}
+
 function cliFirstLine(res: { out: string; err: string }): string {
   return (res.err || res.out).trim().split('\n').filter(Boolean)[0] ?? ''
 }
@@ -66,6 +117,63 @@ function cliLastLine(res: { out: string; err: string }): string {
 async function refExists(cwd: string, ref: string): Promise<boolean> {
   const res = await git(cwd, ['show-ref', '--verify', '--quiet', ref])
   return res.code === 0
+}
+
+/** The top folder of the checkout `cwd` is in, or undefined outside a repository. Git names changed files from there. */
+export async function repoRoot(cwd: string): Promise<string | undefined> {
+  const res = await git(cwd, ['rev-parse', '--show-toplevel'])
+  return res.code === 0 ? res.out.trim() || undefined : undefined
+}
+
+/**
+ * Run `task` alone on the checkout `cwd` is in. Git locks one command at a time, but a commit is
+ * several (read the status, stage, commit, undo the staging if it failed), a push reads the status
+ * and then pushes HEAD, and a pull, a merge or a branch switch rewrites what those read: two of them
+ * interleaved can commit each other's files, commit onto a branch that was switched under them, or
+ * push another branch than the one they checked. The queue
+ * is per checkout, named by the top folder git reports, so a subfolder and the top share it, and
+ * a linked worktree, which has its own index, does not.
+ */
+export async function alone<T>(cwd: string, task: () => Promise<T>): Promise<T> {
+  return inTurn((await repoRoot(cwd)) ?? path.resolve(cwd), task)
+}
+
+/**
+ * What the Git actions of one agent turn hold fixed. `branch` is the branch the checkout was on
+ * when the first began; undefined means HEAD was detached, or could not be read, and an action
+ * then goes on only while HEAD is still not on a branch. So a branch switch queued between a
+ * commit and a push cannot make the push or the pull request name another branch. `signal` ends
+ * with the turn: an action still waiting for its turn on the checkout does not begin. `tree` is the
+ * working copy as the turn's last attempt left it, which is what validation saw: a commit goes on
+ * only with files still as they were then, and with none known (undefined) no file can be checked,
+ * so none is committed. A caller with no scope (the Git panel, an MCP tool) holds nothing fixed.
+ */
+export interface GitScope {
+  branch: string | undefined
+  tree: string | undefined
+  /** No validated snapshot exists to check a commit against (a request over the bridge). */
+  anyTree?: boolean
+  signal?: AbortSignal
+}
+
+/** The branch HEAD is on, or undefined when it is detached or `cwd` is not in a repository. */
+export async function currentBranch(cwd: string): Promise<string | undefined> {
+  const res = await git(cwd, ['symbolic-ref', '--short', '-q', 'HEAD'])
+  return res.code === 0 ? res.out.trim() || undefined : undefined
+}
+
+/**
+ * Why an agent's action must not go on, asked when its turn on the checkout comes: the turn was
+ * stopped while the action waited, or a branch switch ahead of it moved the checkout off the
+ * branch the turn began on. An action already running is never asked: it finishes. A commit and a
+ * push ask inside their own turn; a pull request, which has no git function of its own, asks in
+ * the turn it takes through `alone`.
+ */
+export async function refusal(cwd: string, scope?: GitScope): Promise<string | undefined> {
+  if (!scope) return undefined
+  if (scope.signal?.aborted) return 'Stopped before it began.'
+  const now = await currentBranch(cwd)
+  return now === scope.branch ? undefined : branchMoved(scope.branch, now)
 }
 
 export async function info(cwd: string): Promise<GitInfo> {
@@ -128,7 +236,15 @@ export async function info(cwd: string): Promise<GitInfo> {
   }
 }
 
-export async function checkout(cwd: string, branch: string): Promise<{ ok: boolean; message: string }> {
+export function checkout(cwd: string, branch: string): Promise<{ ok: boolean; message: string }> {
+  return alone(cwd, () => checkoutNow(cwd, branch))
+}
+
+async function checkoutNow(cwd: string, branch: string): Promise<{ ok: boolean; message: string }> {
+  // Git would read a leading dash as an option, and refuses to create such a branch, so there is none to switch to.
+  if (typeof branch !== 'string' || !branch.trim() || branch.startsWith('-')) {
+    return { ok: false, message: `"${branch}" is not a branch name.` }
+  }
   const bare = await git(cwd, ['rev-parse', '--is-bare-repository'])
   if (bare.code === 0 && bare.out.trim() === 'true') {
     return {
@@ -351,7 +467,14 @@ export async function githubStatus(cwd: string): Promise<GitHubInfo> {
 const CONFLICTS_IN_TREE = 'Conflicts are already in the working tree.'
 
 /** Merge `base` into HEAD so conflict markers exist for the agent to edit. */
-export async function mergeForConflicts(
+export function mergeForConflicts(
+  cwd: string,
+  base?: string
+): Promise<{ ok: boolean; message: string; files: string[] }> {
+  return alone(cwd, () => mergeForConflictsNow(cwd, base))
+}
+
+async function mergeForConflictsNow(
   cwd: string,
   base?: string
 ): Promise<{ ok: boolean; message: string; files: string[] }> {
@@ -373,7 +496,11 @@ export async function mergeForConflicts(
   if (!base) {
     return { ok: false, message: 'Could not determine the branch to merge.', files: [] }
   }
-  await git(cwd, ['fetch', 'origin', base], 120_000)
+  // `base` comes from the renderer or from GitHub: git must not read it as an option or a refspec.
+  if (!isSafeBranchName(base)) {
+    return { ok: false, message: `"${base}" is not a valid branch name.`, files: [] }
+  }
+  await gitRemote(cwd, ['fetch', 'origin', base], 120_000, 'origin')
   const from = await resolveConflictSource(cwd, base)
   if (!from) {
     return { ok: false, message: `Could not find ${base} to merge.`, files: [] }
@@ -609,9 +736,10 @@ async function withLineCounts<T extends Pick<GitStatus, 'staged' | 'unstaged' | 
   return { ...parsed, staged, unstaged, untracked, conflicts }
 }
 
-export async function status(cwd: string, base?: string): Promise<GitStatus> {
+/** Commit selection needs individual paths, including both sides of a rename. */
+export async function status(cwd: string, base?: string, individualFiles = false): Promise<GitStatus> {
   const [porcelain, tracking, baseMerge, remotes, unpublished] = await Promise.all([
-    git(cwd, ['status', '--porcelain=v1', '-z']),
+    git(cwd, ['status', '--porcelain=v1', '-z', ...(individualFiles ? ['--untracked-files=all', '--no-renames'] : [])]),
     git(cwd, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']),
     mergeBaseConflicts(cwd, base || undefined),
     git(cwd, ['remote']),
@@ -654,7 +782,7 @@ export async function recentCommits(cwd: string, limit = 5): Promise<GitCommit[]
 
 async function stageFiles(cwd: string, files: string[]): Promise<{ ok: boolean; message: string }> {
   if (!files.length) return { ok: false, message: 'Nothing safe to commit' }
-  const res = await git(cwd, ['add', '--', ...files])
+  const res = await git(cwd, ['--literal-pathspecs', 'add', '--', ...files])
   return { ok: res.code === 0, message: cliFirstLine(res) }
 }
 
@@ -662,7 +790,7 @@ async function unstageFiles(cwd: string, files: string[]): Promise<{ ok: boolean
   if (!files.length) return { ok: true, message: '' }
   // No revision argument: `reset` defaults to HEAD, and falls back to the empty
   // tree on an unborn HEAD (a repo with no commits).
-  const res = await git(cwd, ['reset', '-q', '--', ...files])
+  const res = await git(cwd, ['--literal-pathspecs', 'reset', '-q', '--', ...files])
   return { ok: res.code === 0, message: cliFirstLine(res) }
 }
 
@@ -703,9 +831,13 @@ async function failedCommit(
   removed: string[],
   failure: string,
   fallback: string,
-  hookRun?: GitHookRun
+  hookRun?: GitHookRun,
+  saved?: string
 ): Promise<{ ok: false; error: string; hookRun?: GitHookRun }> {
-  const restored = await restoreStagedFiles(cwd, added, removed)
+  // An agent commit saved the whole index before staging: put it back exactly, partial staging included.
+  const restored = saved
+    ? await git(cwd, ['read-tree', saved]).then((res) => ({ ok: res.code === 0, message: res.err.trim() }))
+    : await restoreStagedFiles(cwd, added, removed)
   const message = failure || fallback
   return {
     ok: false,
@@ -719,12 +851,24 @@ async function failedCommit(
 // as an agent-triggered pipeline run rather than the usual short CLI timeout.
 const HOOK_RUN_TIMEOUT_MS = 15 * 60_000
 
-export async function push(cwd: string): Promise<{ ok: boolean; message: string; hookRun?: GitHookRun }> {
+export function push(
+  cwd: string,
+  scope?: GitScope
+): Promise<{ ok: boolean; message: string; hookRun?: GitHookRun }> {
+  return alone(cwd, () => pushNow(cwd, scope))
+}
+
+async function pushNow(
+  cwd: string,
+  scope?: GitScope
+): Promise<{ ok: boolean; message: string; hookRun?: GitHookRun }> {
+  const refused = await refusal(cwd, scope)
+  if (refused) return { ok: false, message: refused }
   const st = await status(cwd)
   const blocked = pushBlockReason(st)
   if (blocked) return { ok: false, message: blocked }
   const args = !st.upstream && st.remote ? ['push', '-u', st.remote, 'HEAD'] : ['push']
-  const res = await git(cwd, args, HOOK_RUN_TIMEOUT_MS)
+  const res = await gitRemote(cwd, args, HOOK_RUN_TIMEOUT_MS, !st.upstream ? st.remote : undefined)
   const line = cliFirstLine(res)
   if (res.code === 0) return { ok: true, message: line || 'Pushed' }
   const hookRun = await hookRunFor(cwd, 'push', (res.err || res.out).trim())
@@ -732,11 +876,17 @@ export async function push(cwd: string): Promise<{ ok: boolean; message: string;
 }
 
 /** Bring a clean tracking branch forward without creating a merge commit. */
-export async function pull(cwd: string): Promise<{ ok: boolean; message: string }> {
+export function pull(cwd: string): Promise<{ ok: boolean; message: string }> {
+  return alone(cwd, () => pullNow(cwd))
+}
+
+async function pullNow(cwd: string): Promise<{ ok: boolean; message: string }> {
   const st = await status(cwd)
   if (!st.upstream) return { ok: false, message: 'Set an upstream branch before pulling.' }
   if (!st.clean) return { ok: false, message: 'Commit or stash local changes before pulling.' }
-  const res = await git(cwd, ['pull', '--ff-only'], 120_000)
+  const fetched = await gitRemote(cwd, ['fetch'], 120_000)
+  // Merge without credentials, so the hooks it runs (post-merge) never see the grant.
+  const res = fetched.code === 0 ? await git(cwd, ['merge', '--ff-only', '@{upstream}'], 120_000) : fetched
   const line = cliFirstLine(res)
   return { ok: res.code === 0, message: line || (res.code === 0 ? 'Already up to date' : 'Pull failed') }
 }
@@ -744,12 +894,15 @@ export async function pull(cwd: string): Promise<{ ok: boolean; message: string 
 async function commit(
   cwd: string,
   message: string
-): Promise<{ ok: boolean; message: string; hookRun?: GitHookRun }> {
+): Promise<{ ok: boolean; message: string; hookRun?: GitHookRun; commitId?: string }> {
   const trimmed = message.trim()
   if (!trimmed) return { ok: false, message: 'Commit message is empty' }
   const res = await git(cwd, ['commit', '-m', trimmed], HOOK_RUN_TIMEOUT_MS)
   const line = cliFirstLine(res)
-  if (res.code === 0) return { ok: true, message: line || 'Committed' }
+  if (res.code === 0) {
+    const summary = [...res.out.matchAll(/^\[[^\]\n]+\s([0-9a-f]{4,64})\] /gm)].at(-1)
+    return { ok: true, message: line || 'Committed', commitId: summary?.[1] }
+  }
   const hookRun = await hookRunFor(cwd, 'commit', (res.err || res.out).trim())
   return { ok: false, message: line || 'Commit failed', ...(hookRun ? { hookRun } : {}) }
 }
@@ -959,13 +1112,109 @@ export async function draftPullRequest(
   return { ok: true, title: parsed.title, description: parsed.description }
 }
 
+/**
+ * Check `paths` against the selection, then their content against the turn's validated snapshot.
+ * `differs` and `against` make the git command that lists which of the paths differ from the snapshot tree.
+ * NUL-separated paths and disabled rename detection preserve each exact filename.
+ */
+async function scopeError(
+  cwd: string,
+  scope: GitScope | undefined,
+  selected: string[],
+  paths: string[],
+  differs: string[],
+  against: string[] = []
+): Promise<string | undefined> {
+  const allowed = new Set(selected)
+  if (paths.some((file) => !allowed.has(file))) return 'The staged files include paths outside the commit selection.'
+  if (!scope || (scope.anyTree && !scope.tree)) return undefined
+  const res = scope.tree ? await git(cwd, ['--literal-pathspecs', ...differs, '--name-only', '--no-renames', '-z', scope.tree, ...against, '--', ...paths]) : undefined
+  const changed = res?.code === 0 ? res.out.split('\0').filter(Boolean) : paths
+  return changed.length ? staleFilesMessage(changed) : undefined
+}
+
+async function stagedCommitError(cwd: string, scope: GitScope | undefined, selected: string[]): Promise<string | undefined> {
+  const listed = await git(cwd, ['diff', '--cached', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv', '-z', '--'])
+  if (listed.code !== 0) return 'Could not read the staged files.'
+  return scopeError(cwd, scope, selected, listed.out.split('\0').filter(Boolean), ['diff-index', '--cached'])
+}
+
+/**
+ * Commit, and for an agent check what git committed: a pre-commit hook may stage other files or change
+ * the staged ones after `stagedCommitError` looked. Leave an invalid commit for the user to inspect.
+ */
+async function commitChecked(cwd: string, text: string, scope: GitScope | undefined, selected: string[]) {
+  if (!scope) return commit(cwd, text)
+  const done = await commit(cwd, text)
+  if (!done.ok) return done
+  // HEAD can change independently as soon as commit returns. Do not move a ref or
+  // restore the index after a successful commit: either may now belong to another process.
+  const head = done.commitId ? (await git(cwd, ['rev-parse', '--verify', `${done.commitId}^{commit}`])).out.trim() : ''
+  if (!head) return { ok: false, message: 'Could not identify the commit; inspect the repository.', committed: true }
+  const listed = await git(cwd, ['diff-tree', '--root', '--no-commit-id', '--name-only', '--no-renames', '-r', '-z', head])
+  const bad = listed.code === 0
+    ? await scopeError(cwd, scope, selected, listed.out.split('\0').filter(Boolean), ['diff-tree', '-r'], [head])
+    : 'Could not read the committed files.'
+  if (!bad) return done
+  return { ok: false, message: `${bad} Inspect the commit before continuing.`, committed: true }
+}
+
+/** The index as a tree, so a failed agent commit can put it back exactly, partial staging included. Undefined with no scope; null when git cannot write it. */
+async function indexTree(cwd: string, scope: GitScope | undefined): Promise<string | undefined | null> {
+  if (!scope) return undefined
+  const res = await git(cwd, ['write-tree'])
+  return res.code === 0 ? res.out.trim() : null
+}
+
+/** After an agent commit succeeded, give the files it left out their staging back, exactly as the saved index had it. */
+async function keepStaged(cwd: string, saved: string | undefined, removed: string[]): Promise<void> {
+  if (saved && removed.length) await git(cwd, ['--literal-pathspecs', 'restore', '--staged', `--source=${saved}`, '--', ...removed])
+}
+
 /** Make the index match `files`, commit, and restore its prior state on failure. */
-export async function commitAll(
+export function commitAll(
   cwd: string,
   message: string,
-  files?: string[]
+  files?: string[],
+  scope?: GitScope
 ): Promise<{ ok: boolean; message?: string; error?: string; hookRun?: GitHookRun }> {
-  const st = await status(cwd)
+  return alone(cwd, () => commitAllNow(cwd, message, files, scope))
+}
+
+type StageFailure = { message: string; fallback: string }
+
+/** Make the index hold exactly `selected`; for an agent, also match the turn's validated snapshot. */
+async function stageSelection(
+  cwd: string,
+  st: Awaited<ReturnType<typeof status>>,
+  selected: string[],
+  removed: string[],
+  scope: GitScope | undefined
+): Promise<StageFailure | undefined> {
+  const unstaged = await unstageFiles(cwd, removed)
+  if (!unstaged.ok) return { message: unstaged.message, fallback: 'Could not update staged files' }
+
+  // A deletion already in the index has nothing left for `git add` to match.
+  const needsAdd = new Set([...st.unstaged, ...st.untracked].map((file) => file.path))
+  const indexed = new Set(st.staged.filter((file) => file.kind === 'deleted').map((file) => file.path))
+  const toStage = selected.filter((file) => needsAdd.has(file) || !indexed.has(file))
+  const staged = toStage.length ? await stageFiles(cwd, toStage) : undefined
+  if (staged && !staged.ok) return { message: staged.message, fallback: 'Could not stage changes' }
+
+  // An agent's commit holds only what validation checked: what is staged must match its snapshot.
+  const invalid = await stagedCommitError(cwd, scope, selected)
+  return invalid ? { message: invalid, fallback: 'Could not check the staged files' } : undefined
+}
+
+async function commitAllNow(
+  cwd: string,
+  message: string,
+  files?: string[],
+  scope?: GitScope
+): Promise<{ ok: boolean; message?: string; error?: string; hookRun?: GitHookRun }> {
+  const refused = await refusal(cwd, scope)
+  if (refused) return { ok: false, error: refused }
+  const st = await status(cwd, undefined, true)
   const blocked = commitBlockReason(st)
   if (blocked) return { ok: false, error: blocked }
 
@@ -974,27 +1223,18 @@ export async function commitAll(
   const text = sanitizeCommitMessage(message)
   if (!text) return { ok: false, error: 'Commit message is empty' }
 
+  const saved = await indexTree(cwd, scope)
+  if (saved === null) return { ok: false, error: 'Could not read the staged files' }
   const { added, removed } = indexChanges(st, selected)
 
-  const unstaged = await unstageFiles(cwd, removed)
-  if (!unstaged.ok) {
-    return failedCommit(cwd, added, removed, unstaged.message, 'Could not update staged files')
-  }
-
-  // A deletion already in the index has nothing left for `git add` to match.
-  const needsAdd = new Set([...st.unstaged, ...st.untracked].map((file) => file.path))
-  const indexed = new Set(st.staged.filter((file) => file.kind === 'deleted').map((file) => file.path))
-  const toStage = selected.filter((file) => needsAdd.has(file) || !indexed.has(file))
-  if (toStage.length) {
-    const staged = await stageFiles(cwd, toStage)
-    if (!staged.ok) {
-      return failedCommit(cwd, added, removed, staged.message, 'Could not stage changes')
-    }
-  }
-  const done = await commit(cwd, text)
+  const stageFailure = await stageSelection(cwd, st, selected, removed, scope)
+  if (stageFailure) return failedCommit(cwd, added, removed, stageFailure.message, stageFailure.fallback, undefined, saved)
+  const done = await commitChecked(cwd, text, scope, selected)
   if (!done.ok) {
-    return failedCommit(cwd, added, removed, done.message, 'Commit failed', done.hookRun)
+    if ('committed' in done && done.committed) return { ok: false, error: done.message }
+    return failedCommit(cwd, added, removed, done.message, 'Commit failed', done.hookRun, saved)
   }
+  await keepStaged(cwd, saved, removed)
   return { ok: true, message: text }
 }
 

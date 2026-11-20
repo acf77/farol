@@ -167,9 +167,9 @@ describe('managed MCP server', () => {
     expect(Object.keys(JSON.parse(claudeMcpConfig(script)).mcpServers)).toEqual(['farol-chat'])
   })
 
-  it('recognises the delegate call as Claude and Codex name it', () => {
+  it('recognises the managed Claude delegate call', () => {
     expect(isDelegateToolName('mcp__farol-chat__delegate')).toBe(true)
-    expect(isDelegateToolName('farol-chat.delegate')).toBe(true)
+    expect(isDelegateToolName('farol-chat.delegate')).toBe(false)
     expect(isDelegateToolName('mcp__farol__run_pipeline')).toBe(false)
   })
 
@@ -185,10 +185,6 @@ describe('managed MCP server', () => {
     expect(servedTools({ FAROL_TOOLS: 'delegate' })).toEqual(['delegate'])
     expect(servedTools({ FAROL_TOOLS: '' })).toEqual([])
     expect(servedTools({})).toEqual(['delegate', 'approve'])
-  })
-
-  it('recognises the delegate call as ACP CLIs name it', () => {
-    expect(isDelegateToolName('farol-chat_delegate')).toBe(true)
   })
 
   it('offers pipeline tools only outside managed Chat', () => {

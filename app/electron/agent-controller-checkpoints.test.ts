@@ -18,7 +18,7 @@ const git = (...args: string[]): string => execFileSync('git', args, { cwd: repo
 const exists = (name: string): boolean => fs.existsSync(path.join(repo, name))
 
 beforeEach(() => {
-  repo = fs.mkdtempSync(path.join(os.tmpdir(), 'farol-turns-'))
+  repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'farol-turns-')))
   git('init', '-q', '-b', 'main')
   git('config', 'user.email', 't@example.com')
   git('config', 'user.name', 'T')

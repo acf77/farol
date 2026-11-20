@@ -5,6 +5,7 @@ import fs from 'fs'
 import type {
   AgentTaskRequest,
   AppSettings,
+  GitActionEvent,
   GitHookEvent,
   MergeStrategy,
   Pipeline,
@@ -17,8 +18,11 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pipelineStoreRootFor, pull as gitPull, push as gitPush, recentCommits, status as gitStatus, syncManagedHooks } from './git'
+import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, currentBranch, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pipelineStoreRootFor, pull as gitPull, push as gitPush, recentCommits, status as gitStatus, syncManagedHooks, type GitScope } from './git'
 import { createPullRequest, mergePullRequest } from './github'
+import { confineToProjects } from './confine'
+import { performGitAction } from './git-actions'
+import { formatGitResult, parseGitAction, type GitAction, type GitActionResult } from '../shared/git-action'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, flushWorkspace, PipelineWatcher } from './store'
 import {
@@ -51,7 +55,6 @@ import {
   MCP_CONFIG_REL_PATHS,
   type McpServerEntry
 } from '../shared/mcp-config'
-import { codexHookCommand } from '../shared/codex-hook'
 import type { ProjectSession } from '../shared/session'
 import { pruneTrees } from './delegate-snapshot'
 import { pruneCheckpoints } from './checkpoints'
@@ -129,11 +132,11 @@ const agents = new AgentController(
   loadPipelines,
   MANAGED_MCP_TOOLS.length
     ? {
-        mcp: (taskId, delegateId, tools) => managedMcpEntry(managedScript('mcp.js'), taskId, delegateId, tools),
-        codexHook: (taskId, delegateId) => codexHookCommand(managedMcpEntry(managedScript('codex-hook.js'), taskId, delegateId))
+        mcp: (taskId, delegateId, tools) => managedMcpEntry(managedScript('mcp.js'), taskId, delegateId, tools)
       }
     : undefined,
-  procs
+  procs,
+  { enabled: async () => (await loadSettings()).gitActions, branch: managedBranch, run: runManagedGitAction }
 )
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
@@ -465,17 +468,26 @@ function runForAgent(
   })
 }
 
-/** True when `cwd` is the open project or one of its linked worktrees. */
-async function cwdAllowedForProject(projectPath: string, cwd: string): Promise<boolean> {
-  const abs = path.resolve(cwd)
-  const root = path.resolve(projectPath)
-  if (abs === root || abs.startsWith(root + path.sep)) return true
-  const git = await gitInfo(projectPath)
-  for (const wt of git.worktrees ?? []) {
-    const base = path.resolve(wt.path)
-    if (abs === base || abs.startsWith(base + path.sep)) return true
-  }
-  return false
+/**
+ * Where an agent's `cwd` really is, when that is the open project or one of its linked worktrees
+ * (or inside one); undefined otherwise. The answer follows symlinks (see `confineTo`), and a
+ * caller that acts on the folder runs in the `dir` it returns, not the `cwd` it was sent.
+ */
+async function confinedCwd(projectPath: string, cwd: unknown): Promise<{ dir: string; checkout: string } | undefined> {
+  return confineToProjects([projectPath], worktreePaths, cwd)
+}
+
+/** The folders of a project's linked worktrees, as git lists them. */
+async function worktreePaths(project: string): Promise<string[]> {
+  return ((await gitInfo(project)).worktrees ?? []).map((wt) => wt.path)
+}
+
+/**
+ * The same for a managed Chat, whose `cwd` the renderer sends: it must be inside a project the app
+ * has open, or a linked worktree of one. The app decides here which repository an action may touch.
+ */
+async function openProjectDir(cwd: unknown): Promise<{ dir: string; checkout: string } | undefined> {
+  return confineToProjects((await loadOpenProjects()).paths, worktreePaths, cwd)
 }
 
 /** Commit/push only run in a project the app currently has open. */
@@ -490,6 +502,35 @@ async function openProjectCwd(
   const match = paths.find((p) => path.resolve(p).replace(/[/\\]+$/, '') === resolved)
   if (!match) return { ok: false, error: 'Not an open project' }
   return { path: path.resolve(match) }
+}
+
+/**
+ * A Git action an agent asked for, run in `cwd`, which must already be confined to `checkout`:
+ * the action may touch only that checkout's repository. Farol refuses it when the Git actions
+ * switch is off, and tells the Git panel what happened so its log and status follow. `scope` is
+ * what a managed Chat turn's actions hold fixed; a request over the bridge holds its branch and its connection's signal.
+ */
+async function runGitAction(cwd: string, request: GitAction, checkout: string, scope?: GitScope): Promise<GitActionResult> {
+  const result: GitActionResult = (await loadSettings()).gitActions
+    ? await performGitAction(cwd, request, checkout, scope)
+    : { ok: false, refused: true, message: 'Git actions are turned off in Settings, so Farol did not do this.' }
+  if (request.action !== 'status' || !result.ok) {
+    send('git:action', { projectPath: checkout, action: request.action, ok: result.ok, message: result.message } satisfies GitActionEvent)
+  }
+  return result
+}
+
+/** A managed Chat's Git action runs in the folder the app found for it among the open projects, never in the one the renderer named. */
+async function runManagedGitAction(cwd: string, request: GitAction, scope: GitScope): Promise<GitActionResult> {
+  const at = await openProjectDir(cwd)
+  if (!at) return { ok: false, refused: true, message: 'This folder is not in a project the app has open, so Farol did not do this.' }
+  return runGitAction(at.dir, request, at.checkout, scope)
+}
+
+/** The branch a managed Chat's checkout is on, read only in a folder the app found among the open projects. */
+async function managedBranch(cwd: string): Promise<string | undefined> {
+  const at = await openProjectDir(cwd)
+  return at ? currentBranch(at.dir) : undefined
 }
 
 /** Run every pipeline configured for `event`, stopping at the first failure like a shell `&&` chain. */
@@ -516,17 +557,33 @@ async function runHookPipelines(
 
 async function handleBridge(
   req: Exclude<BridgeRequest, { op: 'delegate' | 'approve' }>,
-  projectPath: string
+  projectPath: string,
+  signal: AbortSignal
 ): Promise<BridgeReply> {
-  if (!(await cwdAllowedForProject(projectPath, req.cwd))) {
+  const confined = await confinedCwd(projectPath, req.cwd)
+  if (!confined) {
     return {
       id: req.id,
       ok: false,
       message: `cwd is outside this project: ${req.cwd}`
     }
   }
+  // Everything below runs in the folder that was checked, symlinks resolved, never in `req.cwd`
+  // as it was written: a link there could lead elsewhere by the time it is used.
+  const cwd = confined.dir
+  if (req.op === 'git') {
+    // The socket is open to any process of this user, so the action is validated again here,
+    // `performGitAction` checks that git's repository belongs to the checkout, and
+    // `runGitAction` refuses it while the Git actions switch is off.
+    const action = parseGitAction(req.action)
+    if ('error' in action) return { id: req.id, ok: false, message: action.error }
+    // A requester that hangs up while queued behind another action does not get its action run afterwards.
+    const scope: GitScope = { branch: await currentBranch(cwd), tree: undefined, anyTree: true, signal }
+    const result = await runGitAction(cwd, action, confined.checkout, scope)
+    return { id: req.id, ok: true, op: 'git', text: formatGitResult(action.action, result), failed: !result.ok }
+  }
   // The agent's own directory wins, so an agent in a worktree runs that worktree.
-  const pipelines = await loadPipelines(req.cwd)
+  const pipelines = await loadPipelines(cwd)
   if (req.op === 'list') {
     return {
       id: req.id,
@@ -540,17 +597,17 @@ async function handleBridge(
     }
   }
   if (req.op === 'hook') {
-    return runHookPipelines(req, req.event, pipelines, projectPath)
+    return runHookPipelines({ id: req.id, cwd }, req.event, pipelines, projectPath)
   }
   const found = resolvePipeline(pipelines, req.pipeline)
   if (!found.ok) {
     const detail = found.candidates.length ? `\nAvailable:\n- ${found.candidates.join('\n- ')}` : ''
     return { id: req.id, ok: false, message: found.message + detail }
   }
-  const git = await gitInfo(req.cwd)
+  const git = await gitInfo(cwd)
   const { text, failed } = await runForAgent(
     found.pipeline,
-    req.cwd,
+    cwd,
     git.branch || '(no branch)',
     projectPath
   )
@@ -635,10 +692,10 @@ async function pruneDelegateSnapshots(projectPath: string, session: ProjectSessi
 }
 
 function startBridge(projectPath: string): void {
-  listenBridge(socketPath(projectPath), async (req) =>
+  listenBridge(socketPath(projectPath), async (req, signal) =>
     req.op === 'delegate' || req.op === 'approve'
       ? { id: req.id, ok: false, message: `${req.op} is only available in managed Chat.` }
-      : handleBridge(req, projectPath)
+      : handleBridge(req, projectPath, signal)
   )
 }
 

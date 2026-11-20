@@ -121,8 +121,8 @@ The commit a **Git action** creates, including exactly the files the current age
 _Avoid_: committing the **Commit selection**, committing the whole working tree, `git add -A`
 
 **Git hook pipeline**:
-A pipeline bound to a **Git action** in `.farol` that runs as a gate: when it passes, Farol performs the action; when it fails, Farol does not, and the failure goes back to the agent.
-_Avoid_: a script in `.git/hooks` (Farol still performs the action itself), a check after the action, a pipeline the agent picks with `FAROL_PIPELINES`
+A pipeline bound to a **Git action** in `.farol` that runs as a gate: Farol performs the action with git, whose managed hook runs the pipeline first; when it passes the action completes, when it fails it does not, and the failure goes back to the agent.
+_Avoid_: the agent running git itself (Farol performs the action), a check after the action, a pipeline the agent picks with `FAROL_PIPELINES`
 
 **Git actions toggle**:
 The master, machine-scoped switch in Settings that decides whether Farol performs agent **Git actions**. On by default, with no per-project override.
@@ -186,8 +186,8 @@ The standalone HTTP service in `app/service` that runs **Remote pipeline** steps
 _Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the service, a service URL or API key setting in the desktop app
 
 **Account menu**:
-The avatar at the top right of the header. Signed in, its popover shows the GitHub user and Sign out; signed out, it offers Sign in with GitHub. It is the only place a user signs in to the **Run service**. A **Remote pipeline** that cannot run because nobody is signed in says only “Sign in to run remote pipelines.”
-_Avoid_: a sign-in form in Settings, showing the service address, retrying a run that needs sign-in
+The avatar at the top right of the header. Signed in, its popover shows the GitHub user and Sign out; signed out, it offers Sign in with GitHub. It is the place a user signs in to the **Run service**; the **Git panel** offers the same sign-in when GitHub needs it. The sign-in also gives Farol the user's GitHub token, which Farol uses to call GitHub itself for pull requests and to sign `git push`, `fetch` and `pull` in to github.com; the `gh` CLI and the machine's git credentials are only a fallback. A **Remote pipeline** that cannot run because nobody is signed in says only “Sign in to run remote pipelines.”
+_Avoid_: a sign-in form in Settings, showing the service address, retrying a run that needs sign-in, a second GitHub login for pull requests
 
 ## Relationships
 
@@ -272,11 +272,17 @@ _Avoid_: a sign-in form in Settings, showing the service address, retrying a run
 - Managed Chat requests a **Git action** with the **FAROL_GIT control line**; an agent outside managed Chat uses the matching **Git tool**.
 - The **Managed-chat contract** compels the agent to commit its own work: a turn that changed files generates a commit message and requests a commit, and it may then request a push.
 - An **Agent commit** contains the files that turn changed, not the user's **Commit selection**.
+- An **Agent commit** holds only files as validation saw them: Farol checks the staged content against a snapshot of the working copy taken when the turn's last attempt ended, and refuses the files that changed since. It also makes no **Agent commit** when another chat ran in the same checkout during the turn, because a snapshot cannot tell whose files are whose; a worktree for each chat avoids that.
 - A **Git hook pipeline** is chosen per action in `.farol`; the same action on another project may use a different pipeline, or none.
 - A failing **Git hook pipeline** blocks only that action, and the failure reaches the agent like a validation failure so it can repair.
 - The **Git actions toggle** gates every **Git action**: when it is off, Farol refuses even a bound hook and a valid request, and says so.
 - A failed or refused **Git action** does not replace the turn's own `FAROL_PIPELINES` validation; the hook pipeline is separate from that selection.
 - A **Git action** outcome appears on the existing **Git panel**: the **Git log** records it and the panel refreshes.
+- Stopping a turn ends its queue of **Git actions**: the one already running finishes, and none queued behind it runs, not even one that is still waiting for its turn on the checkout.
+- A **Git action** starts at the top of the repository, even when the agent works in a subfolder.
+- A request that names a folder is judged by where the folder really is: a link inside a project that leads to another repository is not part of the project, and a **Git action** touches only a repository that belongs to the project's checkout. A managed Chat's folder comes from the renderer, so the app judges it against every project it has open and their linked worktrees, and ignores the checkout the chat claims; a folder in none of them is refused.
+- Commit, push, pull, the conflict merge and the branch switch on one checkout run one at a time, whether the **Git panel** or an agent asks; an agent's pull request takes its turn in the same line.
+- The **Git actions** of one turn hold to the branch the checkout was on when the first began (or to no branch, when HEAD was detached): once a branch switch has moved the checkout, Farol refuses the commit, the push and the pull request instead of acting on the other branch.
 - Status is read-only; commit, push, and create pull request change the checkout or the remote.
 - **Plan mode** never performs a **Git action**; a `FAROL_GIT` line in Plan mode is ignored the way a non-empty `FAROL_PIPELINES` list is, and the reply is still accepted.
 - The **Git actions toggle** is machine-scoped and is not saved per project.

@@ -10,8 +10,10 @@ export interface ProcInfo {
   ppid: number
   pgid: number
   uid: number
-  /** Start time, ms since epoch. With the pid it names one process, even after pid reuse. */
+  /** Start time, ms since epoch. The `ps` fallback has only second resolution. */
   startMs: number
+  /** Exact kernel start time, `seconds:microseconds`. Absent with the `ps` fallback. */
+  startId?: string
   /** Bytes. `ri_phys_footprint` when the helper runs, else RSS (see `ProcSnapshot.approximate`). */
   footprint: number
   /** Percent of one core. */
@@ -91,13 +93,9 @@ export interface ProcSnapshot {
 
 export const ROOT_START_WINDOW_MS = 5000
 
-/** One process, even after its pid is reused. */
-export const procKey = (p: Pick<ProcInfo, 'pid' | 'startMs'>): string => `${p.pid}:${Math.floor(p.startMs / 1000)}`
-
-/** Start times from `ps` have second resolution; the helper has microseconds. */
-export function sameStart(a: number, b: number): boolean {
-  return Math.abs(a - b) < 1000
-}
+/** Only precise start times can establish process identity across samples. */
+export const procKey = (p: Pick<ProcInfo, 'pid' | 'startId'>): string | undefined =>
+  p.startId === undefined ? undefined : `${p.pid}:${p.startId}`
 
 function insideDir(path: string, dir: string): boolean {
   const base = dir.replace(/\/+$/, '')
@@ -137,7 +135,8 @@ function liveRoots(ordered: ProcSession[], byPid: Map<number, ProcInfo>): Map<st
 /** The first claim wins, so the tree is settled before the weaker matches. */
 function claim(c: Claims, p: ProcInfo, session: ProcSession, via: ProcVia, inherited?: boolean): void {
   if (c.owner.has(p.pid)) return
-  const owned = inherited ?? (via !== 'cwd' || !!session.seen?.has(procKey(p)))
+  const key = procKey(p)
+  const owned = inherited ?? (via !== 'cwd' || (key !== undefined && !!session.seen?.has(key)))
   c.owner.set(p.pid, { ...p, label: procLabel(p), sessionId: session.id, via, isRoot: p.pid === session.rootPid, owned })
 }
 
@@ -175,7 +174,8 @@ function claimGroups(c: Claims): void {
       if (p.pgid === session.rootPid && p.startMs >= session.startedAt - ROOT_START_WINDOW_MS) {
         // While the agent is verified alive its group is ours. Once it is gone, only a process seen there before
         // is proven: a group id can be reused.
-        claim(c, p, session, 'group', c.roots.has(session.id) || !!session.seen?.has(procKey(p)))
+        const key = procKey(p)
+        claim(c, p, session, 'group', c.roots.has(session.id) || (key !== undefined && !!session.seen?.has(key)))
       }
     }
   }
@@ -189,7 +189,8 @@ function claimSeen(c: Claims): void {
   for (const session of c.ordered) {
     if (!session.seen?.size) continue
     for (const p of c.mine) {
-      if (!session.seen.has(procKey(p))) continue
+      const key = procKey(p)
+      if (key === undefined || !session.seen.has(key)) continue
       claim(c, p, session, 'seen')
       claimDescendants(c, p, session, 'seen', true)
     }

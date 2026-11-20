@@ -10,6 +10,7 @@ import { ProviderMark } from './ProviderMark'
 import { TraceCollapsible, TraceLine } from './trace'
 import {
   CheckIcon,
+  ChevronRight,
   Spinner,
   StatusMark,
   ToolIcon
@@ -325,9 +326,35 @@ export function PipelineMsgCard({
   text: string
   onOpenPipeline: (tabId: string) => void
 }) {
-  const nudge = useFeedbackNudge(pc.runId ?? pc.tabId, pc.status === 'passed')
+  const nudge = useFeedbackNudge(pc.runId ?? pc.tabId, pc.status === 'passed' && !pc.git)
+  const [open, setOpen] = useState(false)
+  const toggle = () => setOpen((o) => !o)
+  // A Git result keeps its first line in the row; its second line names what folds under it (the file list, the hook output).
+  const [head, label, ...body] = pc.git ? text.split('\n') : [text]
+  const more = body.join('\n').trim()
+  // A status reads "Git status - branch main  2 changed files >": the branch inline, the file list folded.
+  const branch = pc.pipelineId === 'git:status' ? /Branch (.+?): /.exec(head)?.[1] : undefined
+  const rowText = branch ? `- branch ${branch}${label && !more ? ` · ${label}` : ''}` : label && !more ? `${head} ${label}` : head
   const row = (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, padding: '6px 0', fontSize: 13 }}>
+    <div
+      {...(more
+        ? {
+            role: 'button',
+            tabIndex: 0,
+            'aria-expanded': open,
+            'aria-label': `${open ? 'Hide' : 'Show'} ${label.replace(/:$/, '')}`,
+            className: 'bf-focus bf-icon-btn',
+            onClick: toggle,
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                toggle()
+              }
+            }
+          }
+        : {})}
+      style={{ display: 'flex', alignItems: 'baseline', gap: 12, padding: '6px 0', fontSize: 13, ...(more ? { cursor: 'pointer', borderRadius: 6 } : {}) }}
+    >
       <span aria-hidden style={{ width: 16, flex: 'none', alignSelf: 'center', display: 'grid', placeItems: 'center' }}>
         {pc.status === 'running' ? (
           <Spinner size={14} />
@@ -354,23 +381,35 @@ export function PipelineMsgCard({
       </span>
       <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', userSelect: 'text' }}>
         <span style={{ fontWeight: 500, color: C.text }}>{pc.pipelineName}</span>
-        <span style={{ marginLeft: 10, color: C.faint, whiteSpace: 'pre-wrap' }}>{text}</span>
+        <span style={{ marginLeft: 10, color: C.faint, whiteSpace: 'pre-wrap' }}>{rowText}</span>
+        {more && <span style={{ marginLeft: 10, color: C.faint }}>{label.replace(/:$/, '')}</span>}
       </span>
-      <button
-        type="button"
-        className="bf-focus bf-icon-btn"
-        onClick={() => onOpenPipeline(pc.tabId)}
-        title="Jump to this run's terminal tab"
-        style={{ flex: 'none', fontSize: 12.5, color: C.textMuted, padding: '2px 6px', borderRadius: 6, border: 'none', background: 'transparent', fontFamily: 'inherit', cursor: 'pointer' }}
-      >
-        Logs
-      </button>
+      {more && (
+        <span aria-hidden style={{ flex: 'none', display: 'grid', placeItems: 'center', padding: '2px 6px', color: C.textMuted }}>
+          <ChevronRight size={13} style={{ transition: 'transform 150ms', transform: open ? 'rotate(90deg)' : undefined }} />
+        </span>
+      )}
+      {!pc.git && (
+        <button
+          type="button"
+          className="bf-focus bf-icon-btn"
+          onClick={() => onOpenPipeline(pc.tabId)}
+          title="Jump to this run's terminal tab"
+          style={{ flex: 'none', fontSize: 12.5, color: C.textMuted, padding: '2px 6px', borderRadius: 6, border: 'none', background: 'transparent', fontFamily: 'inherit', cursor: 'pointer' }}
+        >
+          Logs
+        </button>
+      )}
     </div>
   )
-  if (!nudge.show) return row
+  const list = more && open && (
+    <pre style={{ margin: '0 0 6px 28px', paddingLeft: 14, borderLeft: `1px solid ${C.hair}`, fontFamily: MONO, fontSize: 12, color: C.faint, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text' }}>{more}</pre>
+  )
+  if (!nudge.show) return list ? <div>{row}{list}</div> : row
   return (
     <div>
       {row}
+      {list}
       <div
         role="status"
         style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, margin: '2px 0 6px 28px', fontSize: 12.5, color: C.textMuted }}

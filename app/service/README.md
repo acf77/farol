@@ -77,19 +77,30 @@ Every request except `/healthz` and the sign-in endpoints needs `Authorization: 
 where the token is a session from a GitHub sign-in (`fs1.…`) or an API key (`frl_…`).
 There is no anonymous mode.
 
-The service exchanges GitHub's code for a GitHub token itself, reads the user, and drops
-the GitHub token; clients only ever hold a Farol session. Sessions last 7 days and are
-not refreshed — sign in again. Nobody can sign in until `FAROL_ALLOWED_GITHUB_USERS`,
+The service exchanges GitHub's code for a GitHub token itself and reads the user. It keeps
+no GitHub token, and by default the sign-in reply carries only the session. A client that
+wants to call the GitHub API as the user (the Farol desktop app does) sets
+`"githubAccess": true` in the request body of the device start and poll, or of the code
+exchange. The device flow then asks GitHub for the `repo` scope, and the reply adds
+`github`, the token GitHub issued (`{ token, expiresAt?, refreshToken? }`). Whatever the
+client asks, the flow also asks for `read:org` when access is limited to organizations. A GitHub
+App needs the matching permissions instead: Pull requests, Contents, Checks, Commit
+statuses and Metadata. A GitHub App's tokens expire after 8 hours:
+`POST /v1/auth/github/refresh {refreshToken}` with the session returns a new `{ github }`,
+because only the service holds the client secret. The new token must belong to the caller.
+Sessions last 7 days and are not refreshed — sign in again. Nobody can sign in until `FAROL_ALLOWED_GITHUB_USERS`,
 `FAROL_ALLOWED_GITHUB_ORGS` or `FAROL_ALLOW_ANY_GITHUB_USER` lets them. Removing a login
 from the users list ends their sessions at once; org membership is only checked at sign-in.
 
 - **Desktop, CLI** — device flow: `POST /v1/auth/device` → show `userCode`, open
   `verificationUri`; poll `POST /v1/auth/device/token {deviceCode}` every `interval`
-  seconds until `{status:"ok", token, expiresAt, user}`. Enable the device flow on the GitHub App.
+  seconds until `{status:"ok", token, expiresAt, user}`, plus `github` for a client that set
+  `githubAccess` in both requests. Enable the device flow on the GitHub App.
 - **Web, mobile** — authorization code flow with PKCE: send the user to GitHub's
   authorize URL with your `client_id`, a `redirect_uri` from `FAROL_AUTH_REDIRECTS`, `state`
   and a `code_challenge`; then `POST /v1/auth/code {code, redirectUri, codeVerifier}` →
-  `{token, expiresAt, user}`. Check `state` in the client before sending the code.
+  `{token, expiresAt, user}`, plus `github` for a client that set `githubAccess`. Check
+  `state` in the client before sending the code.
 
 ```sh
 node farol-service.cjs users list
@@ -122,6 +133,7 @@ GitHub user that started it.
 | `POST /v1/auth/code` | GitHub browser-flow sign-in, no token needed |
 | `GET /v1/me` | Who the token belongs to: `{ id, kind: "user" \| "key", name }` |
 | `POST /v1/auth/logout` | End every session of the signed-in user |
+| `POST /v1/auth/github/refresh` | Body `{ refreshToken }`. Trade a GitHub refresh token for a new `{ github }` grant. Needs a session; `400` for an API key or a refused token, `403` for another account's token |
 | `GET /v1/ping` | Check that the token works |
 | `POST /v1/workspaces` | Open a sandbox from the snapshot in the body, for a client that drives its own steps (the Farol desktop app's remote pipelines). The snapshot must hold `.farol/pipelines.json` (`422` otherwise). `201 { id }`. Stopped after 45 idle minutes, and `FAROL_MAX_RUN_MINUTES` after it opened |
 | `POST /v1/workspaces/:id/exec` | Run one shell step of the snapshot's pipelines: its `cmd` with each `${name}` replaced by a single-quoted value, as the desktop runner sends it. Any other command gets `403`. Commands on one workspace run one at a time. Streams NDJSON: `{"chunk": "…"}` lines, then `{"code": n}` |

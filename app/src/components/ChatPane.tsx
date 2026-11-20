@@ -9,6 +9,7 @@ import { Button } from './controls'
 import { Spinner } from './icons'
 import { ChatBanner, type UndoResult } from './chat/cards'
 import { ComposerBox } from './chat/Composer'
+import { GitBar } from './chat/GitBar'
 import { Turn } from './chat/Turn'
 import ScrollToLatest from './ScrollToLatest'
 
@@ -452,6 +453,9 @@ export default function ChatPane({
       )}
       {chatClearedNotice && messages.length === 0 && (
         <ChatClearedBanner onDismissChatCleared={onDismissChatCleared} />
+      )}
+      {settings?.gitActions && usable && (
+        <GitBar disabled={isBusy || modeLocked || mode === 'plan'} onRequest={(prompt) => onMessage(prompt, provider, model, 'build')} />
       )}
       <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex' }}>
         <div

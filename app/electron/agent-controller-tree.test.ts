@@ -16,7 +16,7 @@ import { AgentController, type AgentExecutor } from './agent-controller'
 let repo: string
 
 beforeEach(() => {
-  repo = fs.mkdtempSync(path.join(os.tmpdir(), 'farol-turn-tree-'))
+  repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'farol-turn-tree-')))
   const git = (...args: string[]) => execFileSync('git', args, { cwd: repo })
   git('init', '-q')
   git('config', 'user.email', 't@example.com')

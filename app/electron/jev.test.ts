@@ -259,27 +259,27 @@ describe('selectTools', () => {
         focus: {
           type: 'choice',
           choice: 'implement',
-          probabilities: { inspect: 0.02, implement: 0.92, verify: 0.03, answer: 0.03 }
+          probabilities: { inspect: 0.04, implement: 0.92, answer: 0.04 }
         }
       }
     })
     expect(await selectTools('Mode: build\nTask: patch the login form')).toEqual({
       kind: 'selected',
       focus: 'implement',
-      kept: ['edit', 'shell'],
+      kept: ['edit'],
       omitted: ['web'],
       candidatesFingerprint: toolFocusFingerprint('build')
     })
   })
 
-  it('fails soft (null → full tools) on low confidence in Build', async () => {
+  it('fails soft (null → edit/web tools) on low confidence in Build', async () => {
     peekSecret.mockReturnValue('a-key')
     evaluate.mockResolvedValue({
       answers: {
         focus: {
           type: 'choice',
           choice: 'inspect',
-          probabilities: { inspect: 0.4, implement: 0.3, verify: 0.2, answer: 0.1 }
+          probabilities: { inspect: 0.4, implement: 0.3, answer: 0.3 }
         }
       }
     })

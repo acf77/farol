@@ -1175,6 +1175,16 @@ export default function SettingsPage({
                         onChange={(autoCleanLeftovers) => onSettings({ ...settings, autoCleanLeftovers })}
                       />
                     </Setting>
+                    <Setting
+                      title="Let agents use Git"
+                      hint="Agents can ask Farol to commit the files they changed, push, and open pull requests; a pipeline bound to the action runs first. Off: Farol refuses every request, in every project on this machine."
+                    >
+                      <Switch
+                        label="Let agents use Git"
+                        checked={settings.gitActions}
+                        onChange={(gitActions) => onSettings({ ...settings, gitActions })}
+                      />
+                    </Setting>
                   </Card>
                 </Group>
                 {import.meta.env.DEV && (

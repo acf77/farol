@@ -28,7 +28,10 @@ export class ProcRegistry {
       const session = this.sessions.get(usage.sessionId)
       if (!session) continue
       const seen = session.seen ?? (session.seen = new Set())
-      for (const p of usage.procs) if (p.via !== 'cwd' && p.owned) seen.add(procKey(p))
+      for (const p of usage.procs) {
+        const key = procKey(p)
+        if (key !== undefined && p.via !== 'cwd' && p.owned) seen.add(key)
+      }
     }
   }
 

@@ -16,7 +16,7 @@ import { AgentController, type AgentExecutor } from './agent-controller'
 let repo: string
 
 beforeEach(() => {
-  repo = fs.mkdtempSync(path.join(os.tmpdir(), 'farol-delegate-'))
+  repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'farol-delegate-')))
   const git = (...args: string[]) => execFileSync('git', args, { cwd: repo })
   git('init', '-q')
   git('config', 'user.email', 't@example.com')
@@ -260,12 +260,12 @@ describe('AgentController.delegate', () => {
 
     it('asks in Chat and runs the tool once allowed; "for this chat" stops asking for that tool', async () => {
       const { controller, events, answers } = asking(async (c) => {
-        const first = c.requestApproval('task-1', { toolName: 'Bash', input: { command: 'npm test' } })
+        const first = c.requestApproval('task-1', { toolName: 'Edit', input: { file_path: 'a.txt' } })
         await vi.waitFor(() => expect(pending(events)).toHaveLength(1))
         const ask = pending(events)[0]
-        expect(ask).toMatchObject({ provider: 'claude', toolName: 'Bash', detail: 'npm test' })
+        expect(ask).toMatchObject({ provider: 'claude', toolName: 'Edit', detail: 'a.txt' })
         expect(c.respondApproval('task-1', ask.requestId, 'chat')).toEqual({ ok: true })
-        const again = await c.requestApproval('task-1', { toolName: 'Bash', input: { command: 'ls' } })
+        const again = await c.requestApproval('task-1', { toolName: 'Edit', input: { file_path: 'a.txt' } })
         return [await first, again]
       })
       controller.start(request())
@@ -273,6 +273,36 @@ describe('AgentController.delegate', () => {
       expect(answers[0]).toEqual([{ allow: true }, { allow: true }])
       expect(events.filter((e) => e.kind === 'approval')).toHaveLength(2)
       expect(events.some((e) => e.kind === 'approval' && e.decision === 'chat')).toBe(true)
+    })
+
+    it('refuses shell, indirect execution and Git writes before asking the user', async () => {
+      const { controller, events, answers } = asking(async (c) => {
+        const denied = []
+        for (const toolName of ['Bash', 'python', 'Agent', 'mcp__external__exec']) {
+          denied.push(await c.requestApproval('task-1', { toolName, input: { command: 'git status' } }))
+        }
+        denied.push(await c.requestApproval('task-1', { toolName: 'Write', input: { file_path: '.git/config' } }))
+        return denied
+      })
+      controller.start(request())
+      await vi.waitFor(() => expect(completed(events)).toBe(true))
+      expect(answers[0]).toEqual(Array.from({ length: 5 }, () => expect.objectContaining({ allow: false })))
+      expect(pending(events)).toHaveLength(0)
+    })
+
+    it('refuses Git writes through a link, including a new nested target', async () => {
+      fs.symlinkSync(path.join(repo, '.git'), path.join(repo, 'metadata'))
+      const { controller, events, answers } = asking(async (c) => [
+        await c.requestApproval('task-1', { toolName: 'Write', input: { file_path: 'metadata/config' } }),
+        await c.requestApproval('task-1', { toolName: 'Write', input: { file_path: 'metadata/new/nested/file' } })
+      ])
+      controller.start(request())
+      await vi.waitFor(() => expect(completed(events)).toBe(true))
+      expect(answers[0]).toEqual([
+        expect.objectContaining({ allow: false, message: expect.stringContaining('Git metadata') }),
+        expect.objectContaining({ allow: false, message: expect.stringContaining('Git metadata') })
+      ])
+      expect(pending(events)).toHaveLength(0)
     })
 
     it('passes a deny back to the agent as its reason', async () => {
@@ -290,10 +320,10 @@ describe('AgentController.delegate', () => {
     it('lapses when the asking agent goes away or the turn is stopped', async () => {
       const gone = new AbortController()
       const { controller, events, answers } = asking(async (c) => {
-        const first = c.requestApproval('task-1', { toolName: 'Bash', input: {} }, gone.signal)
+        const first = c.requestApproval('task-1', { toolName: 'Write', input: { file_path: 'a.txt' } }, gone.signal)
         await vi.waitFor(() => expect(pending(events)).toHaveLength(1))
         gone.abort()
-        const second = c.requestApproval('task-1', { toolName: 'Edit', input: {} })
+        const second = c.requestApproval('task-1', { toolName: 'Edit', input: { file_path: 'a.txt' } })
         await vi.waitFor(() => expect(pending(events)).toHaveLength(2))
         c.cancel('task-1')
         return [await first, await second]
@@ -335,65 +365,4 @@ describe('AgentController.delegate', () => {
     })
   })
 
-  describe('Codex Ask first', () => {
-    const managed = { mcp: () => ({ command: 'x', args: [] }), codexHook: () => 'hook' }
-    const codexRequest = () => ({ ...request(), provider: 'codex' as const, autoApprove: false })
-
-    function codexRun(during: (c: AgentController, tool: NonNullable<Parameters<AgentExecutor>[3]>) => Promise<void>) {
-      const events: AgentTaskEvent[] = []
-      const execute = vi.fn<AgentExecutor>(async (_req, _prompt, output, tool) => {
-        await during(controller, tool!)
-        output('Done\nFAROL_PIPELINES: []\n')
-        return 0
-      })
-      const controller: AgentController = new AgentController(
-        { run: vi.fn() },
-        (e) => events.push(e),
-        execute,
-        undefined,
-        undefined,
-        undefined,
-        managed
-      )
-      return { controller, events }
-    }
-    const stopped = (events: AgentTaskEvent[]) =>
-      events.find((e) => e.kind === 'status' && e.status === 'needs-attention')
-
-    it('lets through each write or shell call the developer approved, one for one', async () => {
-      const { controller, events } = codexRun(async (c, tool) => {
-        const answer = c.requestApproval('task-1', { toolName: 'Bash', input: { command: 'ls' } })
-        await vi.waitFor(() => expect(events.some((e) => e.kind === 'approval' && !e.decision)).toBe(true))
-        const ask = events.find((e) => e.kind === 'approval')
-        if (ask?.kind === 'approval') c.respondApproval('task-1', ask.requestId, 'once')
-        await answer
-        tool({ toolId: 'i1', name: 'shell', detail: 'ls', state: 'running' })
-        tool({ toolId: 'i1', name: 'shell', state: 'done' })
-      })
-      controller.start(codexRequest())
-      await vi.waitFor(() => expect(completed(events)).toBe(true))
-      expect(stopped(events)).toBeUndefined()
-      expect(events.some((e) => e.kind === 'tool' && e.auto)).toBe(false)
-    })
-
-    it('stops the run when a write or shell call comes through unapproved', async () => {
-      const { controller, events } = codexRun(async (_c, tool) => {
-        tool({ toolId: 'i1', name: 'apply_patch', detail: 'a.txt', state: 'running' })
-      })
-      controller.start(codexRequest())
-      await vi.waitFor(() => expect(stopped(events)).toBeDefined())
-      const status = stopped(events)
-      expect(status?.kind === 'status' && status.message).toContain('Codex ran apply_patch without asking')
-    })
-
-    it('does not gate a Codex chat that auto-approves', async () => {
-      const { controller, events } = codexRun(async (_c, tool) => {
-        tool({ toolId: 'i1', name: 'shell', detail: 'ls', state: 'done' })
-      })
-      controller.start({ ...codexRequest(), autoApprove: true })
-      await vi.waitFor(() => expect(completed(events)).toBe(true))
-      expect(stopped(events)).toBeUndefined()
-      expect(events.some((e) => e.kind === 'tool' && e.auto)).toBe(true)
-    })
-  })
 })

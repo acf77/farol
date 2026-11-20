@@ -1,4 +1,4 @@
-import { attribute, sameStart, type AttributedProc, type ProcInfo, type ProcSession } from '../shared/proc'
+import { attribute, procKey, type AttributedProc, type ProcInfo, type ProcSession } from '../shared/proc'
 
 export const KILL_GRACE_MS = 3000
 
@@ -22,10 +22,12 @@ export interface KillResult {
 const refused = (message: string): KillResult => ({ ok: false, message, terminated: 0, killed: 0 })
 
 function stillRunning(sample: ProcInfo[], target: AttributedProc): boolean {
-  return sample.some((p) => p.pid === target.pid && sameStart(p.startMs, target.startMs))
+  const key = procKey(target)
+  return key !== undefined && sample.some((p) => p.uid === target.uid && procKey(p) === key)
 }
 
 async function terminate(targets: AttributedProc[], deps: KillDeps, graceMs: number): Promise<KillResult> {
+  if (targets.some((p) => procKey(p) === undefined)) return refused('Cannot confirm the process start time.')
   for (const target of targets) deps.signal(target.pid, 'SIGTERM')
   await deps.sleep(graceMs)
   // The same pid with a new start time is someone else's process now.

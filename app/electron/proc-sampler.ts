@@ -211,8 +211,9 @@ export class ProcSampler {
     }
     const marks = new Map<string, { ns: number; at: number }>()
     const procs = rows.map((row): ProcInfo => {
-      const startMs = row.sec * 1000 + Math.floor(row.usec / 1000)
-      const key = `${row.pid}:${startMs}`
+      const startMs = row.sec * 1000 + row.usec / 1000
+      const startId = `${row.sec}:${row.usec}`
+      const key = `${row.pid}:${startId}`
       const prev = this.cpuMarks.get(key)
       marks.set(key, { ns: row.cpu, at })
       const cpu = prev && at > prev.at ? ((row.cpu - prev.ns) / ((at - prev.at) * 1e6)) * 100 : 0
@@ -222,6 +223,7 @@ export class ProcSampler {
         pgid: row.pgid,
         uid: row.uid,
         startMs,
+        startId,
         footprint: row.fp,
         cpu: Math.max(0, cpu),
         name: row.name,

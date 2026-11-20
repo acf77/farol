@@ -10,6 +10,7 @@ export const BLOCK_MARKER = 'FAROL_BLOCKED:'
 export const PLAN_MARKER = 'FAROL_PLAN:'
 export const TODOS_MARKER = 'FAROL_TODOS:'
 export const HANDOFF_MARKER = 'FAROL_HANDOFF:'
+export const GIT_MARKER = 'FAROL_GIT:'
 export const FINISHED_PLAN = `${PLAN_MARKER} finished`
 
 export const CONTROL_MARKERS = [
@@ -18,7 +19,8 @@ export const CONTROL_MARKERS = [
   BLOCK_MARKER,
   PLAN_MARKER,
   TODOS_MARKER,
-  HANDOFF_MARKER
+  HANDOFF_MARKER,
+  GIT_MARKER
 ] as const
 
 type ControlMarker = (typeof CONTROL_MARKERS)[number]
@@ -80,14 +82,17 @@ export function controlLines(text: string): string[] {
     .map(({ line }) => line)
 }
 
+/** The value after every line-anchored `marker`, in the order the lines appear. */
+export function allControlLines(text: string, marker: string): string[] {
+  return controlLines(text).flatMap((line) => {
+    const trimmed = line.trimStart()
+    return isControlLine(line) && trimmed.startsWith(marker) ? [trimmed.slice(marker.length).trim()] : []
+  })
+}
+
 /** The value after the last line-anchored `marker`, or undefined if absent. */
 export function lastControlLine(text: string, marker: string): string | undefined {
-  let value: string | undefined
-  for (const line of controlLines(text)) {
-    const trimmed = line.trimStart()
-    if (isControlLine(line) && trimmed.startsWith(marker)) value = trimmed.slice(marker.length).trim()
-  }
-  return value
+  return allControlLines(text, marker).at(-1)
 }
 
 /** The last line-anchored control line, or null when the text has none. */
