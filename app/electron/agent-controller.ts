@@ -66,12 +66,15 @@ import {
   type ContextUsage
 } from '../shared/agent-context'
 import {
+  GIT_MARKER,
   appendControlLines,
   flushControlLines,
   lastControlLine,
   stripControlMarkerLines,
   type ControlLineState
 } from '../shared/control-line'
+import { formatGitResult, gitActionsFrom, type GitAction, type GitActionResult } from '../shared/git-action'
+import { repoRoot, type GitScope } from './git'
 import {
   BLOCK_MARKER,
   FINISHED_PLAN,
@@ -92,9 +95,7 @@ import {
 import {
   TODOS_MARKER,
   formatTodos,
-  isAgentTodoToolName,
-  mergeTodos,
-  parseTodosValue,
+  parseTodosMarker,
   todoSummary,
   type Todo,
   type TodoStore
@@ -136,6 +137,28 @@ interface ValidationRunner {
     origin: 'managed-agent',
     signal?: AbortSignal
   ): Promise<PipelineRunResult>
+}
+
+/** How the app performs a Git action a managed Chat asked for with a `FAROL_GIT` line. */
+export interface GitActions {
+  /** Whether Farol performs agent Git actions on this machine (a Settings switch). */
+  enabled(): Promise<boolean>
+  /** The branch the checkout in `cwd` is on, or undefined when it is on none. */
+  branch(cwd: string): Promise<string | undefined>
+  /**
+   * `cwd` is the chat's folder as the renderer sent it, so it decides nothing: the app finds the
+   * open project that holds the folder, and the action may touch only that repository. `scope` is
+   * what the turn's actions hold fixed.
+   */
+  run(cwd: string, action: GitAction, scope: GitScope): Promise<GitActionResult>
+}
+
+/** What the agent is told when another chat shared its checkout: the turn's files are in doubt. */
+const SHARED_CHECKOUT: GitActionResult = {
+  ok: false,
+  refused: true,
+  message:
+    "Another chat worked in this checkout during this turn, so Farol cannot tell which files are this turn's. Commit them from the Git panel, or give each chat its own worktree."
 }
 
 export type AgentToolReport = {
@@ -182,6 +205,8 @@ interface Task {
   process: ChildProcess | null
   /** The subagent a `delegate` call is running; at most one, while the agent waits on it. */
   child: ChildProcess | null
+  /** ProcRegistry session ids for this task's agent runs; finished when the turn releases them. */
+  procRegistryIds: string[]
   delegating: boolean
   delegateSeq: number
   /** The agent's latest `delegate` tool call, so its subagent's card can sit under it. */
@@ -192,6 +217,19 @@ interface Task {
   delegateRuns: Map<string, DelegateRun>
   /** The tree at the start of the turn, handed to its first attempt so it is not captured twice. */
   turnBefore?: string
+  /** Paths the agent changed in this turn, across its attempts: what an agent commit contains. */
+  turnFiles: Set<string>
+  /** The working copy when the turn's last attempt ended, which validation saw: what an agent commit must match. */
+  validatedTree?: string
+  /** The branch the checkout was on when the turn began: Git actions hold to it. */
+  turnBranch?: string
+  /** The repository root of the checkout (the folder itself when it is no repository). */
+  repoKey?: string
+  /** Another chat ran in this checkout while this turn did, so the turn's files cannot be told from theirs. */
+  sharedCheckout: boolean
+  /** Git actions are on for this turn, so the agent is told to request them. */
+  gitEnabled: boolean
+  gitSeq: number
   /** What the agent should hear first on the next turn (e.g. an Undo). */
   notes: string[]
   /** The subagent running now, so its approval requests name it. */
@@ -243,12 +281,6 @@ interface Task {
   askEpoch: number
   questionSeq: number
   todoSeq: number
-  /** When the user message being worked on began; todo notes count "earlier request" from here. */
-  requestStart: number
-  /** The last agent turn ended with a saved todo line and no tool call after it. */
-  todoEndOk: boolean
-  /** Set once the closing todo turn is asked for this message; holds the completion message it delays. */
-  todoClosing?: string
   pendingQuestions?: { requestId: string; questions: AgentQuestion[] }
 }
 
@@ -278,16 +310,6 @@ type CycleScan = ControlLineState & {
   changedTargets: string[]
   /** Tool card names observed this turn — for policy violation diagnostics. */
   toolNames: string[]
-  /** How much of `control` the todo scan has read, so a line is handled once. */
-  controlSeen: number
-  /** Todo saves in the order their lines came; the turn waits for them. */
-  todoSaves: Promise<void>
-  /** Tool events this turn, not counting the CLI's own todo tools. */
-  workCalls: number
-  /** `workCalls` when the last todo line was saved; unset if none was, or the last one failed. */
-  todoAt?: number
-  /** Why the last todo save failed. */
-  todoFailure?: string
   questions?: AgentQuestion[]
   questionId?: string
 }
@@ -382,19 +404,6 @@ function repairPromptOpening(
   ]
     .filter(Boolean)
     .join('\n\n')
-}
-
-/** What the closing todo turn asks of the agent once the work and its validation are done. */
-function todoClosingText(message: string): string {
-  return `Farol finished this request (${message}). Check the todo list one last time: send one ${TODOS_MARKER} line with the true status of every item, so that none of your items stays in_progress. Do not change files, ask questions, or repeat your answer. End with ${PIPELINES_MARKER} [].`
-}
-
-/** The status line for an agent run: the closing todo turn, the first try, or a repair. */
-function attemptStatus(attempt: number, checkingTodos: boolean): [AgentTaskStatus, string] {
-  if (checkingTodos) return ['working', 'Agent checking the todo list']
-  return attempt === 1
-    ? ['working', 'Agent working']
-    : ['repairing', 'Agent repairing validation failures']
 }
 
 function activityStatus(result: PipelineRunResult): PipelineActivity['status'] {
@@ -646,7 +655,9 @@ export class AgentController {
     /** Farol's managed tools for a task, for the providers that can take them per run. */
     private managed?: ManagedTools,
     /** Each agent run reports here, so the memory it and its children use is counted. */
-    private procs?: ProcRegistry
+    private procs?: ProcRegistry,
+    /** Without it, `FAROL_GIT` lines are not offered or acted on. */
+    private gitActions?: GitActions
   ) {}
 
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
@@ -683,10 +694,15 @@ export class AgentController {
       },
       process: null,
       child: null,
+      procRegistryIds: [],
       delegating: false,
       delegateSeq: 0,
       delegateRuns: new Map(),
       notes: [],
+      turnFiles: new Set(),
+      sharedCheckout: false,
+      gitEnabled: false,
+      gitSeq: 0,
       approvals: new Map(),
       approvalSeq: 0,
       allowedTools: new Set(),
@@ -707,9 +723,7 @@ export class AgentController {
       sameModelAttempts: 0,
       askEpoch: 0,
       questionSeq: 0,
-      todoSeq: 0,
-      requestStart: Date.now(),
-      todoEndOk: false
+      todoSeq: 0
     }
     this.tasks.set(request.id, task)
     this.emit({ kind: 'user', taskId: request.id, text: clean })
@@ -830,6 +844,7 @@ export class AgentController {
     task.abort.abort()
     if (task.process?.pid) killPidTree(task.process.pid)
     if (task.child?.pid) killPidTree(task.child.pid)
+    this.releaseProcSessions(task)
     this.expireApprovals(task)
     this.status(task, 'cancelled', 0, 'Cancelled by user')
   }
@@ -1410,6 +1425,7 @@ export class AgentController {
     status: AgentTaskStatus,
     message: string
   ): void {
+    if (!task.guidance.length) this.releaseProcSessions(task)
     task.running = false
     this.status(task, status, attempt, message)
     if (task.disposeWhenIdle) {
@@ -1423,6 +1439,7 @@ export class AgentController {
 
   /** Clear a user stop and start a new agent cycle for the same task. */
   private resume(task: Task, userText: string): void {
+    this.releaseProcSessions(task)
     task.cancelled = false
     task.abort = new AbortController()
     task.running = true
@@ -1436,10 +1453,14 @@ export class AgentController {
   private settleCancel(task: Task): void {
     task.running = false
     if (task.disposeWhenIdle) {
+      this.releaseProcSessions(task)
       this.releaseIfDisposed(task)
       return
     }
-    if (!task.cancelled || !task.guidance.length) return
+    if (!task.cancelled || !task.guidance.length) {
+      this.releaseProcSessions(task)
+      return
+    }
     const text = task.guidance.splice(0).join('\n')
     this.followUp(task, text)
   }
@@ -1448,7 +1469,6 @@ export class AgentController {
   private continueIfGuidanceOpening(task: Task): Opening | null {
     const guidance = task.guidance.splice(0).join('\n')
     if (!guidance) return null
-    this.beginRequest(task)
     return continued(`User request:\n${guidance}`)
   }
 
@@ -1468,7 +1488,6 @@ export class AgentController {
         scan.assistant = (scan.assistant + chunk).slice(-SCAN_WINDOW)
         scan.output = (scan.output + chunk).slice(-SCAN_WINDOW)
         appendControlLines(scan, chunk)
-        this.noteTodoLine(task, scan)
         check()
       },
       turn: (text) => {
@@ -1476,7 +1495,6 @@ export class AgentController {
         scan.assistant = (`${scan.assistant}\n${text}`).slice(-SCAN_WINDOW)
         scan.output = (`${scan.output}\n${text}`).slice(-SCAN_WINDOW)
         appendControlLines(scan, `${text}\n`)
-        this.noteTodoLine(task, scan)
         check()
       },
       tool: (event) => {
@@ -1490,14 +1508,15 @@ export class AgentController {
         const auto = task.runAutoApproves && needsApproval(event.name)
         this.emit({ kind: 'tool', taskId: task.request.id, ...event, ...(auto ? { auto } : {}) })
         scan.toolNames.push(event.name)
-        if (!isAgentTodoToolName(event.name)) scan.workCalls += 1
         // Codex sometimes only fills command on item.completed; accept either.
         if (event.detail && isShellToolName(event.name) && event.state !== 'error') {
           scan.shellInvocations.push(event.detail)
         }
         if (event.state === 'done' && isWriteToolName(event.name)) {
-          noteWrite(scan, event.detail)
+          scan.filesChanged = true
           task.mandatoryOutstanding = true
+          const target = event.detail?.trim()
+          if (target && !scan.changedTargets.includes(target)) scan.changedTargets.push(target)
         }
       },
       question: (questions) => {
@@ -1530,91 +1549,44 @@ export class AgentController {
     task.todos = await this.todoStore.load(task.request.checkout).catch(() => task.todos)
   }
 
+  private async loadGitEnabled(task: Task): Promise<void> {
+    task.gitEnabled = task.request.mode !== 'plan' && !!(await this.gitActions?.enabled().catch(() => false))
+  }
+
   private async loadCustomInstructions(task: Task): Promise<void> {
     if (!this.promptStore) return
     task.customInstructions = await this.promptStore.activeBlock(task.request.checkout).catch(() => '')
   }
 
-  /** A user message starts a request: todo notes count "earlier request" from here, and the closing check is open again. */
-  private beginRequest(task: Task): void {
-    task.requestStart = Date.now()
-    task.todoClosing = undefined
-  }
-
-  /** Save the newest todo line the moment it is complete, so the dock follows the run. */
-  private noteTodoLine(task: Task, scan: CycleScan): void {
-    const line = lastControlLine(scan.control.slice(scan.controlSeen), TODOS_MARKER)
-    scan.controlSeen = scan.control.length
-    if (line === undefined || task.disposeWhenIdle) return
-    const todos = parseTodosValue(line)
-    if (!todos) return
-    const at = scan.workCalls
-    scan.todoSaves = scan.todoSaves.then(() => this.saveTodos(task, scan, todos, at))
-  }
-
-  /**
-   * The agent writes only text, status and priority; Farol stamps the chat and the time. A line still
-   * queued when the chat is stopped or cleared is dropped; the one already saving finishes.
-   */
-  private async saveTodos(task: Task, scan: CycleScan, todos: Todo[], at: number): Promise<void> {
-    if (task.cancelled || task.disposeWhenIdle) return
-    const previous = task.todos
-    try {
-      const chat = { chatId: task.request.id, title: turnPreview(task.context.task) }
-      const merged = mergeTodos(previous, todos, chat, Date.now())
-      await this.todoStore?.save(task.request.checkout, merged, previous)
-      task.todos = merged
-      scan.todoAt = at
-      scan.todoFailure = undefined
-    } catch (error) {
-      scan.todoAt = undefined
-      scan.todoFailure = error instanceof Error ? error.message : 'Could not save the todo list'
-    }
-  }
-
-  /** Read the last line and wait for the run's todo saves, so none is still writing when the turn settles. */
-  private async drainTodos(task: Task, scan: CycleScan): Promise<void> {
-    flushControlLines(scan)
-    this.noteTodoLine(task, scan)
-    await scan.todoSaves
-  }
-
-  /** After a run's saves are done: note whether the list was current at its end, and show one card for them. */
-  private endTodos(task: Task, scan: CycleScan): void {
+  private async applyTodos(task: Task, assistant: string): Promise<void> {
     if (task.disposeWhenIdle) return
-    task.todoEndOk = scan.todoAt === scan.workCalls
-    if (scan.todoAt === undefined && scan.todoFailure === undefined) return
-    this.emit({
-      kind: 'tool',
-      taskId: task.request.id,
-      toolId: `${task.request.id}:todos:${++task.todoSeq}`,
-      name: 'todo',
-      detail: scan.todoFailure ?? todoSummary(task.todos),
-      state: scan.todoFailure === undefined ? 'done' : 'error'
-    })
-  }
-
-  /**
-   * One closing turn per message, once the work is done and the agent's list is stale: its last turn
-   * did not end with a saved todo line, or one of its own items still reads in_progress.
-   * The card goes first so a finished plan message stays closed and Execute plan stays.
-   */
-  private checkTodos(task: Task, message: string): CycleAttemptResult | null {
-    if (task.todoClosing !== undefined || task.cancelled || task.disposeWhenIdle || !task.todos.length) return null
-    const running = task.todos.some(
-      (todo) => todo.status === 'in_progress' && todo.source?.chatId === task.request.id
-    )
-    if (task.todoEndOk && !running) return null
-    task.todoClosing = message
-    this.emit({
-      kind: 'tool',
-      taskId: task.request.id,
-      toolId: `${task.request.id}:todos:${++task.todoSeq}`,
-      name: 'todo',
-      detail: 'Checking the list',
-      state: 'done'
-    })
-    return { kind: 'retry', rewindAttempt: true, opening: continued(todoClosingText(message)) }
+    const todos = parseTodosMarker(assistant)
+    if (!todos) return
+    const previous = task.todos
+    task.todos = todos
+    task.todoSeq += 1
+    const toolId = `${task.request.id}:todos:${task.todoSeq}`
+    try {
+      await this.todoStore?.save(task.request.checkout, todos, previous)
+      this.emit({
+        kind: 'tool',
+        taskId: task.request.id,
+        toolId,
+        name: 'todo',
+        detail: todoSummary(todos),
+        state: 'done'
+      })
+    } catch (error) {
+      task.todos = previous
+      this.emit({
+        kind: 'tool',
+        taskId: task.request.id,
+        toolId,
+        name: 'todo',
+        detail: error instanceof Error ? error.message : 'Could not save the todo list',
+        state: 'error'
+      })
+    }
   }
 
   /** Keep the CLI's session id so the next turn on this CLI and directory resumes it. */
@@ -1745,10 +1717,9 @@ export class AgentController {
   private completeCycle(task: Task, attempt: number, message: string): CycleAttemptResult {
     const next = this.continueIfGuidanceOpening(task)
     if (next) return { kind: 'retry', opening: next }
-    const closing = this.checkTodos(task, message)
-    if (closing) return closing
+    this.releaseProcSessions(task)
     task.running = false
-    this.status(task, 'completed', attempt, task.todoClosing ?? message)
+    this.status(task, 'completed', attempt, message)
     this.releaseIfDisposed(task)
     return { kind: 'done' }
   }
@@ -1812,20 +1783,82 @@ export class AgentController {
 
     // Mandatory pipelines do not run unless files changed (or a previous
     // mandatory run is still waiting to pass).
-    if (!pipelines.length) return this.completeCycle(task, attempt, 'No validation needed')
+    if (!pipelines.length) return this.completeWithGit(task, attempt, scan, 'No validation needed')
 
     const names = pipelines.map((pipeline) => pipeline.name).join(', ')
     this.status(task, 'validating', attempt, `Running ${names}`)
     const outcome = await this.runValidationPipelines(task, pipelines, attempt)
-    return this.handleValidationOutcome(task, attempt, outcome, names)
+    return this.handleValidationOutcome(task, attempt, scan, outcome, names)
   }
 
-  private handleValidationOutcome(
+  /**
+   * The turn is validated: perform the Git actions the agent asked for, then finish. A hook
+   * pipeline that blocks one is a failure for the agent to repair, like a failed validation.
+   */
+  private async completeWithGit(
     task: Task,
     attempt: number,
+    scan: CycleScan,
+    message: string
+  ): Promise<CycleAttemptResult> {
+    const repair = await this.performGitActions(task, scan)
+    if (task.cancelled) {
+      this.settleCancel(task)
+      return { kind: 'done' }
+    }
+    return repair ? { kind: 'retry', opening: continued(repair) } : this.completeCycle(task, attempt, message)
+  }
+
+  /** Run `FAROL_GIT` actions in order; stop on hook failure; honor turn branch, tree, and cancel. */
+  private async performGitActions(task: Task, scan: CycleScan): Promise<string | undefined> {
+    const git = this.gitActions
+    if (!git || !task.gitEnabled) return undefined
+    const { actions, errors } = gitActionsFrom(scan.control)
+    if (errors.length) return `Farol could not read a ${GIT_MARKER} line. ${errors.join(' ')} Send it again.`
+    if (!actions.length) return undefined
+    const scope: GitScope = {
+      branch: task.turnBranch,
+      tree: task.validatedTree,
+      signal: task.abort.signal
+    }
+    for (const request of actions) {
+      if (task.cancelled) return undefined
+      const result = await this.runGitRequest(task, git, request, scope)
+      this.reportGitAction(task, request, result)
+      if (result.ok) continue
+      if (result.hookRun) return `${formatGitResult(request.action, result)}\nFix what it reports, then send the ${GIT_MARKER} line again.`
+      task.notes.push(`Note from Farol: ${formatGitResult(request.action, result)}`)
+      return undefined
+    }
+    return undefined
+  }
+
+  /** One request; commits use this turn's files unless the checkout was shared. */
+  private runGitRequest(task: Task, git: GitActions, request: GitAction, scope: GitScope): Promise<GitActionResult> {
+    if (request.action !== 'commit') return git.run(task.request.cwd, request, scope)
+    if (task.sharedCheckout) return Promise.resolve(SHARED_CHECKOUT)
+    return git.run(task.request.cwd, { ...request, files: [...task.turnFiles] }, scope)
+  }
+
+  private reportGitAction(task: Task, action: GitAction, result: GitActionResult): void {
+    task.gitSeq += 1
+    this.emit({
+      kind: 'tool',
+      taskId: task.request.id,
+      toolId: `${task.request.id}:git:${task.gitSeq}`,
+      name: 'git',
+      detail: formatGitResult(action.action, result),
+      state: result.ok ? 'done' : 'error'
+    })
+  }
+
+  private async handleValidationOutcome(
+    task: Task,
+    attempt: number,
+    scan: CycleScan,
     outcome: Awaited<ReturnType<AgentController['runValidationPipelines']>>,
     names: string
-  ): CycleAttemptResult {
+  ): Promise<CycleAttemptResult> {
     if (outcome.kind === 'cancelled') {
       this.settleCancel(task)
       return { kind: 'done' }
@@ -1833,7 +1866,7 @@ export class AgentController {
     if (outcome.kind === 'stopped') return { kind: 'done' }
     if (outcome.kind === 'passed') {
       task.mandatoryOutstanding = false
-      return this.completeCycle(task, attempt, `${names} passed`)
+      return this.completeWithGit(task, attempt, scan, `${names} passed`)
     }
 
     if (outcome.failures.some(({ pipeline }) => pipeline.mandatory === true)) task.mandatoryOutstanding = true
@@ -2056,7 +2089,8 @@ export class AgentController {
       this.settleCancel(task)
       return { kind: 'done' }
     }
-    this.endTodos(task, scan)
+    flushControlLines(scan)
+    await this.applyTodos(task, scan.control)
     this.applyHandoff(task, scan.control)
     const asked = this.questionsAfterRun(task, attempt, scan)
     if (asked) return asked
@@ -2104,8 +2138,12 @@ export class AgentController {
     opening: Opening,
     attempt: number
   ): Promise<CycleAttemptResult> {
-    const [status, message] = attemptStatus(attempt, task.todoClosing !== undefined)
-    this.status(task, status, attempt, message)
+    this.status(
+      task,
+      attempt === 1 ? 'working' : 'repairing',
+      attempt,
+      attempt === 1 ? 'Agent working' : 'Agent repairing validation failures'
+    )
     // Decided per run: a fallback or a provider switch since the opening was
     // chosen means this CLI has no session and needs the rebuilt history.
     const resume = resumableSession(task.context, cliFor(task.request.provider, openRouterAgent()), task.request.cwd)
@@ -2125,10 +2163,7 @@ export class AgentController {
       shellInvocations: [],
       filesChanged: false,
       changedTargets: [],
-      toolNames: [],
-      controlSeen: 0,
-      todoSaves: Promise.resolve(),
-      workCalls: 0
+      toolNames: []
     }
     const policy = await this.resolveToolPolicy(task, opening.text, attempt)
     task.runAutoApproves = this.autoApproves(task, task.request.provider)
@@ -2154,7 +2189,6 @@ export class AgentController {
           session
         })
     this.observeTools(task, policy, scan.toolNames, attempt)
-    await this.drainTodos(task, scan)
     if (task.askEpoch !== epoch) return { kind: 'done' }
     await this.noteTreeChange(task, scan, before)
     return await this.cycleAfterRun(task, attempt, scan, code, opening)
@@ -2175,9 +2209,11 @@ export class AgentController {
     const cwd = task.request.cwd
     const after = (await this.turnCapture(task))?.tree
     if (!after || !turnChangedFiles(false, before, after)) return
+    task.validatedTree = after
     scan.filesChanged = true
     task.mandatoryOutstanding = true
     for (const target of await changedPaths(cwd, before, after).catch(() => [])) {
+      task.turnFiles.add(target)
       if (!scan.changedTargets.includes(target)) scan.changedTargets.push(target)
     }
   }
@@ -2190,6 +2226,7 @@ export class AgentController {
     task.running = false
     if (task.process?.pid) killPidTree(task.process.pid)
     if (task.child?.pid) killPidTree(task.child.pid)
+    this.releaseProcSessions(task)
     this.expireApprovals(task)
     this.status(
       task,
@@ -2200,8 +2237,28 @@ export class AgentController {
     this.releaseIfDisposed(task)
   }
 
+  /**
+   * A chat that runs in this checkout while this turn does may write files too, and a snapshot cannot
+   * tell whose: the turn's files, and an agent commit of them, are then in doubt. Both chats are
+   * marked, whichever began first.
+   */
+  private async markSharedCheckout(task: Task): Promise<void> {
+    task.sharedCheckout = false
+    const key = (await repoRoot(task.request.cwd).catch(() => undefined)) ?? task.request.cwd
+    task.repoKey = key
+    for (const other of this.tasks.values()) {
+      if (other === task || !other.running || other.repoKey !== key) continue
+      task.sharedCheckout = true
+      other.sharedCheckout = true
+    }
+  }
+
   /** One user message: checkpoint the files before it runs and after it ends, around the attempts. */
   private async cycle(task: Task, first: Opening): Promise<void> {
+    task.turnFiles.clear()
+    task.validatedTree = undefined
+    task.turnBranch = await this.gitActions?.branch(task.request.cwd).catch(() => undefined)
+    await this.markSharedCheckout(task)
     const before = await this.turnCapture(task)
     task.turnBefore = before?.tree
     const record = before ? startTurn(task.request.cwd, task.request.id, before, turnPreview(first.text)) : undefined
@@ -2228,7 +2285,6 @@ export class AgentController {
     let opening = first
     let attempt = 0
     task.resumeAbandoned = false
-    this.beginRequest(task)
     // Fresh cycle → fresh tool ask; within the cycle, same-attempt retries remap.
     task.toolSelection = undefined
     task.toolSelectionAttempt = undefined
@@ -2236,6 +2292,7 @@ export class AgentController {
       for (attempt = 1; attempt <= maxAttempts && !task.cancelled; attempt++) {
         await this.loadTodos(task)
         await this.loadCustomInstructions(task)
+        await this.loadGitEnabled(task)
         const result = await this.runCycleAttempt(task, opening, attempt)
         if (result.kind === 'done') return
         opening = result.opening
@@ -2287,6 +2344,7 @@ export class AgentController {
         ? `Plan mode is read-only. You may inspect the project, ask clarifying questions, and propose a plan, but must not change project files or modify external systems. A finished plan ends with exactly one final line: ${FINISHED_PLAN}. If you need a decision, end with ${QUESTIONS_MARKER}. For an ordinary non-final response, end with ${PIPELINES_MARKER} []. Do not emit ${FINISHED_PLAN} until the plan is complete and ready for the developer to execute. Farol will never run pipelines from a Plan response.`
         : `When the requested file change is complete, select every relevant validation pipeline from the catalog below. If you made no file changes, select none (\`[]\`). Farol will run your selections and return any failures for you to repair.`,
       plan ? '' : mandatoryNote,
+      plan ? '' : this.gitContext(task),
       this.todoContext(task),
       `Handoff note: another agent may take the next turn of this chat without seeing this conversation. When the work's state changed this turn, put one line ${HANDOFF_MARKER} "<JSON string>" just before your final marker: what is done, decisions made, dead ends, and the next step, in at most ${MAX_HANDOFF_CHARS} characters. It replaces the previous note; omit it when nothing changed.`,
       plan
@@ -2305,14 +2363,25 @@ export class AgentController {
       .join('\n')
   }
 
-  private todoContext(task: Task): string {
-    const viewer = { chatId: task.request.id, now: Date.now(), since: task.requestStart }
+  /** The standing rules for Git actions; empty when Farol does not perform them on this machine. */
+  private gitContext(task: Task): string {
+    if (!task.gitEnabled) return ''
     return [
-      `Todo list (shared by every chat in this checkout). One line ${TODOS_MARKER} [{"content":"...","status":"pending|in_progress|completed|cancelled","priority":"high|medium|low"}] replaces the whole list; ${TODOS_MARKER} [] clears it.`,
-      `Check the list twice. First, at the start of your reply and before other work, send the line: remove finished items marked "earlier request", add the steps of this request, and keep open items of other chats as they are. Last, just before your final marker, send the line again with the true status of every item.`,
-      `Keep one of your items in_progress while you work. When you stop, none of your items stays in_progress: completed, or pending if work remains. Add no items for validation that Farol runs. Each item below may end with a ⟨note⟩ that says where it came from; it is not part of content, so do not copy it. A one-step request on an empty list needs neither line.`,
-      formatTodos(task.todos, viewer)
-    ].join('\n')
+      `Git: Farol performs Git actions for you. Never run git or gh yourself to commit, push or open a pull request.`,
+      `When this turn changed files, put one line ${GIT_MARKER} {"action":"commit","message":"<the full commit message>"} just before your final marker. Once validation passes, Farol commits exactly the files this turn changed.`,
+      `Only when the developer asked for it, add ${GIT_MARKER} {"action":"push"} and then ${GIT_MARKER} {"action":"create_pr","base":"<branch>","title":"<title>","body":"<description>"} (base, title and body are optional) after the commit line. Each is one JSON object on one line; Farol performs them in order and stops at the first that fails.`,
+      `A pipeline bound to a Git action runs first and can block it; its output comes back to you to fix.`,
+      `Never call the Farol MCP Git tools (git_status, git_commit, git_push, git_create_pr) in this managed Chat session; use ${GIT_MARKER}.`
+    ].join(' ')
+  }
+
+  private todoContext(task: Task): string {
+    return (
+      `Todo list (shared by every chat in this checkout): put one line ` +
+      `${TODOS_MARKER} [{"content":"...","status":"pending|in_progress|completed|cancelled","priority":"high|medium|low"}] ` +
+      `just before your final marker to replace the whole list, or ${TODOS_MARKER} [] to clear it. ` +
+      `Keep exactly one todo in_progress while work remains.\n${formatTodos(task.todos)}`
+    )
   }
 
   private pipelineHistory(task: Task): string {
@@ -2401,11 +2470,19 @@ export class AgentController {
   }
 
   private setProcess(task: Task, child: boolean, proc: ChildProcess | null): void {
-    const prev = child ? task.child : task.process
     if (child) task.child = proc
     else task.process = proc
-    if (proc?.pid) this.procs?.register(`${task.request.id}:${proc.pid}`, task.request.checkout, proc.pid)
-    else if (prev?.pid) this.procs?.finish(`${task.request.id}:${prev.pid}`)
+    if (!proc?.pid) return
+    const id = `${task.request.id}:${proc.pid}`
+    this.procs?.register(id, task.request.checkout, proc.pid)
+    if (!task.procRegistryIds.includes(id)) task.procRegistryIds.push(id)
+  }
+
+  /** Lets auto-cleanup run only after validation, Git actions, and hook runs on this turn. */
+  private releaseProcSessions(task: Task): void {
+    if (!this.procs) return
+    for (const id of task.procRegistryIds) this.procs.finish(id)
+    task.procRegistryIds.length = 0
   }
 
   /** The CLI command and environment for a managed run: tools, Farol's server, approvals and mode. */

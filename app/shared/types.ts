@@ -23,6 +23,7 @@ import type { SpendKeyStatus, SpendProvider, SpendReport } from './spend'
 import type { Todo } from './todos'
 import type { CustomPrompt, CustomPromptSet } from './custom-prompts'
 import type { ProcSnapshot } from './proc'
+import type { BrowserBounds, BrowserEvent, BrowserState } from './browser'
 
 export type { AgentQuestion, AgentSkill, ProviderUsage }
 
@@ -155,6 +156,14 @@ export interface GitChanged {
   info: GitInfo
 }
 
+/** An agent had Farol perform a Git action: the Git log and the status follow it. */
+export interface GitActionEvent {
+  projectPath: string
+  action: 'status' | 'commit' | 'push' | 'create_pr'
+  ok: boolean
+  message: string
+}
+
 export type GitFileKind = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict'
 
 export interface GitStatusFile {
@@ -241,7 +250,7 @@ export interface PullRequest {
   hasConflicts: boolean
   /** PR base branch, when GitHub reported it. */
   base?: string
-  /** GitHub HTML URL for this PR, when `gh` reported it. */
+  /** GitHub HTML URL for this PR, when GitHub reported it. */
   url?: string
   /** True when the PR is still a draft on GitHub. */
   isDraft?: boolean
@@ -252,6 +261,8 @@ export interface PullRequest {
 export interface GitHubInfo {
   available: boolean
   message?: string
+  /** Farol holds no usable GitHub token and the gh CLI could not stand in: the panel offers Sign in. */
+  signInRequired?: true
   prs: PullRequest[]
   /** Paths that would conflict if the open PR's base were merged into HEAD. */
   conflictFiles?: string[]
@@ -728,6 +739,8 @@ export interface FarolApi {
     ): Promise<{ ok: boolean; message: string; prompt?: string }>
     /** Fires when HEAD changes, including from outside the app. */
     onChanged(cb: (changed: GitChanged) => void): () => void
+    /** Fires when an agent had Farol perform a Git action, so the Git log and status follow. */
+    onAction(cb: (event: GitActionEvent) => void): () => void
   }
   run: {
     start(pipeline: Pipeline, cwd: string, branch: string): Promise<string>
@@ -872,6 +885,21 @@ export interface FarolApi {
   }
   ui: {
     onSettings(cb: () => void): () => void
+  }
+  /** The Browser panel. A checkout's page is a native view that the main process places over `bounds`. */
+  browser: {
+    /** Shows the checkout's page at `bounds` (window CSS pixels), starting it on first use. */
+    show(checkout: string, bounds: BrowserBounds): Promise<BrowserState | null>
+    hide(checkout: string): Promise<void>
+    /** Opens an http(s) address; false when it is not one. */
+    navigate(checkout: string, input: string): Promise<boolean>
+    back(checkout: string): Promise<void>
+    forward(checkout: string): Promise<void>
+    reload(checkout: string): Promise<void>
+    /** Closes the checkout's page. */
+    dispose(checkout: string): Promise<void>
+    onState(cb: (event: BrowserEvent) => void): () => void
+    onOpen(cb: (url: string) => void): () => void
   }
   feedback: {
     /** Opens a GitHub issue form in the browser with this build's version filled in; false if the browser did not open. */

@@ -82,6 +82,7 @@ import ChatPane from './components/ChatPane'
 import CodePane from './components/CodePane'
 import TerminalPane from './components/TerminalPane'
 import WorkspaceGrid from './components/WorkspaceGrid'
+import BrowserPane from './components/BrowserPane'
 import ProjectRail from './components/ProjectRail'
 import Sidebar from './components/Sidebar'
 import GitPane, { gitStatusDotColor } from './components/GitPane'
@@ -931,6 +932,8 @@ interface ProjectWorkspaceProps {
   visible: boolean
   /** Rail poke for a keep-mounted workspace — nonce 0 means "not for this path". */
   workspaceAction: { kind: WorkspaceActionKind; nonce: number }
+  browserUrl: string | null
+  onBrowserUrlHandled: () => void
   gitOpen: boolean
   onGitOpenChange: Dispatch<SetStateAction<boolean>>
   gitAnchorRef: RefObject<HTMLButtonElement>
@@ -952,6 +955,8 @@ export function ProjectWorkspace({
   project,
   visible,
   workspaceAction,
+  browserUrl,
+  onBrowserUrlHandled,
   gitOpen,
   onGitOpenChange,
   gitAnchorRef,
@@ -975,7 +980,15 @@ export function ProjectWorkspace({
   /** Which surfaces are on screen, and how Chat / Code / Terminal are split. */
   const workspace = useWorkspaceLayout()
   const { reveal, split: splitSurface, surfaces } = workspace
+  useEffect(() => {
+    if (!visible || !browserUrl) return
+    reveal('browser')
+    void api.browser.navigate(project.path, browserUrl)
+    onBrowserUrlHandled()
+  }, [visible, browserUrl, project.path, reveal, onBrowserUrlHandled])
   const code = useCodeWorkspace(project.path)
+  // A closed project takes its browser page with it.
+  useEffect(() => () => void api.browser.dispose(project.path), [project.path])
 
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [runs, setRuns] = useState<RunsByBranch>({})
@@ -2486,6 +2499,7 @@ export function ProjectWorkspace({
         updateVersion={updateVersion}
         onInstallUpdate={() => api.update.install()}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenBrowser={() => reveal('browser')}
       />
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
@@ -2561,6 +2575,18 @@ export function ProjectWorkspace({
                     onDiscard={code.confirmClose}
                     onOverwrite={() => void code.overwriteSave()}
                     onCancelNotice={code.cancelNotice}
+                  />
+                </ErrorBoundary>
+              ),
+              browser: (
+                <ErrorBoundary compact>
+                  <BrowserPane
+                    checkout={project.path}
+                    active={
+                      visible &&
+                      surfaces.includes('browser') &&
+                      !(settingsOpen || paletteOpen || newTabOpen || gitOpen || editor)
+                    }
                   />
                 </ErrorBoundary>
               ),
@@ -2703,6 +2729,9 @@ export function ProjectWorkspace({
 }
 
 export default function App() {
+  const [browserUrl, setBrowserUrl] = useState<string | null>(null)
+  useEffect(() => api.browser.onOpen(setBrowserUrl), [])
+  const clearBrowserUrl = useCallback(() => setBrowserUrl(null), [])
   const [projects, setProjects] = useState<Project[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
   const [projectsCollapsed, setProjectsCollapsed] = useState(false)
@@ -2969,6 +2998,8 @@ export default function App() {
               <ProjectWorkspace
                 project={project}
                 visible={visible}
+                browserUrl={browserUrl}
+                onBrowserUrlHandled={clearBrowserUrl}
                 workspaceAction={
                   workspaceAction.path === project.path
                     ? { kind: workspaceAction.kind, nonce: workspaceAction.nonce }

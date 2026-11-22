@@ -25,6 +25,7 @@ import {
   type PrDraft
 } from '@shared/types'
 import { useGitPanel, type GitAction, type GitLogEntry, type MergedPr } from '../hooks/useGitPanel'
+import { remoteAccount } from '../remote-account'
 import { C, MONO, UI, ELLIPSIS } from '../theme'
 import { BranchDropdown, Button } from './controls'
 import { Field, HAIR, Seg, SettingsGroup, SparkIcon, fieldBox } from './editor-ui'
@@ -657,7 +658,8 @@ function PullRequestTab({
   onMergeStrategy,
   onFixConflicts,
   onCreatePr,
-  onMergePr
+  onMergePr,
+  onSignIn
 }: {
   branch: string
   status: GitStatus | null
@@ -679,6 +681,7 @@ function PullRequestTab({
   onFixConflicts: () => void
   onCreatePr: (base: string, title: string, body: string) => void
   onMergePr: (strategy: MergeStrategy, pr: MergedPr) => void
+  onSignIn: () => void
 }) {
   const attached = github?.available ? github.prs[0] : undefined
   const merged = mergedPr?.branch === branch ? mergedPr : null
@@ -898,6 +901,7 @@ function PullRequestTab({
             {prReason && !canCreatePr && !gitAction && (
                 <span style={{ fontSize: 11.5, color: C.faint, lineHeight: 1.45 }}>{prReason}</span>
             )}
+            {github?.signInRequired && <Button variant="primary" onClick={onSignIn}>Sign in with GitHub</Button>}
           </div>
         </>
       )}
@@ -1156,6 +1160,7 @@ export default function GitPane({
                   void mergePr(strategy, pr)
                   setMergeStrategy('squash')
                 }}
+                onSignIn={() => void remoteAccount.signIn().then(() => refresh())}
               />
             )}
             {tab === 'hooks' && <HooksTab hooks={hooks} />}

@@ -7,6 +7,7 @@ import path from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RemoteWorkspace } from '../electron/sandbox'
 import type { RunResult } from '../shared/run-result'
+import { loginScope } from './auth'
 import { GitHub } from './github'
 import { createHandler } from './http'
 import { createKey } from './keys'
@@ -42,22 +43,34 @@ let other: string
 let usersFile: string
 /** Whether the fake GitHub has approved the pending device code yet. */
 let approved: boolean
+/** The scope the service asked the fake GitHub for when it started a device flow. */
+let deviceScope: string | null
 
 const json = (body: unknown): Response => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } })
 const ghUsers: Record<string, { id: number; login: string; name?: string; avatar_url?: string }> = {
   gho_octo: { id: 1, login: 'octo', name: 'Octo Cat', avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4' },
+  gho_octo2: { id: 1, login: 'octo' },
   gho_mallory: { id: 2, login: 'mallory' }
 }
+/** Refresh tokens the fake GitHub accepts, and the access token each one buys. */
+const refreshable: Record<string, string> = { rt_octo: 'gho_octo2', rt_mallory: 'gho_mallory' }
 
 /** Just enough of github.com and api.github.com for the sign-in flows. */
 const fakeGitHub: typeof fetch = async (input, init) => {
   const url = String(input)
   if (url.endsWith('/login/device/code')) {
+    deviceScope = new URLSearchParams(String(init?.body)).get('scope')
     return json({ device_code: 'dc', user_code: 'ABCD-1234', verification_uri: 'https://github.com/login/device', expires_in: 900, interval: 5 })
   }
   if (url.endsWith('/login/oauth/access_token')) {
     const form = new URLSearchParams(String(init?.body))
-    if (form.get('device_code')) return json(approved ? { access_token: 'gho_octo' } : { error: 'authorization_pending' })
+    if (form.get('device_code')) {
+      return json(approved ? { access_token: 'gho_octo', expires_in: 28800, refresh_token: 'rt_octo' } : { error: 'authorization_pending' })
+    }
+    if (form.get('grant_type') === 'refresh_token') {
+      const access = refreshable[form.get('refresh_token') ?? '']
+      return json(access ? { access_token: access, expires_in: 28800, refresh_token: 'rt_next' } : { error: 'bad_refresh_token' })
+    }
     const token = { 'octo-code': 'gho_octo', 'mallory-code': 'gho_mallory' }[form.get('code') ?? '']
     return json(token ? { access_token: token } : { error: 'bad_verification_code' })
   }
@@ -73,6 +86,7 @@ beforeEach(async () => {
   const keysFile = path.join(dir, 'keys.json')
   usersFile = path.join(dir, 'users.json')
   approved = false
+  deviceScope = null
   key = createKey(keysFile, 'web').key
   other = createKey(keysFile, 'other').key
   const registry = new RunRegistry(async () => workspace, { maxActive: 1, retentionMs: 60_000 })
@@ -278,5 +292,75 @@ describe('GitHub sign-in', () => {
 
   it('cannot sign out an API key', async () => {
     expect((await call('/v1/auth/logout', { method: 'POST' })).status).toBe(400)
+  })
+
+  it('asks GitHub for repo access and hands the grant back with the session, to a client that asks', async () => {
+    await post('/v1/auth/device', { githubAccess: true })
+    expect(deviceScope).toBe('repo')
+
+    approved = true
+    const device = (await (await post('/v1/auth/device/token', { deviceCode: 'dc', githubAccess: true })).json()) as {
+      github: unknown
+    }
+    expect(device.github).toEqual({ token: 'gho_octo', expiresAt: expect.any(String), refreshToken: 'rt_octo' })
+
+    const code = (await (
+      await post('/v1/auth/code', { code: 'octo-code', redirectUri: 'https://app.example/callback', githubAccess: true })
+    ).json()) as { github: unknown }
+    expect(code.github).toEqual({ token: 'gho_octo' })
+  })
+
+  it('asks for no repo access and sends no GitHub token to a client that does not ask', async () => {
+    await post('/v1/auth/device', {})
+    expect(deviceScope).toBe('')
+
+    approved = true
+    const device = await (await post('/v1/auth/device/token', { deviceCode: 'dc' })).json()
+    expect(device).toMatchObject({ status: 'ok', user: { login: 'octo' } })
+    expect(device).not.toHaveProperty('github')
+
+    const code = await (await post('/v1/auth/code', { code: 'octo-code', redirectUri: 'https://app.example/callback' })).json()
+    expect(code).toMatchObject({ user: { login: 'octo' } })
+    expect(code).not.toHaveProperty('github')
+  })
+
+  describe('refreshing the GitHub token', () => {
+    const refresh = (token: string | undefined, body: unknown) =>
+      call('/v1/auth/github/refresh', { method: 'POST', token, body: JSON.stringify(body) })
+    const signedIn = async (): Promise<string> =>
+      ((await (await post('/v1/auth/code', { code: 'octo-code', redirectUri: 'https://app.example/callback' })).json()) as { token: string })
+        .token
+
+    it('returns a new grant for the signed-in user', async () => {
+      const res = await refresh(await signedIn(), { refreshToken: 'rt_octo' })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ github: { token: 'gho_octo2', expiresAt: expect.any(String), refreshToken: 'rt_next' } })
+    })
+
+    it('refuses another account’s refresh token, an unknown one, and a missing one', async () => {
+      const session = await signedIn()
+      expect((await refresh(session, { refreshToken: 'rt_mallory' })).status).toBe(403)
+      expect((await refresh(session, { refreshToken: 'nope' })).status).toBe(400)
+      expect((await refresh(session, {})).status).toBe(400)
+    })
+
+    it('needs a session: an API key has no GitHub token and no token is not let in', async () => {
+      expect((await refresh(undefined, { refreshToken: 'rt_octo' })).status).toBe(400)
+      expect((await refresh('nope', { refreshToken: 'rt_octo' })).status).toBe(401)
+    })
+  })
+})
+
+describe('loginScope', () => {
+  const config = (orgs: string[]) => ({ access: { users: [], orgs, anyone: false } })
+
+  it('asks GitHub for repo access only for a client that wants to call the GitHub API', () => {
+    expect(loginScope(config([]), false)).toBe('')
+    expect(loginScope(config([]), true)).toBe('repo')
+  })
+
+  it('always asks for org membership when access is limited to organizations', () => {
+    expect(loginScope(config(['acme']), false)).toBe('read:org')
+    expect(loginScope(config(['acme']), true)).toBe('repo read:org')
   })
 })

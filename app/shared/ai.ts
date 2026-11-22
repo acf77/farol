@@ -9,6 +9,7 @@ import {
   claudeMcpConfig,
   codexMcpOverrides,
   DELEGATE_TOOL,
+  GIT_MCP_TOOLS,
   PIPELINE_MCP_TOOLS,
   type McpServerEntry
 } from './mcp-config'
@@ -657,7 +658,7 @@ function managedClaudeCommand(
         ...effortArgv('claude', effort),
         ...(mcp ? ['--mcp-config', claudeMcpConfig(mcp)] : []),
         '--disallowedTools',
-        PIPELINE_MCP_TOOLS.join(','),
+        [...PIPELINE_MCP_TOOLS, ...GIT_MCP_TOOLS].join(','),
         ...(ask ? ['--allowedTools', DELEGATE_TOOL, '--permission-prompt-tool', APPROVE_TOOL] : []),
         '--permission-mode',
         plan ? 'plan' : ask ? 'default' : 'bypassPermissions',

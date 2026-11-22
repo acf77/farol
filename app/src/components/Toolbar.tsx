@@ -8,6 +8,7 @@ import AccountMenu from './AccountMenu'
 import { CHROME_ROW } from './side-panel'
 import ActivityDot from './ActivityDot'
 import { SettingsIcon } from './icons'
+import { Globe } from 'lucide-react'
 
 interface Props {
   project: Project | null
@@ -27,6 +28,7 @@ interface Props {
   updateVersion: string | null
   onInstallUpdate: () => void
   onOpenSettings: () => void
+  onOpenBrowser: () => void
 }
 
 const drag = { WebkitAppRegion: 'drag' } as React.CSSProperties
@@ -157,7 +159,8 @@ export default function Toolbar({
   chatState,
   updateVersion,
   onInstallUpdate,
-  onOpenSettings
+  onOpenSettings,
+  onOpenBrowser
 }: Props) {
   const [splitOpen, setSplitOpen] = useState(false)
 
@@ -329,6 +332,16 @@ export default function Toolbar({
           </button>
         )}
 
+        <button
+          type="button"
+          className="bf-focus bf-icon-btn"
+          onClick={onOpenBrowser}
+          title="Browser"
+          aria-label="Browser"
+          style={iconButton}
+        >
+          <Globe size={14} />
+        </button>
         <button
           type="button"
           className="bf-focus bf-icon-btn"

@@ -1,14 +1,16 @@
 import { execFile } from 'child_process'
 import { aiEnv, resolveBin } from './bin'
 
+/** `extraEnv` is added to the environment of this one command. */
 export function execCli(
   bin: string,
   cwd: string,
   args: string[],
-  timeout: number
+  timeout: number,
+  extraEnv?: Record<string, string>
 ): Promise<{ code: number; out: string; err: string }> {
   const resolved = resolveBin(bin) ?? bin
-  const env = aiEnv()
+  const env = { ...aiEnv(), ...extraEnv }
   return new Promise((resolve) => {
     execFile(
       resolved,

@@ -97,6 +97,10 @@ export function pickPushRemote(raw: string): string | undefined {
   return remotes.includes('origin') ? 'origin' : remotes[0]
 }
 
+/** A branch name that is safe to hand to git as an argument: it cannot read as an option, a refspec (`a:b`, `+a`) or a range (`a..b`). */
+const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/
+export const isSafeBranchName = (name: string): boolean => SAFE_BRANCH.test(name) && !name.includes('..')
+
 /** Turn porcelain lines into staged / unstaged / untracked / conflict buckets. */
 export function parseGitStatus(porcelain: string): Omit<GitStatus, 'ahead' | 'behind' | 'upstream' | 'remote'> {
   const staged: GitStatusFile[] = []

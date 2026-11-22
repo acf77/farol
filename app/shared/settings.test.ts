@@ -32,7 +32,8 @@ describe('sanitizeSettings', () => {
       pipelineFallbacks: [],
       memoryWarnGb: 2,
       memoryAlertGb: 4,
-      autoCleanLeftovers: false
+      autoCleanLeftovers: false,
+      gitActions: true
     })
   })
 
@@ -58,8 +59,15 @@ describe('sanitizeSettings', () => {
       pipelineFallbacks: [],
       memoryWarnGb: 2,
       memoryAlertGb: 4,
-      autoCleanLeftovers: false
+      autoCleanLeftovers: false,
+      gitActions: true
     })
+  })
+
+  it('keeps the Git actions switch on unless it was turned off', () => {
+    expect(sanitizeSettings({}).gitActions).toBe(true)
+    expect(sanitizeSettings({ gitActions: 'no' }).gitActions).toBe(true)
+    expect(sanitizeSettings({ gitActions: false }).gitActions).toBe(false)
   })
 
   it('keeps memory thresholds and the clean-up switch, and drops junk', () => {
@@ -105,6 +113,7 @@ describe('sanitizeSettings', () => {
       memoryWarnGb: 2,
       memoryAlertGb: 4,
       autoCleanLeftovers: false,
+      gitActions: true,
       openrouter: {
         autoPinned: true,
         pinned: ['openai/gpt-4o'],

@@ -50,3 +50,13 @@ export function syncSummary(files: number, uploadedBytes: number): string {
 
 /** All a user is told about the remote service when they are not signed in. */
 export const SIGN_IN_REQUIRED = 'Sign in to run remote pipelines.'
+
+/** What the Git panel and Git actions say when Farol holds no usable GitHub token. */
+export const GITHUB_SIGN_IN_REQUIRED = 'Sign in with GitHub to use pull requests.'
+
+/** Farol holds no usable GitHub token: the user is signed out, signed in before Farol kept one, or GitHub revoked it. */
+export class GitHubSignInRequired extends Error {
+  constructor() {
+    super(GITHUB_SIGN_IN_REQUIRED)
+  }
+}

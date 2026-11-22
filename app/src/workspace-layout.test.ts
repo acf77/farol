@@ -103,4 +103,11 @@ describe('workspace layout', () => {
     expect(parsed?.focus).toBe('chat')
     expect(parsed?.root).toMatchObject({ size: 85 })
   })
+
+  it('keeps the browser out of shortcut splits but lets it be split in', () => {
+    expect(splitPartner(['chat', 'code', 'terminal'])).toBeUndefined()
+    const layout = splitFocused(defaultLayout(), 'row', 'browser')
+    expect(surfacesOf(layout.root).sort()).toEqual(['browser', 'chat'])
+    expect(layout.focus).toBe('browser')
+  })
 })

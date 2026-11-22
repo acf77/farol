@@ -1,10 +1,11 @@
 import { scanAgents } from './agent-scan'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell as electronShell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import type {
   AgentTaskRequest,
   AppSettings,
+  GitActionEvent,
   GitHookEvent,
   MergeStrategy,
   Pipeline,
@@ -17,8 +18,11 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pipelineStoreRootFor, pull as gitPull, push as gitPush, recentCommits, removeWorktree, status as gitStatus, syncManagedHooks } from './git'
+import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, currentBranch, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pipelineStoreRootFor, pull as gitPull, push as gitPush, recentCommits, removeWorktree, status as gitStatus, syncManagedHooks, type GitScope } from './git'
 import { createPullRequest, mergePullRequest } from './github'
+import { confineToProjects } from './confine'
+import { performGitAction } from './git-actions'
+import { formatGitResult, parseGitAction, type GitAction, type GitActionResult } from '../shared/git-action'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, flushWorkspace, PipelineWatcher } from './store'
 import {
@@ -62,7 +66,7 @@ import { appendTail, plainText } from '../shared/terminal'
 import { AgentController } from './agent-controller'
 import { createTodoStore } from './todos'
 import { createCustomPromptStore } from './custom-prompts'
-import { mergeTodos, parseTodos } from '../shared/todos'
+import { parseTodos } from '../shared/todos'
 import { closedProjects } from '../shared/session'
 import { owningWorktree } from '../shared/worktree'
 import { CHECKOUT_LOCKED, awaitIdle, checkoutLocked, lockCheckout, unlockCheckout } from './checkout-lock'
@@ -70,6 +74,8 @@ import { scopedRuntimeId } from '../shared/runtime'
 import net from 'net'
 import { randomBytes } from 'crypto'
 import os from 'os'
+import { BrowserManager } from './browser'
+import { isHttpUrl, normalizeBrowserUrl, parseBrowserBounds } from '../shared/browser'
 import { ProcRegistry } from './proc-sessions'
 import { listPorts, ProcSampler } from './proc-sampler'
 import { ProcCleanup } from './proc-cleanup'
@@ -81,6 +87,11 @@ let win: BrowserWindow | null = null
 function send(channel: string, payload: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
 }
+
+const browsers = new BrowserManager(
+  () => win,
+  (checkout, state) => send('browser:state', { checkout, state })
+)
 
 let memoryLimits = { warnGb: 2, alertGb: 4 }
 const rememberMemoryLimits = (s: AppSettings): void => {
@@ -134,7 +145,8 @@ const agents = new AgentController(
         codexHook: (taskId, delegateId) => codexHookCommand(managedMcpEntry(managedScript('codex-hook.js'), taskId, delegateId))
       }
     : undefined,
-  procs
+  procs,
+  { enabled: async () => (await loadSettings()).gitActions, branch: managedBranch, run: runManagedGitAction }
 )
 const head = new HeadWatcher(async (cwd) =>
   send('git:changed', { projectPath: cwd, info: await gitInfo(cwd) })
@@ -199,13 +211,14 @@ function createWindow(): void {
     win = null
   })
 
-  // Keep navigation inside the app; send real http(s) links to the system browser.
+  // Keep navigation inside the app.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void openInBrowser(url)
+    openInBrowser(url)
     return { action: 'deny' }
   })
-  win.webContents.on('will-navigate', (event) => {
+  win.webContents.on('will-navigate', (event, url) => {
     event.preventDefault()
+    openInBrowser(url)
   })
   // OOM / GPU faults kill the renderer and leave an empty frame — reload it.
   win.webContents.on('render-process-gone', (_event, details) => {
@@ -320,14 +333,13 @@ async function openFeedback(template: FeedbackTemplate): Promise<boolean> {
   )
 }
 
-/** Opens `url` in the system browser; false when the system could not, so callers do not act as if it opened. */
-async function openInBrowser(url: string): Promise<boolean> {
-  try {
-    await electronShell.openExternal(url)
-    return true
-  } catch {
-    return false
-  }
+/** Sends an HTTP(S) link to the active workspace. */
+function openInBrowser(url: string): boolean {
+  if (!isHttpUrl(url)) return false
+  const normalized = normalizeBrowserUrl(url)
+  if (!normalized || !win || win.isDestroyed()) return false
+  send('browser:open', normalized)
+  return true
 }
 
 async function openProjectDialog() {
@@ -466,17 +478,26 @@ function runForAgent(
   })
 }
 
-/** True when `cwd` is the open project or one of its linked worktrees. */
-async function cwdAllowedForProject(projectPath: string, cwd: string): Promise<boolean> {
-  const abs = path.resolve(cwd)
-  const root = path.resolve(projectPath)
-  if (abs === root || abs.startsWith(root + path.sep)) return true
-  const git = await gitInfo(projectPath)
-  for (const wt of git.worktrees ?? []) {
-    const base = path.resolve(wt.path)
-    if (abs === base || abs.startsWith(base + path.sep)) return true
-  }
-  return false
+/**
+ * Where an agent's `cwd` really is, when that is the open project or one of its linked worktrees
+ * (or inside one); undefined otherwise. The answer follows symlinks (see `confineTo`), and a
+ * caller that acts on the folder runs in the `dir` it returns, not the `cwd` it was sent.
+ */
+async function confinedCwd(projectPath: string, cwd: unknown): Promise<{ dir: string; checkout: string } | undefined> {
+  return confineToProjects([projectPath], worktreePaths, cwd)
+}
+
+/** The folders of a project's linked worktrees, as git lists them. */
+async function worktreePaths(project: string): Promise<string[]> {
+  return ((await gitInfo(project)).worktrees ?? []).map((wt) => wt.path)
+}
+
+/**
+ * The same for a managed Chat, whose `cwd` the renderer sends: it must be inside a project the app
+ * has open, or a linked worktree of one. The app decides here which repository an action may touch.
+ */
+async function openProjectDir(cwd: unknown): Promise<{ dir: string; checkout: string } | undefined> {
+  return confineToProjects((await loadOpenProjects()).paths, worktreePaths, cwd)
 }
 
 /** Commit/push only run in a project the app currently has open. */
@@ -492,6 +513,35 @@ async function openProjectCwd(
   if (!match) return { ok: false, error: 'Not an open project' }
   if (checkoutLocked(match)) return { ok: false, error: CHECKOUT_LOCKED }
   return { path: path.resolve(match) }
+}
+
+/**
+ * A Git action an agent asked for, run in `cwd`, which must already be confined to `checkout`:
+ * the action may touch only that checkout's repository. Farol refuses it when the Git actions
+ * switch is off, and tells the Git panel what happened so its log and status follow. `scope` is
+ * what a managed Chat turn's actions hold fixed; a request over the bridge holds its branch and its connection's signal.
+ */
+async function runGitAction(cwd: string, request: GitAction, checkout: string, scope?: GitScope): Promise<GitActionResult> {
+  const result: GitActionResult = (await loadSettings()).gitActions
+    ? await performGitAction(cwd, request, checkout, scope)
+    : { ok: false, refused: true, message: 'Git actions are turned off in Settings, so Farol did not do this.' }
+  if (request.action !== 'status' || !result.ok) {
+    send('git:action', { projectPath: checkout, action: request.action, ok: result.ok, message: result.message } satisfies GitActionEvent)
+  }
+  return result
+}
+
+/** A managed Chat's Git action runs in the folder the app found for it among the open projects, never in the one the renderer named. */
+async function runManagedGitAction(cwd: string, request: GitAction, scope: GitScope): Promise<GitActionResult> {
+  const at = await openProjectDir(cwd)
+  if (!at) return { ok: false, refused: true, message: 'This folder is not in a project the app has open, so Farol did not do this.' }
+  return runGitAction(at.dir, request, at.checkout, scope)
+}
+
+/** The branch a managed Chat's checkout is on, read only in a folder the app found among the open projects. */
+async function managedBranch(cwd: string): Promise<string | undefined> {
+  const at = await openProjectDir(cwd)
+  return at ? currentBranch(at.dir) : undefined
 }
 
 /** Run every pipeline configured for `event`, stopping at the first failure like a shell `&&` chain. */
@@ -518,17 +568,33 @@ async function runHookPipelines(
 
 async function handleBridge(
   req: Exclude<BridgeRequest, { op: 'delegate' | 'approve' }>,
-  projectPath: string
+  projectPath: string,
+  signal: AbortSignal
 ): Promise<BridgeReply> {
-  if (!(await cwdAllowedForProject(projectPath, req.cwd))) {
+  const confined = await confinedCwd(projectPath, req.cwd)
+  if (!confined) {
     return {
       id: req.id,
       ok: false,
       message: `cwd is outside this project: ${req.cwd}`
     }
   }
+  // Everything below runs in the folder that was checked, symlinks resolved, never in `req.cwd`
+  // as it was written: a link there could lead elsewhere by the time it is used.
+  const cwd = confined.dir
+  if (req.op === 'git') {
+    // The socket is open to any process of this user, so the action is validated again here,
+    // `performGitAction` checks that git's repository belongs to the checkout, and
+    // `runGitAction` refuses it while the Git actions switch is off.
+    const action = parseGitAction(req.action)
+    if ('error' in action) return { id: req.id, ok: false, message: action.error }
+    // A requester that hangs up while queued behind another action does not get its action run afterwards.
+    const scope: GitScope = { branch: await currentBranch(cwd), tree: undefined, anyTree: true, signal }
+    const result = await runGitAction(cwd, action, confined.checkout, scope)
+    return { id: req.id, ok: true, op: 'git', text: formatGitResult(action.action, result), failed: !result.ok }
+  }
   // The agent's own directory wins, so an agent in a worktree runs that worktree.
-  const pipelines = await loadPipelines(req.cwd)
+  const pipelines = await loadPipelines(cwd)
   if (req.op === 'list') {
     return {
       id: req.id,
@@ -542,17 +608,17 @@ async function handleBridge(
     }
   }
   if (req.op === 'hook') {
-    return runHookPipelines(req, req.event, pipelines, projectPath)
+    return runHookPipelines({ id: req.id, cwd }, req.event, pipelines, projectPath)
   }
   const found = resolvePipeline(pipelines, req.pipeline)
   if (!found.ok) {
     const detail = found.candidates.length ? `\nAvailable:\n- ${found.candidates.join('\n- ')}` : ''
     return { id: req.id, ok: false, message: found.message + detail }
   }
-  const git = await gitInfo(req.cwd)
+  const git = await gitInfo(cwd)
   const { text, failed } = await runForAgent(
     found.pipeline,
-    req.cwd,
+    cwd,
     git.branch || '(no branch)',
     projectPath
   )
@@ -637,10 +703,10 @@ async function pruneDelegateSnapshots(projectPath: string, session: ProjectSessi
 }
 
 function startBridge(projectPath: string): void {
-  listenBridge(socketPath(projectPath), async (req) =>
+  listenBridge(socketPath(projectPath), async (req, signal) =>
     req.op === 'delegate' || req.op === 'approve'
       ? { id: req.id, ok: false, message: `${req.op} is only available in managed Chat.` }
-      : handleBridge(req, projectPath)
+      : handleBridge(req, projectPath, signal)
   )
 }
 
@@ -849,7 +915,7 @@ function registerSessionIpc(): void {
     const { paths } = await loadOpenProjects()
     const checkouts = await Promise.all(paths.map(checkoutOf))
     if (!checkouts.includes(key)) throw new Error('Not an open checkout')
-    await todos.save(key, mergeTodos(previous, next, undefined, Date.now()), previous)
+    await todos.save(key, next, previous)
   })
   ipcMain.handle('pipelines:load', async (_e, projectPath: string) => {
     void pipelineFiles.watch(projectPath)
@@ -1094,6 +1160,32 @@ function registerRemoteIpc(): void {
   onPaymentRequired((e) => send('remote:paymentRequired', e))
 }
 
+/** Browser pages are keyed by checkout path. The key names a view and a session only; it is never opened as a path. */
+function registerBrowserIpc(): void {
+  const key = (v: unknown): string | null => (typeof v === 'string' && v && v.length <= 4096 ? v : null)
+  ipcMain.handle('browser:show', (_e, checkout: unknown, bounds: unknown) => {
+    const k = key(checkout)
+    const b = parseBrowserBounds(bounds)
+    if (!k || !b) return null
+    browsers.show(k, b)
+    return browsers.state(k)
+  })
+  ipcMain.handle('browser:hide', (_e, checkout: unknown) => {
+    const k = key(checkout)
+    if (k) browsers.hide(k)
+  })
+  ipcMain.handle('browser:navigate', (_e, checkout: unknown, input: unknown) => {
+    const k = key(checkout)
+    return k ? browsers.navigate(k, input) : false
+  })
+  for (const action of ['back', 'forward', 'reload', 'dispose'] as const) {
+    ipcMain.handle(`browser:${action}`, (_e, checkout: unknown) => {
+      const k = key(checkout)
+      if (k) browsers[action](k)
+    })
+  }
+}
+
 function projectPathOrNull(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
 }
@@ -1164,6 +1256,7 @@ function registerIpc(): void {
   registerRemoteIpc()
   registerAppIpc()
   registerProcIpc()
+  registerBrowserIpc()
   registerKeyIpc()
 }
 
@@ -1229,6 +1322,7 @@ app.on('before-quit', (event) => {
     procCleanup.stop()
     agents.cancelAll()
     shells.disposeAll()
+    browsers.disposeAll()
     runner.cancelAll()
     procSampler.stop()
     head.stop()
