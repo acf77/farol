@@ -11,7 +11,8 @@ export const DISCOVERABLE_PROVIDERS = [
   'codex',
   'cursor',
   'opencode',
-  'omp'
+  'omp',
+  'antigravity'
 ] as const satisfies readonly AiCli[]
 export type DiscoverableProvider = (typeof DISCOVERABLE_PROVIDERS)[number]
 
@@ -72,6 +73,16 @@ export function parseOpenCodeModels(text: string): AiModel[] {
     const slash = id.indexOf('/')
     const label = slash >= 0 ? id.slice(slash + 1) : id
     out.push({ id, label })
+  }
+  return uniqueModels(out)
+}
+
+/** `agy models` lines: `slug<TAB>Label`, after a "Fetching available models..." banner. */
+export function parseAntigravityModels(text: string): AiModel[] {
+  const out: AiModel[] = []
+  for (const line of text.split(/\r?\n/)) {
+    const [id = '', label = ''] = line.split('\t').map((part) => part.trim())
+    if (/^[a-z0-9][\w.:/-]*$/i.test(id)) out.push({ id, label: label || id })
   }
   return uniqueModels(out)
 }

@@ -36,13 +36,14 @@ import { captureTree, mergeBase } from './delegate-snapshot'
 import { aiEnv, resolveBinFrom } from './bin'
 import { openRouterAgent } from './openrouter-agent'
 import { defaultShell, pipelineEnv, PtySession } from './session'
-import { killPidTree, killPty } from './kill'
+import { killPidTree, killPty, stillRunning, waitForExit } from './kill'
 import { errorMessage } from '../shared/jev'
 import { verdictFromOutput } from './jev'
 import { shellFamily } from './protocol'
 import { openRemote as openRemoteWorkspace, PaymentRequired, SignInRequired, type OpenRemote, type RemoteWorkspace } from './remote'
 import { SIGN_IN_REQUIRED } from '../shared/remote'
 import { providerFailure } from '../shared/provider-failure'
+import { CHECKOUT_LOCKED, checkoutLocked, finishesWithin, insideCheckout } from './checkout-lock'
 import { loadSettings } from './store'
 import { pipelineModelFallbacks, type ModelChoice } from '../shared/settings'
 import { backoffDelayMs } from './backoff'
@@ -149,6 +150,7 @@ function writeFailureReport(
 
 interface Active {
   runId: string
+  cwd: string
   branch: string
   origin: RunOrigin
   session: PtySession | null
@@ -237,6 +239,8 @@ function runBlocker(pipeline: Pipeline): string | null {
 
 export class PipelineRunner {
   private active = new Map<string, Active>()
+  /** Killed run processes that may not have exited yet: pid to the folder the run used. */
+  private terminating = new Map<number, string>()
   private waiters = new Map<string, ((result: PipelineRunResult) => void)[]>()
   private finished = new Map<string, PipelineRunResult>()
   /** The working-copy tree each pipeline's last finished run diffed, per checkout. */
@@ -298,6 +302,7 @@ export class PipelineRunner {
   }
 
   start(pipeline: Pipeline, cwd: string, branch: string, origin: RunOrigin = 'app'): string {
+    if (checkoutLocked(cwd)) throw new Error(CHECKOUT_LOCKED)
     const existing = this.active.get(pipeline.id)
     if (existing && !existing.cancelled) return existing.runId
     // Cancelled runs may still be winding down. Re-assert cancel so any leftover
@@ -307,6 +312,7 @@ export class PipelineRunner {
     const runId = `${pipeline.id}:${Date.now()}`
     const state: Active = {
       runId,
+      cwd,
       branch,
       origin,
       session: null,
@@ -328,6 +334,7 @@ export class PipelineRunner {
     const state = this.active.get(pipelineId)
     if (!state) return
     state.cancelled = true
+    this.rememberProcesses(state)
     state.abort.abort()
     void state.remote?.close()
     state.session?.interrupt()
@@ -353,6 +360,31 @@ export class PipelineRunner {
 
   cancelAll(): void {
     for (const id of this.active.keys()) this.cancel(id)
+  }
+
+  /** Keep the run's process ids until they exit, so a delete waits for them even after the run is gone. */
+  private rememberProcesses(state: Active): void {
+    const pids = [
+      state.session?.proc.pid,
+      ...[...state.aiProcs.values()].map((proc) => proc.pid),
+      ...[...state.oneshots.values()].map((child) => child.pid)
+    ]
+    for (const pid of pids) if (pid) this.terminating.set(pid, state.cwd)
+  }
+
+  /**
+   * Stop every run working inside `dir` and wait, within `timeoutMs` in all, for the runs to end and
+   * their processes to exit. A process that has not exited stays on `terminating`, so a retry still
+   * waits for it. False when anything is still alive.
+   */
+  async cancelIn(dir: string, timeoutMs = 3000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    const ids = [...this.active].filter(([, state]) => insideCheckout(dir, state.cwd)).map(([id]) => id)
+    const ended = await finishesWithin(Promise.all(ids.map((id) => this.cancelAndWait(id))), timeoutMs)
+    const waiting = [...this.terminating].filter(([, cwd]) => insideCheckout(dir, cwd)).map(([pid]) => pid)
+    const exited = await waitForExit(waiting, Math.max(0, deadline - Date.now()))
+    for (const pid of waiting) if (!stillRunning([pid]).length) this.terminating.delete(pid)
+    return ended && exited
   }
 
   private async execute(pipeline: Pipeline, cwd: string, state: Active): Promise<void> {

@@ -1,4 +1,5 @@
 import { execCli } from './exec-cli'
+import { CHECKOUT_LOCKED, checkoutLocked, trackWork } from './checkout-lock'
 import fs from 'fs'
 import path from 'path'
 import { runAiOnce } from './ai-oneshot'
@@ -46,12 +47,14 @@ import {
  * data for the UI, not something the user watches scroll by.
  */
 
+/** Run git. Refused while the checkout is being deleted. Tracked so a delete can wait for it. */
 function git(
   cwd: string,
   args: string[],
   timeout = 10_000
 ): Promise<{ code: number; out: string; err: string }> {
-  return execCli('git', cwd, args, timeout)
+  if (checkoutLocked(cwd)) return Promise.resolve({ code: 1, out: '', err: CHECKOUT_LOCKED })
+  return trackWork(cwd, execCli('git', cwd, args, timeout))
 }
 
 function cliFirstLine(res: { out: string; err: string }): string {
@@ -303,6 +306,40 @@ export async function addWorktree(cwd: string, req: WorktreeRequest): Promise<Wo
     return { ok: false, message }
   }
   return { ok: true, path: destOrReuse.dest, branch: name, message: '' }
+}
+
+function realPath(p: string): string {
+  try {
+    return fs.realpathSync(p)
+  } catch {
+    return path.resolve(p)
+  }
+}
+
+/**
+ * Delete the linked worktree folder at `cwd`. The branch stays. The primary
+ * checkout is never removed. Without `force`, git refuses a folder with
+ * uncommitted changes and `dirty` is set so the UI can offer a forced delete.
+ */
+export async function removeWorktree(
+  cwd: string,
+  force = false
+): Promise<{ ok: boolean; message: string; dirty?: boolean }> {
+  const listed = await execCli('git', cwd, ['worktree', 'list', '--porcelain'], 10_000)
+  const trees = parseWorktreeList(listed.out)
+  const primary = trees[0]?.path
+  if (listed.code !== 0 || !primary) return { ok: false, message: 'Not a git worktree' }
+  const target = realPath(cwd)
+  if (realPath(primary) === target) {
+    return { ok: false, message: 'The main checkout cannot be deleted' }
+  }
+  const entry = trees.find((t) => realPath(t.path) === target)
+  if (!entry) return { ok: false, message: 'Not a linked worktree of this repository' }
+
+  const res = await execCli('git', primary, ['worktree', 'remove', ...(force ? ['--force'] : []), entry.path], 120_000)
+  if (res.code === 0) return { ok: true, message: '' }
+  const message = cliLastLine(res) || 'could not remove worktree'
+  return { ok: false, message, dirty: !force && /--force/.test(message) }
 }
 
 async function mergeTree(
@@ -1044,6 +1081,13 @@ export class HeadWatcher {
     } catch {
       /* not watchable (network FS, permissions) — the UI still refreshes on demand */
     }
+  }
+
+  unwatch(cwd: string): void {
+    clearTimeout(this.timers.get(cwd))
+    this.timers.delete(cwd)
+    this.watchers.get(cwd)?.close()
+    this.watchers.delete(cwd)
   }
 
   stop(): void {

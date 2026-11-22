@@ -6,7 +6,9 @@ import type { ShellActivity, ShellCwd, ShellData, ShellExit } from '../shared/ty
 import { interactiveAiEnv, resolveBin } from './bin'
 import { openRouterAgent } from './openrouter-agent'
 import { defaultShell, shellEnv } from './session'
+import { killPty } from './kill'
 import type { ProcRegistry } from './proc-sessions'
+import { CHECKOUT_LOCKED, checkoutLocked, finishesWithin, insideCheckout } from './checkout-lock'
 
 /**
  * Shell panes are interactive PTYs forwarded verbatim to xterm.js. A normal
@@ -39,6 +41,8 @@ interface Session {
 
 export class ShellManager {
   private sessions = new Map<string, Session>()
+  /** Killed shells that have not exited yet, by pid. */
+  private terminating = new Map<number, { cwd: string; exited: Promise<void> }>()
   /** Commands aimed at a pane whose PTY has not started yet. */
   private pending = new Map<string, string[]>()
 
@@ -96,6 +100,7 @@ export class ShellManager {
   }
 
   open(paneId: string, cwd: string, cols = 100, rows = 30, provider?: AiProvider): void {
+    if (checkoutLocked(cwd)) throw new Error(CHECKOUT_LOCKED)
     const existing = this.sessions.get(paneId)
     if (existing) return
 
@@ -207,11 +212,30 @@ export class ShellManager {
     this.procs?.finish(`pty:${paneId}:${session.proc.pid}`)
     this.stopActivityWatch(session)
     this.setActive(paneId, session, false)
+    const { pid } = session.proc
+    const exited = new Promise<void>((resolve) => session.proc.onExit(() => resolve()))
+    void exited.then(() => this.terminating.delete(pid))
+    this.terminating.set(pid, { cwd: session.cwd, exited })
     try {
       session.proc.kill()
     } catch {
       /* already gone */
     }
+  }
+
+  /**
+   * Kill every shell inside `dir` with its process group and wait for the exits.
+   * Every disposed shell stays on `terminating` until it exits, so a delete also waits for shells closed earlier.
+   * Resolves false when one has not exited within `timeoutMs`.
+   */
+  async disposeIn(dir: string, timeoutMs = 3000): Promise<boolean> {
+    for (const [paneId, session] of this.sessions) {
+      if (!insideCheckout(dir, session.cwd)) continue
+      killPty(session.proc)
+      this.dispose(paneId)
+    }
+    const waiting = [...this.terminating.values()].filter((t) => insideCheckout(dir, t.cwd)).map((t) => t.exited)
+    return finishesWithin(Promise.all(waiting), timeoutMs)
   }
 
   disposeAll(): void {

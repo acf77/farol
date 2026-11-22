@@ -13,7 +13,15 @@ import {
   type McpServerEntry
 } from './mcp-config'
 
-export const AI_PROVIDERS = ['claude', 'codex', 'cursor', 'opencode', 'omp', 'openrouter'] as const
+export const AI_PROVIDERS = [
+  'claude',
+  'codex',
+  'cursor',
+  'opencode',
+  'omp',
+  'antigravity',
+  'openrouter'
+] as const
 export type AiProvider = (typeof AI_PROVIDERS)[number]
 export type AgentMode = 'plan' | 'build'
 /**
@@ -42,6 +50,7 @@ export const AI_LABELS: Record<AiProvider, string> = {
   cursor: 'Cursor',
   opencode: 'OpenCode',
   omp: 'OMP',
+  antigravity: 'Antigravity',
   openrouter: 'OpenRouter'
 }
 
@@ -102,6 +111,32 @@ export const AI_MODELS: Record<AiProvider, readonly AiModel[]> = {
     { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
     { id: 'composer-2.5', label: 'Composer 2.5' },
     { id: 'grok-4.6', label: 'Grok 4.6' }
+  ],
+  /** `agy models` gives the live list; `--model` rejects an unknown slug. */
+  antigravity: [
+    { id: 'gemini-4-neon-high', label: 'Gemini 4 Neon (High)' },
+    { id: 'gemini-4-neon-xhigh', label: 'Gemini 4 Neon (XHigh)' },
+    { id: 'gemini-4-neon-medium', label: 'Gemini 4 Neon (Medium)' },
+    { id: 'gemini-4-neon-low', label: 'Gemini 4 Neon (Low)' },
+    { id: 'gemini-4-argon-medium', label: 'Gemini 4 Argon (Medium)' },
+    { id: 'gemini-4-argon-high', label: 'Gemini 4 Argon (High)' },
+    { id: 'gemini-4-argon-low', label: 'Gemini 4 Argon (Low)' },
+    { id: 'gemini-4-hydrogen-high', label: 'Gemini 4 Hydrogen (High)' },
+    { id: 'gemini-4-hydrogen-xhigh', label: 'Gemini 4 Hydrogen (XHigh)' },
+    { id: 'gemini-4-hydrogen-medium', label: 'Gemini 4 Hydrogen (Medium)' },
+    { id: 'gemini-4-hydrogen-low', label: 'Gemini 4 Hydrogen (Low)' },
+    { id: 'gemini-pro-orchestrator-neon', label: 'Orchestrator (Neon)' },
+    { id: 'gemini-pro-orchestrator-g1-pro', label: 'Orchestrator (Argon)' },
+    { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' },
+    { id: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium)' },
+    { id: 'gemini-3.8-flash-low', label: 'Gemini 3.8 Flash (Low)' },
+    { id: 'claude-opus-5-5-low', label: 'Claude Opus 5.5 (Low)' },
+    { id: 'claude-opus-5-5-medium', label: 'Claude Opus 5.5 (Medium)' },
+    { id: 'claude-opus-5-5-high', label: 'Claude Opus 5.5 (High)' },
+    { id: 'claude-sonnet-5-5-low', label: 'Claude Sonnet 5.5 (Low)' },
+    { id: 'claude-sonnet-5-5-medium', label: 'Claude Sonnet 5.5 (Medium)' },
+    { id: 'claude-sonnet-5-5-high', label: 'Claude Sonnet 5.5 (High)' },
+    { id: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium)' }
   ],
   /** Filled from the user's OpenRouter pins (or its whole catalog, unpinned). */
   openrouter: []
@@ -256,11 +291,11 @@ export function normalizeEffort(value: unknown): AgentEffort | undefined {
 
 /**
  * Flags checked with `claude --help` (`--effort`), `codex exec -c` (`model_reasoning_effort`)
- * and `omp --help` (`--thinking`). The other CLIs have no flag Farol can rely on.
+ * `omp --help` (`--thinking`) and the Antigravity headless docs (`--effort`). The other CLIs have no flag Farol can rely on.
  */
 export function effortSupported(provider: AiProvider, via?: OpenRouterAgent): boolean {
   const cli = cliFor(provider, via)
-  return cli === 'claude' || cli === 'codex' || cli === 'omp'
+  return cli === 'claude' || cli === 'codex' || cli === 'omp' || cli === 'antigravity'
 }
 
 /** argv fragment that sets the effort, or empty when there is none or the CLI has no such flag. */
@@ -274,6 +309,8 @@ export function effortArgv(cli: AiCli, effort: AgentEffort | undefined): string[
       return ['-c', `model_reasoning_effort="${effort === 'max' ? 'xhigh' : effort}"`]
     case 'omp':
       return ['--thinking', effort]
+    case 'antigravity':
+      return ['--effort', effort]
     default:
       return []
   }
@@ -324,6 +361,9 @@ const OMP_READONLY_TOOLS = 'read,glob,grep,lsp'
 /** Pi has no sandbox or approval prompts either; its gate is the same kind of allowlist. */
 const PI_READONLY_TOOLS = 'read,grep,find,ls'
 const PI_HINT = 'Install pi (npm i -g @mariozechner/pi-coding-agent) to run OpenRouter through Pi.'
+const ANTIGRAVITY_HINT = 'Install the Antigravity CLI (https://antigravity.google/docs/cli) and sign in once with `agy` to run Antigravity.'
+/** Some `agy -p` builds print nothing without a TTY; a limit makes such a run end. */
+const ANTIGRAVITY_TIMEOUT = '30m'
 
 /**
  * Non-interactive argv for each CLI. Cursor runs in ask mode with plain
@@ -371,6 +411,16 @@ export function aiCommand(
         // --auto-approve keeps it from waiting on an approval it can never receive.
         args: withModel(['-p', '--auto-approve', '--tools', OMP_READONLY_TOOLS, prompt], passed),
         hint: 'Install oh-my-pi (npm i -g @oh-my-pi/pi-coding-agent) to run OMP steps.'
+      }
+    case 'antigravity':
+      return {
+        bins: ['agy'],
+        // Plan mode is read-only; the timeout stops a headless run that prints nothing.
+        args: withModel(
+          ['-p', '--mode', 'plan', '--output-format', 'text', '--print-timeout', ANTIGRAVITY_TIMEOUT, prompt],
+          passed
+        ),
+        hint: ANTIGRAVITY_HINT
       }
     case 'pi':
       return {
@@ -533,6 +583,35 @@ function managedOmpCommand(
   }
 }
 
+function managedAntigravityCommand(
+  prompt: string,
+  passed: string | undefined,
+  plan: boolean,
+  resume?: string,
+  effort?: AgentEffort
+): AiCommand {
+  return {
+    bins: ['agy'],
+    // stdin is ignored, so Build must approve every tool call; Plan is read-only.
+    args: withModel(
+      [
+        '-p',
+        '--output-format',
+        'stream-json',
+        '--print-timeout',
+        ANTIGRAVITY_TIMEOUT,
+        ...(plan ? ['--mode', 'plan'] : ['--dangerously-skip-permissions']),
+        ...effortArgv('antigravity', effort),
+        ...resumeArgv('--conversation', resume),
+        prompt
+      ],
+      passed
+    ),
+    hint: ANTIGRAVITY_HINT,
+    stream: 'ndjson'
+  }
+}
+
 function managedPiCommand(prompt: string, passed: string | undefined, plan: boolean, tools: string | undefined): AiCommand {
   return {
     bins: ['pi'],
@@ -607,7 +686,8 @@ function managedClaudeCommand(
  * both run in `stream-json` and are decoded by `shared/agent-stream.ts`.
  * Codex also emits NDJSON when passed `--json`; decoding it lets managed Chat
  * render command, file, MCP, and web-search activity as tool cards.
- * OpenCode does the same with `--format json`, and OMP and pi with `--mode json`;
+ * OpenCode does the same with `--format json`, Antigravity with `--output-format stream-json`,
+ * and OMP and pi with `--mode json`;
  * OpenRouter rides whichever of OpenCode or pi `opts.via` names.
  *
  * `opts.resume` continues the CLI's own saved conversation (see
@@ -630,7 +710,7 @@ export function managedAiCommand(
     askApproval?: boolean
     /** Codex's Ask-first hook command (see `shared/codex-hook.ts`); Build only. */
     codexHook?: string
-    /** Thinking level for Claude, Codex and OMP; other CLIs ignore it. */
+    /** Thinking level for Claude, Codex, OMP and Antigravity; other CLIs ignore it. */
     effort?: AgentEffort
   }
 ): AiCommand {
@@ -650,6 +730,8 @@ export function managedAiCommand(
       return managedOpencodeCommand(prompt, passed, plan, jsonFormat, resume)
     case 'omp':
       return managedOmpCommand(prompt, passed, plan, tools, effort)
+    case 'antigravity':
+      return managedAntigravityCommand(prompt, passed, plan, resume, effort)
     case 'pi':
       return managedPiCommand(prompt, passed, plan, tools)
     case 'claude':
@@ -687,6 +769,8 @@ export function aiFixCommand(
       return `opencode run "${ask}"`
     case 'omp':
       return `omp "${ask}"`
+    case 'antigravity':
+      return `agy "${ask}"`
     case 'pi':
       return `pi "${ask}"`
     case 'claude':
@@ -705,6 +789,8 @@ export function interactiveAiCommand(provider: AiProvider, via?: OpenRouterAgent
       return 'opencode'
     case 'omp':
       return 'omp'
+    case 'antigravity':
+      return 'agy'
     case 'pi':
       return 'pi'
     case 'claude':

@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { GitInfo, Project } from '@shared/types'
-import { groupOpenProjects, shortPath } from '@shared/project-groups'
+import { groupOpenProjects, shortPath, trimSlashes } from '@shared/project-groups'
+import { primaryWorktreePath } from '@shared/worktree'
 import { C, MONO, ELLIPSIS } from '../theme'
+import CloseProjectDialog, { type RemoveResult } from './CloseProjectDialog'
 import {
   CHROME_ROW,
   SIDE_RAIL_WIDTH,
@@ -69,6 +71,8 @@ interface Props {
   unreadPaths?: ReadonlySet<string>
   onSelect: (path: string) => void
   onClose: (path: string) => void
+  /** Delete the checkout's worktree folder, then close it. Resolves with git's result. */
+  onDelete: (path: string, force: boolean) => Promise<RemoveResult>
   /** Open a repository as a project. */
   onOpenProject?: () => void
   /** Open the branch/worktree dialog for a project in this repo group. */
@@ -153,6 +157,7 @@ export default function ProjectRail({
   unreadPaths,
   onSelect,
   onClose,
+  onDelete,
   onNewBranch,
   onNewChat,
   collapsed,
@@ -173,6 +178,7 @@ export default function ProjectRail({
   const agentUnread = (path: string): boolean => !!unreadPaths?.has(path)
   const [gitByPath, setGitByPath] = useState<Record<string, GitInfo>>({})
   const [groupCollapsed, setGroupCollapsed] = useState<Record<string, boolean>>({})
+  const [closing, setClosing] = useState<{ path: string; branch: string } | null>(null)
   const [pinned, setPinned] = useState(false)
   const [hover, setHover] = useState(false)
   const memory = useProcSnapshot()
@@ -360,7 +366,10 @@ export default function ProjectRail({
       : `opacity ${FADE_OUT_MS}ms ease 0s, visibility 0s linear ${FADE_OUT_MS}ms`
   })
 
+  const primary = closing ? primaryWorktreePath(gitByPath[closing.path]?.worktrees ?? []) : null
+
   return host(
+    <>
     <aside aria-label="Projects" className="bf-side-panel" style={shellStyle}>
       <div aria-hidden={!slim} {...inertWhen(!slim)} style={{ ...layer(slim), width: SIDE_RAIL_WIDTH, alignItems: 'center', gap: 14, padding: '12px 0', boxSizing: 'border-box' }}>
         <button
@@ -500,7 +509,7 @@ export default function ProjectRail({
                           }
                         }}
                         onAuxClick={(e) => {
-                          if (e.button === 1) onClose(project.path)
+                          if (e.button === 1) setClosing({ path: project.path, branch })
                         }}
                         style={{
                           display: 'flex',
@@ -539,7 +548,7 @@ export default function ProjectRail({
                               aria-label="Close project"
                               onClick={(e) => {
                                 e.stopPropagation()
-                                onClose(project.path)
+                                setClosing({ path: project.path, branch })
                               }}
                               style={{ ...iconButton(18), fontSize: 13, lineHeight: 1 }}
                             >
@@ -590,5 +599,24 @@ export default function ProjectRail({
         />
       )}
     </aside>
+    {closing && (
+      <CloseProjectDialog
+        branch={closing.branch}
+        path={closing.path}
+        canDelete={!!primary && trimSlashes(primary) !== trimSlashes(closing.path)}
+        busy={agentBusy(closing.path)}
+        onCancel={() => setClosing(null)}
+        onClose={() => {
+          setClosing(null)
+          onClose(closing.path)
+        }}
+        onDelete={async (force) => {
+          const res = await onDelete(closing.path, force)
+          if (res.ok) setClosing(null)
+          return res
+        }}
+      />
+    )}
+    </>
   )
 }

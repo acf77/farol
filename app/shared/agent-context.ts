@@ -103,7 +103,7 @@ export function isContextOverflow(text: string): boolean {
 export const FRESH_START_KEEP_FOLLOW_UPS = 2
 
 /** CLIs whose headless mode can continue a saved conversation by id. */
-const RESUMABLE: ReadonlySet<AiCli> = new Set<AiCli>(['claude', 'codex', 'cursor', 'opencode'])
+const RESUMABLE: ReadonlySet<AiCli> = new Set<AiCli>(['claude', 'codex', 'cursor', 'opencode', 'antigravity'])
 
 export function canResume(cli: AiCli): boolean {
   return RESUMABLE.has(cli)

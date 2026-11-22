@@ -667,6 +667,15 @@ export interface FarolApi {
       reused?: boolean
       message: string
     }>
+    /**
+     * Delete a linked worktree folder; its branch stays. Refuses the main
+     * checkout. `dirty` means git refused because of uncommitted changes —
+     * retry with `force` to discard them.
+     */
+    removeWorktree(
+      projectPath: string,
+      force?: boolean
+    ): Promise<{ ok: boolean; message: string; dirty?: boolean }>
     /** `base` is the branch the conflict check compares against (default `staging`). */
     status(projectPath: string, base?: string): Promise<GitStatus>
     recentCommits(projectPath: string): Promise<GitCommit[]>

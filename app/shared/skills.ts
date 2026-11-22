@@ -73,6 +73,12 @@ export function skillRoots(provider: AiProvider, via?: OpenRouterAgent): SkillRo
         { kind: 'project', rel: '.claude/skills', rank: 11 },
         { kind: 'project', rel: '.omp/skills', rank: 12 }
       ]
+    case 'antigravity':
+      return [
+        { kind: 'user', rel: '.agents/skills', rank: 1 },
+        { kind: 'user', rel: '.gemini/antigravity-cli/skills', rank: 2 },
+        { kind: 'project', rel: '.agents/skills', rank: 10 }
+      ]
     case 'pi':
       // Pi reads Claude/Codex skill dirs only when settings.json lists them.
       return [

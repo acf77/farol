@@ -201,6 +201,7 @@ async function readAll(now: number): Promise<ProviderUsage[]> {
     cursor: unavailable('cursor', 'Cursor limits need a team Admin API key.', now),
     opencode: unavailable('opencode', 'No host quota; usage follows the selected model.', now),
     omp: unavailable('omp', 'No host quota; usage follows the selected model.', now),
+    antigravity: unavailable('antigravity', 'No host quota; usage follows your Google account.', now),
     openrouter
   }
   return AI_PROVIDERS.map((provider) => rows[provider])

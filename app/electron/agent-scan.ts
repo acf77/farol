@@ -9,7 +9,8 @@ const SCANNED: [AiProvider, string[]][] = [
   ['codex', ['codex']],
   ['opencode', ['opencode']],
   ['cursor', ['cursor-agent', 'agent']],
-  ['omp', ['omp']]
+  ['omp', ['omp']],
+  ['antigravity', ['agy']]
 ]
 
 const VERSION_TIMEOUT = 4000

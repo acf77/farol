@@ -12,6 +12,7 @@ vi.mock('./jev', () => ({
 vi.mock('./backoff', () => ({ backoffDelayMs: () => 0, backoffWait: () => Promise.resolve() }))
 
 import { AgentController, type AgentExecutor } from './agent-controller'
+import { lockCheckout, unlockCheckout } from './checkout-lock'
 
 let repo: string
 const git = (...args: string[]): string => execFileSync('git', args, { cwd: repo, encoding: 'utf8' })
@@ -138,6 +139,53 @@ describe('per-turn checkpoints in Chat', () => {
     await vi.waitFor(async () => expect(await controller.turns('task-1')).toHaveLength(1))
     controller.dispose('task-1')
     await vi.waitFor(() => expect(git('for-each-ref', 'refs/farol/checkpoints/')).toBe(''))
+  })
+
+  it('disposes only the chats working inside a folder', async () => {
+    const { controller, events } = harness()
+    controller.start(request())
+    controller.start({ ...request(), id: 'task-2', cwd: path.join(os.tmpdir(), 'elsewhere') })
+    await vi.waitFor(() => expect(idle(events, 2)).toBe(true))
+
+    expect(await controller.disposeIn(path.join(repo, '.'))).toBe(true)
+
+    expect(controller.taskIds()).toEqual(['task-2'])
+  })
+
+  it('reports a chat that has not stopped when disposeIn runs out of time', async () => {
+    const { controller, events, prompts, holdNext } = harness()
+    controller.start(request())
+    await vi.waitFor(() => expect(idle(events, 1)).toBe(true))
+    const release = holdNext()
+    controller.message('task-1', 'Turn two')
+    await vi.waitFor(() => expect(prompts).toHaveLength(2))
+
+    expect(await controller.disposeIn(repo, 0)).toBe(false)
+
+    release()
+    expect(await controller.disposeIn(repo)).toBe(true)
+  })
+
+  it('refuses to start a chat inside a folder that is being deleted', async () => {
+    const { controller, events } = harness()
+    controller.start(request())
+    await vi.waitFor(() => expect(idle(events, 1)).toBe(true))
+    const key = lockCheckout(repo)!
+    expect(lockCheckout(repo)).toBeNull()
+    try {
+      expect(controller.message('task-1', 'More', undefined, undefined, undefined, undefined, undefined, repo)).toEqual({
+        ok: false,
+        message: 'This checkout is being deleted.'
+      })
+      expect(await controller.revertTurn('task-1', 1)).toEqual({ ok: false, message: 'This checkout is being deleted.' })
+      expect(controller.start({ ...request(), cwd: path.join(repo, '..', path.basename(repo)) })).toEqual({
+        ok: false,
+        message: 'This checkout is being deleted.'
+      })
+    } finally {
+      unlockCheckout(key)
+    }
+    expect(controller.message('task-1', 'More').ok).toBe(true)
   })
 
   it('reads and reverts a chat after a restart, from the checkout the pane remembers', async () => {

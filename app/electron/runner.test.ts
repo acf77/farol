@@ -20,6 +20,7 @@ vi.mock('./bin', () => ({
 }))
 vi.mock('./session', () => ({
   PtySession: class {
+    proc = { pid: 4242 }
     whenReady = vi.fn().mockResolvedValue(true)
     interrupt = vi.fn()
     kill = vi.fn()
@@ -28,7 +29,11 @@ vi.mock('./session', () => ({
   pipelineEnv: vi.fn(() => ({}))
 }))
 vi.mock('./git-artifact', () => ({ runGitToArtifact: runGit, listGitFiles: listGit }))
-vi.mock('./kill', () => ({ killPty: vi.fn(), killPidTree: vi.fn() }))
+const { waitForExit, stillRunning } = vi.hoisted(() => ({
+  waitForExit: vi.fn<(pids: number[], timeoutMs?: number) => Promise<boolean>>().mockResolvedValue(true),
+  stillRunning: vi.fn<(pids: number[]) => number[]>().mockReturnValue([])
+}))
+vi.mock('./kill', () => ({ killPty: vi.fn(), killPidTree: vi.fn(), waitForExit, stillRunning }))
 vi.mock('./jev', () => ({ verdictFromOutput }))
 vi.mock('./remote', () => ({
   openRemote: vi.fn(),
@@ -45,6 +50,7 @@ vi.mock('fs', () => ({
 
 import { PipelineRunner } from './runner'
 import { PaymentRequired, SignInRequired } from './remote'
+import { lockCheckout, unlockCheckout } from './checkout-lock'
 
 const pipeline: Pipeline = {
   id: 'review',
@@ -66,7 +72,7 @@ const pipeline: Pipeline = {
 beforeEach(() => {
   vi.useFakeTimers()
   vi.clearAllMocks()
-  spawn.mockReset().mockReturnValue({ onData, onExit })
+  spawn.mockReset().mockReturnValue({ onData, onExit, pid: 4242 })
   verdictFromOutput.mockReset().mockResolvedValue(null)
   listGit.mockReset().mockResolvedValue([])
 })
@@ -458,5 +464,56 @@ describe('PipelineRunner remote target', () => {
       expect.objectContaining({ kind: 'output', chunk: expect.stringContaining('falling back to this machine') })
     )
     expect(spawn).toHaveBeenCalled()
+  })
+})
+
+describe('PipelineRunner cancelIn', () => {
+  it('stops runs inside the folder, waits for them, and leaves other folders alone', async () => {
+    const events: RunEvent[] = []
+    const runner = new PipelineRunner((event) => events.push(event))
+    const inside = runner.run(pipeline, '/mock/project/wt', 'feat')
+    await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(1))
+    const other = runner.start({ ...pipeline, id: 'other' }, '/mock/project-other', 'main')
+
+    expect(await runner.cancelIn('/mock/project/wt')).toBe(true)
+
+    expect(await inside).toMatchObject({ cancelled: true })
+    expect(events.filter((event) => event.kind === 'end' && event.runId === other)).toEqual([])
+    runner.cancelAll()
+  })
+
+  it('keeps a process that did not exit, so a retry waits for it again', async () => {
+    const runner = new PipelineRunner(() => undefined)
+    const inside = runner.run(pipeline, '/mock/project/wt', 'feat')
+    await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(1))
+    waitForExit.mockResolvedValueOnce(false)
+    stillRunning.mockReturnValueOnce([4242])
+
+    expect(await runner.cancelIn('/mock/project/wt')).toBe(false)
+    await inside
+    expect(await runner.cancelIn('/mock/project/wt')).toBe(true)
+    expect(waitForExit).toHaveBeenLastCalledWith([4242], expect.any(Number))
+  })
+
+  it('remembers processes of a run cancelled through the normal path', async () => {
+    const runner = new PipelineRunner(() => undefined)
+    const inside = runner.run(pipeline, '/mock/project/wt', 'feat')
+    await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(1))
+    runner.cancel(pipeline.id)
+    await inside
+
+    await runner.cancelIn('/mock/project/wt')
+
+    expect(waitForExit).toHaveBeenLastCalledWith([4242], expect.any(Number))
+  })
+
+  it('refuses to start a run inside a folder that is being deleted', () => {
+    const runner = new PipelineRunner(() => undefined)
+    const key = lockCheckout('/mock/project/wt')!
+    try {
+      expect(() => runner.start(pipeline, '/mock/project/wt/sub', 'feat')).toThrow('being deleted')
+    } finally {
+      unlockCheckout(key)
+    }
   })
 })

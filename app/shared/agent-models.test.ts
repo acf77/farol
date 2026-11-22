@@ -10,6 +10,7 @@ import {
   parseClaudeModelOptions,
   parseCodexModelsCache,
   parseCursorModels,
+  parseAntigravityModels,
   parseOmpModelsJson,
   parseOpenCodeModels,
   uniqueModels
@@ -259,6 +260,16 @@ describe('groupModels', () => {
         ]
       },
       { key: 'openai', label: 'openai', models: [{ id: 'openai/gpt-5.6', label: 'GPT-5.6' }] }
+    ])
+  })
+})
+
+describe('parseAntigravityModels', () => {
+  it('reads one slug per line, with an optional label, and skips noise', () => {
+    const text = 'Fetching available models...\ngemini-4-neon-high\tGemini 4 Neon (High)\nclaude-opus-5-5-low\tClaude Opus 5.5 (Low)\n'
+    expect(parseAntigravityModels(text)).toEqual([
+      { id: 'gemini-4-neon-high', label: 'Gemini 4 Neon (High)' },
+      { id: 'claude-opus-5-5-low', label: 'Claude Opus 5.5 (Low)' }
     ])
   })
 })

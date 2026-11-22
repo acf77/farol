@@ -2772,6 +2772,15 @@ export default function App() {
     [activePath, setAgentBusy, setAgentUnread]
   )
 
+  const deleteProject = useCallback(
+    async (projectPath: string, force: boolean) => {
+      const res = await api.git.removeWorktree(projectPath, force)
+      if (res.ok) closeProject(projectPath)
+      return res
+    },
+    [closeProject]
+  )
+
   const requestWorkspaceAction = useCallback((projectPath: string, kind: WorkspaceActionKind) => {
     setActivePath(projectPath)
     setWorkspaceAction((prev) => ({ path: projectPath, kind, nonce: prev.nonce + 1 }))
@@ -2915,6 +2924,7 @@ export default function App() {
         unreadPaths={agentUnreadPaths}
         onSelect={setActivePath}
         onClose={closeProject}
+        onDelete={deleteProject}
         onNewBranch={(path) => requestWorkspaceAction(path, 'branch')}
         onNewChat={(path) => requestWorkspaceAction(path, 'chat')}
         collapsed={projectsCollapsed}

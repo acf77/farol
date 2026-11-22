@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import { describe, expect, it } from 'vitest'
-import { killPidTree } from './kill'
+import { killPidTree, waitForExit } from './kill'
 
 function alive(pid: number): boolean {
   try {
@@ -45,5 +45,15 @@ describe('killPidTree', () => {
     const end = Date.now() + 3000
     while (alive(childPid) && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50))
     expect(alive(childPid)).toBe(false)
+  })
+})
+
+describe('waitForExit', () => {
+  it('resolves true when the process is gone', async () => {
+    expect(await waitForExit([2 ** 22 + 12345], 50)).toBe(true)
+  })
+
+  it('resolves false when a process is still running after the timeout', async () => {
+    expect(await waitForExit([process.pid], 50)).toBe(false)
   })
 })

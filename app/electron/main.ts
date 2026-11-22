@@ -17,7 +17,7 @@ import type {
   WorktreeRequest
 } from '../shared/types'
 import { ShellManager } from './shell'
-import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pipelineStoreRootFor, pull as gitPull, push as gitPush, recentCommits, status as gitStatus, syncManagedHooks } from './git'
+import { HeadWatcher, addWorktree, bringPrConflicts, checkout, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, info as gitInfo, pipelineStoreRootFor, pull as gitPull, push as gitPush, recentCommits, removeWorktree, status as gitStatus, syncManagedHooks } from './git'
 import { createPullRequest, mergePullRequest } from './github'
 import { PipelineRunner } from './runner'
 import { loadPipelines, pushRecent, readRecents, savePipelines, toProject, lastProjectPath, loadOpenProjects, saveOpenProjects, loadProjectSession, saveProjectSession, clearLastProject, loadSettings, saveSettings, flushWorkspace, PipelineWatcher } from './store'
@@ -65,6 +65,7 @@ import { createCustomPromptStore } from './custom-prompts'
 import { mergeTodos, parseTodos } from '../shared/todos'
 import { closedProjects } from '../shared/session'
 import { owningWorktree } from '../shared/worktree'
+import { CHECKOUT_LOCKED, awaitIdle, checkoutLocked, lockCheckout, unlockCheckout } from './checkout-lock'
 import { scopedRuntimeId } from '../shared/runtime'
 import net from 'net'
 import { randomBytes } from 'crypto'
@@ -489,6 +490,7 @@ async function openProjectCwd(
   const resolved = path.resolve(projectPath).replace(/[/\\]+$/, '')
   const match = paths.find((p) => path.resolve(p).replace(/[/\\]+$/, '') === resolved)
   if (!match) return { ok: false, error: 'Not an open project' }
+  if (checkoutLocked(match)) return { ok: false, error: CHECKOUT_LOCKED }
   return { path: path.resolve(match) }
 }
 
@@ -874,6 +876,39 @@ function registerShellIpc(): void {
   ipcMain.handle('shell:send', (_e, paneId: string, data: string) => shells.send(paneId, data))
 }
 
+/** Stop everything working in `dir`, in order. Names the first thing that would not stop. */
+async function quiesce(dir: string): Promise<string | null> {
+  const steps: Array<[() => Promise<boolean>, string]> = [
+    [() => agents.disposeIn(dir), 'An agent did not stop in time.'],
+    [() => shells.disposeIn(dir), 'A shell did not stop in time.'],
+    [() => runner.cancelIn(dir), 'A pipeline process did not stop in time.'],
+    [() => awaitIdle(dir), 'A git command is still running.']
+  ]
+  for (const [step, message] of steps) if (!(await step())) return `${message} Try again.`
+  return null
+}
+
+/** Delete an open project's linked worktree. Everything working in it stops first, so nothing writes during removal. */
+function registerWorktreeIpc(): void {
+  ipcMain.handle('git:removeWorktree', async (_e, projectPath: unknown, force: unknown) => {
+    const cwd = await openProjectCwd(projectPath)
+    if ('error' in cwd) return { ok: false, message: cwd.error }
+    const key = lockCheckout(cwd.path)
+    if (!key) return { ok: false, message: 'This checkout is already being deleted.' }
+    let res: Awaited<ReturnType<typeof removeWorktree>>
+    try {
+      const blocked = await quiesce(cwd.path)
+      if (blocked) return { ok: false, message: blocked }
+      head.unwatch(cwd.path)
+      res = await removeWorktree(cwd.path, force === true)
+    } finally {
+      unlockCheckout(key)
+    }
+    if (!res.ok) void head.watch(cwd.path)
+    return res
+  })
+}
+
 function registerGitIpc(): void {
   ipcMain.handle('git:info', async (_e, projectPath: string) => {
     void head.watch(projectPath)
@@ -1124,6 +1159,7 @@ function registerIpc(): void {
   registerSessionIpc()
   registerShellIpc()
   registerGitIpc()
+  registerWorktreeIpc()
   registerTaskIpc()
   registerRemoteIpc()
   registerAppIpc()

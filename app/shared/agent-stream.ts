@@ -21,6 +21,8 @@ import { isCodexHookTrustWarning } from './codex-hook'
  * `text` / `tool_use` / `error` envelopes with a `part` payload. OMP
  * (`--mode json`) emits `message_end` envelopes plus `tool_execution_*` events.
  * Upstream pi, which OpenRouter can ride, emits the same events as OMP.
+ * Antigravity (`--output-format stream-json`) keys its events by `event`
+ * (`init`, `step_update`, `result`) instead of `type`.
  */
 
 /** One complete assistant turn. */
@@ -341,6 +343,7 @@ function handleBrokenStreamJson(text: string): AgentStreamEvent[] {
  * on `thread.started`, and OpenCode a `sessionID` on every event.
  */
 function streamSessionId(event: Record<string, unknown>): string | undefined {
+  if (event.event === 'init') return stringField(event, 'conversation_id')?.trim() || undefined
   if (event.type === 'thread.started') return stringField(event, 'thread_id')?.trim() || undefined
   if ((event.type === 'system' && event.subtype === 'init') || event.type === 'result') {
     return stringField(event, 'session_id')?.trim() || undefined
@@ -406,6 +409,8 @@ export class AgentStreamParser {
   private sawControlMarker = false
   /** OMP/pi: the latest settled assistant message ended with `stopReason: 'error'`. */
   private endedInError = false
+  /** Antigravity: reply text per step, held until the step is `DONE`. */
+  private replies = new Map<number, string>()
 
   /**
    * True when the run's last assistant message failed. Pi exits 0 in
@@ -455,7 +460,7 @@ export class AgentStreamParser {
     this.sessionId ??= streamSessionId(value)
     this.contextTokens = streamContextTokens(value) ?? this.contextTokens
     this.contextWindow = streamContextWindow(value) ?? this.contextWindow
-    return this.event(value)
+    return typeof value.event === 'string' ? this.antigravityEvent(value) : this.event(value)
   }
 
   private event(event: Record<string, unknown>): AgentStreamEvent[] {
@@ -648,6 +653,49 @@ export class AgentStreamParser {
   /** OMP status chatter is routine; only a real failure belongs in Chat. */
   private ompNotice(event: Record<string, unknown>): AgentStreamEvent[] {
     return event.level === 'error' ? this.streamError(event) : []
+  }
+
+  /**
+   * Antigravity: `{ event: 'step_update', step_update: { step_index, state, step_type,
+   * text_delta, tool_name, tool_info } }` and a final `{ event: 'result', result: { status, error } }`.
+   */
+  private antigravityEvent(event: Record<string, unknown>): AgentStreamEvent[] {
+    if (event.event === 'result') return this.antigravityResult(event)
+    const step = event.event === 'step_update' ? event.step_update : undefined
+    if (!isRecord(step)) return []
+    const index = typeof step.step_index === 'number' ? step.step_index : this.replies.size
+    if (step.step_type === 'agent_response') return this.antigravityReply(step, index)
+    return step.step_type === 'tool' ? this.antigravityTool(step, index) : []
+  }
+
+  /** Reply deltas are held until the step is `DONE`, then sent as one message. */
+  private antigravityReply(step: Record<string, unknown>, index: number): AgentStreamEvent[] {
+    const text = (this.replies.get(index) ?? '') + (stringField(step, 'text_delta') ?? '')
+    if (step.state !== 'DONE') {
+      this.replies.set(index, text)
+      return []
+    }
+    this.replies.delete(index)
+    return text.trim() ? [{ kind: 'text', text }] : []
+  }
+
+  private antigravityTool(step: Record<string, unknown>, index: number): AgentStreamEvent[] {
+    const name = stringField(step, 'tool_name') ?? 'tool'
+    const toolId = `antigravity-${index}`
+    const asked = isQuestionToolName(name) ? questionsFromToolInput(step.tool_info) : undefined
+    if (asked) return [{ kind: 'question', toolId, questions: asked }]
+    const detail = toolDetail(step.tool_info)
+    const state = step.state === 'DONE' ? 'done' : 'running'
+    return [{ kind: 'tool', toolId, name, ...(detail ? { detail } : {}), state }]
+  }
+
+  private antigravityResult(event: Record<string, unknown>): AgentStreamEvent[] {
+    const result = event.result
+    if (!isRecord(result)) return []
+    this.sessionId ??= stringField(result, 'conversation_id')?.trim() || undefined
+    if (result.status === 'SUCCESS') return []
+    this.endedInError = true
+    return [{ kind: 'raw', text: `${stringField(result, 'error') ?? `Antigravity ended with ${String(result.status)}.`}\n` }]
   }
 
   /** Claude's `result` duplicates assistant text; emit it only for a missed Farol marker. */

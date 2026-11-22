@@ -11,8 +11,9 @@ const { runAiOnce, githubInfo } = vi.hoisted(() => ({
 vi.mock('./ai-oneshot', () => ({ runAiOnce }))
 vi.mock('./github', () => ({ githubInfo }))
 
-import { bringPrConflicts, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, mergeBaseConflicts, mergeForConflicts, parseCommitLog, parsePrDraftResponse, pull, push, sanitizeCommitMessage, sanitizePrDescription, sanitizePrTitle, status, syncManagedHooks } from './git'
+import { info, bringPrConflicts, commitAll, draftCommit, draftPullRequest, githubStatus, hooksInfo, mergeBaseConflicts, mergeForConflicts, parseCommitLog, parsePrDraftResponse, pull, push, removeWorktree, sanitizeCommitMessage, sanitizePrDescription, sanitizePrTitle, status, syncManagedHooks } from './git'
 import type { Pipeline } from '../shared/types'
+import { lockCheckout, unlockCheckout } from './checkout-lock'
 
 const dirs: string[] = []
 
@@ -394,6 +395,63 @@ describe('syncManagedHooks', () => {
     const hook = path.join(cwd, '.git', 'hooks', 'pre-commit')
     expect(fs.existsSync(hook)).toBe(true)
     expect(await hooksInfo(worktree)).toEqual([{ name: 'pre-commit', path: hook, enabled: true }])
+  })
+})
+
+describe('removeWorktree', () => {
+  function repoWithWorktree(): { cwd: string; worktree: string } {
+    const cwd = tmpRepo()
+    fs.writeFileSync(path.join(cwd, 'file.txt'), 'a\n')
+    git(cwd, ['add', 'file.txt'])
+    git(cwd, ['commit', '-m', 'init'])
+    const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'bf-git-wt-'))
+    fs.rmdirSync(worktree)
+    dirs.push(worktree)
+    git(cwd, ['worktree', 'add', '-b', 'feat', worktree])
+    return { cwd, worktree }
+  }
+
+  it('deletes a linked worktree folder and keeps its branch', async () => {
+    const { cwd, worktree } = repoWithWorktree()
+
+    expect(await removeWorktree(worktree)).toEqual({ ok: true, message: '' })
+
+    expect(fs.existsSync(worktree)).toBe(false)
+    expect(git(cwd, ['branch', '--list', 'feat'])).toContain('feat')
+  })
+
+  it('refuses the main checkout', async () => {
+    const { cwd } = repoWithWorktree()
+
+    const res = await removeWorktree(cwd, true)
+
+    expect(res.ok).toBe(false)
+    expect(fs.existsSync(cwd)).toBe(true)
+  })
+
+  it('reports uncommitted changes, then deletes them when forced', async () => {
+    const { worktree } = repoWithWorktree()
+    fs.writeFileSync(path.join(worktree, 'file.txt'), 'changed\n')
+
+    const refused = await removeWorktree(worktree)
+    expect(refused).toMatchObject({ ok: false, dirty: true })
+    expect(fs.existsSync(worktree)).toBe(true)
+
+    expect((await removeWorktree(worktree, true)).ok).toBe(true)
+    expect(fs.existsSync(worktree)).toBe(false)
+  })
+})
+
+describe('git while a checkout is being deleted', () => {
+  it('refuses git work in the locked folder', async () => {
+    const cwd = tmpRepo()
+    const key = lockCheckout(cwd)!
+    try {
+      expect(await info(cwd)).toMatchObject({ isRepo: false })
+    } finally {
+      unlockCheckout(key)
+    }
+    expect(await info(cwd)).toMatchObject({ isRepo: true })
   })
 })
 

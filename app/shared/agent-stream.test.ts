@@ -651,6 +651,45 @@ describe('AgentStreamParser', () => {
   })
 })
 
+describe('AgentStreamParser: antigravity', () => {
+  const line = (value: unknown) => JSON.stringify(value) + '\n'
+  const step = (step_update: Record<string, unknown>) => line({ event: 'step_update', step_update })
+
+  it('joins reply deltas into one text event and reads the conversation id', () => {
+    const parser = new AgentStreamParser()
+    const out = parse(
+      parser,
+      line({ event: 'init', conversation_id: 'c-1', init: { cwd: '/r' } }),
+      step({ step_index: 1, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'Hel' }),
+      step({ step_index: 1, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'lo' }),
+      step({ step_index: 1, state: 'DONE', step_type: 'agent_response' }),
+      line({ event: 'result', result: { status: 'SUCCESS' } })
+    )
+    expect(out).toEqual([{ kind: 'text', text: 'Hello' }])
+    expect(parser.sessionId).toBe('c-1')
+    expect(parser.failed).toBe(false)
+  })
+
+  it('shows a tool as running, then done', () => {
+    const out = parse(
+      new AgentStreamParser(),
+      step({ step_index: 2, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: { command: 'ls' } }),
+      step({ step_index: 2, state: 'DONE', step_type: 'tool', tool_name: 'run_command', tool_info: { command: 'ls' } })
+    )
+    expect(out.map((e) => e.kind === 'tool' && [e.toolId, e.state])).toEqual([
+      ['antigravity-2', 'running'],
+      ['antigravity-2', 'done']
+    ])
+  })
+
+  it('marks the run failed and shows the error when the result is not SUCCESS', () => {
+    const parser = new AgentStreamParser()
+    const out = parse(parser, line({ event: 'result', result: { status: 'ERROR', error: 'authentication required' } }))
+    expect(out).toEqual([{ kind: 'raw', text: 'authentication required\n' }])
+    expect(parser.failed).toBe(true)
+  })
+})
+
 describe('toolDetail', () => {
   it('prefers the field that identifies the call', () => {
     expect(toolDetail({ description: 'Read it', command: 'cat a.txt' })).toBe('cat a.txt')

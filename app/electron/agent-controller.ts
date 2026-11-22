@@ -353,6 +353,7 @@ function blockedMarker(assistant: string): string | null {
 }
 
 import { providerFailure } from '../shared/provider-failure'
+import { CHECKOUT_LOCKED, checkoutLocked, insideCheckout, trackWork } from './checkout-lock'
 
 function failureContext(pipeline: Pipeline, result: PipelineRunResult): string {
   const failed = result.steps.filter((step) => !step.ok && !step.skipped)
@@ -651,6 +652,7 @@ export class AgentController {
   start(request: AgentTaskRequest): { ok: boolean; message?: string } {
     const clean = request.prompt.trim()
     const mode = normalizeMode(request.mode)
+    if (checkoutLocked(request.cwd)) return { ok: false, message: CHECKOUT_LOCKED }
     if (!clean) return { ok: false, message: 'Enter a task for the agent.' }
     const existing = this.tasks.get(request.id)
     if (existing) {
@@ -741,6 +743,7 @@ export class AgentController {
     if (!task) return { ok: false, message: 'This agent task is no longer available.' }
     if (!clean) return { ok: false, message: 'Enter a message.' }
     if (this.reverting.has(taskId)) return { ok: false, message: 'Wait for the revert to finish.' }
+    if (checkoutLocked(cwd ?? task.request.cwd)) return { ok: false, message: CHECKOUT_LOCKED }
     this.applyMessageOverrides(task, provider, model, mode, pipelines, fallbacks)
     task.request.effort = effort
     if (cwd) task.request.cwd = cwd
@@ -1301,11 +1304,12 @@ export class AgentController {
     const task = this.tasks.get(taskId)
     const dir = this.checkpointCwd(taskId, cwd)
     if (!dir) return { ok: false, message: 'This chat has no checkout.' }
+    if (checkoutLocked(dir)) return { ok: false, message: CHECKOUT_LOCKED }
     if (task?.running) return { ok: false, message: 'Stop the agent, or wait for it to finish, before reverting.' }
     if (this.reverting.has(taskId)) return { ok: false, message: 'A revert is already running.' }
     this.reverting.add(taskId)
     try {
-      const outcome = await revertToTurn(dir, taskId, turn, task?.request.checkpointLimit)
+      const outcome = await trackWork(dir, revertToTurn(dir, taskId, turn, task?.request.checkpointLimit))
       if (outcome.ok) {
         task?.notes.push(
           `Note from Farol: the developer reverted the files to how they were before turn ${turn}. ${outcome.fileCount} file(s) changed back. Your memory of the later turns is still there, but their file changes are gone: read files again before you edit them.`
@@ -1331,11 +1335,23 @@ export class AgentController {
     task.guidance.length = 0
     if (task.delegateRuns.size) {
       task.delegateRuns.clear()
-      void releaseTrees(task.request.cwd, taskId).catch(() => undefined)
+      void trackWork(task.request.cwd, releaseTrees(task.request.cwd, taskId)).catch(() => undefined)
     }
-    void releaseCheckpoints(task.request.cwd, taskId)
+    void trackWork(task.request.cwd, releaseCheckpoints(task.request.cwd, taskId))
     this.cancel(taskId)
     if (!task.running) this.tasks.delete(taskId)
+  }
+
+  /** Dispose every chat working inside `dir`. Resolves false when one has not let go within `timeoutMs`. */
+  async disposeIn(dir: string, timeoutMs = 5000): Promise<boolean> {
+    const ids = [...this.tasks.values()].filter((t) => insideCheckout(dir, t.request.cwd)).map((t) => t.request.id)
+    ids.forEach((id) => this.dispose(id))
+    const deadline = Date.now() + timeoutMs
+    while (ids.some((id) => this.tasks.has(id))) {
+      if (Date.now() >= deadline) return false
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    return true
   }
 
   /** Chats the main process still holds, whatever their state. */

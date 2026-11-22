@@ -563,3 +563,57 @@ describe('omp', () => {
     ])
   })
 })
+
+describe('antigravity', () => {
+  it('is its own CLI named agy, offered in the picker', () => {
+    expect(cliFor('antigravity')).toBe('antigravity')
+    expect(pickerProviders()).toContain('antigravity')
+    expect(interactiveAiCommand('antigravity')).toBe('agy')
+    expect(aiFixCommand('antigravity', 'REPORT.md')).toContain('agy "')
+    expect(canAskApproval('antigravity')).toBe(false)
+    expect(effortSupported('antigravity')).toBe(true)
+  })
+
+  it('runs Build with every tool approved and the model before the prompt', () => {
+    const cmd = managedAiCommand('antigravity', 'fix this', 'gemini-3-pro', { effort: 'max' })
+    expect(cmd.bins).toEqual(['agy'])
+    expect(cmd.stream).toBe('ndjson')
+    expect(cmd.args).toEqual([
+      '-p',
+      '--output-format',
+      'stream-json',
+      '--print-timeout',
+      '30m',
+      '--dangerously-skip-permissions',
+      '--effort',
+      'max',
+      '--model',
+      'gemini-3-pro',
+      'fix this'
+    ])
+  })
+
+  it('runs Plan read-only and resumes a saved conversation', () => {
+    const args = managedAiCommand('antigravity', 'plan', undefined, { mode: 'plan', resume: 'c1' }).args
+    expect(args).toContain('--mode')
+    expect(args).toContain('plan')
+    expect(args).not.toContain('--dangerously-skip-permissions')
+    expect(args.slice(args.indexOf('--conversation'), args.indexOf('--conversation') + 2)).toEqual([
+      '--conversation',
+      'c1'
+    ])
+  })
+
+  it('runs a pipeline review in plan mode with plain text', () => {
+    expect(aiCommand('antigravity', 'review').args).toEqual([
+      '-p',
+      '--mode',
+      'plan',
+      '--output-format',
+      'text',
+      '--print-timeout',
+      '30m',
+      'review'
+    ])
+  })
+})

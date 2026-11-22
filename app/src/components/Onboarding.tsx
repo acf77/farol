@@ -23,7 +23,8 @@ const MAIN: AgentRow[] = [
 ]
 const OTHERS: AgentRow[] = [
   { provider: 'cursor', install: 'curl https://cursor.com/install -fsS | bash' },
-  { provider: 'omp', install: 'npm i -g omp-cli' }
+  { provider: 'omp', install: 'npm i -g omp-cli' },
+  { provider: 'antigravity', install: 'https://antigravity.google/docs/cli' }
 ]
 const ALL = [...MAIN, ...OTHERS]
 

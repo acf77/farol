@@ -13,6 +13,7 @@ import {
   parseClaudeHelp,
   parseClaudeModelOptions,
   parseAnthropicModels,
+  parseAntigravityModels,
   parseCodexModelsCache,
   parseCursorModels,
   parseOmpModelsJson,
@@ -159,6 +160,10 @@ async function discoverOne(
       return discoverOpenCode(forceRefresh)
     case 'omp':
       return discoverOmp(forceRefresh)
+    case 'antigravity': {
+      const text = await runBin(['agy'], ['models'])
+      return text ? parseAntigravityModels(text) : []
+    }
   }
 }
 

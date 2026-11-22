@@ -78,6 +78,7 @@ const api: FarolApi = {
     checkout: (projectPath: string, branch: string) =>
       ipcRenderer.invoke('git:checkout', projectPath, branch),
     worktree: (projectPath, req) => ipcRenderer.invoke('git:worktree', projectPath, req),
+    removeWorktree: (projectPath, force) => ipcRenderer.invoke('git:removeWorktree', projectPath, force),
     status: (projectPath: string, base?: string) => ipcRenderer.invoke('git:status', projectPath, base),
     recentCommits: (projectPath: string) => ipcRenderer.invoke('git:recentCommits', projectPath),
     draftCommit: (projectPath: string, provider, model, files) =>

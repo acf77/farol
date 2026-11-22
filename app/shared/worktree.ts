@@ -53,20 +53,23 @@ export function primaryRepoFolderName(toplevel: string, entries: WorktreeEntry[]
  * path sits outside every listed worktree.
  */
 export function owningWorktree<T extends { path: string }>(cwd: string, worktrees: T[]): T | null {
-  const target = cwd.replace(/[/\\]+$/, '')
   let best: T | null = null
   let bestLen = -1
   for (const worktree of worktrees) {
     const dir = worktree.path.replace(/[/\\]+$/, '')
-    if (
-      (target === dir || target.startsWith(dir + '/') || target.startsWith(dir + '\\')) &&
-      dir.length > bestLen
-    ) {
+    if (isInside(dir, cwd) && dir.length > bestLen) {
       best = worktree
       bestLen = dir.length
     }
   }
   return best
+}
+
+/** True when `target` is `dir` or sits inside it. */
+export function isInside(dir: string, target: string): boolean {
+  const base = dir.replace(/[/\\]+$/, '')
+  const t = target.replace(/[/\\]+$/, '')
+  return t === base || t.startsWith(base + '/') || t.startsWith(base + '\\')
 }
 
 function isAbsolutePath(p: string): boolean {
