@@ -80,6 +80,21 @@ export default function XtermPane({ paneId, cwd, agent, visible, focused, onFocu
       scrollback: 10000,
       theme: THEME
     })
+    term.registerLinkProvider({
+      provideLinks(lineNumber, callback) {
+        const line = term.buffer.active.getLine(lineNumber - 1)
+        const text = line?.translateToString(true) ?? ''
+        const links = [...text.matchAll(/https?:\/\/[^\s<>"']+/gi)].map((match) => ({
+          text: match[0],
+          range: {
+            start: { x: (match.index ?? 0) + 1, y: lineNumber },
+            end: { x: (match.index ?? 0) + match[0].length, y: lineNumber }
+          },
+          activate: (_event: MouseEvent, url: string) => { window.open(url, '_blank', 'noopener,noreferrer') }
+        }))
+        callback(links)
+      }
+    })
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(host)

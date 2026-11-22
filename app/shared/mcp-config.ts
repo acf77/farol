@@ -71,6 +71,15 @@ export const TOOLS_ENV = 'FAROL_TOOLS'
 export const PIPELINE_MCP_TOOLS = [`mcp__${MCP_SERVER_KEY}__list_pipelines`, `mcp__${MCP_SERVER_KEY}__run_pipeline`]
 
 /**
+ * The project `farol` server's Git tools, for agents outside Farol. Managed Chat asks for a
+ * Git action with a `FAROL_GIT` line, which Farol performs once validation has passed and
+ * with the files the turn changed, so Chat must not call these.
+ */
+export const GIT_MCP_TOOLS = ['git_status', 'git_commit', 'git_push', 'git_create_pr'].map(
+  (name) => `mcp__${MCP_SERVER_KEY}__${name}`
+)
+
+/**
  * Tools the managed server offers. Until there is one, managed Chat does not
  * start the server at all: a server with no tools fails the client's tool
  * listing and shows up as a broken server.

@@ -3,11 +3,6 @@ import path from 'path'
 import { randomUUID } from 'crypto'
 import { sanitizeTodos, type Todo, type TodoStore } from '../shared/todos'
 
-/** What makes two lists the same for the stale-edit check: the fields Farol stamps do not count. */
-function core(todos: Todo[]): string {
-  return JSON.stringify(todos.map(({ content, status, priority }) => ({ content, status, priority })))
-}
-
 /** Persisted in userData, keyed by checkout. `userDataDir` is a thunk so this can be built before Electron is ready. */
 export function createTodoStore(
   userDataDir: () => string,
@@ -59,10 +54,12 @@ export function createTodoStore(
 
   function update(checkout: string, todos: Todo[], expected?: Todo[]): Promise<void> {
     const key = path.resolve(checkout)
-    const baseline = expected === undefined ? undefined : core(expected)
+    const baseline = expected === undefined
+      ? undefined
+      : JSON.stringify(expected.map(({ content, status, priority }) => ({ content, status, priority })))
     return enqueue(async () => {
       const all = await readAll()
-      if (baseline !== undefined && core(all[key] ?? []) !== baseline) {
+      if (baseline !== undefined && JSON.stringify(all[key] ?? []) !== baseline) {
         throw new Error('Todo list changed. Reload it before saving again.')
       }
       if (todos.length) all[key] = todos

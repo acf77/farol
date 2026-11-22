@@ -130,6 +130,8 @@ export interface AppSettings {
   memoryAlertGb: number
   /** Stop what an agent left behind once its session is done or its worktree is gone. */
   autoCleanLeftovers: boolean
+  /** Farol performs the Git actions agents ask for (status, commit, push, pull request). One switch for this machine, no per-project override. */
+  gitActions: boolean
 }
 
 export function defaultSettings(): AppSettings {
@@ -143,7 +145,8 @@ export function defaultSettings(): AppSettings {
     pipelineFallbacks: [],
     memoryWarnGb: 2,
     memoryAlertGb: 4,
-    autoCleanLeftovers: false
+    autoCleanLeftovers: false,
+    gitActions: true
   }
 }
 
@@ -413,6 +416,7 @@ export function sanitizeSettings(raw: unknown): AppSettings {
     memoryWarnGb: gbField(s.memoryWarnGb, d.memoryWarnGb),
     memoryAlertGb: gbField(s.memoryAlertGb, d.memoryAlertGb),
     autoCleanLeftovers: s.autoCleanLeftovers === true,
+    gitActions: s.gitActions !== false,
     ...(openrouter ? { openrouter } : {}),
     ...(catalogs ? { catalogs } : {}),
     ...(keysOff.length ? { providerKeysOff: keysOff } : {}),

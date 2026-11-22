@@ -1,7 +1,4 @@
-import { execFileSync } from 'child_process'
 import fs from 'fs'
-import os from 'os'
-import path from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentTaskEvent, AgentTaskRequest } from '../shared/types'
 
@@ -12,19 +9,13 @@ vi.mock('./jev', () => ({
 vi.mock('./backoff', () => ({ backoffDelayMs: () => 0, backoffWait: () => Promise.resolve() }))
 
 import { AgentController, type AgentExecutor } from './agent-controller'
+import { makeTempGitRepo } from './agent-controller-test-helpers'
 import type { ProcRegistry } from './proc-sessions'
 
 let repo: string
 
 beforeEach(() => {
-  repo = fs.mkdtempSync(path.join(os.tmpdir(), 'farol-procs-'))
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo })
-  git('init', '-q')
-  git('config', 'user.email', 't@example.com')
-  git('config', 'user.name', 'T')
-  fs.writeFileSync(path.join(repo, 'app.ts'), 'export const name = "Widget"\n')
-  git('add', '.')
-  git('commit', '-qm', 'init')
+  repo = makeTempGitRepo('farol-procs-')
 })
 
 afterEach(() => fs.rmSync(repo, { recursive: true, force: true }))
@@ -44,6 +35,7 @@ const request: () => AgentTaskRequest = () => ({
 interface Internals {
   tasks: Map<string, object>
   setProcess(task: object, child: boolean, proc: { pid?: number } | null): void
+  releaseProcSessions(task: object): void
 }
 
 async function controllerWithProcs(): Promise<{ procs: ProcRegistry; internals: Internals; task: object }> {
@@ -53,20 +45,22 @@ async function controllerWithProcs(): Promise<{ procs: ProcRegistry; internals: 
     output('Hi.\nFAROL_PIPELINES: []\n')
     return 0
   }
-  const controller = new AgentController({ run: vi.fn() }, (event) => events.push(event), execute, undefined, undefined, undefined, undefined, procs)
+  const controller = new AgentController({ run: vi.fn(() => Promise.resolve({ ok: true, runId: 'r', steps: [] })) }, (event) => events.push(event), execute, undefined, undefined, undefined, undefined, procs)
   controller.start(request())
-  await vi.waitFor(() => expect(events.some((e) => e.kind === 'status' && e.status === 'completed')).toBe(true), { timeout: 10_000 })
+  await vi.waitFor(() => expect(events.some((e) => e.kind === 'status' && e.status === 'completed')).toBe(true))
   const internals = controller as unknown as Internals
   return { procs, internals, task: internals.tasks.get('task-1')! }
 }
 
 describe('agent runs report their process to the registry', () => {
-  it('registers a run when its process starts and finishes it when the process is cleared', async () => {
+  it('registers a run when its process starts and finishes only when the turn releases it', async () => {
     const { procs, internals, task } = await controllerWithProcs()
     internals.setProcess(task, false, { pid: 4242 })
     expect(procs.register).toHaveBeenCalledWith('task-1:4242', repo, 4242)
     expect(procs.finish).not.toHaveBeenCalled()
     internals.setProcess(task, false, null)
+    expect(procs.finish).not.toHaveBeenCalled()
+    internals.releaseProcSessions(task)
     expect(procs.finish).toHaveBeenCalledWith('task-1:4242')
   })
 
@@ -75,7 +69,10 @@ describe('agent runs report their process to the registry', () => {
     internals.setProcess(task, false, { pid: 10 })
     internals.setProcess(task, true, { pid: 11 })
     internals.setProcess(task, true, null)
-    expect(procs.finish).toHaveBeenCalledTimes(1)
+    expect(procs.finish).not.toHaveBeenCalled()
+    internals.releaseProcSessions(task)
+    expect(procs.finish).toHaveBeenCalledTimes(2)
+    expect(procs.finish).toHaveBeenCalledWith('task-1:10')
     expect(procs.finish).toHaveBeenCalledWith('task-1:11')
   })
 

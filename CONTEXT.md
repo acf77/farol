@@ -121,8 +121,8 @@ The commit a **Git action** creates, including exactly the files the current age
 _Avoid_: committing the **Commit selection**, committing the whole working tree, `git add -A`
 
 **Git hook pipeline**:
-A pipeline bound to a **Git action** in `.farol` that runs as a gate: when it passes, Farol performs the action; when it fails, Farol does not, and the failure goes back to the agent.
-_Avoid_: a script in `.git/hooks` (Farol still performs the action itself), a check after the action, a pipeline the agent picks with `FAROL_PIPELINES`
+A pipeline bound to a **Git action** in `.farol` that runs as a gate: Farol performs the action with git, whose managed hook runs the pipeline first; when it passes the action completes, when it fails it does not, and the failure goes back to the agent.
+_Avoid_: the agent running git itself (Farol performs the action), a check after the action, a pipeline the agent picks with `FAROL_PIPELINES`
 
 **Git actions toggle**:
 The master, machine-scoped switch in Settings that decides whether Farol performs agent **Git actions**. On by default, with no per-project override.
@@ -158,12 +158,8 @@ _Avoid_: Clear as the remedy for a full context, a Farol summarizer call, droppi
 ### Todo list
 
 **Todo list**:
-The task list a managed agent maintains with a hidden `FAROL_TODOS:` control line — Farol's stand-in for OpenCode's `todowrite`, because managed Chat runs every CLI with project MCP disabled. One line carries the whole list as JSON; a valid line replaces it and `FAROL_TODOS: []` clears it. It belongs to a checkout, so every chat in that checkout reads and writes the same list. Each item records the chat that added it and when it last changed, both set by Farol. The agent checks the list twice per user message: a line at the start of its reply and a line before its final marker.
+The task list a managed agent maintains with a hidden `FAROL_TODOS:` control line — Farol's stand-in for OpenCode's `todowrite`, because managed Chat runs every CLI with project MCP disabled. One line carries the whole list as JSON; a valid line replaces it and `FAROL_TODOS: []` clears it. It belongs to a checkout, so every chat in that checkout reads and writes the same list.
 _Avoid_: per-chat todos, per-repo or per-worktree-group todos, a Farol MCP todo tool, partial updates or per-item edits, storing the list in `.farol` or committing it
-
-**Closing turn**:
-The one extra agent turn Farol starts, once per user message, after a run is complete (validation passed, none was needed, or a plan is finished) when the **Todo list** is stale. It asks only for a fresh `FAROL_TODOS:` line, changes no files, and leaves the run with its completion message.
-_Avoid_: running it before validation, more than one per message, a second validation cycle for it
 
 ### Custom prompts
 
@@ -186,8 +182,8 @@ The standalone HTTP service in `app/service` that runs **Remote pipeline** steps
 _Avoid_: desktop API, Farol server, hosted Chat, editing pipelines through the service, a service URL or API key setting in the desktop app
 
 **Account menu**:
-The avatar at the top right of the header. Signed in, its popover shows the GitHub user and Sign out; signed out, it offers Sign in with GitHub. It is the only place a user signs in to the **Run service**. A **Remote pipeline** that cannot run because nobody is signed in says only “Sign in to run remote pipelines.”
-_Avoid_: a sign-in form in Settings, showing the service address, retrying a run that needs sign-in
+The avatar at the top right of the header. Signed in, its popover shows the GitHub user and Sign out; signed out, it offers Sign in with GitHub. It is the place a user signs in to the **Run service**; the **Git panel** offers the same sign-in when GitHub needs it. The sign-in also gives Farol the user's GitHub token, which Farol uses to call GitHub itself for pull requests and to sign `git push`, `fetch` and `pull` in to github.com; the `gh` CLI and the machine's git credentials are only a fallback. A **Remote pipeline** that cannot run because nobody is signed in says only “Sign in to run remote pipelines.”
+_Avoid_: a sign-in form in Settings, showing the service address, retrying a run that needs sign-in, a second GitHub login for pull requests
 
 ## Relationships
 
@@ -272,11 +268,17 @@ _Avoid_: a sign-in form in Settings, showing the service address, retrying a run
 - Managed Chat requests a **Git action** with the **FAROL_GIT control line**; an agent outside managed Chat uses the matching **Git tool**.
 - The **Managed-chat contract** compels the agent to commit its own work: a turn that changed files generates a commit message and requests a commit, and it may then request a push.
 - An **Agent commit** contains the files that turn changed, not the user's **Commit selection**.
+- An **Agent commit** holds only files as validation saw them: Farol checks the staged content against a snapshot of the working copy taken when the turn's last attempt ended, and refuses the files that changed since. It also makes no **Agent commit** when another chat ran in the same checkout during the turn, because a snapshot cannot tell whose files are whose; a worktree for each chat avoids that.
 - A **Git hook pipeline** is chosen per action in `.farol`; the same action on another project may use a different pipeline, or none.
 - A failing **Git hook pipeline** blocks only that action, and the failure reaches the agent like a validation failure so it can repair.
 - The **Git actions toggle** gates every **Git action**: when it is off, Farol refuses even a bound hook and a valid request, and says so.
 - A failed or refused **Git action** does not replace the turn's own `FAROL_PIPELINES` validation; the hook pipeline is separate from that selection.
 - A **Git action** outcome appears on the existing **Git panel**: the **Git log** records it and the panel refreshes.
+- Stopping a turn ends its queue of **Git actions**: the one already running finishes, and none queued behind it runs, not even one that is still waiting for its turn on the checkout.
+- A **Git action** starts at the top of the repository, even when the agent works in a subfolder.
+- A request that names a folder is judged by where the folder really is: a link inside a project that leads to another repository is not part of the project, and a **Git action** touches only a repository that belongs to the project's checkout. A managed Chat's folder comes from the renderer, so the app judges it against every project it has open and their linked worktrees, and ignores the checkout the chat claims; a folder in none of them is refused.
+- Commit, push, pull, the conflict merge and the branch switch on one checkout run one at a time, whether the **Git panel** or an agent asks; an agent's pull request takes its turn in the same line.
+- The **Git actions** of one turn hold to the branch the checkout was on when the first began (or to no branch, when HEAD was detached): once a branch switch has moved the checkout, Farol refuses the commit, the push and the pull request instead of acting on the other branch.
 - Status is read-only; commit, push, and create pull request change the checkout or the remote.
 - **Plan mode** never performs a **Git action**; a `FAROL_GIT` line in Plan mode is ignored the way a non-empty `FAROL_PIPELINES` list is, and the reply is still accepted.
 - The **Git actions toggle** is machine-scoped and is not saved per project.
@@ -301,11 +303,8 @@ _Avoid_: a sign-in form in Settings, showing the service address, retrying a run
 
 - A **Todo list** belongs to one checkout; every chat in that checkout shares it, and a linked worktree has its own.
 - Both **Plan mode** and **Build mode** may update the **Todo list**.
-- An update is a full replace through a single `FAROL_TODOS:` line; an empty array clears the list, and a malformed line leaves the list unchanged. The newest complete line is saved as soon as it arrives, so the dock follows the run. Stop or a cleared chat drops lines still queued; a save already running finishes before the turn settles, so no save outlives its turn.
-- The line is stripped from the visible Chat, and a turn's updates appear as one `todo` tool card when the turn ends. A reply that holds only control lines is not shown.
-- Each user message is checked twice: the prompt tells the agent to send the line at the start of its reply (remove finished items from earlier requests, add the steps of this request, leave open items of other chats alone) and again just before its final marker. When the agent stops, none of its items stays `in_progress`, and it adds no items for validation that Farol runs.
-- Each item records `source` (chat id and title) and `changedAt`. Farol sets them when it saves the agent's list: an item keeps its source while its text is unchanged, a new item belongs to the saving chat, and an item the developer adds in the dock has no source. `changedAt` is set for a new item and moves only when status or priority changes. The agent never sets these fields; the prompt marks each item with its chat, its age, and "earlier request" for a finished item from before the current message.
-- When a run is complete (validation passed or none was needed, or a plan is finished), Farol asks once more in a **closing turn** if the list is not empty and either the agent's last turn did not end with a saved todo line (none, a failed save, or tool calls after it) or an item of this chat is still `in_progress`. At most one closing turn per user message; none after questions, a stop, or an error. The closing turn changes no files and the run keeps its completion message.
+- An update is a full replace through a single `FAROL_TODOS:` line placed before the turn's final marker; an empty array clears the list, and a missing or malformed line leaves the list unchanged.
+- The line is stripped from the visible Chat, and the update appears as a `todo` tool card.
 - The current list is injected into every agent turn, so a fresh chat in the same checkout sees it.
 - The **Todo list** is saved per checkout in application data, not in the repository, so it survives restarts and cleared chats and never joins a commit.
 - Closing a checkout (removing the project from the workspace) deletes its **Todo list**; the checkout's saved chat session is unaffected.
@@ -534,12 +533,6 @@ _Avoid_: a sign-in form in Settings, showing the service address, retrying a run
 > **Developer:** "What if the line is malformed?"
 > **Domain expert:** "Ignore it and keep the list. It is not worth retrying the turn."
 
-> **Developer:** "Does the agent check the list at the start and at the end of a run?"
-> **Domain expert:** "Yes. The prompt asks for a line at the start of the reply and one before the final marker. If the end line is missing or stale once the run is complete, Farol asks once more."
-
-> **Developer:** "How do I know where an item came from?"
-> **Domain expert:** "Each item records the chat that added it and when it last changed. The dock shows both under the item."
-
 > **Developer:** "Does clearing a chat clear its todos?"
 > **Domain expert:** "No. The list belongs to the checkout, so a new chat sees the same list."
 
@@ -641,9 +634,6 @@ _Avoid_: a sign-in form in Settings, showing the service address, retrying a run
 - “Delete checkout” as the removal trigger could mean the folder disappearing — resolved: closing the checkout (removing the project from the workspace) deletes its list, while the checkout's saved chat session is left alone.
 - A cleared chat is a new **Chat** — resolved: it does not clear the **Todo list**, which belongs to the checkout.
 - The list could be shown only to the agent — resolved: each update also appears as a `todo` tool card, and the current list is injected into every turn.
-- The check at the start and at the end could be a prompt rule or enforced — resolved: the prompt asks for both lines and the start line is saved live; Farol enforces only the end, with one closing turn per message, so a model that ignores it cannot loop.
-- The closing turn could run before or after validation — resolved: after it, so the agent knows the result and the run keeps Farol's completion message.
-- Old items lie around without context — resolved: each item records its chat and time, the agent removes finished items from earlier requests when it starts, and the dock shows the source. Farol never deletes an item by itself.
 
 ### Jev pipeline auto-selection
 

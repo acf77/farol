@@ -1,7 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentTaskEvent,
+  BrowserEvent,
   FarolApi,
+  GitActionEvent,
   GitChanged,
   Pipeline,
   PipelinesChanged,
@@ -96,7 +98,8 @@ const api: FarolApi = {
       ipcRenderer.invoke('git:mergePr', projectPath, strategy),
     bringConflicts: (projectPath: string, base?: string) =>
       ipcRenderer.invoke('git:bringConflicts', projectPath, base),
-    onChanged: (cb) => on<GitChanged>('git:changed', cb)
+    onChanged: (cb) => on<GitChanged>('git:changed', cb),
+    onAction: (cb) => on<GitActionEvent>('git:action', cb)
   },
   run: {
     start: (pipeline, cwd, branch) => ipcRenderer.invoke('run:start', pipeline, cwd, branch),
@@ -184,6 +187,17 @@ const api: FarolApi = {
   },
   ui: {
     onSettings: (cb) => on('ui:settings', () => cb())
+  },
+  browser: {
+    show: (checkout, bounds) => ipcRenderer.invoke('browser:show', checkout, bounds),
+    hide: (checkout) => ipcRenderer.invoke('browser:hide', checkout),
+    navigate: (checkout, input) => ipcRenderer.invoke('browser:navigate', checkout, input),
+    back: (checkout) => ipcRenderer.invoke('browser:back', checkout),
+    forward: (checkout) => ipcRenderer.invoke('browser:forward', checkout),
+    reload: (checkout) => ipcRenderer.invoke('browser:reload', checkout),
+    dispose: (checkout) => ipcRenderer.invoke('browser:dispose', checkout),
+    onState: (cb) => on<BrowserEvent>('browser:state', cb),
+    onOpen: (cb) => on<string>('browser:open', cb)
   },
   feedback: {
     open: (template) => ipcRenderer.invoke('feedback:open', template)
