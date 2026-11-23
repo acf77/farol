@@ -27,6 +27,7 @@ import { formatGitResult, parseGitAction } from '../../shared/git-action'
 import { resolvePipeline, topoSort } from '../../shared/graph'
 import type { McpServerEntry } from '../../shared/mcp-config'
 import { BenchGit, BenchRunner, MemoryTodoStore, mcpRunReport, type AttemptClock } from '../farol'
+import { lastLine } from '../grade'
 import type { BenchCase, FinalStatus, Subject, ToolCall, Trace } from '../types'
 import { claudeUsage, emptyUsage } from '../usage'
 import { casePipelines, createWorkspace, disposeWorkspace, runAcceptance } from '../workspace'
@@ -198,7 +199,7 @@ export async function runMcp(c: BenchCase, subject: Subject, opts: RunOptions & 
   const after = await tree()
   const changedFiles = before && after && before !== after ? await changedPaths(ws.repo, before, after).catch(() => []) : []
   const status: FinalStatus = error ? 'error' : run.timedOut ? 'timeout' : run.code === 0 ? 'completed' : 'failed'
-  opts.log?.(`  [${c.id}] ${status}`)
+  opts.log?.(`  [${c.id}] ${status}${run.code !== 0 ? `: ${lastLine(run.text) || '(no output)'}` : ''}`)
 
   const trace: Trace = {
     caseId: c.id,

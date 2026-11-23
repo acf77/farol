@@ -19,6 +19,7 @@ import { grade } from './grade'
 import { runChat, scriptedAgent } from './harness/chat'
 import { runMcp } from './harness/mcp'
 import { markdownReport, summarize, type RunMeta } from './report'
+import { preflight } from './preflight'
 import { parseSubject } from './subject'
 import type { BenchCase, CaseResult, Subject } from './types'
 
@@ -34,7 +35,13 @@ interface Args {
   keep: boolean
   /** Play each case's reference instead of a model: checks the bench itself, for free. */
   reference: boolean
+  preflight: boolean
+  /** Keep the scored runs already in `out` and do only the rest. */
+  resume: boolean
 }
+
+/** After this many runs in a row where a subject's CLI never ran, its remaining runs are skipped. */
+const STOP_AFTER_CLI_ERRORS = 3
 
 function usage(): never {
   console.log(`Usage: bun run bench -- [options]
@@ -46,6 +53,9 @@ function usage(): never {
   --concurrency n    runs at once (default 2)
   --timeout s        seconds before a run is stopped (default 900)
   --out dir          where results go (default bench/results/<time>)
+  --resume dir       finish an earlier run: keep its scored runs, redo the rest
+                     (CLI errors included), and write into the same folder
+  --no-preflight     skip the one-line check that each CLI and model can run
   --keep             leave each run's checkout on disk
   --reference        run each case's reference solution instead of a model
                      (checks the bench and this machine; spends no tokens)
@@ -74,16 +84,30 @@ function parseArgs(argv: string[]): Args | 'listed' {
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const reference = argv.includes('--reference')
+  const resume = value('--resume')
   return {
     subjects: reference ? [parseSubject('chat/claude:reference')] : (value('--subjects')?.split(',') ?? DEFAULT_SUBJECTS).filter(Boolean).map(parseSubject),
     cases: selectCases(value('--cases')?.split(',').filter(Boolean) ?? []),
     trials: Math.max(1, Number(value('--trials') ?? 1)),
     concurrency: Math.max(1, Number(value('--concurrency') ?? 2)),
     timeoutMs: Math.max(30, Number(value('--timeout') ?? 900)) * 1000,
-    out: path.resolve(value('--out') ?? path.join('bench', 'results', stamp)),
+    out: path.resolve(resume ?? value('--out') ?? path.join('bench', 'results', stamp)),
     keep: argv.includes('--keep'),
-    reference
+    reference,
+    preflight: !reference && !argv.includes('--no-preflight'),
+    resume: !!resume
   }
+}
+
+/** The scored runs an earlier run left in `file`; its CLI errors are run again. */
+function scoredRuns(file: string): CaseResult[] {
+  if (!fs.existsSync(file)) throw new Error(`Nothing to resume: ${file} does not exist`)
+  return fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line) as CaseResult)
+    .filter((result) => !result.cliError)
 }
 
 function sh(cmd: string, args: string[]): string {
@@ -97,12 +121,34 @@ function sh(cmd: string, args: string[]): string {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
   if (args === 'listed') return
-  // Jev has no key in a bench run, so each turn would log that it skipped.
-  const info = console.info.bind(console)
-  console.info = (...line: unknown[]) => {
-    if (line[0] !== '[farol] Jev') info(...line)
+  // Jev has no key in a bench run, so each turn would log that it skipped; a failed agent run is
+  // already reported by its status line and the CLI's own error, printed by the harness.
+  const quiet = new Set(['[farol] Jev', '[farol] Agent'])
+  for (const level of ['info', 'warn'] as const) {
+    const write = console[level].bind(console)
+    console[level] = (...line: unknown[]) => {
+      if (!quiet.has(String(line[0]))) write(...line)
+    }
   }
   process.on('unhandledRejection', (reason) => console.error(`  (ignored) ${reason instanceof Error ? reason.message : String(reason)}`))
+
+  if (args.preflight) {
+    const failures: string[] = []
+    const seen = new Set<string>()
+    for (const subject of args.subjects) {
+      const key = `${subject.provider}:${subject.model ?? ''}@${subject.effort ?? ''}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      process.stdout.write(`preflight ${subject.label} … `)
+      const why = await preflight(subject)
+      console.log(why ? 'FAILED' : 'ok')
+      if (why) failures.push(`${subject.label}\n  ${why.split('\n').join('\n  ')}`)
+    }
+    if (failures.length) {
+      console.error(`\nThese agents could not run, so the benchmark did not start:\n\n${failures.join('\n\n')}\n\nFix the CLI (sign in, model name, usage limit) and try again, or pass --no-preflight.`)
+      process.exit(1)
+    }
+  }
 
   fs.mkdirSync(args.out, { recursive: true })
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'farol-bench-'))
@@ -116,20 +162,29 @@ async function main(): Promise<void> {
     trials: args.trials
   }
 
+  const key = (subject: string, caseId: string, trial: number): string => `${subject}|${caseId}|${trial}`
+  const results: CaseResult[] = args.resume ? scoredRuns(path.join(args.out, 'results.jsonl')) : []
+  const kept = new Set(results.map((r) => key(r.subject, r.caseId, r.trial)))
   const jobs = args.subjects.flatMap((subject) =>
     args.cases
       .filter((c) => subject.surface === 'chat' || c.mcpChecks)
       .flatMap((c) => Array.from({ length: args.trials }, (_, i) => ({ subject, c, trial: i + 1 })))
+      .filter((job) => !kept.has(key(job.subject.label, job.c.id, job.trial)))
   )
-  console.log(`farol-bench: ${jobs.length} runs (${args.subjects.length} subjects, ${args.cases.length} cases, ${args.trials} trials) → ${args.out}`)
+  console.log(
+    `farol-bench: ${jobs.length} runs (${args.subjects.length} subjects, ${args.cases.length} cases, ${args.trials} trials)${results.length ? `, ${results.length} kept from before` : ''} → ${args.out}`
+  )
 
-  const results: CaseResult[] = []
   const stream = fs.createWriteStream(path.join(args.out, 'results.jsonl'))
+  for (const result of results) stream.write(`${JSON.stringify(result)}\n`)
+  const cliErrorsInARow = new Map<string, number>()
+  const stopped: Record<string, string> = {}
   let next = 0
   let done = 0
   const worker = async (): Promise<void> => {
     while (next < jobs.length) {
       const { subject, c, trial } = jobs[next++]
+      if (stopped[subject.label]) continue
       const opts = {
         trial,
         root,
@@ -145,11 +200,19 @@ async function main(): Promise<void> {
       stream.write(`${JSON.stringify(result)}\n`)
       done += 1
       const failed = result.checks.filter((chk) => !chk.pass).map((chk) => chk.id)
-      console.log(`${result.pass ? '✔' : '✘'} [${done}/${jobs.length}] ${subject.label}  ${c.id}  #${trial}  ${Math.round(trace.durationMs / 1000)}s${failed.length ? `  failed: ${failed.join(', ')}` : ''}`)
+      const outcome = result.cliError ? `CLI error, not scored: ${result.cliError}` : failed.length ? `failed: ${failed.join(', ')}` : ''
+      console.log(`${result.cliError ? '⚠' : result.pass ? '✔' : '✘'} [${done}/${jobs.length}] ${subject.label}  ${c.id}  #${trial}  ${Math.round(trace.durationMs / 1000)}s  ${outcome}`)
+      const inARow = result.cliError ? (cliErrorsInARow.get(subject.label) ?? 0) + 1 : 0
+      cliErrorsInARow.set(subject.label, inARow)
+      if (inARow >= STOP_AFTER_CLI_ERRORS && !stopped[subject.label]) {
+        stopped[subject.label] = result.cliError ?? 'unknown'
+        console.error(`\n⛔ Stopping ${subject.label}: its CLI failed ${inARow} runs in a row before doing anything. Last error: ${result.cliError}\n   Fix it, then finish with: bun run bench -- --resume ${args.out} (plus the same --subjects/--cases/--trials)\n`)
+      }
     }
   }
   await Promise.all(Array.from({ length: Math.min(args.concurrency, jobs.length) }, worker))
   stream.end()
+  if (Object.keys(stopped).length) meta.stopped = stopped
 
   const order = (r: CaseResult): string => `${args.subjects.findIndex((s) => s.label === r.subject)}:${meta.cases.indexOf(r.caseId)}:${r.trial}`
   results.sort((a, b) => order(a).localeCompare(order(b), undefined, { numeric: true }))

@@ -198,6 +198,8 @@ export interface CaseResult {
   pass: boolean
   /** Every check passed, critical or not. */
   strict: boolean
+  /** The agent's CLI never ran (not signed in, model unavailable, usage limit): not scored. */
+  cliError?: string
   checks: GradedCheck[]
   trace: Trace
 }

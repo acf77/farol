@@ -193,6 +193,37 @@ describe('a sloppy agent fails the right checks', () => {
     expect(result.strict).toBe(true)
   }, 60_000)
 
+  it('a CLI that never runs is a CLI error, not a model failure', async () => {
+    const c = byId('pipelines/docs-typo')
+    const message = "There's an issue with the selected model (claude-opus-5-5). It may not exist or you may not have access to it."
+    const broken: AgentExecutor = async (_request, _prompt, onOutput) => {
+      onOutput(`${message}\n`)
+      return 1
+    }
+    const result = grade(c, await run(c, broken))
+    // Farol retries the same model before giving up; each try is an attempt that did nothing.
+    expect(result.trace.attempts.length).toBeGreaterThan(1)
+    expect(result.trace.status).toBe('needs-attention')
+    expect(result.cliError).toBe(message)
+    const md = markdownReport([result], { startedAt: 'now', farolVersion: '0', commit: 'abc', subjects: [subject.label], cases: [c.id], trials: 1 })
+    expect(md).toContain('| chat/claude:scripted | 0/0 (–)')
+    expect(md).toContain('`pipelines/docs-typo` | ⚠️ CLI')
+    expect(md).toContain(`## CLI errors`)
+    expect(md).not.toContain('## What went wrong')
+  }, 60_000)
+
+  it('a run where the agent worked and then failed is still scored', async () => {
+    const c = byId('pipelines/docs-typo')
+    const crash: AgentExecutor = async (_request, _prompt, onOutput, onTool) => {
+      onTool?.({ toolId: 'read', name: 'Read', detail: 'README.md', state: 'done' })
+      onOutput('Reading the README…\n')
+      return 1
+    }
+    const result = grade(c, await run(c, crash))
+    expect(result.cliError).toBeUndefined()
+    expect(result.pass).toBe(false)
+  }, 60_000)
+
   it('dropping the rest of the list when adding a todo fails todos.unchanged', async () => {
     const c = byId('todos/add')
     const executor = agent([() => ({ text: 'Added.\nFAROL_TODOS: [{"content":"Write a migration guide for v2","status":"pending","priority":"high"}]\nFAROL_PIPELINES: []' })])

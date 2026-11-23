@@ -87,6 +87,21 @@ export function finalMarker(text: string): string | undefined {
   return [PIPELINES_MARKER, QUESTIONS_MARKER, PLAN_MARKER, BLOCK_MARKER].find((marker) => line.startsWith(marker))
 }
 
+/** The last non-empty line of what an agent said: where a CLI's own error ends up. */
+export function lastLine(text: string): string {
+  return text.trim().split('\n').at(-1)?.trim().slice(0, 300) ?? ''
+}
+
+/**
+ * Why the agent's CLI never got going (every attempt exited non-zero without using a tool), or
+ * undefined. Such a run says nothing about the model, so it is reported apart and not scored.
+ */
+export function cliFailure(trace: Trace): string | undefined {
+  if (trace.status === 'completed' || !trace.attempts.length) return undefined
+  if (trace.attempts.some((a) => a.exitCode === 0 || a.tools.length)) return undefined
+  return lastLine(trace.attempts.at(-1)?.text ?? '') || trace.statusMessage
+}
+
 const pass = (detail?: string): CheckResult => ({ pass: true, ...(detail ? { detail } : {}) })
 const fail = (detail: string): CheckResult => ({ pass: false, detail })
 const list = (items: string[]): string => items.join(', ') || 'none'
@@ -364,10 +379,12 @@ export function grade(c: BenchCase, trace: Trace): CaseResult {
     }
     return { id: chk.id, category: chk.category, critical: chk.critical, description: chk.description, ...result }
   })
+  const cliError = cliFailure(trace)
   return {
     caseId: c.id,
     subject: trace.subject,
     trial: trace.trial,
+    ...(cliError ? { cliError } : {}),
     pass: checks.every((chk) => chk.pass || !chk.critical),
     strict: checks.every((chk) => chk.pass),
     checks,

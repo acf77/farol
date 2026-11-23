@@ -14,7 +14,7 @@ import { AgentController, type AgentExecutor } from '../../electron/agent-contro
 import { captureLimited, changedPaths } from '../../electron/delegate-snapshot'
 import type { AgentTaskEvent, AgentTaskRequest } from '../../shared/types'
 import { BenchGit, BenchRunner, MemoryTodoStore, type AttemptClock } from '../farol'
-import { attemptSelection, retryReason } from '../grade'
+import { attemptSelection, lastLine, retryReason } from '../grade'
 import type { AttemptTrace, BenchCase, FinalStatus, Reference, Subject, ToolCall, Trace } from '../types'
 import { claudeUsage, emptyUsage } from '../usage'
 import { createWorkspace, disposeWorkspace, runAcceptance, type Workspace } from '../workspace'
@@ -77,7 +77,8 @@ class AttemptRecorder {
 
   constructor(
     private readonly ws: Workspace,
-    private readonly events: AgentTaskEvent[]
+    private readonly events: AgentTaskEvent[],
+    private readonly log?: (line: string) => void
   ) {}
 
   record(prompt: string, run: () => Promise<number>): Promise<number> {
@@ -112,6 +113,7 @@ class AttemptRecorder {
       })
       this.clock.finished = this.attempts.length
       this.lastTree = after
+      if (code !== 0) this.log?.(`agent exited ${code}: ${lastLine(text) || '(no output)'}`)
     }
   }
 }
@@ -120,7 +122,7 @@ export async function runChat(c: BenchCase, subject: Subject, opts: RunOptions):
   const started = Date.now()
   const ws = createWorkspace(c, opts.root)
   const events: AgentTaskEvent[] = []
-  const recorder = new AttemptRecorder(ws, events)
+  const recorder = new AttemptRecorder(ws, events, (line) => opts.log?.(`  [${c.id}] ${line}`))
   const runner = new BenchRunner(ws.bareIds, recorder.clock, 'chat')
   const git = new BenchGit(ws.repo, c.git?.enabled ?? false, recorder.clock, 'chat')
   const todos = new MemoryTodoStore(ws.repo, c.todos)

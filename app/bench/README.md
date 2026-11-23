@@ -13,6 +13,20 @@ bun run bench -- --list
 
 Each run writes `report.md`, `results.json` and `results.jsonl` to `bench/results/<time>/` (ignored by Git). `results.json` holds every trace, so a failure can be read in full, down to each prompt Farol sent. `--report <results.json>` rebuilds the report.
 
+Before it starts, the bench runs each CLI and model once on a one-line prompt, with the same command Chat uses. If one can't run, the bench prints the CLI's own error and doesn't start. Common causes: you're not signed in, the account can't use that model, or you've hit a usage limit. A CLI can also start failing mid-run, for example when a limit runs out. In that case:
+
+- each failed attempt prints the CLI's error;
+- those runs are reported as **CLI errors** and not scored;
+- after three in a row, that subject's remaining runs are skipped.
+
+To finish later in the same folder, keeping the scored runs:
+
+```bash
+bun run bench -- --resume bench/results/<time>
+```
+
+Pass the same `--subjects`, `--cases` and `--trials` as the original run.
+
 ## What runs
 
 Every case starts from a fresh copy of **tally**, a tiny text-helpers library (`fixture.ts`). Its checks run on plain Node with nothing to install. Its `CONTRIBUTING.md` states every rule its pipelines and hooks enforce. The checkout has a local `origin` to push to.
