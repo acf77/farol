@@ -38,6 +38,20 @@ describe('captureTree', () => {
     expect(git('diff', '--cached', '--name-only')).toBe('')
   })
 
+  it('sees a same-size edit made in the second the index was written', async () => {
+    // Without ctime, the cached stat is all git has to go on, so only racy-git detection catches it.
+    git('config', 'core.trustctime', 'false')
+    const file = path.join(repo, 'a.txt')
+    const second = new Date(Math.floor(Date.now() / 1000 - 60) * 1000)
+    fs.utimesSync(file, second, second)
+    git('add', 'a.txt')
+    fs.utimesSync(path.join(repo, '.git', 'index'), second, second)
+    const before = await captureTree(repo)
+    fs.writeFileSync(file, 'six\n')
+    fs.utimesSync(file, second, second)
+    expect(await treeDiffStat(repo, before!, (await captureTree(repo))!)).toContain('a.txt')
+  })
+
   it('reports no change when nothing changed', async () => {
     const before = await captureTree(repo)
     expect(await treeDiffStat(repo, before!, (await captureTree(repo))!)).toBe('')

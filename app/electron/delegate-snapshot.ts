@@ -65,7 +65,14 @@ export async function captureLimited(cwd: string, maxBytes?: number): Promise<Ca
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'farol-snap-'))
   const index = path.join(dir, 'index')
   try {
-    if (fs.existsSync(realIndex)) fs.copyFileSync(realIndex, index)
+    if (fs.existsSync(realIndex)) {
+      fs.copyFileSync(realIndex, index)
+      // Git trusts a file's cached stat unless the file changed in the same second the index was
+      // written ("racy git"), which it tells by the index file's own mtime. A fresh copy would look
+      // newer than every entry, and a same-size edit made in that second would be missed.
+      const { atime, mtime } = fs.statSync(realIndex)
+      fs.utimesSync(index, atime, mtime)
+    }
     const env = { GIT_INDEX_FILE: index }
     if (skipped.length) {
       const specs = path.join(dir, 'pathspecs')
