@@ -18,6 +18,7 @@
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "node ./node_modules/electron/install.js && electron-rebuild -f -w node-pty",
     "test": "vitest run",
+    "bench": "bun --preload ./bench/electron-stub.ts bench/main.ts",
     "dist": "npm run build:procsnap && electron-vite build && electron-builder --mac dmg zip && node scripts/publish-local.mjs",
     "dist:alpha": "electron-vite build && electron-builder --mac dmg zip -c.appId=com.farol.app.alpha \"-c.productName=Farol Alpha\" -c.directories.output=dist-alpha \"-c.dmg.title=Farol Alpha ${version}\"",
     "service:build": "esbuild service/main.ts --bundle --platform=node --target=node22 --format=cjs --outfile=service/dist/farol-service.cjs",

@@ -104,6 +104,7 @@ See [`app/README.md`](app/README.md) for packaging, tests, and how the app is pu
 | --- | --- |
 | [`app/`](app) | The Electron desktop app |
 | [`app/service/`](app/service) | The run service for remote pipelines |
+| [`app/bench/`](app/bench) | A benchmark of how well agents and models use Farol's tools |
 | [`docs/adr/`](docs/adr) | Architecture decisions |
 | [`CONTEXT.md`](CONTEXT.md) | The product&rsquo;s vocabulary |
 | [`DESIGN.md`](DESIGN.md) | How Farol should look, feel, and read |

@@ -19,6 +19,7 @@ npm start       # alias for electron-vite preview
 npm run dist         # Mac .dmg + .zip into dist/, publish local update feed
 npm run install:app  # same, then replace /Applications/Farol.app
 npm test             # unit tests for the terminal parser
+bun run bench        # how well agents use Farol's tools (see bench/README.md)
 npm run typecheck
 ```
 

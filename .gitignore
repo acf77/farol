@@ -20,3 +20,6 @@ dist-alpha/
 
 # TypeScript build cache
 *.tsbuildinfo
+
+# Benchmark output
+app/bench/results/

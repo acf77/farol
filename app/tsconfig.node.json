@@ -14,5 +14,5 @@
     "types": ["node", "electron-vite/node"],
     "paths": { "@shared/*": ["./shared/*"] }
   },
-  "include": ["electron", "shared", "service", "scripts", "electron.vite.config.ts"]
+  "include": ["electron", "shared", "service", "scripts", "bench", "electron.vite.config.ts"]
 }
