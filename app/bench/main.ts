@@ -15,7 +15,7 @@ import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { CASES, selectCases } from './cases'
-import { grade } from './grade'
+import { cliFailure, grade } from './grade'
 import { runChat, scriptedAgent } from './harness/chat'
 import { runMcp } from './harness/mcp'
 import { markdownReport, summarize, type RunMeta } from './report'
@@ -99,15 +99,24 @@ function parseArgs(argv: string[]): Args | 'listed' {
   }
 }
 
-/** The scored runs an earlier run left in `file`; its CLI errors are run again. */
+/**
+ * The scored runs an earlier run left in `file`; its CLI errors are run again. Each trace is
+ * checked anew, so a run from before CLI errors were told apart is redone too, and a line
+ * cut off by stopping the run is dropped.
+ */
 function scoredRuns(file: string): CaseResult[] {
   if (!fs.existsSync(file)) throw new Error(`Nothing to resume: ${file} does not exist`)
   return fs
     .readFileSync(file, 'utf8')
     .split('\n')
-    .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as CaseResult)
-    .filter((result) => !result.cliError)
+    .flatMap((line) => {
+      try {
+        return line.trim() ? [JSON.parse(line) as CaseResult] : []
+      } catch {
+        return []
+      }
+    })
+    .filter((result) => !result.cliError && !cliFailure(result.trace))
 }
 
 function sh(cmd: string, args: string[]): string {
