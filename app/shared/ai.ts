@@ -366,6 +366,12 @@ const ANTIGRAVITY_HINT = 'Install the Antigravity CLI (https://antigravity.googl
 /** Some `agy -p` builds print nothing without a TTY; a limit makes such a run end. */
 const ANTIGRAVITY_TIMEOUT = '30m'
 
+/** `agy -p` takes the prompt as its value, so `-p <prompt>` goes last, after every other flag. */
+function antigravityArgv(flags: string[], prompt: string, model: string | undefined): string[] {
+  const id = normalizeModel(model)
+  return [...flags, ...(id ? ['--model', id] : []), '-p', prompt]
+}
+
 /**
  * Non-interactive argv for each CLI. Cursor runs in ask mode with plain
  * text so a review step returns a string instead of Agent "ACT" chrome.
@@ -417,8 +423,9 @@ export function aiCommand(
       return {
         bins: ['agy'],
         // Plan mode is read-only; the timeout stops a headless run that prints nothing.
-        args: withModel(
-          ['-p', '--mode', 'plan', '--output-format', 'text', '--print-timeout', ANTIGRAVITY_TIMEOUT, prompt],
+        args: antigravityArgv(
+          ['--mode', 'plan', '--output-format', 'text', '--print-timeout', ANTIGRAVITY_TIMEOUT],
+          prompt,
           passed
         ),
         hint: ANTIGRAVITY_HINT
@@ -594,18 +601,17 @@ function managedAntigravityCommand(
   return {
     bins: ['agy'],
     // stdin is ignored, so Build must approve every tool call; Plan is read-only.
-    args: withModel(
+    args: antigravityArgv(
       [
-        '-p',
         '--output-format',
         'stream-json',
         '--print-timeout',
         ANTIGRAVITY_TIMEOUT,
         ...(plan ? ['--mode', 'plan'] : ['--dangerously-skip-permissions']),
         ...effortArgv('antigravity', effort),
-        ...resumeArgv('--conversation', resume),
-        prompt
+        ...resumeArgv('--conversation', resume)
       ],
+      prompt,
       passed
     ),
     hint: ANTIGRAVITY_HINT,

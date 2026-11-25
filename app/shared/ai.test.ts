@@ -587,7 +587,6 @@ describe('antigravity', () => {
     expect(cmd.bins).toEqual(['agy'])
     expect(cmd.stream).toBe('ndjson')
     expect(cmd.args).toEqual([
-      '-p',
       '--output-format',
       'stream-json',
       '--print-timeout',
@@ -597,6 +596,7 @@ describe('antigravity', () => {
       'max',
       '--model',
       'gemini-3-pro',
+      '-p',
       'fix this'
     ])
   })
@@ -610,17 +610,24 @@ describe('antigravity', () => {
       '--conversation',
       'c1'
     ])
+    expect(args.slice(-2)).toEqual(['-p', 'plan'])
   })
 
-  it('runs a pipeline review in plan mode with plain text', () => {
+  it('runs a pipeline review in plan mode with plain text, the prompt right after -p', () => {
     expect(aiCommand('antigravity', 'review').args).toEqual([
-      '-p',
       '--mode',
       'plan',
       '--output-format',
       'text',
       '--print-timeout',
       '30m',
+      '-p',
+      'review'
+    ])
+    expect(aiCommand('antigravity', 'review', 'gemini-3-pro').args.slice(-4)).toEqual([
+      '--model',
+      'gemini-3-pro',
+      '-p',
       'review'
     ])
   })
